@@ -8,5 +8,5 @@ name = "kimo-mcp"
 path = "src/main.rs"
 
 [dependencies]
-kimo-core = { path = "../kino-core" }
+kimo-core = { path = "../kimo-core" }
 serde_json = "1"

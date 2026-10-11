@@ -29,8 +29,8 @@ VFX: add_adjustment_layer, add_shape (rect/ellipse/polygon/line), set_corner_pin
 Output: render_frame, export.
 
 ## Layout
-- `crates/kino-core`: model, keyframes, command registry, CPU renderer, effects, text, audio, tracking
-- `crates/kino-mcp`: MCP stdio server
+- `crates/kimo-core`: model, keyframes, command registry, CPU renderer, effects, text, audio, tracking
+- `crates/kimo-mcp`: MCP stdio server
 - `examples/`: Python client and demos
 
 Status: early, CPU renderer. See ROADMAP.md.
