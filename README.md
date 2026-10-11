@@ -102,7 +102,7 @@ The full, current tool list is whatever `tools/list` returns.
 
 ## Layout
 
-- `crates/` - `kimo-core` (model, keyframes, command registry, CPU renderer, effects, text, audio, tracking, color) and `kimo-mcp` (the MCP stdio server).
+- `crates/` - `kino-core` (model, keyframes, command registry, CPU renderer, effects, text, audio, tracking, color) and `kino-mcp` (the MCP stdio server). These folders are being renamed to `kimo-*`; the packages and binary are already `kimo-core`, `kimo-mcp`.
 - `examples/` - Python client and demos
 - `docs/` - design notes and reviews
 - `tests/` - the tool fuzz runner
