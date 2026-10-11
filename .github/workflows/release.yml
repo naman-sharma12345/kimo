@@ -4,6 +4,12 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to attach binaries to
+        default: v1.0.0
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
 permissions:
   contents: write
 jobs:
@@ -31,12 +37,12 @@ jobs:
       - name: package
         shell: bash
         run: |
-          D=kimo-${{ github.ref_name }}-${{ matrix.name }}
+          D=kimo-${{ env.TAG }}-${{ matrix.name }}
           mkdir $D && cp target/${{ matrix.target }}/release/${{ matrix.exe }} README.md $D/
           if [ "${{ runner.os }}" = "Windows" ]; then 7z a $D.zip $D; else tar czf $D.tar.gz $D; fi
       - uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
         with:
+          tag_name: ${{ env.TAG }}
           files: |
             kimo-*.tar.gz
             kimo-*.zip
