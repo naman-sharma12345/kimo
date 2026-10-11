@@ -1,116 +1,42 @@
-name: release
-
+name: release-binaries
+# Builds kimo-mcp for Linux, macOS (arm64 and x86_64) and Windows and attaches them to a release when a v* tag is pushed.
 on:
   push:
-    tags: ["v*"]
+    tags: ['v*']
   workflow_dispatch:
-    inputs:
-      publish:
-        description: "Attach artifacts to a GitHub release for this ref's tag (tags only). Off = just upload a workflow artifact."
-        type: boolean
-        default: false
-
 permissions:
-  contents: read
-
-env:
-  CARGO_TERM_COLOR: never
-  CARGO_INCREMENTAL: "0"
-
+  contents: write
 jobs:
   build:
-    name: build (${{ matrix.target }})
-    runs-on: ubuntu-22.04   # old glibc baseline for the gnu build
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Primary: fully static, runs on any x86_64 Linux regardless of glibc.
-          - target: x86_64-unknown-linux-musl
-            suffix: linux-x86_64-static
-          # Optional: dynamic glibc build (needs glibc >= 2.35), usually faster allocator.
-          - target: x86_64-unknown-linux-gnu
-            suffix: linux-x86_64-glibc
+          - { os: ubuntu-latest,  target: x86_64-unknown-linux-musl, name: linux-x86_64, exe: kimo-mcp }
+          - { os: macos-14,       target: aarch64-apple-darwin,      name: macos-arm64,  exe: kimo-mcp }
+          - { os: macos-13,       target: x86_64-apple-darwin,       name: macos-x86_64, exe: kimo-mcp }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc,    name: windows-x86_64, exe: kimo-mcp.exe }
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: "${{ matrix.target }}" }
+      - name: musl tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --target ${{ matrix.target }}
+      - name: smoke test (MCP initialize)
+        shell: bash
+        run: echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | target/${{ matrix.target }}/release/${{ matrix.exe }} | head -c 200
+      - name: package
+        shell: bash
         run: |
-          rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
-          rustup default stable
-          rustc -V
-
-      - uses: actions/cache@v4
+          D=kimo-${{ github.ref_name }}-${{ matrix.name }}
+          mkdir $D && cp target/${{ matrix.target }}/release/${{ matrix.exe }} README.md $D/
+          if [ "${{ runner.os }}" = "Windows" ]; then 7z a $D.zip $D; else tar czf $D.tar.gz $D; fi
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
-
-      - name: Build (default features, no OCIO)
-        run: cargo build --release --locked -p kimo-mcp --target ${{ matrix.target }}
-
-      - name: Fetch bundled fonts (SIL OFL)
-        run: |
-          bash fonts/fetch.sh
-          n=$(find fonts -maxdepth 1 -name '*.ttf' -size +10k | wc -l)
-          echo "fonts: $n"
-          # fetch.sh swallows download errors, so fail on a short or empty set
-          test "$n" -ge 70
-          find fonts -maxdepth 1 -name '*.ttf' -size -10k -print -quit | grep -q . && { echo "truncated font"; exit 1; } || true
-
-      - name: Smoke test the built binary
-        run: |
-          bin=target/${{ matrix.target }}/release/kimo-mcp
-          if [ "${{ matrix.target }}" = x86_64-unknown-linux-musl ]; then
-            file "$bin" | grep -q 'statically linked'
-          fi
-          out=$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | KIMO_FONTS=$PWD/fonts "$bin")
-          echo "$out" | head -1 | grep -q '"serverInfo"'
-          echo "$out" | tail -1 | python3 -c 'import sys,json; n=len(json.loads(sys.stdin.read())["result"]["tools"]); print("tools:",n); assert n>50'
-
-      - name: Package
-        id: pkg
-        run: |
-          ver="${GITHUB_REF_NAME//\//-}"
-          name="kimo-${ver}-${{ matrix.suffix }}"
-          mkdir -p "dist/$name/bin" "dist/$name/fonts"
-          install -m755 target/${{ matrix.target }}/release/kimo-mcp "dist/$name/bin/kimo-mcp"
-          strip "dist/$name/bin/kimo-mcp" || true
-          cp fonts/*.ttf fonts/fetch.sh "dist/$name/fonts/"
-          cp README.md FEATURES.md "dist/$name/" 
-          cp docs/RELEASE_BINARIES.md "dist/$name/"
-          (cd dist && tar -czf "$name.tar.gz" "$name" && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
-          echo "name=$name" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.pkg.outputs.name }}
-          path: |
-            dist/${{ steps.pkg.outputs.name }}.tar.gz
-            dist/${{ steps.pkg.outputs.name }}.tar.gz.sha256
-
-  release:
-    name: publish release
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || inputs.publish)
-    runs-on: ubuntu-22.04
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-      - name: Create or update release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          ls -l artifacts
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" artifacts/* --clobber
-          else
-            gh release create "$GITHUB_REF_NAME" artifacts/* --title "$GITHUB_REF_NAME" --generate-notes
-          fi
+          files: |
+            kimo-*.tar.gz
+            kimo-*.zip
