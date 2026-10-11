@@ -22,7 +22,7 @@ fn dlk() -> String { "directional".into() } fn dli() -> f64 { 1.0 }
 pub struct Light { #[serde(default = "dlk")] pub kind: String, #[serde(default = "d3")] pub dir: [f64; 3], #[serde(default = "d3")] pub pos: [f64; 3], #[serde(default = "d1")] pub color: [f64; 3], #[serde(default = "dli")] pub intensity: f64 }
 fn dam() -> [f64; 3] { [0.08, 0.09, 0.11] }
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Scene3D { #[serde(default)] pub objects: Vec<Obj>, #[serde(default)] pub lights: Vec<Light>, #[serde(default = "dam")] pub ambient: [f64; 3], #[serde(default)] pub dof: f64, #[serde(default)] pub focus: f64, #[serde(default)] pub ssaa: u32, #[serde(default)] pub shadows: bool, #[serde(default)] pub ao: f64, #[serde(default)] pub env: f64 }
+pub struct Scene3D { #[serde(default)] pub objects: Vec<Obj>, #[serde(default)] pub lights: Vec<Light>, #[serde(default = "dam")] pub ambient: [f64; 3], #[serde(default)] pub dof: f64, #[serde(default)] pub focus: f64, #[serde(default)] pub ssaa: u32, #[serde(default)] pub shadows: bool, #[serde(default)] pub ao: f64, #[serde(default)] pub env: f64, #[serde(default)] pub shutter_deg: f64, #[serde(default)] pub blur_samples: u32 }
 
 type V3 = [f64; 3];
 struct Tri { p: [V3; 3], n: [V3; 3] }
@@ -93,6 +93,18 @@ impl Shadow {
 }
 fn env_col(r: V3, lights: &[(V3, V3, f64, bool)]) -> V3 { let up = (-r[1]).clamp(-1.0, 1.0) * 0.5 + 0.5; let mut c = [0.02 + 0.10 * up, 0.03 + 0.14 * up, 0.05 + 0.2 * up];
     for (lp, lc, li, point) in lights { if *point { continue; } let d = dotv(r, *lp).max(0.0).powi(24) * li * 2.5; for k in 0..3 { c[k] += lc[k] * d; } } c }
+
+/// Motion blur for a 3D scene: renders `blur_samples` (0 = 8) instants spread over a shutter of `shutter_deg`/360 of a frame centred on `t` and averages the
+/// premultiplied results. Object animation and camera moves (via `cam_at`, which gets the offset in seconds) both blur, because each sample re-poses the whole scene.
+/// shutter_deg = 0 renders once, identical to `render`.
+pub fn render_blur(sc: &Scene3D, f: &mut Frame, t: f64, fps: f64, cam_at: &dyn Fn(f64) -> Camera) {
+    if sc.shutter_deg <= 0.0 { render(sc, f, t, &cam_at(0.0)); return; }
+    let n = if sc.blur_samples == 0 { 8 } else { sc.blur_samples.clamp(2, 32) as usize }; let sh = sc.shutter_deg.clamp(0.0, 720.0) / 360.0 / fps.max(1.0);
+    let mut acc = vec![0f32; f.w * f.h * 4];
+    for k in 0..n { let off = sh * ((k as f64 + 0.5) / n as f64 - 0.5); let mut g = Frame::new(f.w, f.h); render(sc, &mut g, t + off, &cam_at(off));
+        for i in 0..f.w * f.h { let a = g.d[i * 4 + 3]; for j in 0..3 { acc[i * 4 + j] += g.d[i * 4 + j] * a; } acc[i * 4 + 3] += a; } }
+    let inv = 1.0 / n as f32; for i in 0..f.w * f.h { let a = acc[i * 4 + 3] * inv; if a > 1e-6 { for j in 0..3 { f.d[i * 4 + j] = acc[i * 4 + j] * inv / a; } } else { for j in 0..3 { f.d[i * 4 + j] = 0.0; } } f.d[i * 4 + 3] = a.min(1.0); }
+}
 
 pub fn render(sc: &Scene3D, f: &mut Frame, t: f64, cam: &Camera) {
     let (w, h) = (f.w, f.h); let ss = if sc.ssaa == 0 { 2 } else { sc.ssaa.min(4) as usize }; let (sw, sh) = (w * ss, h * ss); let cv = CamView::new(sw, sh, cam); let eye = cv.eye(); let fl = cv.focal() / ss as f64;
