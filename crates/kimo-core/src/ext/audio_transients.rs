@@ -10,6 +10,22 @@ fn number(a: &Value, k: &str, d: f64) -> Result<f64, String> {
             .ok_or_else(|| crate::errors::arg_err(a, k, "number")),
     }
 }
+fn has_visual_clips(p: &crate::model::Project, tracks: &[crate::model::Track]) -> bool {
+    tracks.iter().flat_map(|tr| &tr.clips).any(|c| {
+        if c.props.get("audio_only").map_or(false, |v| v.at(0.) >= 0.5) {
+            return false;
+        }
+        match &c.source {
+            crate::model::Source::Adjustment => false,
+            crate::model::Source::Media { asset } => p
+                .assets
+                .get(asset)
+                .map_or(true, |a| a.width > 0 && a.height > 0),
+            crate::model::Source::Precomp { tracks } => has_visual_clips(p, tracks),
+            _ => true,
+        }
+    })
+}
 fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let mut p = ev::Params::default();
     p.sensitivity = number(a, "sensitivity", 0.5)?;
@@ -36,7 +52,9 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
         .transpose()?
         .unwrap_or("none");
     if !["none", "waveform"].contains(&image) {
-        return Err(format!("image '{image}' not allowed. Valid: none, waveform"));
+        return Err(format!(
+            "image '{image}' not allowed. Valid: none, waveform"
+        ));
     }
     p.band = match a.get("band") {
         None => [0., 24000.],
@@ -91,6 +109,66 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
     }
     let r = ev::analyze(&mono, &p)?;
     let events=r.transients.iter().map(|e|json!({"t":e.t+st,"strength":e.strength,"level_db":e.level_db,"kind":e.kind,"nearest_frame_time":((e.t+st)*ss.project.fps).round()/ss.project.fps,"frame_offset_ms":((((e.t+st)*ss.project.fps).round()/ss.project.fps)-(e.t+st))*1000.})).collect::<Vec<_>>();
+    // Timeline cuts are visual content events, not merely edit boundaries; path/clip targets need timeline-origin care.
+    let timeline_target = target == "mix"
+        || target.get("mix") == Some(&json!(true))
+        || target.get("track_id").is_some()
+        || target.get("clip_id").is_some()
+        || target.as_str().map_or(false, |id| {
+            ss.project.find_clip(id).is_some() || ss.project.tracks.iter().any(|tr| tr.id == id)
+        });
+    let visual = has_visual_clips(&ss.project, &ss.project.tracks);
+    let cut_result = if timeline_target && visual {
+        crate::commands::dispatch(ss, "detect_cuts", &json!({})).ok()
+    } else {
+        None
+    };
+    let cut_status = if !timeline_target {
+        json!({"status":"skipped","reason":"path_target"})
+    } else if !visual {
+        json!({"status":"skipped","reason":"no_visual_clips"})
+    } else if cut_result.is_none() {
+        json!({"status":"skipped","reason":"visual_cut_detection_unavailable"})
+    } else {
+        json!({"status":"complete"})
+    };
+    let cuts: Vec<f64> = cut_result
+        .as_ref()
+        .and_then(|v| v["cuts"].as_array())
+        .map(|cs| {
+            cs.iter()
+                .filter(|c| c["kind"] != "flash")
+                .filter_map(|c| c["time"].as_f64())
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut events = events;
+    let mut fft = crate::dsp::fft::Fft::new();
+    for (row, event) in events.iter_mut().zip(&r.transients) {
+        crate::guard::check();
+        fft.run(&mono, (event.t * 48000.).round() as usize);
+        let (mut energy, mut moment) = (0., 0.);
+        for k in 1..=crate::dsp::fft::FRAME / 2 {
+            let power = fft.re[k] * fft.re[k] + fft.im[k] * fft.im[k];
+            energy += power;
+            moment += power * k as f64 * 48000. / crate::dsp::fft::FRAME as f64;
+        }
+        let centroid = if energy > 0. { moment / energy } else { 0. };
+        row["strength_db"] = json!(20. * event.strength.max(1e-12).log10());
+        row["band"] = json!(if centroid < 250. {
+            "low"
+        } else if centroid < 4000. {
+            "mid"
+        } else {
+            "high"
+        });
+        let t = event.t + st;
+        row["nearest_cut_dt"] = json!(cuts
+            .iter()
+            .copied()
+            .min_by(|a, b| (t - a).abs().total_cmp(&(t - b).abs()).then(a.total_cmp(b)))
+            .map(|c| t - c));
+    }
     let fps = ss.project.fps;
     let times = r.transients.iter().map(|e| e.t + st).collect::<Vec<_>>();
     let nearest = times
@@ -103,6 +181,7 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
         .map(|(t, n)| (n - t) * 1000.)
         .collect::<Vec<_>>();
     let mut out = json!({"params":{"target":target,"start":st,"end":st+mono.len() as f64/48000.,"sensitivity":p.sensitivity,"min_gap_ms":p.min_gap_ms,"band":p.band,"mode":p.mode,"max_items":p.max_items,"image":image,"frame_rate":fps},"method":{"sample_rate":48000,"channels":"mono arithmetic stereo mean","frame":1024,"hop":256,"window":"Hann symmetric","fft":"fixed radix-2 f64 in-tree, fixed reduction order","onset":"half-wave log(1+magnitude) spectral flux","adaptive_window_s":0.5,"threshold":"median + k*MAD + floor","k":6.-5.*p.sensitivity,"floor":0.001,"peak_pick":"local maximum; earliest refined sample anchors min_gap before threshold eligibility (monotonic sensitivity)","refinement":"maximum absolute PCM sample within +/-1024 of flux center","level":"10 ms RMS centered at envelope peak","kind":"percussive if spectral flatness > .2 else tonal","flatness_threshold":0.2,"envelope_peak_floor":0.005,"envelope_rise_ratio":1.25,"envelope_reference_ms":[-20,-10],"tempo":"onset-envelope autocorrelation 60..200 BPM, median event spacing for matching octave, keep observed 60 BPM; no downbeat inference","grid_confidence_threshold":0.5,"source":decoded.source},"duration_s":mono.len() as f64/48000.,"transients":events,"count":r.count,"truncated":r.truncated,"snap_hints":{"nearest_frame_times":nearest,"frame_offset_ms":offsets}});
+    out["nearest_cut_analysis"] = cut_status;
     if p.mode == "beat" {
         out["bpm"] = json!(r.bpm);
         out["confidence"] = json!(r.confidence);
@@ -133,5 +212,5 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
     Ok(out)
 }
 pub fn commands() -> Vec<Command> {
-    vec![Command{name:"audio_transients",description:"Native deterministic audio onset, transient and beat perception. target is clip_id, track_id, mix or a local media path; target objects {clip_id|track_id|path|mix:true} also work. start/end use absolute timeline seconds (path: source seconds). Spectral-flux onset strength, median/MAD threshold, sub-hop sample refinement, percussive/tonal flatness, relative strengths and 10ms RMS levels. Beat mode reports tempo, confidence, octave alternative, no downbeat guess and no grid on uncertain material. Snap hints use project fps. Optional waveform SVG returned without files. Read-only; legacy detect_beats unchanged.",mutates:false,schema:obj(vec![("target",json!({"description":"clip_id, track_id, mix, path or target object","oneOf":[{"type":"string"},{"type":"object"}]})),("start",n("timeline seconds; path source seconds")),("end",n("timeline seconds; path source seconds")),("sensitivity",json!({"type":"number","minimum":0,"maximum":1})),("min_gap_ms",json!({"type":"number","minimum":20,"maximum":2000})),("band",json!({"oneOf":[{"type":"string","enum":["full","low","mid","high"]},{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2}]})),("mode",json!({"type":"string","enum":["onset","beat"]})),("max_items",json!({"type":"integer","minimum":1,"maximum":5000})),("image",json!({"type":"string","enum":["none","waveform"]}))],&[]),run}]
+    vec![Command{name:"audio_transients",description:"Native deterministic audio onset, transient and beat perception. target is clip_id, track_id, mix or a local media path; target objects {clip_id|track_id|path|mix:true} also work. start/end use absolute timeline seconds (path: source seconds). Spectral-flux onset strength, median/MAD threshold, sub-hop sample refinement, percussive/tonal flatness, relative strengths and 10ms RMS levels. Beat mode reports tempo, confidence, octave alternative, no downbeat guess and no grid on uncertain material. Additive strength_db is 20log10(relative onset strength), not dBFS; band is Hann-window spectral centroid low<250Hz, mid<4kHz, else high. nearest_cut_dt is signed event minus nearest visual timeline cut (flash excluded), null for path targets, audio-only timelines or unavailable cuts; nearest_cut_analysis reports complete or skipped with reason. Snap hints use project fps. Optional waveform SVG returned without files. Read-only; legacy detect_beats unchanged.",mutates:false,schema:obj(vec![("target",json!({"description":"clip_id, track_id, mix, path or target object","oneOf":[{"type":"string"},{"type":"object"}]})),("start",n("timeline seconds; path source seconds")),("end",n("timeline seconds; path source seconds")),("sensitivity",json!({"type":"number","minimum":0,"maximum":1})),("min_gap_ms",json!({"type":"number","minimum":20,"maximum":2000})),("band",json!({"oneOf":[{"type":"string","enum":["full","low","mid","high"]},{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2}]})),("mode",json!({"type":"string","enum":["onset","beat"]})),("max_items",json!({"type":"integer","minimum":1,"maximum":5000})),("image",json!({"type":"string","enum":["none","waveform"]}))],&[]),run}]
 }

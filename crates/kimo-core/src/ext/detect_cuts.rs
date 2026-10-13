@@ -187,10 +187,65 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
             v["end"] = json!(start + i as f64 / fps);
         }
         v["fix_hint"] = crate::perception::fix_hint::none(&format!("{} scored {:.3} at {:.3}s; whether it is intended depends on the edit, so nothing is changed", c.kind, peak, t));
+        let mut timeline: Vec<&crate::model::Clip> = ss
+            .project
+            .tracks
+            .iter()
+            .flat_map(|tr| tr.clips.iter().map(|c| c.as_ref()))
+            .filter(|c| {
+                !matches!(c.source, crate::model::Source::Adjustment)
+                    && !c.props.get("audio_only").map_or(false, |p| p.at(0.) > 0.5)
+            })
+            .collect();
+        timeline.sort_by(|a, b| a.start.total_cmp(&b.start).then(a.id.cmp(&b.id)));
+        let left = timeline
+            .iter()
+            .rev()
+            .find(|c| c.start < t && c.start + c.duration >= t - 1e-9)
+            .map(|c| c.id.clone());
+        let right = timeline
+            .iter()
+            .rev()
+            .find(|c| c.start <= t + 1e-9 && c.start + c.duration > t)
+            .map(|c| c.id.clone());
+        let mut boundaries: Vec<f64> = timeline
+            .iter()
+            .flat_map(|c| [c.start, c.start + c.duration])
+            .collect();
+        boundaries.sort_by(f64::total_cmp);
+        boundaries.dedup();
+        let nearest = boundaries
+            .iter()
+            .copied()
+            .min_by(|a, b| (t - a).abs().total_cmp(&(t - b).abs()).then(a.total_cmp(b)));
+        let dt = nearest.map(|b| t - b);
+        v["left_clip"] = json!(if source == "timeline" { left } else { None });
+        v["right_clip"] = json!(if source == "timeline" { right } else { None });
+        v["on_clip_boundary"] =
+            json!(source == "timeline" && dt.map_or(false, |d| d.abs() <= 1e-9));
+        v["nearest_boundary_dt"] = json!(if source == "timeline" { dt } else { None });
+        // Detecting an offset does not prove the edit intent. Advice uses the nearest right-side boundary clip only.
+        if source == "timeline"
+            && ["hard_cut", "dissolve"].contains(&c.kind)
+            && dt.map_or(false, |d| {
+                d.abs() > 1e-9 && d.abs() <= 1. / ss.project.fps + 1e-9
+            })
+        {
+            if let Some(b) = nearest {
+                if let Some(cl) = timeline.iter().find(|cl| (cl.start - b).abs() <= 1e-9) {
+                    v["fix_hint"]=crate::perception::fix_hint::hint("retime","move_clip",json!({"clip_id":cl.id,"start":t}),format!("cut at {t:.6}s differs from clip boundary by {:.6}s; move the boundary clip if alignment is intended",dt.unwrap()),"estimate");
+                }
+            }
+        }
         values.push(v);
     }
     let mut ranked: Vec<&Value> = values.iter().collect();
-    ranked.sort_by(|a, b| b["score"].as_f64().unwrap_or(0.).total_cmp(&a["score"].as_f64().unwrap_or(0.)));
+    ranked.sort_by(|a, b| {
+        b["score"]
+            .as_f64()
+            .unwrap_or(0.)
+            .total_cmp(&a["score"].as_f64().unwrap_or(0.))
+    });
     let next_steps: Vec<Value> = ranked.iter().take(3).map(|v| json!({"tool":"describe_frame","args":{"time":v["time"]},"why":format!("{} scored {:.3} at {:.3}s; inspect the frame after the cut", v["kind"].as_str().unwrap_or("cut"), v["score"].as_f64().unwrap_or(0.), v["time"].as_f64().unwrap_or(0.))})).collect();
     let boundaries: Vec<f64> = if source == "timeline" {
         let mut b: Vec<_> = ss
@@ -234,5 +289,5 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
     Ok(out)
 }
 pub fn commands() -> Vec<Command> {
-    vec![Command{name:"detect_cuts",mutates:false,description:"Detect content cuts in timeline composite (default), clip:<id> or file:<path>. Advisory only, never edits. Default min(timeline fps,12), analysis max side160; shared box filter, normalized 8x8x8 RGB histogram half-L1, Rec709 luma mean abs delta/0.25 capped1, combined=max. Threshold=0.6-0.5*sensitivity or explicit threshold wins; additionally score > mean(5 prior scores)*3+0.02 suppresses motion. min_gap_s keeps stronger candidate, refine resamples +/-1 analysis step at full timeline fps. Kind hints identify single-step hard_cut, monotone >=3-step dissolve, return-within-3-step flash. Dip-to-black merges opposite ramps into one fade interval with dip:true. Optional spatial grid4x4 (or1x1) requires histogram change above threshold in >=min_cells_ratio cells (default.6), off by default. Adaptive and content guards precede flash labeling; global pans can still look like cuts, verify scores with frame comparisons. Caps 20000 analysed frames, scores decimated to <=10000. Timeline clip boundaries are separate hints, not content detections.",schema:obj(vec![("source",s("timeline default, clip:<id>, file:<path>")),("start",n("range start")),("end",n("range end")),("method",json!({"type":"string","enum":["histogram","luma","combined"]})),("fps",n("0<fps<=timeline fps")),("scale",n("analysis max side default160")),("sensitivity",n("0..1 default.5")),("threshold",n("0..1 explicit wins")),("min_gap_s",n("default.25")),("refine",json!({"type":"boolean"})),("return_scores",json!({"type":"boolean"})),("kind_hints",json!({"type":"boolean"})),("spatial",json!({"type":"object","description":"off by default; grid4x4 or1x1, min_cells_ratio default0.6, per-cell histogram change>threshold"}))],&[]),run}]
+    vec![Command{name:"detect_cuts",mutates:false,description:"Detect content cuts in timeline composite (default), clip:<id> or file:<path>. Advisory only, never edits. Default min(timeline fps,12), analysis max side160; shared box filter, normalized 8x8x8 RGB histogram half-L1, Rec709 luma mean abs delta/0.25 capped1, combined=max. Threshold=0.6-0.5*sensitivity or explicit threshold wins; additionally score > mean(5 prior scores)*3+0.02 suppresses motion. min_gap_s keeps stronger candidate, refine resamples +/-1 analysis step at full timeline fps. Output kinds are hard_cut, fade, dissolve, flash. Kind hints identify single-step hard_cut, monotone >=3-step dissolve at its span midpoint, and a 1-2-frame flash returning to prior content. Timeline events include left_clip/right_clip, exact on_clip_boundary and signed nearest_boundary_dt; retime advice only for hard_cut/dissolve within one frame of an offset boundary. Dip-to-black merges opposite ramps into one fade interval with dip:true. Optional spatial grid4x4 (or1x1) requires histogram change above threshold in >=min_cells_ratio cells (default.6), off by default. Adaptive and content guards precede flash labeling; global pans can still look like cuts, verify scores with frame comparisons. Caps 20000 analysed frames, scores decimated to <=10000. Timeline clip boundaries are separate hints, not content detections.",schema:obj(vec![("source",s("timeline default, clip:<id>, file:<path>")),("start",n("range start")),("end",n("range end")),("method",json!({"type":"string","enum":["histogram","luma","combined"]})),("fps",n("0<fps<=timeline fps")),("scale",n("analysis max side default160")),("sensitivity",n("0..1 default.5")),("threshold",n("0..1 explicit wins")),("min_gap_s",n("default.25")),("refine",json!({"type":"boolean"})),("return_scores",json!({"type":"boolean"})),("kind_hints",json!({"type":"boolean"})),("spatial",json!({"type":"object","description":"off by default; grid4x4 or1x1, min_cells_ratio default0.6, per-cell histogram change>threshold"}))],&[]),run}]
 }

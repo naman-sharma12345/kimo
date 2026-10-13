@@ -89,14 +89,27 @@ fn audio_transients_strength_db_band_nearest_cut() {
         "add_clip",
         json!({"track_id": t, "source_type": "media", "asset_id": asset, "start": 0, "duration": 4}),
     );
-    let r = dispatch(&mut ss, "audio_transients", &json!({"target": "mix"})).unwrap();
+    let mut outs = vec![];
+    let before = serde_json::to_vec(&ss.project).unwrap();
+    for n in [1, 4] {
+        kimo_core::par::set_threads(n);
+        outs.push(dispatch(&mut ss, "audio_transients", &json!({"target": "mix"})).unwrap());
+    }
+    kimo_core::par::set_threads(0);
+    assert_eq!(
+        serde_json::to_vec(&outs[0]).unwrap(),
+        serde_json::to_vec(&outs[1]).unwrap()
+    );
+    assert_eq!(serde_json::to_vec(&ss.project).unwrap(), before);
+    let r = &outs[0];
     let events = r["transients"].as_array().unwrap();
     assert_eq!(events.len(), 4);
     for e in events {
-        assert!(e["strength_db"]
-            .as_f64()
-            .expect("strength_db (P2) missing")
-            .is_finite());
+        let strength_db = e["strength_db"].as_f64().expect("strength_db (P2) missing");
+        assert!(
+            (strength_db - 20. * e["strength"].as_f64().unwrap().max(1e-12).log10()).abs() < 1e-9
+        );
+        assert_eq!(e["band"], "high", "impulse centroid is high-band");
         assert!(
             ["low", "mid", "high"].contains(&e["band"].as_str().expect("band (P2) missing")),
             "band low|mid|high"
@@ -147,12 +160,20 @@ fn speech_intervals_confidence_rms_gaps_fix_hint() {
     )
     .unwrap();
     let path = speech_like_wav();
-    let r = dispatch(
-        &mut ss,
-        "audio_speech_intervals",
-        &json!({"target": {"path": path}, "max_pause": 0.5, "pad_ms": 0, "hangover_ms": 0}),
-    )
-    .unwrap();
+    let args = json!({"target": {"path": path}, "max_pause": 0.5, "pad_ms": 0, "hangover_ms": 0});
+    let mut outs = vec![];
+    let before = serde_json::to_vec(&ss.project).unwrap();
+    for n in [1, 4] {
+        kimo_core::par::set_threads(n);
+        outs.push(dispatch(&mut ss, "audio_speech_intervals", &args).unwrap());
+    }
+    kimo_core::par::set_threads(0);
+    assert_eq!(
+        serde_json::to_vec(&outs[0]).unwrap(),
+        serde_json::to_vec(&outs[1]).unwrap()
+    );
+    assert_eq!(serde_json::to_vec(&ss.project).unwrap(), before);
+    let r = &outs[0];
     let intervals = r["speech"].as_array().unwrap();
     assert_eq!(intervals.len(), 2, "two bursts: {intervals:?}");
     for iv in intervals {
@@ -227,4 +248,75 @@ fn existing_dip_fade_span_and_time_remain_unchanged() {
     assert_eq!(c.start, Some(11));
     assert_eq!(c.end, Some(35));
     assert_eq!(c.index, 12);
+}
+
+#[test]
+fn three_frame_white_excursion_is_not_a_flash() {
+    let mut frames = vec![flat(0.); 14];
+    for i in 6..9 {
+        frames[i] = flat(1.);
+    }
+    let (cuts, _) = kimo_core::perception::cuts::detect(&frames, "combined", 0.35, 1, true);
+    assert!(cuts.iter().all(|c| c.kind != "flash"));
+    assert!(cuts.iter().any(|c| c.kind == "hard_cut"));
+}
+
+#[test]
+fn offset_boundary_retime_hint_uses_existing_schema_and_exact_boundary_has_none() {
+    let (mut ss, left, right) = cut_project();
+    dispatch(&mut ss, "trim_clip", &json!({"clip_id":left,"duration":4})).unwrap();
+    dispatch(&mut ss, "move_clip", &json!({"clip_id":right,"start":2.04})).unwrap();
+    let r = dispatch(&mut ss, "detect_cuts", &json!({"fps":12,"refine":false})).unwrap();
+    let c = &r["cuts"][0];
+    assert_eq!(c["kind"], "hard_cut");
+    assert_eq!(c["on_clip_boundary"], false);
+    assert!(c["nearest_boundary_dt"].as_f64().unwrap().abs() <= 1. / 12.);
+    assert_eq!(c["fix_hint"]["kind"], "retime");
+    assert_eq!(c["fix_hint"]["tool"], "move_clip");
+    assert_eq!(c["fix_hint"]["args"]["clip_id"], right);
+    let cmd = kimo_core::commands::find_command("move_clip").unwrap();
+    for (k, v) in c["fix_hint"]["args"].as_object().unwrap() {
+        assert!(cmd.schema["properties"][k].is_object());
+        if cmd.schema["properties"][k]["type"] == "number" {
+            assert!(v.is_number())
+        }
+    }
+    let (mut ss, _, _) = cut_project();
+    let r = dispatch(&mut ss, "detect_cuts", &json!({"fps":12})).unwrap();
+    assert_eq!(r["cuts"][0]["fix_hint"]["kind"], "none");
+}
+
+#[test]
+fn audio_only_timeline_skips_visual_cuts_explicitly_and_is_bounded() {
+    let mut ss = Session::new();
+    dispatch(
+        &mut ss,
+        "project_set",
+        &json!({"width":256,"height":256,"fps":24}),
+    )
+    .unwrap();
+    let path = click_wav(&[0.5, 1.5, 2.5, 3.5], 4.);
+    let asset =
+        dispatch(&mut ss, "import_media", &json!({"path":path})).unwrap()["asset_id"].clone();
+    let tr = dispatch(&mut ss, "add_track", &json!({})).unwrap()["track_id"].clone();
+    dispatch(
+        &mut ss,
+        "add_clip",
+        &json!({"track_id":tr,"source_type":"media","asset_id":asset,"start":0,"duration":4}),
+    )
+    .unwrap();
+    let now = std::time::Instant::now();
+    let r = dispatch(&mut ss, "audio_transients", &json!({"target":"mix"})).unwrap();
+    let elapsed = now.elapsed().as_secs_f64();
+    eprintln!("audio-only 4s whole-tool elapsed={elapsed:.6}s");
+    assert!(
+        elapsed < 1.5,
+        "audio-only timeline should not render 48 visual samples: {elapsed}"
+    );
+    assert_eq!(r["nearest_cut_analysis"]["status"], "skipped");
+    assert_eq!(r["nearest_cut_analysis"]["reason"], "no_visual_clips");
+    for e in r["transients"].as_array().unwrap() {
+        assert_eq!(e["nearest_cut_dt"], Value::Null)
+    }
+    std::fs::remove_file(path).unwrap();
 }

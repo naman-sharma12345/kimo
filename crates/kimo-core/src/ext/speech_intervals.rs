@@ -119,7 +119,7 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
     if i1 <= i0 {
         return Err("range selects no samples".into());
     }
-    let start=i0 as f64/96000.; // actual sample boundary, not requested fractional seconds
+    let start = i0 as f64 / 96000.; // actual sample boundary, not requested fractional seconds
     let x = &pcm[i0..i1];
     let mut result = vad::analyze(x, &p)?;
     for s in &mut result.speech {
@@ -135,14 +135,68 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
         s.end += start;
     }
     let mut out = serde_json::to_value(&result).map_err(|e| e.to_string())?;
-    for key in ["speech","silence","cut_suggestions"] {if let Some(rows)=out[key].as_array_mut(){for row in rows{crate::perception::timebase::annotate(row,ss.project.fps,key!="speech")}}}
-    out["timebase"]=crate::perception::timebase::meta(ss.project.fps);
-    out["range_samples"]=json!({"start_sample":i0/2,"end_sample":i1/2,"sample_count":(i1-i0)/2});
+    for key in ["speech", "silence", "cut_suggestions"] {
+        if let Some(rows) = out[key].as_array_mut() {
+            for row in rows {
+                crate::perception::timebase::annotate(row, ss.project.fps, key != "speech")
+            }
+        }
+    }
+    out["timebase"] = crate::perception::timebase::meta(ss.project.fps);
+    out["range_samples"] = json!({"start_sample":i0/2,"end_sample":i1/2,"sample_count":(i1-i0)/2});
     out["params"]["requested_start"] = json!(a.get("start").and_then(Value::as_f64).unwrap_or(0.));
-    out["params"]["target"] = target;
+    out["params"]["target"] = target.clone();
     out["params"]["start"] = json!(start);
     out["params"]["end"] = json!(start + result.duration_s);
     out["params"]["image"] = json!(image);
+    // RMS is measured over the returned padded interval, in stereo engine PCM. Existing confidence/level_db remain unchanged.
+    if let Some(rows) = out["speech"].as_array_mut() {
+        for row in rows {
+            let lo = ((row["start"].as_f64().unwrap_or(start) - start) * 48000.)
+                .round()
+                .max(0.) as usize;
+            let hi = ((row["end"].as_f64().unwrap_or(start) - start) * 48000.)
+                .round()
+                .max(0.) as usize;
+            let a = (lo * 2).min(x.len());
+            let b = (hi * 2).min(x.len());
+            let rms = if b > a {
+                (x[a..b].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (b - a) as f64).sqrt()
+            } else {
+                0.
+            };
+            row["rms_db"] = json!(20. * rms.max(1e-12).log10());
+        }
+    }
+    let max_pause = a
+        .get("max_pause")
+        .map(|_| number(a, "max_pause", 0.))
+        .transpose()?;
+    if max_pause.map_or(false, |v| v < 0.) {
+        return Err("out_of_range: max_pause must be nonnegative seconds".into());
+    }
+    let mut gaps = vec![];
+    for pair in result.speech.windows(2) {
+        let st = pair[0].end;
+        let en = pair[1].start;
+        let duration = en - st;
+        if duration <= 0. {
+            continue;
+        }
+        let why = format!(
+            "pause is {duration:.6}s{}; inspect before trimming",
+            max_pause
+                .map(|v| format!(", caller maximum {v:.6}s"))
+                .unwrap_or_default()
+        );
+        let mut gap = json!({"start":st,"end":en,"duration":duration});
+        if max_pause.map_or(false, |v| duration > v) {
+            gap["fix_hint"] = crate::perception::fix_hint::none(&why);
+            gap["next_steps"] = json!([{"tool":"audio_speech_intervals","args":{"target":target,"start":st,"end":en,"mode":"silence"},"why":why}]);
+        }
+        gaps.push(gap);
+    }
+    out["gaps"] = json!(gaps);
     if image == "waveform" {
         let mut hash = 0xcbf29ce484222325u64;
         for v in x {
@@ -190,5 +244,5 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
     Ok(out)
 }
 pub fn commands() -> Vec<Command> {
-    vec![Command{name:"audio_speech_intervals",mutates:false,description:"Detect speech voice pauses with lightweight energy ZCR spectral VAD (NOT neural recognition), or silence using the same 100ms RMS rule as audio_probe. Stereo 48k engine decode -> mono 16k, 20ms features, percentile noise floor, two-state hysteresis and hangover. Aggressiveness 2..3 rejects steady tones; 0..1 can classify a tone burst as speech (reported limitation). Speech/cut times include requested padding, start/end are target-relative seconds; cut_suggestions are advice only and never edit. target: mix, {clip_id}, {track_id}, path or {path}. Missing audio/decode failure are errors. max_items caps result arrays, count is before truncation. Exact per-channel 48k PCM start_sample/end_sample/sample_count and start_ms/end_ms accompany seconds. Speech frame_aligned snaps outward, silence/cuts inward; exclusive ends, frame sample indices follow round(frame*48000/fps). Sample indices are authoritative; target-relative, not absolute project timeline for a clip. Requested range snaps to actual PCM samples. synthetic validation only; real-speech recall and reverb tails below the floor not established. Optional waveform image.",schema:obj(vec![("target",json!({"description":"mix, path, or exactly one clip_id|track_id|mix|path object","oneOf":[{"type":"string"},{"type":"object"}]})),("start",n("range start seconds")),("end",n("range end seconds")),("mode",json!({"type":"string","enum":["vad","silence"]})),("aggressiveness",n("integer 0..3; default 1")),("min_speech_ms",n("minimum speech duration, default 200 ms")),("min_silence_ms",n("minimum pause, default 300 ms")),("pad_ms",n("speech edge padding, default 120 ms")),("hangover_ms",n("speech trailing hangover, default 200 ms")),("threshold_db",n("silence-mode RMS threshold, default -60 dBFS")),("merge_gap_ms",n("merge nearby speech intervals, default 0 ms")),("max_items",n("array cap, default 1000")),("image",json!({"type":"string","enum":["none","waveform"]}))],&[]),run}]
+    vec![Command{name:"audio_speech_intervals",mutates:false,description:"Detect speech voice pauses with lightweight energy ZCR spectral VAD (NOT neural recognition), or silence using the same 100ms RMS rule as audio_probe. Stereo 48k engine decode -> mono 16k, 20ms features, percentile noise floor, two-state hysteresis and hangover. Aggressiveness 2..3 rejects steady tones; 0..1 can classify a tone burst as speech (reported limitation). Speech/cut times include requested padding, start/end are target-relative seconds; cut_suggestions are advice only and never edit. target: mix, {clip_id}, {track_id}, path or {path}. Missing audio/decode failure are errors. max_items caps result arrays, count is before truncation. Exact per-channel 48k PCM start_sample/end_sample/sample_count and start_ms/end_ms accompany seconds. Speech frame_aligned snaps outward, silence/cuts inward; exclusive ends, frame sample indices follow round(frame*48000/fps). Sample indices are authoritative; target-relative, not absolute project timeline for a clip. Requested range snaps to actual PCM samples. synthetic validation only; real-speech recall and reverb tails below the floor not established. Additive rms_db is measured stereo dBFS over each returned padded speech interval; confidence is the existing heuristic, not calibrated probability. gaps lists positive pauses between returned speech intervals; max_pause in seconds adds inspection-only fix_hint when exceeded, never trims. Optional waveform image.",schema:obj(vec![("target",json!({"description":"mix, path, or exactly one clip_id|track_id|mix|path object","oneOf":[{"type":"string"},{"type":"object"}]})),("start",n("range start seconds")),("end",n("range end seconds")),("mode",json!({"type":"string","enum":["vad","silence"]})),("aggressiveness",n("integer 0..3; default 1")),("min_speech_ms",n("minimum speech duration, default 200 ms")),("min_silence_ms",n("minimum pause, default 300 ms")),("pad_ms",n("speech edge padding, default 120 ms")),("hangover_ms",n("speech trailing hangover, default 200 ms")),("threshold_db",n("silence-mode RMS threshold, default -60 dBFS")),("max_pause",n("nonnegative maximum pause seconds for gap advice")),("merge_gap_ms",n("merge nearby speech intervals, default 0 ms")),("max_items",n("array cap, default 1000")),("image",json!({"type":"string","enum":["none","waveform"]}))],&[]),run}]
 }

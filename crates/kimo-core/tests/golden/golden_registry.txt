@@ -42,8 +42,8 @@ apply_motion_preset 39406bbbdd87a9e9
 audio_effect_describe 07a0a16b3052585b
 audio_filter_response 4cae8e36278fcc87
 audio_probe 6d7f39ef67b65cb5
-audio_speech_intervals 8257897c223ee122
-audio_transients fdd42015ab3821b9
+audio_speech_intervals 078f413100880b5e
+audio_transients 17007526b6615bf8
 audit_color_output 58cf03598cf93fb6
 auto_duck 9765e1ee86c49428
 bake_property 389f09faed23fecf
@@ -73,7 +73,7 @@ delete_clip f4a1f352f81309a7
 delete_track e83a622c3e4b81fe
 describe_frame 29274974284be9a5
 detect_beats 0a305ba852c6ffd1
-detect_cuts 2d0b26c91f7deda5
+detect_cuts 87293e672d4339c2
 diff_frames 57e8068dab23233f
 disconnect_nodes ad3dce0b755a8341
 distribute_clips de3b81a25b80ced1

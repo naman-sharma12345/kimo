@@ -82,7 +82,7 @@ pub fn detect_stats_spatial(
             && spatial_ok
             && (content_change > 0.02 || (means[i] - means[i - 1]).abs() > 0.02)
         {
-            let return_at = (i + 1..=(i + 3).min(n - 1)).find(|&j| {
+            let return_at = (i + 1..=(i + 2).min(n - 1)).find(|&j| {
                 histograms[i - 1]
                     .iter()
                     .zip(&histograms[j])
@@ -171,6 +171,12 @@ pub fn detect_stats_spatial(
             }
         }
         merged.push(c);
+    }
+    // A merged dip fade retains its old first-ramp time. Only standalone dissolves use midpoint.
+    for c in &mut merged {
+        if c.kind == "dissolve" {
+            c.index = (c.start.unwrap() + c.end.unwrap()) / 2;
+        }
     }
     let cuts = merged;
     let mut kept: Vec<Cut> = vec![];
