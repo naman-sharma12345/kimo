@@ -55,7 +55,7 @@ burn_in 0df91ac9090a9beb
 cache_clear 6022ac3871ddd27b
 cache_set_budget 422160a7f6a95562
 cache_stats fda818c878e0e6dc
-callout_card dd3ec2c74afd7d3f
+callout_card e22766eab10028e6
 camera_solve_info 68eba83a999378cc
 cancel_job 71597b2319b6d6cf
 checkpoint 4063b9f4243b3a4e

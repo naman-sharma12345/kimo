@@ -240,3 +240,4 @@ rust dim_mask fast
 rust callout fast
 rust bg_plumbing fast
 rust bg_tools skip # failing-first rows for bg_grid/bg_orbs/bg_wave: red until those tools land, then flip to fast
+py visual_pass.py helper # visual tier (pass 2): renders labelled contact sheets for a person to inspect via tests/visual_pass.sh; needs a built kimo-mcp and ffmpeg, writes only to a temp dir, not a pass/fail proof

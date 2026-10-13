@@ -165,40 +165,88 @@ fn callout_card(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let ink = measure(ss, &text, size, letter, &align)?;
     let (card_w, card_h) = (ink[2] + 2.0 * padding, ink[3] + 2.0 * padding);
     if card_w > max_card_w + 1e-9 { return Err(format!("text_too_wide: the card would be {card_w:.1}px wide but style.max_width is {max_card_w:.1}px; the text is never clipped or auto-wrapped; fix_hint: add \\n line breaks, lower style.size, or raise style.max_width")); }
-    // position: a box [x,y,w,h] (card is centred in it and must fit), an anchor name (margin from the edge), or near:<clip_id> (below that clip, plus offset)
+    // The card, its badge and its shadow extent are ONE unit: position, near:, anchors, the box fit and the safe-zone check all use the unit bounds.
+    let badge_pos = match a.get("badge_pos") { None | Some(Value::Null) => "above_left".to_string(), Some(v) => { let p = v.as_str().unwrap_or(""); if !["above_left", "above_right", "inside_top_left", "none"].contains(&p) { return Err("out_of_range: badge_pos is not allowed. Valid: above_left, above_right, inside_top_left, none; fix_hint: use one of those".into()); } p.to_string() } };
+    let badge = if badge_pos == "none" { None } else { badge };
+    let safe_profile = match a.get("safe_profile") { None | Some(Value::Null) => "title_safe".to_string(), Some(v) => v.as_str().filter(|p| !p.is_empty()).ok_or("out_of_range: safe_profile must be a profile name from query_safe_margins or \"none\"; fix_hint: use title_safe, action_safe or none")?.to_string() };
+    let mut binfo = None; let (mut bw, mut bh) = (0.0, 0.0);
+    if let Some(bt) = &badge { let bi = measure(ss, bt, bsize, 0.0, "center")?; bw = bi[2] + 2.0 * bpad; bh = bi[3] + 2.0 * bpad; binfo = Some(bi); }
+    let inside = badge.is_some() && badge_pos == "inside_top_left";
+    let text_dy = if inside { bh + bgap } else { 0.0 };
+    let card_w = if inside { card_w.max(bw + 2.0 * padding) } else { card_w };
+    let (card_w, card_h) = (card_w, card_h + text_dy);
+    // everything below is relative to the card top-left (0,0)
+    let badge_rel: Option<[f64; 4]> = badge.as_ref().map(|_| match badge_pos.as_str() { "above_right" => [card_w - bw, -bgap - bh, bw, bh], "inside_top_left" => [padding, padding, bw, bh], _ => [0.0, -bgap - bh, bw, bh] });
+    let shadow_rel: Option<[f64; 4]> = shadow.as_ref().map(|sh| { let (dx, dy, bl) = (sh["dx"].as_f64().unwrap_or(0.0), sh["dy"].as_f64().unwrap_or(0.0), sh["blur"].as_f64().unwrap_or(0.0)); [dx - bl, dy - bl, card_w + 2.0 * bl, card_h + 2.0 * bl] });
+    let mut u = [0.0, 0.0, card_w, card_h];
+    for r in [badge_rel, shadow_rel].iter().flatten() { let (x1, y1) = ((u[0] + u[2]).max(r[0] + r[2]), (u[1] + u[3]).max(r[1] + r[3])); u[0] = u[0].min(r[0]); u[1] = u[1].min(r[1]); u[2] = x1 - u[0]; u[3] = y1 - u[1]; }
+    let (uw, uh) = (u[2], u[3]);
+    // safe zones: the unit must sit inside every safe zone of the chosen profile and out of every avoid zone; "none" checks the canvas only
+    let zones: Vec<(String, String, [f64; 4])> = if safe_profile == "none" { vec![("canvas".into(), "safe".into(), [0.0, 0.0, cw, ch])] } else {
+        let m = crate::commands::dispatch_nested(ss, "query_safe_margins", &json!({"profile": safe_profile}))?;
+        m["zones"].as_array().ok_or("query_safe_margins returned no zones")?.iter().map(|z| { let v = z["rect"].as_array().map(|v| v.iter().map(|x| x.as_f64().unwrap_or(0.0)).collect::<Vec<_>>()).unwrap_or_default(); (z["name"].as_str().unwrap_or("zone").to_string(), z["kind"].as_str().unwrap_or("safe").to_string(), [v[0], v[1], v[2], v[3]]) }).collect() };
+    // overflow per edge [left, top, right, bottom] in px (>0 = outside) against the canvas and each safe zone, plus avoid-zone hits
+    let overflow = |b: [f64; 4]| -> ([f64; 4], Option<String>) {
+        let mut o = [(0.0 - b[0]).max(0.0), (0.0 - b[1]).max(0.0), (b[0] + b[2] - cw).max(0.0), (b[1] + b[3] - ch).max(0.0)]; let mut hit = None;
+        for (name, kind, z) in &zones { if kind == "safe" { o[0] = o[0].max(z[0] - b[0]); o[1] = o[1].max(z[1] - b[1]); o[2] = o[2].max(b[0] + b[2] - (z[0] + z[2])); o[3] = o[3].max(b[1] + b[3] - (z[1] + z[3])); } else if b[0] < z[0] + z[2] && z[0] < b[0] + b[2] && b[1] < z[1] + z[3] && z[1] < b[1] + b[3] { hit = Some(name.clone()); } }
+        (o, hit) };
+    let unfit = |b: [f64; 4], why: &str| -> String { let (o, hit) = overflow(b); format!("callout_unfit: the card + badge + shadow unit [{:.1}, {:.1}, {:.1}, {:.1}] does not fit ({why}) inside profile '{safe_profile}' on the {cw} x {ch} canvas; overflow_px {{left: {:.1}, top: {:.1}, right: {:.1}, bottom: {:.1}}}{}; fix_hint: move it with position or offset, lower style.size or style.margin, shorten the text, or drop the badge (badge_pos none)", b[0], b[1], b[2], b[3], o[0], o[1], o[2], o[3], hit.map(|h| format!(", overlaps avoid zone '{h}'")).unwrap_or_default()) };
+    let fits = |b: [f64; 4]| { let (o, hit) = overflow(b); hit.is_none() && o.iter().all(|x| *x <= 1e-9) };
+    let hit_rect = |p: [f64; 4], q: [f64; 4]| p[0] < q[0] + q[2] - 1e-9 && q[0] < p[0] + p[2] - 1e-9 && p[1] < q[1] + q[3] - 1e-9 && q[1] < p[1] + p[3] - 1e-9;
+    // position: a box [x,y,w,h] (unit is centred in it and must fit), an anchor name (margin from the edge), or near:<clip_id>
     let pos = a.get("position").cloned().unwrap_or(json!("bottom_center"));
-    let (px0, py0, pos_note);
+    let (px0, py0, pos_note, mut placement, mut tried);
+    placement = "anchor".to_string(); tried = vec![];
     if let Some(arr) = pos.as_array() {
         if arr.len() != 4 { return Err(format!("out_of_range: position box must be [x,y,w,h] (got {} numbers); fix_hint: pass 4 numbers or an anchor name", arr.len())); }
         let mut b = [0.0; 4]; for i in 0..4 { b[i] = arr[i].as_f64().filter(|f| f.is_finite()).ok_or_else(|| format!("out_of_range: position[{i}] must be a finite number; fix_hint: pass plain pixel numbers"))?; }
         if b[2] <= 0.0 || b[3] <= 0.0 { return Err("out_of_range: position box w and h must be > 0; fix_hint: pass a box with positive size".into()); }
-        if card_w > b[2] + 1e-9 || card_h > b[3] + 1e-9 { return Err(format!("text_too_wide: the card is {card_w:.1} x {card_h:.1}px but the position box is {} x {}; fix_hint: enlarge the box, lower style.size or add \\n", b[2], b[3])); }
-        px0 = b[0] + (b[2] - card_w) / 2.0; py0 = b[1] + (b[3] - card_h) / 2.0; pos_note = "box: card centred in the box";
+        if uw > b[2] + 1e-9 || uh > b[3] + 1e-9 { return Err(format!("text_too_wide: the card + badge + shadow unit is {uw:.1} x {uh:.1}px but the position box is {} x {}; fix_hint: enlarge the box, lower style.size, add \\n, or drop the badge", b[2], b[3])); }
+        px0 = b[0] + (b[2] - uw) / 2.0 - u[0]; py0 = b[1] + (b[3] - uh) / 2.0 - u[1]; pos_note = "box: the card + badge + shadow unit is centred in the box"; placement = "box".into();
     } else if let Some(name) = pos.as_str() {
         if let Some(near) = name.strip_prefix("near:") {
             let id = super::names::resolve_ref(&ss.project, "clip", near)?;
             let is_text = matches!(ss.project.find_clip(&id).map(|c| &c.source), Some(crate::model::Source::Text { .. }));
             let r = if is_text { text_rect(ss, json!({"clip_id": id}))? } else { target(ss, &json!({"shape_id": id}))? };
-            let off = match a.get("offset") { None | Some(Value::Null) => [0.0, 12.0], Some(v) => { let o = v.as_array().filter(|x| x.len() == 2).ok_or("out_of_range: offset must be [dx,dy]; fix_hint: pass two pixel numbers")?; [o[0].as_f64().filter(|f| f.is_finite()).ok_or("out_of_range: offset must be finite")?, o[1].as_f64().filter(|f| f.is_finite()).ok_or("out_of_range: offset must be finite")?] } };
-            px0 = r[0] + off[0]; py0 = r[1] + r[3] + off[1]; pos_note = "near: card top-left = target left + dx, target bottom + dy (default offset [0,12])";
+            let pair = |k: &str| -> Result<Option<[f64; 2]>, String> { match a.get(k) { None | Some(Value::Null) => Ok(None), Some(v) => { let o = v.as_array().filter(|x| x.len() == 2).ok_or_else(|| format!("out_of_range: {k} must be [dx,dy]; fix_hint: pass two pixel numbers"))?; Ok(Some([o[0].as_f64().filter(|f| f.is_finite()).ok_or_else(|| format!("out_of_range: {k} must be finite; fix_hint: pass plain pixel numbers"))?, o[1].as_f64().filter(|f| f.is_finite()).ok_or_else(|| format!("out_of_range: {k} must be finite; fix_hint: pass plain pixel numbers"))?])) } } };
+            let (off_u, off_c) = (pair("offset")?, pair("card_offset")?);
+            if off_u.is_some() && off_c.is_some() { return Err("out_of_range: offset and card_offset are mutually exclusive; fix_hint: pass offset (moves the card+badge+shadow unit) or card_offset (moves the card only, the unit is still validated)".into()); }
+            let explicit = off_u.or(off_c); let by_card = off_c.is_some();
+            let ub = |x0: f64, y0: f64| [x0, y0, uw, uh];
+            if let Some(off) = explicit {
+                // explicit offset: the UNIT top-left = target left + dx, target bottom + dy; validated, never retried elsewhere
+                let b = if by_card { ub(r[0] + off[0] + u[0], r[1] + r[3] + off[1] + u[1]) } else { ub(r[0] + off[0], r[1] + r[3] + off[1]) };
+                if hit_rect(b, r) {
+                    let cand = [[0.0, r[1] + r[3] - b[1]], [0.0, r[1] - uh - b[1]], [r[0] + r[2] - b[0], 0.0], [r[0] - uw - b[0], 0.0]];
+                    let m = cand.iter().min_by(|p, q| (p[0].abs() + p[1].abs()).partial_cmp(&(q[0].abs() + q[1].abs())).unwrap()).unwrap();
+                    return Err(format!("callout_overlap: the unit [{:.1}, {:.1}, {:.1}, {:.1}] at offset [{}, {}] intersects the target ink rect [{:.1}, {:.1}, {:.1}, {:.1}]; fix_hint: use the min_fixing_offset [{:.1}, {:.1}]; min_fixing_offset: [{:.1}, {:.1}]", b[0], b[1], b[2], b[3], off[0], off[1], r[0], r[1], r[2], r[3], off[0] + m[0], off[1] + m[1], off[0] + m[0], off[1] + m[1]));
+                }
+                if !fits(b) { return Err(unfit(b, "explicit offset")); }
+                px0 = b[0] - u[0]; py0 = b[1] - u[1]; pos_note = "near: explicit offset moves the unit (unit top-left = target left + dx, target bottom + dy; card_offset moves the card instead), then it is re-validated"; placement = "offset".into();
+            } else {
+                let gap = padding; // default gap between the target and the unit's nearest ink = the card padding, so a badge never crowds the target
+                let c = [("below", ub(r[0], r[1] + r[3] + gap)), ("above", ub(r[0], r[1] - gap - uh)), ("right", ub(r[0] + r[2] + gap, r[1])), ("left", ub(r[0] - gap - uw, r[1]))];
+                let mut win = None;
+                for (nm, b) in c.iter() { let ok = fits(*b) && !hit_rect(*b, r); tried.push(json!({"side": nm, "unit": b, "ok": ok})); if ok && win.is_none() { win = Some((*nm, *b)); } }
+                let (nm, b) = win.ok_or_else(|| unfit(c[0].1, "none of below, above, right, left is inside the safe area and clear of the target"))?;
+                px0 = b[0] - u[0]; py0 = b[1] - u[1]; pos_note = "near: the unit tries below, above, right, left of the target ink rect (gap = style.padding) and takes the first one that is inside the safe area and does not touch the target"; placement = nm.into();
+            }
         } else if ANCHORS.contains(&name) {
-            px0 = if name.ends_with("left") { margin } else if name.ends_with("right") { cw - margin - card_w } else { (cw - card_w) / 2.0 };
-            py0 = if name.starts_with("top") { margin } else if name.starts_with("bottom") { ch - margin - card_h } else { (ch - card_h) / 2.0 };
-            pos_note = "anchor: card edge sits `margin` px from the canvas edge, centred on the other axis";
+            let ins = match a.get("offset") { None | Some(Value::Null) => None, Some(v) => { let o = v.as_array().filter(|x| x.len() == 2).ok_or("out_of_range: offset must be [dx,dy]; fix_hint: pass two pixel numbers")?; Some([o[0].as_f64().filter(|f| f.is_finite()).ok_or("out_of_range: offset must be finite")?, o[1].as_f64().filter(|f| f.is_finite()).ok_or("out_of_range: offset must be finite")?]) } };
+            if ins.is_some() && a.get("card_offset").map(|v| !v.is_null()).unwrap_or(false) { return Err("out_of_range: offset and card_offset are mutually exclusive; fix_hint: pass one of them".into()); }
+            let (ix, iy) = match ins { Some(o) => (Some(o[0]), Some(o[1])), None => (None, None) };
+            let ux = if name.ends_with("left") { ix.unwrap_or(margin) } else if name.ends_with("right") { cw - ix.unwrap_or(margin) - uw } else { (cw - uw) / 2.0 + ix.unwrap_or(0.0) };
+            let uy = if name.starts_with("top") { iy.unwrap_or(margin) } else if name.starts_with("bottom") { ch - iy.unwrap_or(margin) - uh } else { (ch - uh) / 2.0 + iy.unwrap_or(0.0) };
+            px0 = ux - u[0]; py0 = uy - u[1];
+            pos_note = "anchor: the card + badge + shadow unit edge sits `margin` px from the canvas edge, centred on the other axis";
         } else { return Err(format!("out_of_range: position '{name}' is not allowed. Valid: {}, near:<clip_id>, or a box [x,y,w,h]; fix_hint: use one of those", ANCHORS.join(", "))); }
     } else { return Err("out_of_range: position must be an anchor name, near:<clip_id> or a box [x,y,w,h]; fix_hint: pass one of those".into()); }
     let card = [px0, py0, card_w, card_h];
-    let mut badge_rect = None; let mut binfo = None;
-    if let Some(bt) = &badge {
-        let bi = measure(ss, bt, bsize, 0.0, "center")?;
-        let (bw, bh) = (bi[2] + 2.0 * bpad, bi[3] + 2.0 * bpad);
-        let br = [px0, py0 - bgap - bh, bw, bh];
-        badge_rect = Some(br); binfo = Some(bi);
-    }
-    let all = [Some(card), badge_rect];
-    for r in all.iter().flatten() {
-        if r[0] < -1e-9 || r[1] < -1e-9 || r[0] + r[2] > cw + 1e-9 || r[1] + r[3] > ch + 1e-9 { return Err(format!("out_of_range: the callout rect [{:.1}, {:.1}, {:.1}, {:.1}] leaves the {cw} x {ch} canvas; fix_hint: move it with position, lower style.size, or shorten the text (the badge sits above the card)", r[0], r[1], r[2], r[3])); }
-    }
+    let unit_bounds = [px0 + u[0], py0 + u[1], uw, uh];
+    if !fits(unit_bounds) { return Err(unfit(unit_bounds, "placement")); }
+    let badge_rect = badge_rel.map(|r| [px0 + r[0], py0 + r[1], r[2], r[3]]);
+    let shadow_rect = shadow_rel.map(|r| [px0 + r[0], py0 + r[1], r[2], r[3]]);
+    let text_top = py0 + padding + text_dy;
     let n_existing = ss.project.tracks.iter().flat_map(|t| t.clips.iter()).filter(|c| c.tags.iter().any(|t| t.starts_with("callout:"))).count();
     let cid = match a.get("callout_id") { None | Some(Value::Null) => format!("c{}", n_existing + 1), Some(v) => { let s = v.as_str().filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')).ok_or("out_of_range: callout_id must be 1+ characters of A-Z a-z 0-9 _ -; fix_hint: pass a short id like intro")?; s.to_string() } };
     let tag = format!("callout:{cid}");
@@ -220,19 +268,19 @@ fn callout_card(ss: &mut Session, a: &Value) -> Result<Value, String> {
     };
     shape("card", "0", card, fill, radius, &mut ops);
     if let Some(sh) = &shadow { ops.push(json!({"tool": "add_effect", "args": {"clip_id": "$card.clip_id", "kind": "drop_shadow", "params": sh}})); }
-    txt("text", "1", &text, size, letter, &align, text_color, ink, [px0 + padding, py0 + padding], &mut ops, &font);
+    txt("text", "1", &text, size, letter, &align, text_color, ink, [px0 + padding, text_top], &mut ops, &font);
     if let (Some(bt), Some(br), Some(bi)) = (&badge, badge_rect, binfo) {
         shape("badge", "2", br, badge_fill, br[3] / 2.0, &mut ops);
         txt("badge_text", "3", bt, bsize, 0.0, "center", badge_text_color, bi, [br[0] + bpad, br[1] + bpad], &mut ops, &font);
     }
     let ids: Vec<&str> = if badge.is_some() { vec!["card", "text", "badge", "badge_text"] } else { vec!["card", "text"] };
     for id in &ids { ops.push(json!({"tool": "set_meta", "args": {"id": format!("${id}.clip_id"), "role": "callout", "tags": [tag.clone()]}})); }
-    let text_ink = [px0 + padding, py0 + padding, ink[2], ink[3]];
+    let text_ink = [px0 + padding, text_top, ink[2], ink[3]];
     let style = json!({"fill": fill, "text_color": text_color, "font": font, "size": size, "letter_spacing": letter, "align": align, "padding": padding, "corner_radius": radius, "margin": margin, "max_width": max_card_w, "shadow": shadow,
         "badge_fill": badge_fill, "badge_text_color": badge_text_color, "badge_size": bsize, "badge_padding": bpad, "badge_gap": bgap});
     let params = json!({"text": text, "badge": badge, "position": pos, "position_rule": pos_note, "style": style, "style_from": a.get("style_from"), "callout_id": cid, "tag": tag, "role": "callout", "start": start, "duration": dur,
-        "card_rect": card, "text_rect": text_ink, "badge_rect": badge_rect,
-        "layout": "tracks bottom to top: card, text, badge, badge text (later tracks draw on top); card_rect = measured text ink rect grown by style.padding; the badge sits above the card, left aligned, never over the text; text is never clipped or auto-wrapped (text_too_wide error)"});
+        "card_rect": card, "text_rect": text_ink, "badge_rect": badge_rect, "shadow_rect": shadow_rect, "unit_bounds": unit_bounds, "applied_offset": a.get("offset").or(a.get("card_offset")).cloned().unwrap_or(Value::Null), "offset_kind": if a.get("card_offset").map(|v| !v.is_null()).unwrap_or(false) { "card_offset" } else { "offset" }, "badge_pos": badge_pos, "safe_profile": safe_profile, "placement": placement, "tried": tried, "default_gap": padding,
+        "layout": "tracks bottom to top: card, text, badge, badge text (later tracks draw on top); card_rect = measured text ink rect grown by style.padding; the card, badge and shadow extent are one unit (unit_bounds) that must sit inside the safe profile (callout_unfit otherwise); the badge sits per badge_pos (default above the card, left aligned), never over the text; text is never clipped or auto-wrapped (text_too_wide error)"});
     if !apply { return Ok(json!({"applied": false, "no_history": true, "params": params, "expansion": ops})); }
     let r = crate::commands::dispatch_nested(ss, "batch", &json!({"ops": ops, "atomic": true, "return": "full"}))?;
     if r["ok"] != true { return Err(format!("batch_failed: {}", r["failed"])); }
@@ -250,6 +298,6 @@ pub fn commands() -> Vec<Command> {
         Command{name:"fit_box_to_text",mutates:false,description:"Read-only, nothing is moved: the canvas-pixel rect [x,y,w,h] of a text clip's measured ink (compute_text_bounds canvas_rect, at optional t) grown by padding px on every side. Use it to size a card or underline around text.",
             schema:obj(vec![("clip_id",s("text clip id or @name")),("padding",n("px, default 0")),("t",n("seconds, default 0"))],&["clip_id"]),run:fit_box_to_text},
         Command{name:"callout_card",mutates:true,description:"Wrapper: a rounded card around text with an optional badge, as a pure expansion into add_track/add_shape/add_text/set_property/add_effect/set_meta (card rect = measured text ink + style.padding). apply:false (default) returns the expansion and changes nothing; apply:true runs the same ops as one undo step. position is an anchor (top_left, top_center, top_right, center, bottom_left, bottom_center, bottom_right), near:<clip_id> plus offset [dx,dy], or a box [x,y,w,h]. style is an explicit object with documented neutral defaults echoed in params (no theme); style_from copies from a shape or text clip. Text is never clipped or wrapped: too wide gives text_too_wide with a fix_hint. Clips get role callout and tag callout:<callout_id>.",
-            schema:obj(vec![("text",s("callout text, \\n for new lines")),("badge",s("optional short badge text, shown above the card")),("position",json!({"description":"anchor name, near:<clip_id>, or box [x,y,w,h] in canvas px; default bottom_center"})),("offset",json!({"type":"array","items":{"type":"number"},"description":"[dx,dy] for near:, default [0,12]"})),("style",json!({"type":"object","description":"fill [r,g,b,a], text_color, font, size, letter_spacing, align, padding, corner_radius, margin, max_width, shadow {dx,dy,blur,opacity}|null, badge_fill, badge_text_color, badge_size, badge_padding, badge_gap"})),("style_from",s("shape or text clip to copy fill/corner_radius or font/size/text_color from")),("callout_id",s("tag suffix, default c<N>")),("start",n("seconds, default 0")),("duration",n("seconds, default 5")),("apply",json!({"type":"boolean","description":"default false: return the expansion only"}))],&["text"]),run:callout_card},
+            schema:obj(vec![("text",s("callout text, \\n for new lines")),("badge",s("optional short badge text, shown above the card")),("position",json!({"description":"anchor name, near:<clip_id>, or box [x,y,w,h] in canvas px; default bottom_center"})),("offset",json!({"type":"array","items":{"type":"number"},"description":"[dx,dy]: near: = gap between target rect and the card+badge+shadow unit (unit top-left = target left+dx, target bottom+dy); anchors = inset of the unit from the anchor edge; without it near: tries below, above, right, left (12px gap)"})),("card_offset",json!({"type":"array","items":{"type":"number"},"description":"opt-in, near: only: [dx,dy] moves the CARD (card top-left = target left+dx, target bottom+dy); exclusive with offset; the unit is still validated"})),("badge_pos",json!({"type":"string","enum":["above_left","above_right","inside_top_left","none"],"description":"default above_left; none drops the badge"})),("safe_profile",json!({"type":"string","description":"query_safe_margins profile the unit must sit inside, default title_safe; none = canvas only"})),("style",json!({"type":"object","description":"fill [r,g,b,a], text_color, font, size, letter_spacing, align, padding, corner_radius, margin, max_width, shadow {dx,dy,blur,opacity}|null, badge_fill, badge_text_color, badge_size, badge_padding, badge_gap"})),("style_from",s("shape or text clip to copy fill/corner_radius or font/size/text_color from")),("callout_id",s("tag suffix, default c<N>")),("start",n("seconds, default 0")),("duration",n("seconds, default 5")),("apply",json!({"type":"boolean","description":"default false: return the expansion only"}))],&["text"]),run:callout_card},
     ]
 }
