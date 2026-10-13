@@ -110,13 +110,17 @@ pub fn search_tools(q: &str, limit: usize, group: Option<&str>, effects: &Value,
     let mut tools: Vec<Value> = vec![];
     for m in r["matches"].as_array().into_iter().flatten() { let name = m["action"].as_str().unwrap_or(""); let Some(c) = reg().iter().find(|c| c.name == name) else { continue }; if let Some(g) = group { if group_of(name) != g { continue; } }
         let req = required_args(c); tools.push(json!({"type":"tool","name":name,"group":group_of(name),"summary":m["summary"],"required":req,"call_as":format!("{}({})", name, req.join(", "))})); }
+    // exact-name tier: a query that is exactly a tool name (case, underscores and spaces ignored) ranks that tool first, above description matches and catalog hits
+    let norm = |s: &str| s.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(|w| w.to_lowercase()).collect::<Vec<_>>().join(" "); let nq = norm(q);
+    let exact: Option<Value> = if nq.is_empty() { None } else { reg().iter().find(|c| norm(c.name) == nq && group.map_or(true, |g| group_of(c.name) == g)).map(|c| { let req = required_args(c); json!({"type":"tool","name":c.name,"group":group_of(c.name),"summary":first_sentence(c.description),"required":req,"call_as":format!("{}({})", c.name, req.join(", "))}) }) };
+    if let Some(e) = &exact { tools.retain(|t| t["name"] != e["name"]); tools.insert(0, e.clone()); }
     let words: Vec<String> = q.split(|c: char| !c.is_alphanumeric()).filter(|w| w.len() > 2).map(|w| w.to_lowercase()).collect();
     let mut cat: Vec<Value> = vec![]; if group.map_or(true, |g| g == "effects") { for h in search_catalog(q, effects, transitions, 8) { let ty = h["type"].as_str().unwrap_or(""); let kind = h["kind"].as_str().unwrap_or("");
         let (tool, extra) = if ty == "transition" { ("add_transition", ", duration") } else { ("add_effect", "") };
         cat.push(json!({"type":ty,"name":kind,"group":"effects","summary":h["summary"],"call_as":format!("{tool}(clip_id{extra}, kind=\"{kind}\")")})); } }
     let matches_all = |h: &Value| { let t = format!("{} {}", h["name"].as_str().unwrap_or(""), h["summary"].as_str().unwrap_or("")).to_lowercase(); !words.is_empty() && words.iter().all(|w| t.contains(w.as_str())) };
     let mut out: Vec<Value> = vec![]; let mut rest: Vec<Value> = vec![];
-    for (i, h) in cat.into_iter().enumerate() { if i == 0 && matches_all(&h) { out.push(h); } else { rest.push(h); } }
+    for (i, h) in cat.into_iter().enumerate() { if i == 0 && exact.is_none() && matches_all(&h) { out.push(h); } else { rest.push(h); } }
     out.extend(tools); out.extend(rest); out.truncate(limit);
     json!({"matches": out, "total": total, "note": "call any listed name directly as a tool; effects and transitions are used through add_effect / add_transition"})
 }
