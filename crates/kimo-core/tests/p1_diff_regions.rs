@@ -155,7 +155,7 @@ fn forty_dots_truncates_at_32() {
         .as_str()
         .unwrap()
         .to_string();
-    c(&mut ss, "checkpoint", &json!({"name": "a"}));
+    c(&mut ss, "checkpoint", json!({"name": "a"}));
     for i in 0..40 {
         let cl = c(&mut ss, "add_shape", json!({"track_id": t, "shape": "rect", "width": 2, "height": 2, "fill": [1, 1, 1, 1], "start": 0, "duration": 1}))["clip_id"].as_str().unwrap().to_string();
         c(

@@ -76,7 +76,7 @@ fn audio_transients_strength_db_band_nearest_cut() {
     let (mut ss, _l, _r) = cut_project();
     let path = click_wav(&[0.5, 1.5, 2.5, 3.5], 4.0);
     let c = |ss: &mut Session, n: &str, a: Value| dispatch(ss, n, &a).unwrap();
-    let asset = c(&mut ss, "import_media", &json!({"path": path}))["asset_id"]
+    let asset = c(&mut ss, "import_media", json!({"path": path}))["asset_id"]
         .as_str()
         .unwrap()
         .to_string();
