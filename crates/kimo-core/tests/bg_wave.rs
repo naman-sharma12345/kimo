@@ -108,3 +108,20 @@ fn audio_at(s: &mut Session, secs: usize, hz: f64, rate: usize) -> String {
     let on = amts(&dispatch(&mut s, "bg_wave", &a(json!({"from":[0.35,0.85,1],"to":[0.75,0.4,1]}))).unwrap()); let off = amts(&dispatch(&mut s, "bg_wave", &a(json!(false))).unwrap());
     eprintln!("outer_glow amounts following {on:?} pinned {off:?}"); assert_eq!(on.len(), 3); assert!(on.iter().cloned().fold(0.0, f64::max) > 4.0 && on.iter().all(|v| *v <= 10.0 + 1e-9), "follow lifts the cap to 10: {on:?}"); assert!(off.iter().all(|v| *v <= 4.0 + 1e-9), "a pinned halo keeps the cap of 4: {off:?}");
 }
+#[test] fn glow_scale_weights_are_0_55_0_33_0_12_when_following_and_0_5_0_3_0_2_when_pinned() {
+    let (mut s, t) = base(); let (rad, inten, stroke) = (8.0f64, 0.1f64, 8.0f64);
+    let a = |g: Value| json!({"track":t,"duration":1,"source":"values","values":[0.0,0.3,0.0],"box":[16,64,224,128],"stroke_px":stroke,"glow":{"radius_px":rad,"intensity":inten},"gradient":g});
+    let amts = |r: &Value| -> Vec<f64> { r["expansion"].as_array().unwrap().iter().filter(|o| o["args"]["kind"] == "outer_glow").map(|o| o["args"]["params"]["amount"].as_f64().unwrap()).collect() };
+    let gs = |r: f64| (2.0 * r / stroke).max(1.0); let radii = [2.5 * rad, rad, rad / 3.0];
+    let on = amts(&dispatch(&mut s, "bg_wave", &a(json!({"from":[0.35,0.85,1],"to":[0.75,0.4,1]}))).unwrap()); let off = amts(&dispatch(&mut s, "bg_wave", &a(json!(false))).unwrap());
+    for (got, w, what) in [(&on, [0.12, 0.33, 0.55], "following"), (&off, [0.2, 0.3, 0.5], "pinned")] { assert_eq!(got.len(), 3); for k in 0..3 { let want = inten * w[k] * gs(radii[k]); assert!((got[k] - want).abs() < 1e-9, "{what} scale {k}: {} vs {want}", got[k]); } }
+    eprintln!("scale amounts following {on:?} pinned {off:?}");
+}
+#[test] fn a_following_halo_decays_smoothly_with_no_plateau_and_is_nearly_gone_by_4r() {
+    // flat line, glow radius 10 on 256: gaussian-shaped falloff, strictly decreasing and no box plateau
+    let (mut s, t) = base(); let a = json!({"track":t,"duration":1,"source":"values","values":[0.0,0.0,0.0],"smooth":false,"box":[16,100,224,56],"stroke_px":4,"glow":{"radius_px":10,"intensity":2.5},"gradient":{"from":[0.35,0.85,1],"to":[0.35,0.85,1]},"apply":true});
+    dispatch(&mut s, "bg_wave", &a).unwrap(); let f = kimo_core::render::render_frame(&s.project, 0.5, &kimo_core::render::Cache::new()).unwrap();
+    let lum = |y: usize| { let i = (y * 256 + 128) * 4; (f.d[i] + f.d[i + 1] + f.d[i + 2]) as f64 }; let yc = (0..256).max_by(|a, b| lum(*a).total_cmp(&lum(*b))).unwrap(); let s0 = lum(yc);
+    let r: Vec<f64> = [4usize, 8, 12, 16, 24, 32, 40].iter().map(|d| lum(yc + d) / s0).collect(); eprintln!("halo/stroke at 4,8,12,16,24,32,40 px: {r:.3?}");
+    for w in r.windows(2) { assert!(w[1] < w[0] * 0.97, "strictly decaying, no plateau: {r:?}"); } assert!(r[0] >= 0.2 && r[6] <= 0.06, "visible near the stroke, nearly gone by 4r: {r:?}");
+}
