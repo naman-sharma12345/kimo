@@ -81,7 +81,7 @@ fn times(ss: &Session, a: &Value, cap: usize) -> Result<Vec<f64>, String> {
 fn layer(c: &Clip) -> Value {
     json!({"id":c.id,"name":c.name,"role":c.role})
 }
-fn bounds(p: &crate::model::Project, c: &Clip, t: f64) -> Option<([f64; 4], f64)> {
+pub(crate) fn bounds(p: &crate::model::Project, c: &Clip, t: f64) -> Option<([f64; 4], f64)> {
     let lt = crate::render::clip_local_time(c, t);
     let q = crate::render::resolve_xform(p, c, lt);
     let (w, h) = (p.width as f64, p.height as f64);

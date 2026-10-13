@@ -244,3 +244,28 @@ fn region_metrics_source_coordinates_and_inspection_hints() {
     }
     assert!(r["next_steps"].as_array().unwrap().len() <= 3);
 }
+
+#[test]
+fn region_threshold_is_strict_and_diagonal_pixels_connect() {
+    use kimo_core::perception::{analysis::Image, regions};
+    let a = Image::new(256, 256);
+    let mut b = a.clone();
+    b.rgb[0][20 * 256 + 20] = 0.5;
+    b.rgb[0][21 * 256 + 21] = 0.5;
+    assert!(regions::detect(&a, &b, 0.5, 0).is_empty());
+    let rs = regions::detect(&a, &b, 0.49, 0);
+    assert_eq!(rs.len(), 1);
+    assert_eq!(rs[0].points.len(), 2);
+    assert_eq!(rs[0].first, 20 * 256 + 20);
+}
+
+#[test]
+fn dilation_merges_at_exact_two_radius_distance_only() {
+    use kimo_core::perception::{analysis::Image, regions};
+    let a = Image::new(256, 256);
+    let mut b = a.clone();
+    b.rgb[0][10 * 256 + 10] = 1.;
+    b.rgb[0][10 * 256 + 18] = 1.;
+    assert_eq!(regions::detect(&a, &b, 0.04, 3).len(), 2);
+    assert_eq!(regions::detect(&a, &b, 0.04, 4).len(), 1);
+}

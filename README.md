@@ -303,3 +303,11 @@ MIT licensed.
 Guided workflow draft: [A reference film, one step at a time](docs/WORKFLOWS.md). Captured current calls are separated from stages waiting for new APIs.
 
 Frame lint: `lint_frame` is read-only advisory checks, report only, not a design certification: `out_of_bounds`, `text_overflow`, `safe_zone`, `min_text_size`, `text_contrast`, `static_frame`, `invisible_layer`, `low_res_upscale`. Tags `lint:allow_bleed` and `lint:ignore=<code>` silence a check per clip and are counted in the summary; thresholds are echoed in `params_used`; unknown check names return `invalid_check` with the allowed list. `text_contrast` takes the text's source colour and layer opacity as the foreground and samples the rendered background with that text hidden, so gradient text, effects and strokes are not certified. See docs/FRAME_LINT.md.
+
+### V4-1 perception additions
+
+The tool count remains 327 on the v41-fix baseline: P1/P2 enrich existing tools, with no new names. P5's separate series adds two audio tools.
+
+- `diff_frames` returns 8-connected changed-pixel regions with source-pixel boxes, area, centroid, max-channel mean/max RGB delta and approximate bounds-based layer hits from both revisions. `merge_px` dilates each component in analysis-pixel Chebyshev distance (default 4); overlapping dilations merge. IDs are the first changed pixel in row-major analysis order. Regions sort largest first, ties by ID, capped at 32 with `truncated`. `expect_bbox=[x,y,w,h]` adds inspection-only unexpected-change findings outside the source-pixel box.
+
+Intentional golden changes for this series are limited to registry descriptions/schema hashes of diff_frames (P2 changes follow in a separate commit). Frame/project/error baselines must stay unchanged. Performance acceptance is not claimed from dev or gate builds.

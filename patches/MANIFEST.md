@@ -72,3 +72,9 @@ Final odd-size edge proof: 1x1,1x19,17x1,17x19,33x31, expression and displace cl
 
 RV-27 B1 audit closed for registered pixel effects: rgb_split/shake/glitch_blocks/chromatic_aberration (only glitch_blocks matches glitch_* in CATALOG; motion glitch_jitter preset and add_glitch_confetti procedural source are not changed). Frozen6792265 formulas bit-identical over240 default/legacy-amount/time/odd-size cases.26 exposed knobs tested live and keyed evaluation equals constant-at-time. Doc-vs-code rows explicitly negative signed fract (Rust truncation remainder, not mathematical floor-fract) and fractional RGB offsets truncate before coordinate addition, not round-to-nearest. Descriptions now exactly name these formulas and clamps. No production shader math changed in audit commit. Mutation green shift4->5 fails legacy-equivalence test; restored. Old frame/registry/project/error goldens unchanged by this follow-up. Earlier SIMD/flat bytecode work remains separate follow-up.
 RV27 LaneC clean series: optional Asset origin/hash/kind model-only migration first (None omitted, old JSON byte-identical), then final raw APIs/effects/linear keys/response with ONE strict48kstereo decode. Shared B4 assets/effective_limits not copied. Planar formats/hash, native-shape asset_key, durable store and collect, peaks/limits. Pre-Lane-C plain/auto_duck exportWAV+strictPCM SHA256 fixtures byte-identical. No arithmetic changes on existing effects. Tests and mutation proof; no WIP subjects.
+
+## V4-1 P1/P2 perception enrichment (on v41-fix)
+
+| unit | status | tests / intentional differences |
+|---|---|---|
+| P1 regions | gate green, mutation verified | Failing first: 7 missing regions/findings/layer_hits rows. Gate implementation: 9/9 including threshold equality, diagonal connectivity, dilation distance, cap32, metrics, centroid, attribution and 1v4 read-only bytes. Registry diff_frames hash intentionally changes; no rendering arithmetic edits. |
