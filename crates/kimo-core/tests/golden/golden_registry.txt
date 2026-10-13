@@ -8,6 +8,7 @@ add_captions 59f096446c4d0d66
 add_clip be500ff5ffa4a7e8
 add_counter 2cfd3406e38575f3
 add_detection_box e740cc0690940b44
+add_dim_mask 2cad78d93df4bd4d
 add_effect e6816644952085e2
 add_emitter 940e20f3bb9b947f
 add_glitch_confetti ea3c9845ccf22d20
@@ -287,6 +288,7 @@ solve_camera 109d6fc96592a39e
 solve_constraints 3ea242b079bf2ed1
 split_all_at 846f25f325036668
 split_clip 1a109f15314ba83d
+spotlight 3b8194733affae16
 stabilize 9e45db97224ae6db
 swap_clips 7e618d3ff4d26a38
 switch_angle 2a55c52c71e95121

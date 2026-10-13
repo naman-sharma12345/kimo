@@ -236,3 +236,4 @@ rust dsp_v4 fast
 rust search_exact fast
 py fresh_clone_row.py fast
 rust fix_hints fast
+rust dim_mask fast
