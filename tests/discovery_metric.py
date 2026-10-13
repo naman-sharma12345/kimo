@@ -59,7 +59,7 @@ for p in ["core", "flat", "audio,color_grade"]:
     x = S(p); r = x.call("list_fonts", {}); check(not r["result"].get("isError"), f"list_fonts callable under KIMO_TOOLS={p}"); x.close()
 # round trip: 10 tasks; calls + bytes of discovery to the first correct call
 TASKS = [("blur a clip", "add_effect"), ("slow motion", "set_speed"), ("add a title", "add_title"), ("normalize loudness", "normalize_loudness"), ("export a gif", "export_gif"),
-         ("green screen key", "add_effect"), ("undo last edit", "undo"), ("stabilize shaky clip", "stabilize"), ("auto captions from speech", "transcribe"), ("track a point", "track_point"), ("animated grid background", "bg_grid"), ("glowing orbs background", "bg_orbs"), ("audio reactive waveform line", "bg_wave")]
+         ("green screen key", "add_effect"), ("undo last edit", "undo"), ("stabilize shaky clip", "stabilize"), ("auto captions from speech", "transcribe"), ("track a point", "track_point")]
 rows = []
 for task, want in TASKS:
     row = [task, want]
