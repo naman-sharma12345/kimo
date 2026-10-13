@@ -5,13 +5,13 @@
 use super::kit::*;
 
 const MAX_FEATHER: f64 = 256.0;
-fn finite(a: &Value, k: &str, d: f64) -> Result<f64, String> {
+pub(crate) fn finite(a: &Value, k: &str, d: f64) -> Result<f64, String> {
     match a.get(k) {
         None | Some(Value::Null) => Ok(d),
         Some(v) => v.as_f64().filter(|x| x.is_finite()).ok_or_else(|| format!("out_of_range: {k} must be a finite number (got {v}); fix_hint: pass a plain number")),
     }
 }
-fn range(a: &Value, k: &str, d: f64, lo: f64, hi: f64, hint: &str) -> Result<f64, String> {
+pub(crate) fn range(a: &Value, k: &str, d: f64, lo: f64, hi: f64, hint: &str) -> Result<f64, String> {
     let v = finite(a, k, d)?;
     if v < lo || v > hi { return Err(format!("out_of_range: {k} must be between {lo} and {hi} (got {v}); fix_hint: {hint}")); }
     Ok(v)

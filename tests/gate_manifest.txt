@@ -238,3 +238,5 @@ py fresh_clone_row.py fast
 rust fix_hints fast
 rust dim_mask fast
 rust callout fast
+rust bg_plumbing fast
+rust bg_tools skip # failing-first rows for bg_grid/bg_orbs/bg_wave: red until those tools land, then flip to fast
