@@ -39,6 +39,22 @@ pub fn lint(p: &Project, f: &mut Value, o: &Opts, steps: &mut Vec<Value>) {
         "invisible_layer" => { if m["fully_offscreen"] == true { return Err("the layer is off canvas; intent unknown".into()); } constant(c, "opacity", 1.0).ok_or("opacity is animated")?; Ok(vec![prop_step(json!({"clip_id": c.id, "property": "opacity", "value": 1.0}), format!("opacity is {:.3} at this sample; set it to 1 if the layer should show", m["opacity"].as_f64().unwrap_or(0.)), "set_param", "estimate")]) }
         "low_res_upscale" => { let ratio = m["ratio"].as_f64().ok_or("ratio missing")?; let sc = constant(c, "scale", 1.0).ok_or("scale is animated")?; Ok(vec![prop_step(json!({"clip_id": c.id, "property": "scale", "value": sc * o.upscale_limit / ratio * 0.99}), format!("the layer is drawn at {ratio:.2}x its source pixels (limit {}); scale it down below the limit", o.upscale_limit), "resize", "estimate")]) }
         "min_text_size" => { let Source::Text { size, .. } = &c.source else { return Err("not a text clip".into()) }; let cap = m["cap_height_1080_px"].as_f64().ok_or("cap missing")?; if cap <= 0. { return Err("measured cap height is 0".into()); } let k = cap / m["cap_height_canvas_px"].as_f64().filter(|v| *v > 0.).unwrap_or(1.); let eff = (cap - k).max(k * 0.5); let ns = (size * o.min_cap_1080 / eff * 1.02).ceil(); Ok(vec![("set_text", json!({"clip_id": c.id, "size": ns}), format!("capital-H ink is {cap:.1} px at 1080p, minimum {}; raise size from {size} to {ns}", o.min_cap_1080), "resize", "estimate")]) }
+        "text_over_foreground" | "caption_over_foreground" => {
+            if c.parent.is_some() { return Err("the text has a parent, so its x/y are relative to the parent".into()); }
+            let rect = |v: &Value| -> Option<[f64; 4]> { let a = v.as_array()?; if a.len() < 4 { return None; } Some([0, 1, 2, 3].map(|i| a[i].as_f64().unwrap_or(0.))) };
+            let ink = rect(&f["rect"]).ok_or("ink rect missing")?; let sub = rect(&m["subject_bbox"]).ok_or("the subject box is unknown")?;
+            let safe = [0.05 * w, 0.05 * h, 0.95 * w, 0.95 * h];
+            // candidate moves: put the ink just above, below, left or right of the subject box, inside the title-safe rectangle
+            let mut best: Option<(f64, &str, f64)> = None;
+            for (axis, d) in [("y", sub[1] - 1.0 - (ink[1] + ink[3])), ("y", sub[1] + sub[3] + 1.0 - ink[1]), ("x", sub[0] - 1.0 - (ink[0] + ink[2])), ("x", sub[0] + sub[2] + 1.0 - ink[0])] {
+                let n = if axis == "x" { [ink[0] + d, ink[1]] } else { [ink[0], ink[1] + d] };
+                if n[0] < safe[0] || n[1] < safe[1] || n[0] + ink[2] > safe[2] || n[1] + ink[3] > safe[3] { continue; }
+                if best.map_or(true, |b| d.abs() < b.0) { best = Some((d.abs(), axis, d)); }
+            }
+            let (_, axis, d) = best.ok_or("no position inside the title-safe area clears the subject box")?;
+            let cur = constant(c, axis, 0.0).ok_or(format!("{axis} is animated"))?;
+            Ok(vec![prop_step(json!({"clip_id": c.id, "property": axis, "value": r2(cur + d)}), format!("move {axis} by {:.1} px so the text ink clears the covered layer's box inside the title-safe area (the box is {})", d, m["basis"].as_str().unwrap_or("rect")), "move", "estimate")])
+        }
         "text_contrast" => Err(format!("contrast ratio {:.2} is below the limit; the fix depends on the background, so pick a text colour or add a backing shape", m["min_ratio"].as_f64().unwrap_or(0.))),
         other => Err(format!("no automatic fix for {other}")),
     })();

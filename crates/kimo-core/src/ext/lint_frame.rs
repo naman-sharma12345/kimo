@@ -12,7 +12,13 @@ pub const CHECKS: &[&str] = &[
     "min_text_size",
     "safe_zone",
     "text_overflow",
+    "text_overlap",
+    "text_over_foreground",
+    "caption_over_foreground",
+    "caption_style_consistency",
 ];
+/// Opt-in, info-only: not part of the default check set.
+pub const OPT_IN: &[&str] = &["optical_balance"];
 fn number(a: &Value, k: &str, d: f64, lo: f64, hi: f64) -> Result<f64, String> {
     let v = match a.get(k) {
         None => d,
@@ -186,6 +192,10 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
         ("contrast_large", 3., 1., 100.),
         ("large_cap_px", 24., 0., 1e8),
         ("min_cap_px", 20., 0., 1e8),
+        ("render_budget", 64., 0., 10000.),
+        ("overlap_min_px", 1., 0., 1e8),
+        ("min_overlap", 0.10, 0., 1.),
+        ("min_matte_overlap", 0.02, 0., 1.),
     ] {
         used[k] = json!(number(&params, k, d, lo, hi)?);
     }
@@ -210,10 +220,11 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
             let mut s = BTreeSet::new();
             for x in arr {
                 let k = x.as_str().ok_or("invalid_check: check must be a string")?;
-                if !CHECKS.contains(&k) {
+                if !CHECKS.contains(&k) && !OPT_IN.contains(&k) {
                     return Err(format!(
-                        "invalid_check: '{k}' not implemented; allowed: {}",
-                        CHECKS.join(", ")
+                        "invalid_check: '{k}' not implemented; allowed: {}, {} (opt-in)",
+                        CHECKS.join(", "),
+                        OPT_IN.join(", ")
                     ));
                 }
                 s.insert(k.into());
@@ -243,6 +254,7 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let mut omitted = 0usize;
     let hint_opts = crate::perception::fix_hint::Opts { min_cap_1080: used["min_cap_px"].as_f64().unwrap_or(0.), upscale_limit: used["upscale_ratio"].as_f64().unwrap_or(0.) };
     let mut hint_steps: Vec<Value> = vec![];
+    let mut budget = Budget { left: used["render_budget"].as_f64().unwrap() as usize, skipped: vec![], excluded: vec![] };
     for (i, t) in ts.iter().enumerate() {
         crate::guard::check();
         let start = std::time::Instant::now();
@@ -316,7 +328,8 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
                 }
             }
         }
-        text_findings(ss, *t, &checks, &used, a, &mut findings, &mut suppressed)?;
+        text_findings(ss, *t, &checks, &used, a, &mut findings, &mut suppressed, &mut budget)?;
+        layout_findings(ss, *t, &checks, &used, &mut findings, &mut suppressed, &mut budget)?;
         if checks.contains("static_frame") {
             let img = analysis::render(
                 ss,
@@ -403,7 +416,10 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
             groups
                 .entry((
                     finding["code"].as_str().unwrap().into(),
-                    finding["layer"]["id"].as_str().unwrap().into(),
+                    match finding["measured"]["covered_layer"]["id"].as_str() {
+                        Some(cv) => format!("{}\u{0}{cv}", finding["layer"]["id"].as_str().unwrap()),
+                        None => finding["layer"]["id"].as_str().unwrap().into(),
+                    },
                 ))
                 .or_default()
                 .push((i, finding.clone()));
@@ -433,7 +449,7 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
         }
     }
     Ok(
-        json!({"next_steps":crate::perception::fix_hint::next_steps(hint_steps),"frames":frames,"intervals":intervals,"summary":{"counts_by_code":counts,"ignored_by_tag":suppressed.len(),"suppressed":suppressed,"frames_checked":ts.len(),"omitted_findings":omitted},"params_used":used,"notes":["Advisory only, not a design certification. No edit, undo entry or export block.","Geometry is matrix-transformed source layer bounds, not effect-expanded ink. Fully masked visibility is not measured. Text uses static C2 ink, excluding shadow/glow/bg and animator deformation; contrast is a WCAG heuristic on background under that bbox, not certification. Overflow is canvas only, not own-box wrapping.","Static results cover sampled times only; audio presence does not establish speech or intentional holding."]}),
+        json!({"next_steps":crate::perception::fix_hint::next_steps(hint_steps),"frames":frames,"intervals":intervals,"summary":{"counts_by_code":counts,"ignored_by_tag":suppressed.len(),"suppressed":suppressed,"frames_checked":ts.len(),"skipped_checks":budget.skipped,"excluded_layers":budget.excluded,"omitted_findings":omitted},"params_used":used,"notes":["Advisory only, not a design certification. No edit, undo entry or export block.","Geometry is matrix-transformed source layer bounds, not effect-expanded ink. Fully masked visibility is not measured. Text uses static C2 ink, excluding shadow/glow/bg and animator deformation; contrast is a WCAG heuristic on background under that bbox, not certification. Overflow is canvas only, not own-box wrapping.","Static results cover sampled times only; audio presence does not establish speech or intentional holding."]}),
     )
 }
 fn severity_score(f: &Value) -> f64 {
@@ -527,6 +543,7 @@ fn text_findings(
     a: &Value,
     out: &mut Vec<Value>,
     suppressed: &mut Vec<Value>,
+    budget: &mut Budget,
 ) -> Result<(), String> {
     if ![
         "text_contrast",
@@ -650,8 +667,15 @@ fn text_findings(
             let Source::Text { color, .. } = c.source else {
                 continue;
             };
+            if budget.left == 0 {
+                budget.skipped.push(json!({"check":"text_contrast","t":t,"clip_id":c.id,"reason":"render_budget","render_budget":used["render_budget"]}));
+                continue;
+            }
+            budget.left -= 1;
             let p = super::view::view_of(&ss.project, None, Some(&[c.id.clone()]));
-            let bg = crate::render::render_frame(&p, t, &crate::render::Cache::new())?;
+            let mut cache = crate::render::Cache::new();
+            crate::render::prepare_at(&p, &mut cache, Some(t))?;
+            let bg = crate::render::render_frame(&p, t, &cache)?;
             let img = Image::from_frame(&bg);
             let (x0, y0, x1, y1) = (
                 r[0].floor().max(0.) as usize,
@@ -689,8 +713,271 @@ fn text_findings(
             .as_f64()
             .unwrap();
             if min < limit {
-                emit(&c,"text_contrast","warn",r,json!({"min_ratio":min,"p10_ratio":ratios[(ratios.len()-1)/10],"mean_ratio":mean,"spread":ratios.last().unwrap()-min,"worst_point":worst,"threshold":limit,"heuristic":true}),"WCAG contrast heuristic below threshold; bbox sampling does not certify legibility.",out,suppressed)
+                emit(&c,"text_contrast","warn",r,json!({"min_ratio":min,"p10_ratio":ratios[(ratios.len()-1)/10],"p5_ratio":ratios[(ratios.len()-1)/20],"p50_ratio":ratios[(ratios.len()-1)/2],"background_spread":lum_spread(&img,x0,y0,x1,y1),"mean_ratio":mean,"spread":ratios.last().unwrap()-min,"worst_point":worst,"threshold":limit,"heuristic":true}),"WCAG contrast heuristic below threshold; bbox sampling does not certify legibility.",out,suppressed)
             }
+        }
+    }
+    Ok(())
+}
+
+struct Budget {
+    left: usize,
+    skipped: Vec<Value>,
+    excluded: Vec<Value>,
+}
+fn lum_spread(img: &Image, x0: usize, y0: usize, x1: usize, y1: usize) -> f64 {
+    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for y in y0.min(img.h)..y1 {
+        for x in x0.min(img.w)..x1 {
+            let i = y * img.w + x;
+            let l = srgb_luma([img.rgb[0][i], img.rgb[1][i], img.rgb[2][i]]);
+            lo = lo.min(l);
+            hi = hi.max(l);
+        }
+    }
+    if hi < lo { 0. } else { hi - lo }
+}
+fn inter(a: [f64; 4], b: [f64; 4]) -> (f64, f64) {
+    (
+        ((a[0] + a[2]).min(b[0] + b[2]) - a[0].max(b[0])).max(0.),
+        ((a[1] + a[3]).min(b[1] + b[3]) - a[1].max(b[1])).max(0.),
+    )
+}
+fn style_key(c: &Clip) -> Option<String> {
+    let Source::Text { font, size, color, letter_spacing, stroke_width, stroke_color, shadow, align, .. } = &c.source else { return None };
+    Some(format!("{font}|{size}|{color:?}|{letter_spacing}|{stroke_width}|{stroke_color:?}|{shadow}|{align}"))
+}
+/// Text layout checks that need only ink rects and clip metadata (no extra renders).
+fn layout_findings(
+    ss: &mut Session,
+    t: f64,
+    checks: &BTreeSet<String>,
+    used: &Value,
+    out: &mut Vec<Value>,
+    suppressed: &mut Vec<Value>,
+    budget: &mut Budget,
+) -> Result<(), String> {
+    let any = ["text_overlap", "text_over_foreground", "caption_over_foreground", "caption_style_consistency", "optical_balance"];
+    if !any.iter().any(|x| checks.contains(*x)) {
+        return Ok(());
+    }
+    let eps = used["opacity_epsilon"].as_f64().unwrap();
+    let live = |c: &Clip| t >= c.start && t < c.start + c.duration;
+    let mut texts: Vec<(Clip, [f64; 4])> = vec![];
+    let all: Vec<Clip> = ss.project.tracks.iter().filter(|tr| !tr.muted).flat_map(|tr| tr.clips.iter()).filter(|c| live(c)).map(|c| (**c).clone()).collect();
+    for c in all.iter().filter(|c| matches!(c.source, Source::Text { .. })) {
+        let lt = crate::render::clip_local_time(c, t);
+        if crate::render::resolve_xform(&ss.project, c, lt).opacity <= eps {
+            continue;
+        }
+        let b = crate::commands::dispatch(ss, "compute_text_bounds", &json!({"clip_id":c.id,"t":t}))?;
+        let Some(v) = b["canvas_rect"].as_array() else { continue };
+        texts.push((c.clone(), [v[0].as_f64().unwrap(), v[1].as_f64().unwrap(), v[2].as_f64().unwrap(), v[3].as_f64().unwrap()]));
+    }
+    let min_px = used["overlap_min_px"].as_f64().unwrap();
+    if checks.contains("text_overlap") {
+        for i in 0..texts.len() {
+            for j in i + 1..texts.len() {
+                let (w, h) = inter(texts[i].1, texts[j].1);
+                if w >= min_px && h >= min_px {
+                    let (a, b) = (&texts[i].0, &texts[j].0);
+                    let smaller = (texts[i].1[2] * texts[i].1[3]).min(texts[j].1[2] * texts[j].1[3]);
+                    let tag = "lint:ignore=text_overlap".to_string();
+                    if a.tags.contains(&tag) || b.tags.contains(&tag) {
+                        let who = if a.tags.contains(&tag) { a } else { b };
+                        suppressed.push(json!({"layer":layer(who),"code":"text_overlap","tag":tag}));
+                        continue;
+                    }
+                    emit(a, "text_overlap", "warn", texts[i].1, json!({"other":layer(b),"overlap_px":{"w":w,"h":h},"overlap_ratio_of_smaller":if smaller>0.{w*h/smaller}else{0.},"scope":"ink_rects"}), "Two text layers' ink rectangles overlap at this time.", out, suppressed);
+                }
+            }
+        }
+    }
+    if checks.contains("text_over_foreground") || checks.contains("caption_over_foreground") {
+        foreground_findings(ss, t, &all, &texts, checks, used, out, suppressed, budget)?;
+    }
+    if checks.contains("caption_style_consistency") {
+        let groups: Vec<(String, Vec<String>)> = ss.project.editorial.captions.iter().map(|(k, g)| (k.clone(), g.clips.clone())).collect();
+        for (gid, ids) in groups {
+            let mut tally: Vec<(String, usize)> = vec![];
+            for id in &ids {
+                if let Some(k) = ss.project.find_clip(id).and_then(|c| style_key(c)) {
+                    match tally.iter_mut().find(|(x, _)| *x == k) { Some(e) => e.1 += 1, None => tally.push((k, 1)) }
+                }
+            }
+            let Some(mode) = tally.iter().fold(None::<&(String, usize)>, |b, e| if b.map_or(true, |b| e.1 > b.1) { Some(e) } else { b }) else { continue };
+            let mode = mode.0.clone();
+            for (c, r) in texts.iter().filter(|(c, _)| ids.contains(&c.id)) {
+                if style_key(c).as_deref() == Some(mode.as_str()) {
+                    continue;
+                }
+                if c.tags.iter().any(|x| x == "lint:allow_style_variation") {
+                    suppressed.push(json!({"layer":layer(c),"code":"caption_style_consistency","tag":"lint:allow_style_variation"}));
+                    continue;
+                }
+                emit(c, "caption_style_consistency", "warn", *r, json!({"caption_id":gid,"cue_style":style_key(c),"group_style":mode,"cues_in_group":ids.len(),"basis":"most common style tuple in the group; ties go to the earliest cue"}), "Caption cue style differs from the rest of its group.", out, suppressed);
+            }
+        }
+    }
+    if checks.contains("optical_balance") && !texts.is_empty() {
+        let (w, h) = (ss.project.width as f64, ss.project.height as f64);
+        let (mut a, mut cx, mut cy) = (0., 0., 0.);
+        for (_, r) in &texts {
+            let ar = r[2] * r[3];
+            a += ar;
+            cx += ar * (r[0] + r[2] / 2.);
+            cy += ar * (r[1] + r[3] / 2.);
+        }
+        if a > 0. {
+            let c0 = &texts[0].0;
+            emit(c0, "optical_balance", "info", [0., 0., w, h], json!({"centroid_px":[cx/a,cy/a],"offset_from_centre_frac":[(cx/a-w/2.)/w,(cy/a-h/2.)/h],"text_layers":texts.len(),"basis":"ink-rect area-weighted centroid; info only"}), "Area-weighted text centroid relative to the canvas centre.", out, suppressed);
+        }
+    }
+    Ok(())
+}
+
+fn is_text_like(ss: &Session, c: &Clip) -> bool {
+    matches!(c.source, Source::Text { .. })
+        || matches!(c.role.as_deref(), Some("caption" | "title" | "lower_third" | "subtitle"))
+        || c.tags.iter().any(|x| x == "caption")
+        || ss.project.editorial.captions.values().any(|g| g.clips.iter().any(|x| *x == c.id))
+}
+fn is_caption(ss: &Session, c: &Clip) -> bool {
+    c.role.as_deref() == Some("caption")
+        || c.tags.iter().any(|x| x == "caption")
+        || ss.project.editorial.captions.values().any(|g| g.clips.iter().any(|x| *x == c.id))
+}
+fn clip_rect(ss: &Session, c: &Clip, t: f64) -> Option<([f64; 4], f64)> {
+    let (r, o) = bounds(&ss.project, c, t)?;
+    let (w, h) = (ss.project.width as f64, ss.project.height as f64);
+    let (x0, y0, x1, y1) = (r[0].max(0.), r[1].max(0.), (r[0] + r[2]).min(w), (r[1] + r[3]).min(h));
+    if x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+    Some(([x0, y0, x1 - x0, y1 - y0], o))
+}
+/// ARCH P3 rules 1-8: text drawn over a foreground layer below it in draw order.
+#[allow(clippy::too_many_arguments)]
+fn foreground_findings(
+    ss: &mut Session,
+    t: f64,
+    all: &[Clip],
+    texts: &[(Clip, [f64; 4])],
+    checks: &BTreeSet<String>,
+    used: &Value,
+    out: &mut Vec<Value>,
+    suppressed: &mut Vec<Value>,
+    budget: &mut Budget,
+) -> Result<(), String> {
+    let (w, h) = (ss.project.width as f64, ss.project.height as f64);
+    let canvas = w * h;
+    let min_o = used["min_overlap"].as_f64().unwrap();
+    let min_m = used["min_matte_overlap"].as_f64().unwrap();
+    // visible non-text layers with bounds, in draw order (z = index in `all`)
+    let hidden_src: BTreeSet<String> = all.iter().filter_map(|c| c.mask.as_ref().and_then(|m| m.matte.as_ref()).filter(|m| m.hide_source).map(|m| m.source.clone())).collect();
+    let vis: Vec<(usize, &Clip, [f64; 4])> = all
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| !is_text_like(ss, c) && !hidden_src.contains(&c.id))
+        .filter_map(|(z, c)| clip_rect(ss, c, t).filter(|(_, o)| *o > 0.05).map(|(r, _)| (z, c, r)))
+        .collect();
+    let bottom = vis.first().map(|v| v.1.id.clone());
+    let is_bg = |c: &Clip, r: [f64; 4]| -> bool {
+        if c.tags.iter().any(|x| x == "lint:background") || c.role.as_deref() == Some("background") {
+            return true;
+        }
+        let full = r[2] * r[3] >= 0.95 * canvas;
+        let matte = c.mask.as_ref().map_or(false, |m| m.matte.is_some());
+        (Some(&c.id) == bottom.as_ref() && full && !matte)
+            || (matches!(c.source, Source::Solid { .. } | Source::Gradient { .. }) && full && !matte)
+    };
+    for (z_t, (tc, ink)) in texts.iter().enumerate().map(|(_, tx)| (all.iter().position(|c| c.id == tx.0.id).unwrap_or(0), tx)) {
+        let caption = is_caption(ss, tc);
+        let code = if caption { "caption_over_foreground" } else { "text_over_foreground" };
+        if !checks.contains(code) {
+            continue;
+        }
+        let ink_area = ink[2] * ink[3];
+        if ink_area <= 0. {
+            continue;
+        }
+        let mut hits: Vec<(f64, usize, String, Value, Clip)> = vec![];
+        for (z, l, r) in vis.iter().filter(|v| v.0 < z_t) {
+            if is_bg(l, *r) {
+                continue;
+            }
+            let (iw, ih) = inter(*ink, *r);
+            if iw <= 0. || ih <= 0. {
+                continue;
+            }
+            // own backing plate (rule 4)
+            let own_tag = format!("lint:backing_of={}", tc.id);
+            let adjacent = !vis.iter().any(|v| v.0 > *z && v.0 < z_t);
+            let plate = matches!(l.source, Source::Shape { .. } | Source::Solid { .. })
+                && r[0] + 1. <= ink[0] && r[1] + 1. <= ink[1] && r[0] + r[2] >= ink[0] + ink[2] + 1. && r[1] + r[3] >= ink[1] + ink[3] + 1.
+                && adjacent && *z + 1 == z_t;
+            let own_box = tc.text_fx.as_ref().and_then(|f| f.bg).map_or(false, |b| b[3] > 0.);
+            if l.tags.contains(&own_tag) || plate || own_box {
+                let basis = if l.tags.contains(&own_tag) { "tag" } else if own_box { "own_box" } else { "auto_backing" };
+                let e = json!({"text":layer(tc),"layer":layer(l),"basis":basis});
+                if !budget.excluded.contains(&e) {
+                    budget.excluded.push(e);
+                }
+                continue;
+            }
+            let (ratio, basis, bbox) = if l.mask.is_some() {
+                if budget.left == 0 {
+                    budget.skipped.push(json!({"check":code,"t":t,"clip_id":tc.id,"layer":l.id,"reason":"render_budget","render_budget":used["render_budget"]}));
+                    continue;
+                }
+                budget.left -= 1;
+                let mut iso = vec![l.id.clone()];
+                if let Some(m) = l.mask.as_ref().and_then(|m| m.matte.as_ref()) {
+                    iso.push(m.source.clone());
+                }
+                let p = super::view::view_of(&ss.project, Some(&iso), None);
+                let mut cache = crate::render::Cache::new();
+                crate::render::prepare_at(&p, &mut cache, Some(t))?;
+                let f = crate::render::render_frame_opts(&p, t, &cache, true)?;
+                let (mut under, mut bb) = (0usize, [f.w, f.h, 0usize, 0usize]);
+                let (ix0, iy0, ix1, iy1) = (ink[0].floor().max(0.) as usize, ink[1].floor().max(0.) as usize, ((ink[0] + ink[2]).ceil() as usize).min(f.w), ((ink[1] + ink[3]).ceil() as usize).min(f.h));
+                let mut cells = 0usize;
+                for y in 0..f.h {
+                    for x in 0..f.w {
+                        let on = f.d[(y * f.w + x) * 4 + 3] > 0.5;
+                        if on {
+                            bb = [bb[0].min(x), bb[1].min(y), bb[2].max(x + 1), bb[3].max(y + 1)];
+                        }
+                        if x >= ix0 && x < ix1 && y >= iy0 && y < iy1 {
+                            cells += 1;
+                            if on {
+                                under += 1
+                            }
+                        }
+                    }
+                }
+                let ratio = if cells == 0 { 0. } else { under as f64 / cells as f64 };
+                let bbox = if bb[2] > bb[0] { json!([bb[0], bb[1], bb[2] - bb[0], bb[3] - bb[1]]) } else { Value::Null };
+                (ratio, if l.mask.as_ref().map_or(false, |m| m.matte.is_some()) { "matte" } else { "mask" }, bbox)
+            } else {
+                (iw * ih / ink_area, "rect", json!(r))
+            };
+            let limit = if basis == "rect" { min_o } else { min_m };
+            if ratio >= limit && ratio > 0. {
+                if l.tags.iter().any(|x| x == "lint:allow_overlap") {
+                    suppressed.push(json!({"layer":layer(tc),"code":code,"tag":"lint:allow_overlap","covered_layer":layer(l)}));
+                    continue;
+                }
+                hits.push((ratio, *z, l.id.clone(), json!({"overlap_ratio":ratio,"covered_layer":layer(l),"basis":basis,"subject_bbox":bbox,"threshold":limit}), (*l).clone()));
+            }
+        }
+        hits.sort_by(|a, b| b.0.total_cmp(&a.0).then(b.1.cmp(&a.1)).then(a.2.cmp(&b.2)));
+        let more = hits.len().saturating_sub(3);
+        for (i, (_, _, _, mut m, _)) in hits.into_iter().take(3).enumerate() {
+            if i == 2 && more > 0 {
+                m["more"] = json!(more);
+            }
+            emit(tc, code, "warn", *ink, m, "Text ink overlaps a foreground layer below it in draw order.", out, suppressed);
         }
     }
     Ok(())
