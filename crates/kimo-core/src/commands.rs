@@ -255,7 +255,7 @@ pub fn dispatch_ex(ss: &mut Session, name: &str, args: &Value) -> Result<Value, 
             _ => {}
         }
         // RV-22: when a string argument is outside the schema's own enum, name the allowed values (generated from the same enum the schema advertises, never a hand list), with a did-you-mean. Message text is unchanged.
-        if matches!(e.code, "invalid_value" | "other" | "out_of_range" | "invalid_method" | "invalid_metric" | "invalid_profile") && e.allowed.is_none() { if let (Some(c), Some(obj)) = (registry_ref().iter().find(|c| c.name == name), args.as_object()) {
+        if matches!(e.code, "invalid_value" | "other" | "out_of_range" | "bg_param_out_of_range" | "invalid_method" | "invalid_metric" | "invalid_profile") && e.allowed.is_none() { if let (Some(c), Some(obj)) = (registry_ref().iter().find(|c| c.name == name), args.as_object()) {
             if let Some(props) = c.schema.get("properties").and_then(|p| p.as_object()) { for (pn, p) in props { let (Some(en), Some(v)) = (p.get("enum").and_then(|x| x.as_array()), obj.get(pn).and_then(|v| v.as_str())) else { continue };
                 let vals: Vec<String> = en.iter().filter_map(|x| x.as_str().map(String::from)).collect(); if vals.is_empty() || vals.iter().any(|x| x == v) { continue; }
                 let total = vals.len(); let near = crate::errors::nearest(v, &vals, 1); let mut hint = format!("valid values for '{pn}' ({total}): {}", vals.iter().take(40).cloned().collect::<Vec<_>>().join(", ")); if total > 40 { hint.push_str(", ... (first 40 shown)"); }

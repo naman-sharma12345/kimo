@@ -61,7 +61,7 @@ fn png(path: &str, w: usize, h: usize, rgb: &[u8]) {
         let (mut s, t) = proj(1920, 1080); put(&mut s, &t, "bg_orbs", if sh { json!({"duration":2,"combine":"add","dither":1.0,"orbs":orbs}) } else { json!({"duration":2,"combine":"add","dither":1.0,"vignette":0,"grain":0,"ceiling":1,"orbs":orbs}) });
         if false { let id = s.project.tracks.iter().flat_map(|t| t.clips.iter()).find(|c| !c.effects.is_empty()).map(|c| c.id.clone()).unwrap(); dispatch(&mut s, "add_effect", &json!({"clip_id":id,"kind":"shoulder"})).unwrap(); }
         dispatch(&mut s, "render_frame", &json!({"time":0.5,"path":format!("{d}/{name}.png"),"inline":"never"})).unwrap(); }
-    let (mut s, t) = proj(1920, 1080); put(&mut s, &t, "bg_wave", json!({"duration":2,"source":"values","values":[-0.3,0.5,-0.7,0.8,0.0,-0.4,0.35,-0.1,0.5],"box":[96,300,1824,780],"glow":{"radius_px":32,"intensity":2.2},"gradient":{"from":[0.35,0.85,1],"to":[0.75,0.4,1],"angle_deg":0},"stroke_px":4}));
+    let (mut s, t) = proj(1920, 1080); put(&mut s, &t, "bg_wave", json!({"duration":2,"source":"values","values":[-0.3,0.5,-0.7,0.8,0.0,-0.4,0.35,-0.1,0.5],"box":[96,300,1824,780],"glow":{"radius_px":40,"intensity":4.0},"gradient":{"from":[0.35,0.85,1],"to":[0.75,0.4,1],"angle_deg":0},"stroke_px":4}));
     dispatch(&mut s, "render_frame", &json!({"time":0.5,"path":format!("{d}/wave1080_glow.png"),"inline":"never"})).unwrap();
 }
 #[test] fn visual_1080p_orbs_depth_layers() { let Some(d) = dir() else { return };

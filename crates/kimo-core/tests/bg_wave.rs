@@ -102,3 +102,9 @@ fn audio_at(s: &mut Session, secs: usize, hz: f64, rate: usize) -> String {
     let (l, r) = (at(20), at(92)); eprintln!("narrow path ends: x=20 {l:?} x=92 {r:?}");
     assert!(r[0] > l[0] + 0.45 && l[0] < 0.35 && r[0] > 0.65, "red must sweep from about the from stop to about the to stop across the path: {l:?} {r:?}");
 }
+#[test] fn a_following_halo_may_exceed_the_old_amount_cap_of_4_but_a_pinned_halo_may_not() {
+    let (mut s, t) = base(); let a = |g: Value| json!({"track":t,"duration":1,"source":"values","values":[0.0,0.3,0.0],"box":[16,64,224,128],"stroke_px":4,"glow":{"radius_px":40,"intensity":4.0},"gradient":g});
+    let amts = |r: &Value| -> Vec<f64> { r["expansion"].as_array().unwrap().iter().filter(|o| o["args"]["kind"] == "outer_glow").map(|o| o["args"]["params"]["amount"].as_f64().unwrap()).collect() };
+    let on = amts(&dispatch(&mut s, "bg_wave", &a(json!({"from":[0.35,0.85,1],"to":[0.75,0.4,1]}))).unwrap()); let off = amts(&dispatch(&mut s, "bg_wave", &a(json!(false))).unwrap());
+    eprintln!("outer_glow amounts following {on:?} pinned {off:?}"); assert_eq!(on.len(), 3); assert!(on.iter().cloned().fold(0.0, f64::max) > 4.0 && on.iter().all(|v| *v <= 10.0 + 1e-9), "follow lifts the cap to 10: {on:?}"); assert!(off.iter().all(|v| *v <= 4.0 + 1e-9), "a pinned halo keeps the cap of 4: {off:?}");
+}
