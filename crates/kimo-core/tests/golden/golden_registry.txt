@@ -55,6 +55,7 @@ burn_in 0df91ac9090a9beb
 cache_clear 6022ac3871ddd27b
 cache_set_budget 422160a7f6a95562
 cache_stats fda818c878e0e6dc
+callout_card dd3ec2c74afd7d3f
 camera_solve_info 68eba83a999378cc
 cancel_job 71597b2319b6d6cf
 checkpoint 4063b9f4243b3a4e
@@ -102,6 +103,7 @@ export_preset e5c29f6d9e3173dc
 export_with_subtitles 824e8be7e0dd374e
 ext_list 83a5db4765dba269
 find 78641da05597f921
+fit_box_to_text deca85bc1e5e8b92
 fit_info c3f52f5446f58baa
 fit_track_homography 5ea697fda92d2eaa
 freeze_frame c6a17e82ed026eb3
