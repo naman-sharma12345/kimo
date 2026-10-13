@@ -36,7 +36,7 @@ fn read_only_tool_tones_and_noise() {
 }
 
 #[test]
-fn beatbox_yin_error_is_small_and_bad_parameters() {
+fn upstream_yin_error_is_small_and_bad_parameters() {
     for hz in [41.2,55.,110.,261.63,440.,987.77] {
         let x=tone(hz); let mut bytes=vec![];
         for n in [1,4] {kimo_core::par::set_threads(n); let (f,c)=pitch_detect(&x,48000.,30.,1600.,0.15).unwrap();
