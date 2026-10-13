@@ -63,8 +63,8 @@ fn badge_sits_above_and_never_overlaps_text() {
     assert!(!ov(t, btxt), "badge text does not touch the callout text");
     close(shape_rect(&s, r["badge_clip_id"].as_str().unwrap()), b, "badge shape == echoed badge_rect");
     let found = c(&mut s, "find", json!({"role":"callout"}));
-    assert_eq!(found["total"], 4, "card, text, badge, badge text carry role callout");
-    assert_eq!(c(&mut s, "find", json!({"tag":"callout:c1"}))["total"], 4);
+    assert_eq!(found["total"], 6, "card, text, badge, badge text, highlight, badge highlight carry role callout");
+    assert_eq!(c(&mut s, "find", json!({"tag":"callout:c1"}))["total"], 6);
 }
 #[test]
 fn long_text_is_a_typed_error_never_a_silent_clip() {
@@ -110,7 +110,7 @@ fn closed_loop_card_inside_safe_zone_has_no_lint_findings() {
     assert_eq!(n, 0, "{l}");
     // and a card pushed out of the safe zone is reported
     let mut s2 = base();
-    c(&mut s2, "callout_card", json!({"text":"Hello","position":[0,0,60,40],"safe_profile":"none","style":{"size":18,"padding":4},"apply":true}));
+    c(&mut s2, "callout_card", json!({"text":"Hello","position":[0,0,60,40],"safe_profile":"none","style":{"size":18,"padding":4,"shadow":false},"apply":true}));
     let l2 = c(&mut s2, "lint_frame", json!({"time":1,"checks":["safe_zone"],"profile":"title_safe","annotate":false}));
     let n2: usize = l2["frames"].as_array().unwrap().iter().map(|f| f["findings"].as_array().unwrap().len()).sum();
     assert!(n2 > 0, "text near the corner is flagged: {l2}");
@@ -231,7 +231,7 @@ fn offset_gap_is_the_same_for_every_badge_mode_and_card_offset_is_opt_in_and_val
     let both = dispatch(&mut s, "callout_card", &json!({"text":"Tip","position":format!("near:{id}"),"offset":[0,20],"card_offset":[0,20]})).unwrap_err();
     assert!(both.contains("mutually exclusive") && both.contains("fix_hint"), "{both}");
     let before = serde_json::to_vec(&s.project).unwrap();
-    let e = dispatch(&mut s, "callout_card", &json!({"text":"Tip","badge":"TIP","position":format!("near:{id}"),"card_offset":[0,20],"style":{"size":16,"padding":8},"apply":true})).unwrap_err();
+    let e = dispatch(&mut s, "callout_card", &json!({"text":"Tip","badge":"TIP","position":format!("near:{id}"),"card_offset":[0,-40],"style":{"size":16,"padding":8},"apply":true})).unwrap_err();
     assert!(e.starts_with("callout_overlap") && e.contains("min_fixing_offset"), "card_offset [0,20] with the badge above overlaps the title: {e}");
     assert_eq!(before, serde_json::to_vec(&s.project).unwrap(), "invalid card_offset never applies");
 }

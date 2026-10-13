@@ -157,8 +157,10 @@ fn fill_px(f: &mut crate::effects::Frame, x0: i64, y0: i64, x1: i64, y1: i64, c:
 }
 /// Severity colours chosen so each is at least 3:1 against both white and black.
 fn sev_colour(sev: &str) -> [f32; 3] { match sev { "error" => [1.0, 0.2, 0.1], "info" => [0.0, 0.55, 0.8], _ => [0.9, 0.35, 0.0] } }
-/// stroke px = max(2, round(min(w,h)/160))
-pub fn stroke_px(w: usize, h: usize) -> i64 { (((w.min(h)) as f64 / 160.0).round() as i64).max(2) }
+/// Spec chip fills: error #E5484D, warn #F5A524, info #3B82F6 (the 3:1 stroke colours above stay as they are; F5A524 is under 3:1 on white).
+fn chip_fill(sev: &str) -> [f32; 3] { match sev { "error" => [229.0 / 255.0, 72.0 / 255.0, 77.0 / 255.0], "info" => [59.0 / 255.0, 130.0 / 255.0, 246.0 / 255.0], "warn" => [245.0 / 255.0, 165.0 / 255.0, 36.0 / 255.0], _ => [0.10, 0.10, 0.12] } }
+/// stroke px = max(2, round(0.25u)), u = min(w,h)/135 (2 px at 1080p)
+pub fn stroke_px(w: usize, h: usize) -> i64 { ((((w.min(h)) as f64 / 135.0) * 0.25).round() as i64).max(2) }
 fn rects_hit(a: [i64; 4], b: [i64; 4]) -> bool { a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3] }
 /// Draws the report on the render copy only (findings are never touched): a stroke OUTSIDE each finding rect with a 1px dark halo, colour by severity,
 /// dashed safe-zone line and an edge marker for canvas-clipped rects, and up to 3 label chips ("code value") then "+n". Returns what it drew.
@@ -203,7 +205,8 @@ fn draw_annotations(f: &mut crate::effects::Frame, findings: &[Value]) -> Value 
         boxes.push(json!({"code":row["code"],"severity":sev,"rect":row["rect"],"colour":col,"clipped_edges":clipped}));
     }
     // label chips: dark chip, light text, inside the canvas, clear of every box and of earlier chips
-    let size = ((f.w.min(f.h)) as f32 / 20.0).round().max(13.0); let (pad, ch_h) = ((size * 0.7).round() as i64, (size * 1.7).round() as i64);
+    // chip metrics in u = min(w,h)/135: label 2.5u (20 px at 1080p, never below 12), padding 1u x 0.625u (8 x 5), radius 0.5u
+    let u = (f.w.min(f.h)) as f32 / 135.0; let size = (2.5 * u).round().max(12.0); let (pad, ch_h) = ((u.round() as i64).max(4), ((0.729 * size) + 2.0 * (0.625 * u).round().max(3.0)).round() as i64); let crad = (0.5 * u).round().max(2.0) as f64; let gap1 = (u.round() as i64).max(2); // 1u clear gap between a chip and the rect stroke
     let mut chips = vec![];
     for (n, row) in findings.iter().enumerate() {
         let txt = if n == 3 { format!("+{}", findings.len() - 3) } else if n > 3 { break } else {
@@ -215,12 +218,22 @@ fn draw_annotations(f: &mut crate::effects::Frame, findings: &[Value]) -> Value 
         let r = row["rect"].as_array().map(|a| a.iter().map(|x| x.as_f64().unwrap_or(0.0)).collect::<Vec<_>>()).unwrap_or_else(|| vec![0.; 4]);
         let (rx, ry, rw, rh) = (r[0].floor() as i64, r[1].floor() as i64, (r[2].ceil() as i64).max(1), (r[3].ceil() as i64).max(1));
         let clampx = |x: i64| x.max(0).min((w - cw).max(0)); let clampy = |y: i64| y.max(0).min((h - cx_h).max(0));
-        let cands = [[clampx(rx), clampy(ry - s - 3 - cx_h)], [clampx(rx), clampy(ry + rh + s + 3)], [clampx(rx + rw + s + 3), clampy(ry)], [clampx(rx - s - 3 - cw), clampy(ry)], [0, 0], [clampx(w), clampy(h)]];
+        let cands = [[clampx(rx), clampy(ry - s - 1 - gap1 - cx_h)], [clampx(rx), clampy(ry + rh + s + 1 + gap1)], [clampx(rx + rw + s + 1 + gap1), clampy(ry)], [clampx(rx - s - 1 - gap1 - cw), clampy(ry)], [0, 0], [clampx(w), clampy(h)]];
         let boxr = [rx - s - 1, ry - s - 1, rw + 2 * s + 2, rh + 2 * s + 2];
         let clear = |c: [i64; 4]| !rects_hit(c, boxr) && obstacles.iter().all(|o| !rects_hit(c, *o)) && chips.iter().all(|k: &Value| { let q: Vec<i64> = k["rect"].as_array().unwrap().iter().map(|x| x.as_i64().unwrap()).collect(); !rects_hit(c, [q[0], q[1], q[2], q[3]]) });
         let pick = cands.iter().map(|p| [p[0], p[1], cw, cx_h]).find(|c| clear(*c)).unwrap_or([cands[0][0], cands[0][1], cw, cx_h]);
-        for y in pick[1].max(0)..(pick[1] + pick[3]).min(h) { for x in pick[0].max(0)..(pick[0] + pick[2]).min(w) { let i = (y as usize * f.w + x as usize) * 4; let (rr, ex) = (pick[3] as f64 / 2.0, (x as f64 + 0.5 - pick[0] as f64).min(pick[0] as f64 + pick[2] as f64 - x as f64 - 0.5)); let cy = (y as f64 + 0.5 - pick[1] as f64 - rr).abs(); let (dx, dy) = ((rr - ex).max(0.0), cy); if dx * dx + dy * dy > rr * rr { continue; } for k in 0..3 { f.d[i + k] = f.d[i + k] * 0.2 + 0.04 * 0.8; } } }
-        let _ = crate::text::draw_label(f, &txt, (pick[0] + pad) as f64, (pick[1] as f64 + (ch_h as f64 - size as f64 * 1.2) / 2.0), size, [1.0, 1.0, 1.0]);
+        // rounded rect (radius 0.5u): severity fill at 0.92 alpha with a 1px dark halo just outside
+        let fill = chip_fill(if n == 3 { "" } else { row["severity"].as_str().unwrap_or("warn") });
+        let lum = |c: [f32; 3]| { let l = |v: f32| { let v = v as f64; if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) } }; 0.2126 * l(c[0]) + 0.7152 * l(c[1]) + 0.0722 * l(c[2]) };
+        let lf = lum(fill); let (cw_, cb_) = ((1.05) / (lf + 0.05), (lf + 0.05) / 0.05); let txt_col = if cw_ >= cb_ { [1.0f32, 1.0, 1.0] } else { [0.0f32, 0.0, 0.0] };
+        let (hx, hy) = (pick[2] as f64 / 2.0, pick[3] as f64 / 2.0);
+        for y in (pick[1] - 1).max(0)..(pick[1] + pick[3] + 1).min(h) { for x in (pick[0] - 1).max(0)..(pick[0] + pick[2] + 1).min(w) {
+            let (px, py) = ((x as f64 + 0.5 - pick[0] as f64 - hx).abs(), (y as f64 + 0.5 - pick[1] as f64 - hy).abs());
+            let (qx, qy) = ((px - (hx - crad)).max(0.0), (py - (hy - crad)).max(0.0)); let d = (qx * qx + qy * qy).sqrt() - crad; // signed distance to the chip edge
+            let i = (y as usize * f.w + x as usize) * 4;
+            if d <= 0.0 { for k in 0..3 { f.d[i + k] = f.d[i + k] * 0.08 + fill[k] * 0.92; } } else if d <= 1.0 { for k in 0..3 { f.d[i + k] *= 0.4; } }
+        } }
+        let _ = crate::text::draw_label(f, &txt, (pick[0] + pad) as f64, { let (asc, cap) = crate::text::label_metrics(size).unwrap_or((size * 0.93, size * 0.73)); pick[1] as f64 + ch_h as f64 / 2.0 + cap as f64 / 2.0 - asc as f64 }, size, txt_col);
         chips.push(json!({"text":txt,"rect":pick}));
     }
     json!({"stroke_px": s, "boxes": boxes, "chips": chips, "zone_lines": zone_lines, "edge_markers": markers, "min_contrast_vs_frame": if min_contrast.is_finite() { json!(min_contrast) } else { Value::Null }, "note": "drawn on a render copy; findings are unchanged; stroke is outside the rect with a 1px dark halo, colour by severity (error red, warn orange, info cyan); green dashes are the safe-zone edge that was violated"})

@@ -502,11 +502,11 @@ fn ann_scene(w: u32, h: u32, bg: f64) -> Session {
 fn ann_lint(s: &mut Session, annotate: bool) -> Value { c(s, "lint_frame", json!({"time":1,"checks":["safe_zone"],"profile":"title_safe","annotate":annotate})) }
 #[test]
 fn annotation_stroke_follows_the_formula_at_three_sizes() {
-    for (w, h, want) in [(256u32, 256u32, 2i64), (480, 270, 2), (1920, 1080, 7)] {
+    for (w, h, want) in [(256u32, 256u32, 2i64), (480, 270, 2), (1920, 1080, 2)] {
         let mut s = ann_scene(w, h, 0.0);
         let r = ann_lint(&mut s, true);
         let a = &r["frames"][0]["annotation"];
-        assert_eq!(a["stroke_px"], want, "{w}x{h}: max(2, round(min(w,h)/160))");
+        assert_eq!(a["stroke_px"], want, "{w}x{h}: max(2, round(0.25u)), u = min(w,h)/135");
     }
 }
 #[test]

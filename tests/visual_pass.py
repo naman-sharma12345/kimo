@@ -11,7 +11,7 @@ if "--out" in ARGS: i = ARGS.index("--out"); OUT = ARGS[i + 1]; del ARGS[i:i + 2
 OUT = OUT or tempfile.mkdtemp(prefix="visual_pass_"); os.makedirs(OUT, exist_ok=True)
 class S:
     def __init__(s):
-        s.cwd = tempfile.mkdtemp(prefix="vp_cwd_"); s.p = subprocess.Popen([os.path.abspath(BIN)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, cwd=s.cwd); s.i = 0; s.used = []; s.rpc("initialize", {})
+        s.cwd = tempfile.mkdtemp(prefix="vp_cwd_"); s.p = subprocess.Popen([os.path.abspath(BIN)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, cwd=s.cwd, env=dict(os.environ, KIMO_FONTS=os.environ.get("KIMO_FONTS", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "fonts")))); s.i = 0; s.used = []; s.rpc("initialize", {})
     def rpc(s, m, pr): s.i += 1; s.p.stdin.write(json.dumps({"jsonrpc": "2.0", "id": s.i, "method": m, "params": pr}) + "\n"); s.p.stdin.flush(); return json.loads(s.p.stdout.readline())
     def j(s, n, a):
         s.used.append(n); r = s.rpc("tools/call", {"name": n, "arguments": a})["result"]

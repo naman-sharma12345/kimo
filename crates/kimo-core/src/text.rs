@@ -32,10 +32,12 @@ fn font(name: &str, weight: f64) -> Result<std::sync::Arc<FontVec>, String> {
 }
 
 /// Width in px of `text` set in the bundled sans at `size` (used by annotation chips; no kerning, plain advances).
-pub fn label_width(text: &str, size: f32) -> Result<f64, String> { let fnt = font("DejaVu Sans", 400.0)?; let sf = fnt.as_scaled(PxScale::from(size)); Ok(text.chars().map(|c| sf.h_advance(fnt.glyph_id(c))).sum::<f32>() as f64) }
+pub fn label_width(text: &str, size: f32) -> Result<f64, String> { let fnt = font("Inter", 600.0)?; let sf = fnt.as_scaled(PxScale::from(size)); Ok(text.chars().map(|c| sf.h_advance(fnt.glyph_id(c))).sum::<f32>() as f64) }
+/// (ascent, cap height) in px of the chip label face at `size`, so callers can centre the ink vertically.
+pub fn label_metrics(size: f32) -> Result<(f32, f32), String> { let fnt = font("Inter", 600.0)?; let sf = fnt.as_scaled(PxScale::from(size)); Ok((sf.ascent(), 0.729 * size)) }
 /// Draw `text` with its top-left at (x, y) onto `f` in colour `fg` with antialiasing; pixels outside the frame are skipped.
 pub fn draw_label(f: &mut Frame, text: &str, x: f64, y: f64, size: f32, fg: [f32; 3]) -> Result<(), String> {
-    let fnt = font("DejaVu Sans", 400.0)?; let sf = fnt.as_scaled(PxScale::from(size)); let (mut cx, base) = (x as f32, y as f32 + sf.ascent());
+    let fnt = font("Inter", 600.0)?; let sf = fnt.as_scaled(PxScale::from(size)); let (mut cx, base) = (x as f32, y as f32 + sf.ascent());
     for ch in text.chars() { let gid = fnt.glyph_id(ch);
         if let Some(o) = fnt.outline_glyph(gid.with_scale_and_position(PxScale::from(size), ab_glyph::point(cx, base))) { let b = o.px_bounds();
             o.draw(|gx, gy, v| { let (px, py) = (b.min.x as i32 + gx as i32, b.min.y as i32 + gy as i32); if px < 0 || py < 0 || px as usize >= f.w || py as usize >= f.h { return; } let i = (py as usize * f.w + px as usize) * 4; for k in 0..3 { f.d[i + k] = f.d[i + k] * (1.0 - v) + fg[k] * v; } }); }
