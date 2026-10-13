@@ -56,6 +56,7 @@ pub fn reject_unknown(a: &Value, tool: &str, own: &[&str]) -> Result<(), String>
     Ok(())
 }
 fn name_ok(s: &str, extra: &[char], max: usize) -> bool { !s.is_empty() && s.chars().count() <= max && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-' || extra.contains(&c)) }
+#[derive(Debug, Clone)]
 pub struct Common { pub track: String, pub start: f64, pub duration: f64, pub name: Option<String>, pub tags: Vec<String>, pub seed: u64, pub apply: bool, pub blend: String, pub opacity: f64, pub kind: String }
 impl Common {
     /// Validate the common arguments of tool `tool` (kind = the bg:<kind> tag). `own` lists the tool's own property names for unknown-property rejection.
