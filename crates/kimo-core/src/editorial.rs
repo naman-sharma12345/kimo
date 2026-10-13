@@ -103,6 +103,30 @@ pub fn loudness(pcm: &[f32]) -> Option<f64> {
     if pcm.len() < 38400 {
         return None;
     }
+    let energy = k_weighted_energy(pcm)?;
+    let mut blocks = vec![];
+    let mut sum: f64 = energy[..19200].iter().sum();
+    for st in (0..=energy.len() - 19200).step_by(4800) {
+        if st > 0 {
+            sum -= energy[st - 4800..st].iter().sum::<f64>();
+            sum += energy[st + 14400..st + 19200].iter().sum::<f64>();
+        }
+        let e = sum / 19200.;
+        if e > 0. && -0.691 + 10. * e.log10() >= -70. {
+            blocks.push(e)
+        }
+    }
+    if blocks.is_empty() {
+        return None;
+    }
+    let mean = blocks.iter().sum::<f64>() / blocks.len() as f64;
+    let threshold = mean * 0.1;
+    let gated: Vec<f64> = blocks.into_iter().filter(|v| *v >= threshold).collect();
+    Some(-0.691 + 10. * (gated.iter().sum::<f64>() / gated.len() as f64).log10())
+}
+
+/// K-weighted stereo frame energy, preserving the integrated loudness arithmetic.
+fn k_weighted_energy(pcm: &[f32]) -> Option<Vec<f64>> {
     crate::guard::reserve(pcm.len().checked_mul(4)?);
     let mut energy = vec![0.; pcm.len() / 2];
     for ch in 0..2 {
@@ -136,25 +160,40 @@ pub fn loudness(pcm: &[f32]) -> Option<f64> {
             *e += z * z;
         }
     }
-    let mut blocks = vec![];
-    let mut sum: f64 = energy[..19200].iter().sum();
-    for st in (0..=energy.len() - 19200).step_by(4800) {
+    Some(energy)
+}
+
+/// EBU Tech 3342 loudness range (LU): 3 s windows / 1 s hops,
+/// absolute -70 LUFS gate, relative -20 LU gate, 10th to 95th percentile.
+/// Null for less than 3 s or no audible short-term blocks. Stereo 48 kHz.
+pub fn loudness_range(pcm: &[f32]) -> Option<f64> {
+    const WINDOW: usize = 144_000;
+    const HOP: usize = 48_000;
+    if pcm.len() / 2 < WINDOW { return None; }
+    let energy = k_weighted_energy(pcm)?;
+    let mut blocks = Vec::new();
+    let mut sum: f64 = energy[..WINDOW].iter().sum();
+    for st in (0..=energy.len() - WINDOW).step_by(HOP) {
+        crate::guard::check();
         if st > 0 {
-            sum -= energy[st - 4800..st].iter().sum::<f64>();
-            sum += energy[st + 14400..st + 19200].iter().sum::<f64>();
+            sum -= energy[st-HOP..st].iter().sum::<f64>();
+            sum += energy[st+WINDOW-HOP..st+WINDOW].iter().sum::<f64>();
         }
-        let e = sum / 19200.;
-        if e > 0. && -0.691 + 10. * e.log10() >= -70. {
-            blocks.push(e)
-        }
+        let e = (sum / WINDOW as f64).max(0.0);
+        if e > 0.0 && -0.691 + 10.0*e.log10() >= -70.0 { blocks.push(e); }
     }
-    if blocks.is_empty() {
-        return None;
-    }
-    let mean = blocks.iter().sum::<f64>() / blocks.len() as f64;
-    let threshold = mean * 0.1;
-    let gated: Vec<f64> = blocks.into_iter().filter(|v| *v >= threshold).collect();
-    Some(-0.691 + 10. * (gated.iter().sum::<f64>() / gated.len() as f64).log10())
+    if blocks.is_empty() { return None; }
+    let threshold = blocks.iter().sum::<f64>() / blocks.len() as f64 * 0.01;
+    let mut levels: Vec<f64> = blocks.into_iter().filter(|e| *e >= threshold)
+        .map(|e| -0.691 + 10.0*e.log10()).collect();
+    levels.sort_by(f64::total_cmp);
+    let percentile = |p: f64| {
+        let x = p * (levels.len()-1) as f64;
+        let lo = x.floor() as usize;
+        let hi = x.ceil() as usize;
+        levels[lo] + (levels[hi]-levels[lo])*(x-lo as f64)
+    };
+    Some(percentile(0.95)-percentile(0.10))
 }
 
 /// Stereo Schroeder reverb: eight parallel damped combs and four serial

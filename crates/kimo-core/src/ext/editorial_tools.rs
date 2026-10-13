@@ -317,7 +317,7 @@ fn measure_loudness(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let l = loudness(&pcm);
     let peak = pcm.iter().map(|v| v.abs() as f64).fold(0., f64::max);
     Ok(
-        json!({"integrated_lufs":l,"sample_peak_dbfs":if peak>0.{Some(20.*peak.log10())}else{None},"method":"EBU R128 stereo 48k; clip measurement post filters, before volume/pan; timeline post mix/limiter","minimum_seconds":0.4,"true_peak_dbfs":true_peak,"true_peak_method":if tp{Some("4x 64-tap Blackman-windowed sinc estimate, not certified")}else{None}}),
+        json!({"integrated_lufs":l,"lra_lu":crate::editorial::loudness_range(&pcm),"sample_peak_dbfs":if peak>0.{Some(20.*peak.log10())}else{None},"method":"EBU R128 stereo 48k; clip measurement post filters, before volume/pan; timeline post mix/limiter","minimum_seconds":0.4,"true_peak_dbfs":true_peak,"true_peak_method":if tp{Some("4x 64-tap Blackman-windowed sinc estimate, not certified")}else{None}}),
     )
 }
 fn normalize_loudness_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {
