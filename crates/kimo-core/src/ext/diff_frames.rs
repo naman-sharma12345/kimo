@@ -234,6 +234,15 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
         });
         out["heatmap"] = json!({"path":path,"image":{"mime_type":"image/png","gain":4.0}});
     }
+    let changed = out["delta"]["changed_percent"].as_f64().unwrap_or(0.);
+    let identical = out["delta"]["bit_identical"] == true;
+    let why = if identical { "the frames are bit identical, nothing to change".to_string() } else { format!("{changed:.2}% of pixels differ; a difference is not a defect, so no edit is implied") };
+    out["fix_hint"] = crate::perception::fix_hint::none(&why);
+    let mut steps = vec![];
+    if !identical && json!(sb) == json!("composite") {
+        steps.push(json!({"tool":"lint_frame","args":{"time":br.time,"annotate":false},"why":format!("{changed:.2}% of pixels changed; lint the later frame for defects")}));
+    }
+    out["next_steps"] = json!(steps);
     Ok(out)
 }
 pub fn commands() -> Vec<Command> {

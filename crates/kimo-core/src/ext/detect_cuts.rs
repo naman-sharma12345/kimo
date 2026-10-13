@@ -186,8 +186,12 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
         if let Some(i) = c.end {
             v["end"] = json!(start + i as f64 / fps);
         }
+        v["fix_hint"] = crate::perception::fix_hint::none(&format!("{} scored {:.3} at {:.3}s; whether it is intended depends on the edit, so nothing is changed", c.kind, peak, t));
         values.push(v);
     }
+    let mut ranked: Vec<&Value> = values.iter().collect();
+    ranked.sort_by(|a, b| b["score"].as_f64().unwrap_or(0.).total_cmp(&a["score"].as_f64().unwrap_or(0.)));
+    let next_steps: Vec<Value> = ranked.iter().take(3).map(|v| json!({"tool":"describe_frame","args":{"time":v["time"]},"why":format!("{} scored {:.3} at {:.3}s; inspect the frame after the cut", v["kind"].as_str().unwrap_or("cut"), v["score"].as_f64().unwrap_or(0.), v["time"].as_f64().unwrap_or(0.))})).collect();
     let boundaries: Vec<f64> = if source == "timeline" {
         let mut b: Vec<_> = ss
             .project
@@ -210,7 +214,7 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
                 .to_string(),
         );
     }
-    let mut out = json!({"source":source,"range":{"start":start,"end":end},"fps_analysed":fps,"params_used":{"method":method,"scale":scale,"sensitivity":sensitivity,"threshold":threshold,"threshold_explicit":a.get("threshold").is_some(),"threshold_formula":"0.6 - 0.5*sensitivity; explicit wins","adaptive_guard":"score > mean(5 prior scores)*3 + 0.02","histogram":"8x8x8 RGB normalized half-L1","luma":"mean abs Rec709 delta / 0.25, capped 1","combined":"max(histogram,luma)","min_gap_s":gap,"refine":refine,"kind_hints":hints,"spatial":a.get("spatial"),"content_guard":"histogram change>0.02 or mean luma change>0.02 before hard/flash"},"count":values.len(),"cuts":values,"timeline_clip_boundaries":boundaries,"notes":notes});
+    let mut out = json!({"source":source,"range":{"start":start,"end":end},"fps_analysed":fps,"params_used":{"method":method,"scale":scale,"sensitivity":sensitivity,"threshold":threshold,"threshold_explicit":a.get("threshold").is_some(),"threshold_formula":"0.6 - 0.5*sensitivity; explicit wins","adaptive_guard":"score > mean(5 prior scores)*3 + 0.02","histogram":"8x8x8 RGB normalized half-L1","luma":"mean abs Rec709 delta / 0.25, capped 1","combined":"max(histogram,luma)","min_gap_s":gap,"refine":refine,"kind_hints":hints,"spatial":a.get("spatial"),"content_guard":"histogram change>0.02 or mean luma change>0.02 before hard/flash"},"count":values.len(),"cuts":values,"next_steps":next_steps,"timeline_clip_boundaries":boundaries,"notes":notes});
     if a.get("return_scores")
         .and_then(Value::as_bool)
         .unwrap_or(false)

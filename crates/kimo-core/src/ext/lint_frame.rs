@@ -241,6 +241,8 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let mut static_start = None;
     let mut total = 0usize;
     let mut omitted = 0usize;
+    let hint_opts = crate::perception::fix_hint::Opts { min_cap_1080: used["min_cap_px"].as_f64().unwrap_or(0.), upscale_limit: used["upscale_ratio"].as_f64().unwrap_or(0.) };
+    let mut hint_steps: Vec<Value> = vec![];
     for (i, t) in ts.iter().enumerate() {
         crate::guard::check();
         let start = std::time::Instant::now();
@@ -348,7 +350,8 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
             prev = Some(img);
         }
         let mut frow = json!({"time":t,"findings":[]});
-        for f in findings {
+        for mut f in findings {
+            crate::perception::fix_hint::lint(&ss.project, &mut f, &hint_opts, &mut hint_steps);
             let code = f["code"].as_str().unwrap().to_string();
             *counts.entry(code).or_default() += 1;
             if total < max as usize {
@@ -413,7 +416,8 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
             while hi + 1 < hits.len() && hits[hi + 1].0 == hits[hi].0 + 1 {
                 hi += 1
             }
-            intervals.push(json!({"code":code,"t0":ts[hits[lo].0],"t1":ts[hits[hi].0],"layers":[hits[lo].1["layer"].clone()],"worst":hits[lo..=hi].iter().max_by(|a,b|severity_score(&a.1).total_cmp(&severity_score(&b.1))).unwrap().1["measured"].clone(),"note":"sampled hits only"}));
+            let worst = hits[lo..=hi].iter().max_by(|a,b|severity_score(&a.1).total_cmp(&severity_score(&b.1))).unwrap();
+            intervals.push(json!({"code":code,"t0":ts[hits[lo].0],"t1":ts[hits[hi].0],"layers":[hits[lo].1["layer"].clone()],"worst":worst.1["measured"].clone(),"fix_hint":worst.1["fix_hint"].clone(),"note":"sampled hits only"}));
             lo = hi + 1;
         }
     }
@@ -429,7 +433,7 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
         }
     }
     Ok(
-        json!({"frames":frames,"intervals":intervals,"summary":{"counts_by_code":counts,"ignored_by_tag":suppressed.len(),"suppressed":suppressed,"frames_checked":ts.len(),"omitted_findings":omitted},"params_used":used,"notes":["Advisory only, not a design certification. No edit, undo entry or export block.","Geometry is matrix-transformed source layer bounds, not effect-expanded ink. Fully masked visibility is not measured. Text uses static C2 ink, excluding shadow/glow/bg and animator deformation; contrast is a WCAG heuristic on background under that bbox, not certification. Overflow is canvas only, not own-box wrapping.","Static results cover sampled times only; audio presence does not establish speech or intentional holding."]}),
+        json!({"next_steps":crate::perception::fix_hint::next_steps(hint_steps),"frames":frames,"intervals":intervals,"summary":{"counts_by_code":counts,"ignored_by_tag":suppressed.len(),"suppressed":suppressed,"frames_checked":ts.len(),"omitted_findings":omitted},"params_used":used,"notes":["Advisory only, not a design certification. No edit, undo entry or export block.","Geometry is matrix-transformed source layer bounds, not effect-expanded ink. Fully masked visibility is not measured. Text uses static C2 ink, excluding shadow/glow/bg and animator deformation; contrast is a WCAG heuristic on background under that bbox, not certification. Overflow is canvas only, not own-box wrapping.","Static results cover sampled times only; audio presence does not establish speech or intentional holding."]}),
     )
 }
 fn severity_score(f: &Value) -> f64 {
@@ -458,7 +462,7 @@ fn static_interval(ss: &Session, t0: f64, t1: f64) -> Value {
                 && !c.audio.mute
                 && c.audio.volume.at(0.) > 0.
         });
-    json!({"code":"static_frame","t0":t0,"t1":t1,"layers":[],"worst":{"duration_s":t1-t0,"audio_present":audio},"severity":"info"})
+    json!({"code":"static_frame","t0":t0,"t1":t1,"layers":[],"worst":{"duration_s":t1-t0,"audio_present":audio},"severity":"info","fix_hint":crate::perception::fix_hint::none("a static stretch may be intended; decide whether to trim, add motion or keep it")})
 }
 pub fn commands() -> Vec<Command> {
     vec![Command{name:"lint_frame",mutates:false,description:"Read-only advisory frame lint, report-only, not a design certification. Initial geometry/static checks: out_of_bounds (source layer bounds, not ink), invisible_layer (sampled), low_res_upscale, static_frame. Never edits or blocks export. time OR times OR range {start,end,step default .5}, max120 samples. checks defaults to implemented checks. params echoes thresholds, overridable. Tags lint:allow_bleed and lint:ignore=<code> suppress with an explicit counted list. annotate default true writes boxed PNG paths and inline images. Text checks: text_contrast (WCAG heuristic), min_text_size (capital-H ink), safe_zone (platform estimates), text_overflow (canvas only, not own-box overflow).",schema:obj(vec![("time",n("timeline seconds")),("times",json!({"type":"array","items":{"type":"number"}})),("range",json!({"type":"object"})),("checks",json!({"type":"array","items":{"type":"string"}})),("params",json!({"type":"object"})),("delivery_height",n("pixels, default canvas height")),("profile",s("safe margins profile, default title_safe")),("annotate",json!({"type":"boolean"})),("max_findings",n("default200"))],&[]),run}]
