@@ -9,3 +9,4 @@ pub mod vad;
 pub mod timebase;
 pub mod audio_raw;
 pub mod fix_hint;
+pub mod tryhint;

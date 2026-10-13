@@ -200,7 +200,7 @@ fn record_undo(ss: &mut Session, before: Project, name: &str, args: &Value) {
 /// project size check. Returns the tool result and, when a history entry is due (mutating, ok, not no_history), the `before` snapshot for `record_undo`.
 fn run_core(ss: &mut Session, name: &str, args: &Value) -> Result<(Value, Option<Project>), String> {
     let t = reg_tables(); let c = t.1.get(name).map(|&i| &t.0[i]).ok_or(format!("unknown tool '{name}'"))?;
-    let l = crate::guard::limits(); let limit_args; let sanitize_limits = if name=="set_limits" {limit_args={let mut q=l.clone();q.max_num=u64::MAX as f64;q}; &limit_args} else {l}; crate::guard::sanitize(args, sanitize_limits, 0).map_err(|e| format!("rejected by sandbox: {e}"))?;
+    let l = crate::guard::limits(); let limit_args; let sanitize_limits = if name=="set_limits" {limit_args={let mut q=l.clone();q.max_num=u64::MAX as f64;q}; &limit_args} else {l}; crate::guard::sanitize(args, sanitize_limits, 0).map_err(|e| { let m = format!("rejected by sandbox: {e}"); if matches!(name, "describe_frame" | "diff_frames" | "detect_cuts" | "lint_frame") { crate::perception::tryhint::with_try(name, m) } else { m } })?;
     // read-only tools skip the whole-project snapshot (it cost O(project) on every call); mutating tools still snapshot for undo and rollback
     // KIMO_AUDIT_READONLY=1: a tool marked read-only must leave the project unchanged (undo, redo, checkpoint and restore manage history themselves and are allowed).
     static AUDIT: std::sync::OnceLock<bool> = std::sync::OnceLock::new(); let audit = !c.mutates && *AUDIT.get_or_init(|| std::env::var("KIMO_AUDIT_READONLY").map(|v| v == "1").unwrap_or(false)) && !matches!(name, "undo" | "redo" | "checkpoint" | "checkpoint_delete" | "restore");
