@@ -80,8 +80,7 @@ use serde_json::json;
 fn sample_api_roundtrip_formats_peaks_mixer_collect_limits() {
     let dir = std::env::temp_dir().join(format!("kimo-raw-api-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    std::env::set_var("KIMO_ASSET_DIR", &dir);
-    let mut s = Session::new();
+    let mut s = Session::new(); s.asset_dir = Some(dir.clone());
     let planes = vec![
         (0..96)
             .map(|i| if i % 7 == 0 { 1.25f32 } else { i as f32 / 128. })
@@ -227,7 +226,6 @@ fn sample_api_roundtrip_formats_peaks_mixer_collect_limits() {
     let e = dispatch_ex(&mut s, "read_samples", &json!({"target":target})).unwrap_err();
     assert!(e.message.contains("max_samples") && e.message.contains("set_limits"));
     std::fs::remove_dir_all(dir).unwrap();
-    std::env::remove_var("KIMO_ASSET_DIR");
 }
 #[test]
 fn analytic_response_matches_native_and_effect_defaults() {
@@ -255,8 +253,7 @@ fn analytic_response_matches_native_and_effect_defaults() {
 fn keyed_coefficients_rendered_fft_response_and_overflow_rejection() {
     let dir = std::env::temp_dir().join(format!("kimo-raw-key-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    std::env::set_var("KIMO_ASSET_DIR", &dir);
-    let mut s = Session::new();
+    let mut s = Session::new(); s.asset_dir = Some(dir.clone());
     for hz in [100., 1000., 10000.] {
         let x: Vec<f32> = (0..48000)
             .map(|i| 0.1 * (std::f64::consts::TAU * hz * i as f64 / 48000.).sin() as f32)
@@ -351,7 +348,6 @@ fn keyed_coefficients_rendered_fft_response_and_overflow_rejection() {
     )
     .is_err());
     std::fs::remove_dir_all(dir).unwrap();
-    std::env::remove_var("KIMO_ASSET_DIR");
 }
 #[test]
 fn export_quantization_symmetric_dc_and_zero_crossing() {
@@ -428,8 +424,7 @@ fn export_quantization_symmetric_dc_and_zero_crossing() {
 fn api_fuzz_repeat_threads_native_mono_layout_and_errors() {
     let dir = std::env::temp_dir().join(format!("kimo-raw-edge-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    std::env::set_var("KIMO_ASSET_DIR", &dir);
-    let mut s = Session::new();
+    let mut s = Session::new(); s.asset_dir = Some(dir.clone());
     let a = dispatch(
         &mut s,
         "import_samples",
@@ -499,14 +494,12 @@ fn api_fuzz_repeat_threads_native_mono_layout_and_errors() {
     .unwrap_err();
     assert!(e.message.contains("available decoded channels"));
     std::fs::remove_dir_all(dir).unwrap();
-    std::env::remove_var("KIMO_ASSET_DIR");
 }
 #[test]
 fn same_pcm_different_shape_distinct_asset_key_preserved_native() {
     let dir = std::env::temp_dir().join(format!("kimo-raw-shape-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    std::env::set_var("KIMO_ASSET_DIR", &dir);
-    let mut s = Session::new();
+    let mut s = Session::new(); s.asset_dir = Some(dir.clone());
     let a = dispatch(
         &mut s,
         "import_samples",
@@ -556,5 +549,4 @@ fn same_pcm_different_shape_distinct_asset_key_preserved_native() {
     ];
     assert_eq!(read["data"], json!(expected));
     std::fs::remove_dir_all(dir).unwrap();
-    std::env::remove_var("KIMO_ASSET_DIR");
 }

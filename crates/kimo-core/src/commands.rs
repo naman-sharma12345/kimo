@@ -27,8 +27,10 @@ pub struct Session { pub resource_limits: crate::resource_limits::Limits, pub me
     /// Snapshot-size estimate for the history cap, refreshed every 16 mutations instead of serialising the project on every call.
     pub snap_sz: usize, pub snap_n: u32, pub snap_clips: usize,
     /// Build that first saved the loaded/current project (kept across re-saves); None until a save or a load sets it.
-    pub created_with: Option<serde_json::Value> }
-impl Session { pub fn new() -> Self { Session { resource_limits: crate::resource_limits::Limits::startup(), media: vec![], project: Project::default(), undo: vec![], redo: vec![], cache: render::Cache::new(), fcache: crate::framecache::FrameCache::new(crate::framecache::default_cap()), undo_labels: vec![], redo_labels: vec![], checkpoints: vec![], snap_sz: 1 << 20, snap_n: 0, snap_clips: 0, created_with: None, stats: Default::default() } } }
+    pub created_with: Option<serde_json::Value>,
+    /// Explicit asset storage root for projects without a base_dir; takes the place of the process-wide KIMO_ASSET_DIR for this session only (tests and embedders set it instead of mutating the environment).
+    pub asset_dir: Option<std::path::PathBuf> }
+impl Session { pub fn new() -> Self { Session { resource_limits: crate::resource_limits::Limits::startup(), media: vec![], project: Project::default(), undo: vec![], redo: vec![], cache: render::Cache::new(), fcache: crate::framecache::FrameCache::new(crate::framecache::default_cap()), undo_labels: vec![], redo_labels: vec![], checkpoints: vec![], snap_sz: 1 << 20, snap_n: 0, snap_clips: 0, created_with: None, stats: Default::default(), asset_dir: None } } }
 const MAX_CHECKPOINTS: usize = 24;
 
 #[derive(Clone)]

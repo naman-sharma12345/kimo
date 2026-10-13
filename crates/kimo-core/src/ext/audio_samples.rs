@@ -436,11 +436,11 @@ fn store_audio(
     channels: usize,
     bytes: &[u8],
 ) -> Result<(std::path::PathBuf, &'static str), String> {
-    let dir = crate::assets::store_dir(&s.project, "audio")?.join(format!("{rate}hz-{channels}ch"));
+    let dir = crate::assets::store_dir_in(&s.project, s.asset_dir.as_deref(), "audio")?.join(format!("{rate}hz-{channels}ch"));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let rule = if s.project.base_dir.is_some() {
         "project"
-    } else if std::env::var_os("KIMO_ASSET_DIR").is_some() {
+    } else if s.asset_dir.is_some() || std::env::var_os("KIMO_ASSET_DIR").is_some() {
         "env"
     } else {
         "user_data"

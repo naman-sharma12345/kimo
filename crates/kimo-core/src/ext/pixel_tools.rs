@@ -82,7 +82,7 @@ fn import(ss: &mut Session, a: &Value) -> Result<Value, String> {
     }
     let bytes = pixels::encode(&f)?;
     let sha = crate::deps::sha256_hex(&bytes);
-    let dir = crate::assets::store_dir(&ss.project,"pixels")?;
+    let dir = crate::assets::store_dir_in(&ss.project,ss.asset_dir.as_deref(),"pixels")?;
     let path = dir.join(format!("{sha}.kimopx"));
     if path.exists() {
         if std::fs::read(&path).map_err(|e| e.to_string())? != bytes {
