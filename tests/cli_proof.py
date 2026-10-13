@@ -4,7 +4,7 @@
 import sys, os, json, glob, shutil, subprocess, hashlib
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'examples')); from mcp_client import Kimo
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
-CLI = os.environ.get('KIMO_CLI', os.path.join(ROOT, 'target/release/kimo'))
+CLI = os.environ.get('KIMO_CLI') or (os.path.join(os.path.dirname(os.path.abspath(os.environ['KIMO_BIN'])), 'kimo') if os.environ.get('KIMO_BIN') else os.path.join(ROOT, 'target/release/kimo'))   # the CLI sits next to KIMO_BIN
 D = '/tmp/cli_proof'; shutil.rmtree(D, ignore_errors=True); os.makedirs(D)
 def sh(*a, stdin=subprocess.DEVNULL, env=None):
     e = dict(os.environ); e.update(env or {}); r = subprocess.run([CLI, *a], stdin=stdin, capture_output=True, text=True, env=e, timeout=300); return r

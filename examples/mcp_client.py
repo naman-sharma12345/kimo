@@ -8,7 +8,7 @@
 - Every call has a timeout (default 600 s, per-call `timeout=`); on timeout the request is cancelled (notifications/cancelled) and KimoTimeout is raised.
   After a timeout or process exit the client is closed; make a new Kimo().
 """
-import json, queue, subprocess, threading
+import json, os, queue, subprocess, threading
 
 
 class KimoError(RuntimeError):
@@ -39,7 +39,8 @@ class KimoTimeout(TimeoutError):
 
 
 class Kimo:
-    def __init__(self, exe="target/release/kimo-mcp", timeout=600.0):
+    def __init__(self, exe=None, timeout=600.0):
+        exe = exe or os.environ.get("KIMO_BIN") or "target/release/kimo-mcp"   # KIMO_BIN lets proofs run against a binary built in another target dir
         self.timeout = timeout; self.i = 0; self.notifications = []; self.closed = False
         self.p = subprocess.Popen([exe], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, stderr=None)
         self._q = queue.Queue(); self._t = threading.Thread(target=self._pump, daemon=True); self._t.start()
