@@ -111,3 +111,17 @@ fn one(extra: Value) -> serde_json::Value { let mut o = json!({"cx":100.5,"cy":1
     let f = frame(&s2, 0.0); let mx = (0..256 * 256).map(|i| f[i * 4].max(f[i * 4 + 1]).max(f[i * 4 + 2])).fold(0.0f32, f32::max); let p8 = (mx * 255.0).round(); eprintln!("near core peak {p8} / 255 (230-240 wanted, never 255)");
     assert!((230.0..=240.0).contains(&p8), "near core peak {p8}");
 }
+#[test] fn dither_pattern_changes_every_frame_but_a_frame_is_repeatable() {
+    // QA found adjacent frames bit-equal (a locked screen-door). The seed now carries the frame time.
+    let grad = json!({"type":"gradient","c1":[0.20,0.20,0.20],"c2":[0.24,0.24,0.24]});
+    let (mut s, t) = base_wh(256, 256); dispatch(&mut s, "bg_orbs", &json!({"track":t,"vignette":0,"grain":0,"ceiling":1,"duration":5,"apply":true,"dither":1.0,"seed":5,"base":grad,"orbs":[{"cx":-9000,"cy":0,"radius":1}]})).unwrap();
+    let (a, a2, b, c) = (frame(&s, 0.0), frame(&s, 0.0), frame(&s, 0.01), frame(&s, 0.02)); assert_eq!(bits(&a), bits(&a2), "same frame repeats bit-equal");
+    let (mut s0, t0) = base_wh(256, 256); dispatch(&mut s0, "bg_orbs", &json!({"track":t0,"vignette":0,"grain":0,"ceiling":1,"duration":5,"apply":true,"dither":0,"base":grad,"orbs":[{"cx":-9000,"cy":0,"radius":1}]})).unwrap(); let plain = frame(&s0, 0.0);
+    let res = |f: &[f32]| -> Vec<f64> { (0..256 * 256).map(|i| (f[i * 4] - plain[i * 4]) as f64).collect() };
+    let corr = |x: &[f64], y: &[f64]| { let n = x.len() as f64; let (mx, my) = (x.iter().sum::<f64>() / n, y.iter().sum::<f64>() / n); let (mut sxy, mut sxx, mut syy) = (0.0, 0.0, 0.0); for i in 0..x.len() { sxy += (x[i] - mx) * (y[i] - my); sxx += (x[i] - mx).powi(2); syy += (y[i] - my).powi(2); } sxy / (sxx * syy).sqrt().max(1e-12) };
+    let (ra, rb, rc) = (res(&a), res(&b), res(&c)); let (c1, c2) = (corr(&ra, &rb), corr(&rb, &rc)); eprintln!("dither residual correlation frame0-frame1 {c1:.3}, frame1-frame2 {c2:.3}");
+    assert!(c1.abs() < 0.05 && c2.abs() < 0.05, "adjacent frames must not share a pattern: {c1} {c2}");
+    // TPDF: zero mean, +-1 LSB peak, and triangular (P(|x| > 0.5 LSB) = 0.25, a uniform draw would give 0.5)
+    let lsb = 1.0 / 255.0; let mean = ra.iter().sum::<f64>() / ra.len() as f64 / lsb; let frac = ra.iter().filter(|v| v.abs() > 0.5 * lsb).count() as f64 / ra.len() as f64; let peak = ra.iter().fold(0.0f64, |m, v| m.max(v.abs())) / lsb; eprintln!("dither residual mean {mean:.4} LSB, peak {peak:.3} LSB, P(|x|>0.5 LSB) {frac:.3}");
+    assert!(mean.abs() < 0.03 && peak <= 1.001 && frac > 0.2 && frac < 0.3, "zero-mean triangular dither within 1 LSB: mean {mean} peak {peak} frac {frac}"); let diff = a.iter().zip(&b).enumerate().filter(|(i, (x, y))| i % 4 == 0 && x != y).count(); assert!(diff > 256 * 256 / 3, "adjacent frames differ in many pixels: {diff}");
+}
