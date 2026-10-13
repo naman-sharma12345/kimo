@@ -167,6 +167,19 @@ fn import(ss: &mut Session, a: &Value) -> Result<Value, String> {
         );
     }
     count(n, s.planes.len())?;
+    let native_rate = s.rate;
+    let (s, n) = if native_rate == 48000 {
+        (s, n)
+    } else {
+        let planes = s
+            .planes
+            .iter()
+            .map(|p| crate::dsp::resample::resample(p, native_rate, 48000))
+            .collect::<Result<Vec<_>, _>>()?;
+        let n = planes.first().map_or(0, |p| p.len());
+        count(n, planes.len())?;
+        (Samples { rate: 48000, planes }, n)
+    };
     let hash = crate::deps::sha256_hex(&audio_raw::bytes(&s));
     let wav = audio_raw::wav(&s)?;
     let (path, store) = store_audio(ss, &hash, s.rate, s.planes.len(), &wav)?;
@@ -200,7 +213,7 @@ fn import(ss: &mut Session, a: &Value) -> Result<Value, String> {
             id
         });
     Ok(
-        json!({"asset_id":id,"path":absolute,"rate":s.rate,"channels":s.planes.len(),"n_samples":n,"hash":hash,"duration_s":n as f64/s.rate as f64,"origin":"import_samples","store":store,"asset_key":format!("{}hz-{}ch/{hash}",s.rate,s.planes.len()),"decoded_equivalent":{"rate":48000,"channels":2,"bit_equal_roundtrip":s.rate==48000&&s.planes.len()==2},"conversion":if format=="base64_f64le"{"f64 rounded to f32"}else{"none"}}),
+        json!({"asset_id":id,"path":absolute,"rate":s.rate,"channels":s.planes.len(),"n_samples":n,"hash":hash,"duration_s":n as f64/s.rate as f64,"origin":"import_samples","source_info":{"native_rate":native_rate,"resampled_to":s.rate,"resampler":"kaiser windowed-sinc (dsp::resample)"},"store":store,"asset_key":format!("{}hz-{}ch/{hash}",s.rate,s.planes.len()),"decoded_equivalent":{"rate":48000,"channels":2,"bit_equal_roundtrip":s.rate==48000&&s.planes.len()==2},"conversion":if format=="base64_f64le"{"f64 rounded to f32"}else{"none"}}),
     )
 }
 fn parse_wav(b: &[u8]) -> Result<Samples, String> {
@@ -241,8 +254,9 @@ fn parse_wav(b: &[u8]) -> Result<Samples, String> {
     )
 }
 fn read(ss: &mut Session, a: &Value) -> Result<Value, String> {
-    if usize_arg(a, "rate", 48000)? != 48000 {
-        return Err("out_of_range: mixer rate is fixed 48000".into());
+    let out_rate = usize_arg(a, "rate", 48000)?;
+    if !(1000..=384000).contains(&out_rate) {
+        return Err("out_of_range: rate 1000..384000 required (the mixer itself runs at 48000)".into());
     }
     let target = a.get("target").and_then(Value::as_str).unwrap_or("mix");
     let default_stage = if target == "mix" || target.starts_with("track:") {
@@ -369,13 +383,21 @@ fn read(ss: &mut Session, a: &Value) -> Result<Value, String> {
             .map(|&c| (lo..hi).map(|i| pcm[i * 2 + c]).collect())
             .collect()
     };
+    let planes = if out_rate == 48000 {
+        planes
+    } else {
+        planes
+            .iter()
+            .map(|p: &Vec<f32>| crate::dsp::resample::resample(p, 48000, out_rate as u32))
+            .collect::<Result<Vec<_>, _>>()?
+    };
     let s = Samples {
-        rate: 48000,
+        rate: out_rate as u32,
         planes,
     };
     let bytes = audio_raw::bytes(&s);
     let hash = crate::deps::sha256_hex(&bytes);
-    let mut out = json!({"rate":48000,"channels":s.planes.len(),"channel_map":map,"n_samples":hi-lo,"start":st,"end":hi as f64/48000.,"stage":stage,"hash":hash,"clipped_count":s.planes.iter().flatten().filter(|v|v.abs()>1.).count(),"layout":"planar"});
+    let mut out = json!({"rate":out_rate,"channels":s.planes.len(),"channel_map":map,"n_samples":s.planes.first().map_or(0, |p| p.len()),"start":st,"end":hi as f64/48000.,"stage":stage,"hash":hash,"clipped_count":s.planes.iter().flatten().filter(|v|v.abs()>1.).count(),"layout":"planar"});
     if let Some(path) = target.strip_prefix("file:") {
         out["source_info"] =
             crate::audio::source_info(&ss.project.resolve(path)).map_err(|e| e.to_string())?;
@@ -426,7 +448,7 @@ fn read(ss: &mut Session, a: &Value) -> Result<Value, String> {
     Ok(out)
 }
 pub fn commands() -> Vec<Command> {
-    vec![Command{name:"read_samples",mutates:false,description:"Read planar f32 samples through the same strict decoder/mixer at fixed48000 stereo; no second decoder or resampler. target clip:<id> uses clip-local seconds, track:<id>/mix timeline, file:<path> source. stage source clears clip audio filters, post_filter before volume/pan, post_mix includes volume/pan/duck/limiter. Channel selector all|mono arithmetic mean|index|indices (decoded indices0,1). json <=4096 samples/ch, base64_f32le planar or file wav_f32/raw_f32le/npy; peaks min/max/RMS. Hash SHA256 canonical planar f32le, clipped_count informational, never clamps. Native source rate/channel metadata separately. f64 read not offered.",schema:obj(vec![("target",s("clip:<id>,track:<id>,mix,file:<path>")),("start",n("seconds")),("end",n("seconds")),("channels",json!({})),("stage",json!({"type":"string","enum":["source","post_filter","post_mix"]})),("rate",n("fixed48000")),("format",json!({"type":"string","enum":["json","base64_f32le","file"]})),("file_format",json!({"type":"string","enum":["wav_f32","raw_f32le","npy"]})),("peaks",json!({"type":"object"})),("max_samples",n("max frames per selected channel, total capped by limits"))],&[]),run:read},Command{name:"import_samples",mutates:true,description:"Import finite raw samples as hash-addressed file-backed float32 WAV audio asset, one undo step, collectable and usable by add_audio_clip. Planar API default, interleaved optional. JSON/f32le/s16le/f64le base64 or path WAVfloat32/rawf32/NPY; f64 rounds to f32, s16 divides32768. Never normalize/clamp. Rate1000..384000 stored native; existing mixer decodes fixed48000 stereo. Bit-equal import/read source roundtrip only48000 stereo. SHA256 planar f32le dedup. Project/env/user_data assets/audio storage, absolute path returned.",schema:obj(vec![("name",s("label")),("rate",n("1000..384000")),("channels",n("1..64")),("layout",json!({"type":"string","enum":["planar","interleaved"]})),("format",json!({"type":"string","enum":["json","base64_f32le","base64_s16le","base64_f64le","path"]})),("data",json!({})),("path",s("input file")),("normalize",json!({"type":"boolean"}))],&["rate","channels"]),run:import}]
+    vec![Command{name:"read_samples",mutates:false,description:"Read planar f32 samples through the same strict decoder/mixer at the mixer's 48000 stereo; no second decoder. Optional rate1000..384000 converts the result with a Kaiser windowed-sinc resampler (default 48000, n_samples is the converted count, hash is over the converted samples). target clip:<id> uses clip-local seconds, track:<id>/mix timeline, file:<path> source. stage source clears clip audio filters, post_filter before volume/pan, post_mix includes volume/pan/duck/limiter. Channel selector all|mono arithmetic mean|index|indices (decoded indices0,1). json <=4096 samples/ch, base64_f32le planar or file wav_f32/raw_f32le/npy; peaks min/max/RMS. Hash SHA256 canonical planar f32le, clipped_count informational, never clamps. Native source rate/channel metadata separately. f64 read not offered.",schema:obj(vec![("target",s("clip:<id>,track:<id>,mix,file:<path>")),("start",n("seconds")),("end",n("seconds")),("channels",json!({})),("stage",json!({"type":"string","enum":["source","post_filter","post_mix"]})),("rate",n("fixed48000")),("format",json!({"type":"string","enum":["json","base64_f32le","file"]})),("file_format",json!({"type":"string","enum":["wav_f32","raw_f32le","npy"]})),("peaks",json!({"type":"object"})),("max_samples",n("max frames per selected channel, total capped by limits"))],&[]),run:read},Command{name:"import_samples",mutates:true,description:"Import finite raw samples as hash-addressed file-backed float32 WAV audio asset, one undo step, collectable and usable by add_audio_clip. Planar API default, interleaved optional. JSON/f32le/s16le/f64le base64 or path WAVfloat32/rawf32/NPY; f64 rounds to f32, s16 divides32768. Never normalize/clamp. Rate1000..384000; a rate other than 48000 is converted to 48000 with a Kaiser windowed-sinc resampler and the asset is stored at 48000, the original rate is returned in source_info.native_rate. Bit-equal import/read source roundtrip only48000 stereo. SHA256 planar f32le dedup. Project/env/user_data assets/audio storage, absolute path returned.",schema:obj(vec![("name",s("label")),("rate",n("1000..384000")),("channels",n("1..64")),("layout",json!({"type":"string","enum":["planar","interleaved"]})),("format",json!({"type":"string","enum":["json","base64_f32le","base64_s16le","base64_f64le","path"]})),("data",json!({})),("path",s("input file")),("normalize",json!({"type":"boolean"}))],&["rate","channels"]),run:import}]
 }
 
 fn store_audio(

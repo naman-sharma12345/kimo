@@ -232,3 +232,4 @@ rust export_job_kill fast
 rust expansion_flag fast
 rust docs_call_budget fast
 rust preview_range fast
+rust dsp_v4 fast

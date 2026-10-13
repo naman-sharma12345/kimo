@@ -1,6 +1,7 @@
 //! kimo-core: project model, keyframes, command registry, CPU renderer.
 //! Every user-visible operation is a registered Command; the MCP server
 //! is generated from the registry, so nothing can exist without a tool.
+pub mod dsp;
 pub mod ext;
 pub mod deps;
 pub mod transcript;

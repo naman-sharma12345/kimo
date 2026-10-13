@@ -215,13 +215,15 @@ fn sample_api_roundtrip_formats_peaks_mixer_collect_limits() {
         .extension()
         .and_then(|e| e.to_str())
         == Some("wav")));
-    let e = dispatch_ex(
-        &mut s,
-        "read_samples",
-        &json!({"target":target,"rate":44100}),
-    )
-    .unwrap_err();
-    assert!(e.message.contains("mixer rate is fixed 48000"));
+    let r44 = dispatch(&mut s, "read_samples", &json!({"target":target,"rate":44100})).unwrap();
+    assert_eq!(r44["rate"], 44100);
+    let r48 = dispatch(&mut s, "read_samples", &json!({"target":target})).unwrap();
+    assert_eq!(r48["rate"], 48000);
+    assert_ne!(r44["hash"], r48["hash"]);
+    let again = dispatch(&mut s, "read_samples", &json!({"target":target,"rate":44100})).unwrap();
+    assert_eq!(again["hash"], r44["hash"], "resampled read is stable");
+    let e = dispatch_ex(&mut s, "read_samples", &json!({"target":target,"rate":999})).unwrap_err();
+    assert!(e.message.contains("out_of_range"));
     dispatch(&mut s, "set_limits", &json!({"max_samples":4})).unwrap();
     let e = dispatch_ex(&mut s, "read_samples", &json!({"target":target})).unwrap_err();
     assert!(e.message.contains("max_samples") && e.message.contains("set_limits"));
@@ -439,7 +441,8 @@ fn api_fuzz_repeat_threads_native_mono_layout_and_errors() {
         assert_eq!(r["rate"], 48000);
         assert_eq!(r["channels"], 2);
         assert_eq!(r["source_info"]["native_channels"], 1);
-        assert_eq!(r["source_info"]["native_rate"], 24000);
+        assert_eq!(r["source_info"]["native_rate"], 48000, "the stored asset is 48 kHz since V4-0b");
+        assert_eq!(a["source_info"]["native_rate"], 24000, "the import records the original rate");
         let r = serde_json::to_string(&r).unwrap();
         if let Some(f) = &first {
             assert_eq!(&r, f);
@@ -512,7 +515,10 @@ fn same_pcm_different_shape_distinct_asset_key_preserved_native() {
         &json!({"rate":44100,"channels":1,"data":[[0.1,0.2,0.3,0.4]]}),
     )
     .unwrap();
-    assert_eq!(a["hash"], b["hash"]);
+    let conv = kimo_core::dsp::resample::resample(&[0.1, 0.2, 0.3, 0.4], 44100, 48000).unwrap();
+    assert_ne!(a["hash"], b["hash"], "b is resampled to 48 kHz, so its samples (and hash) differ from a");
+    assert_eq!(b["source_info"]["native_rate"], 44100);
+    assert_eq!(b["rate"], 48000);
     assert_ne!(a["asset_key"], b["asset_key"]);
     assert_ne!(a["path"], b["path"]);
     assert_eq!(s.project.assets.len(), 2);
@@ -520,8 +526,8 @@ fn same_pcm_different_shape_distinct_asset_key_preserved_native() {
     assert_eq!(
         &raw[44..],
         &bytes(&Samples {
-            rate: 44100,
-            planes: vec![vec![0.1, 0.2, 0.3, 0.4]]
+            rate: 48000,
+            planes: vec![conv]
         })
     );
     let read = dispatch(
@@ -532,7 +538,7 @@ fn same_pcm_different_shape_distinct_asset_key_preserved_native() {
     .unwrap();
     assert_eq!(read["rate"], 48000);
     assert_eq!(read["channels"], 2);
-    assert_eq!(read["source_info"]["native_rate"], 44100);
+    assert_eq!(read["source_info"]["native_rate"], 48000);
     let decoded =
         kimo_core::perception::audio_targets::decode(&s, &json!({"path":b["path"]})).unwrap();
     let expected = vec![

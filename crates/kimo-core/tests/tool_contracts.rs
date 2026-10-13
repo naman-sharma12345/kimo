@@ -565,7 +565,7 @@ let before=pj(&s);let r=call(&mut s,"audio_speech_intervals",json!({"target":"mi
 }
 #[test]fn shader_resource_readonly_rows(){for tool in ["get_limits","set_limits"]{row(&[],tool,json!({}),|_,a,b|assert_eq!(a,b));}row(&[],"effect_describe",json!({"kind":"pixel_expr"}),|r,a,b|{assert_eq!(a,b);assert!(r["formula"].as_str().unwrap().contains("expression"));});row(&[],"read_pixels",json!({"time":0,"region":{"x":0,"y":0,"w":1,"h":1}}),|r,a,b|{assert_eq!(a,b);assert_eq!(r["count"],1);});}
 
-#[test]fn raw_audio_key_mutation_and_response_readonly_contracts(){let(s,_,_,_)=one_clip();row(&s,"audio_filter_response",json!({"coeffs":[1],"freqs":[100,1000]}),|r,b,a|{assert_eq!(a,b);assert_eq!(r["response"][0]["magnitude_db"],0.);});row(&s,"audio_effect_describe",json!({"kind":"biquad"}),|r,b,a|{assert_eq!(a,b);assert!(r["formula"].as_str().unwrap().contains("DF-II"));});row_err(&s,"read_samples",json!({"rate":44100}),Some("fixed 48000"));row_err(&s,"import_samples",json!({"rate":0,"channels":2,"data":[]}),Some("rate"));}
+#[test]fn raw_audio_key_mutation_and_response_readonly_contracts(){let(s,_,_,_)=one_clip();row(&s,"audio_filter_response",json!({"coeffs":[1],"freqs":[100,1000]}),|r,b,a|{assert_eq!(a,b);assert_eq!(r["response"][0]["magnitude_db"],0.);});row(&s,"audio_effect_describe",json!({"kind":"biquad"}),|r,b,a|{assert_eq!(a,b);assert!(r["formula"].as_str().unwrap().contains("DF-II"));});row_err(&s,"read_samples",json!({"rate":999}),Some("rate 1000..384000"));row_err(&s,"import_samples",json!({"rate":0,"channels":2,"data":[]}),Some("rate"));}
 
 #[test] fn transform_node_rows() {
     let (s, t1, _t2, c) = one_clip();
