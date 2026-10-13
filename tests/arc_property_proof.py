@@ -1,9 +1,9 @@
 """Step B property test: a seeded random sequence of 90 mixed mutating tools with undo/redo interleaved is run on the NEW binary and on a reference binary
-(env KIMO_ORACLE, built before the Arc<Clip> flip). After every step get_project JSON must be byte-identical. Writes only to /tmp.
+(env KIMO_ORACLE, built before the Arc<Clip> flip). After every step get_project JSON must be byte-identical. Writes only to a temp dir.
 Note: the oracle predates the central track lock (u9l) and later intentional behaviour changes, so this proof never sets locked=true or uses set_track_matte (dangling-ref clearing, u9i); those changes are pinned by tool_contracts and error_table."""
 import sys, os, json, random, hashlib; sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'examples')); from mcp_client import Kimo
 errs = {}
-new = Kimo(); old = Kimo(exe=os.environ.get('KIMO_ORACLE', '/tmp/kimo-oracle'))
+new = Kimo(); old = Kimo(exe=os.environ.get('KIMO_ORACLE', os.path.join(__import__('tempfile').gettempdir(), 'kimo-oracle')))
 def both(tool, **a):
     r = []
     for k in (new, old):
@@ -27,7 +27,7 @@ def frames(tag):
     for tm in (0.5, 1.7, 3.2):
         h = []
         for k, n in ((new, 'n'), (old, 'o')):
-            p = '/tmp/arcp_%s.png' % n
+            p = os.path.join(__import__('tempfile').gettempdir(), 'arcp_%s.png' % n)
             try: k.call('render_frame', time=tm, path=p); h.append(hashlib.sha1(open(p, 'rb').read()).hexdigest()[:10])
             except Exception as e: h.append('err')
         assert h[0] == h[1], 'render diverged at %s t=%s: %s' % (tag, tm, h)

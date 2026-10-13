@@ -1,4 +1,4 @@
-import sys; sys.path.insert(0,'/home/sandbox/kimo/examples')
+import sys; sys.path.insert(0,__import__('os').path.join(__import__('os').path.dirname(__import__('os').path.abspath(__file__)),'..','examples'))
 from mcp_client import Kimo
 k=Kimo(); k.call("project_set",width=1280,height=720,fps=25)
 def trk(): return k.call("add_track")["track_id"]

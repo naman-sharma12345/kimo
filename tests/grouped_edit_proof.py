@@ -1,5 +1,5 @@
 """A real edit built only through the grouped interface (kimo_search, kimo_describe, group calls). usage: grouped_edit_proof.py SRC.mp4 OUT.mp4"""
-import sys,json,time;sys.path.insert(0,'/home/sandbox/kino/examples');from mcp_client import Kimo
+import sys,json,time;sys.path.insert(0,__import__('os').path.join(__import__('os').path.dirname(__import__('os').path.abspath(__file__)),'..','examples'));from mcp_client import Kimo
 SRC=sys.argv[1] if len(sys.argv)>1 else '/downloads/city-49844-76b1f705.mp4'
 k=Kimo(); st={'search':0,'describe':0,'call':0,'errors':0}; errs=[]
 def find(q):

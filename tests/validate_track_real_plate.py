@@ -1,4 +1,4 @@
-import sys,time,json;sys.path.insert(0,'/home/sandbox/kimo/examples');from mcp_client import Kimo
+import sys,time,json;sys.path.insert(0,__import__('os').path.join(__import__('os').path.dirname(__import__('os').path.abspath(__file__)),'..','examples'));from mcp_client import Kimo
 k=Kimo();C=k.call;C('project_set',width=1280,height=720,fps=25)
 a=C('import_media',path=(sys.argv[1] if len(sys.argv)>1 else '/downloads/city-49844-76b1f705.mp4'))['asset_id'];t=C('add_track')['track_id'];c=C('add_clip',track_id=t,source_type='media',asset_id=a,start=0,duration=4,fit='cover')['clip_id']
 W,H=1280,720

@@ -1,5 +1,5 @@
 # export speed + correctness bench: full vs range export frame md5 at crf 0. Needs /tmp/export_bench_src.png (any 1920x1080 image) and, for the pre-change comparison, /tmp/ex_full.mp4. Writes only /tmp.
-import sys,time,subprocess;sys.path.insert(0,'/home/sandbox/kimo/examples');from mcp_client import Kimo
+import sys,time,subprocess;sys.path.insert(0,__import__('os').path.join(__import__('os').path.dirname(__import__('os').path.abspath(__file__)),'..','examples'));from mcp_client import Kimo
 k=Kimo();C=k.call;C('project_set',width=1920,height=1080,fps=30)
 bg=C('import_media',path='/tmp/export_bench_src.png')['asset_id']
 t0=C('add_track')['track_id'];b=C('add_clip',track_id=t0,source_type='media',asset_id=bg,start=0,duration=4)['clip_id']

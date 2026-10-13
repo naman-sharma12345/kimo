@@ -1,7 +1,7 @@
 """G-a/G-b proof: history is bound to the project bytes (project_sha), saves are atomic (no .tmp left), a save without history removes a stale .history,
-history_steps=0 keeps checkpoints and zero undo steps, and the project file is byte-identical to the reference binary (KIMO_ORACLE) output. /tmp only."""
+history_steps=0 keeps checkpoints and zero undo steps, and the project file is byte-identical to the reference binary (KIMO_ORACLE) output. Scratch lives in a temp dir."""
 import sys, os, json, glob, shutil; sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'examples')); from mcp_client import Kimo
-D = '/tmp/hbind'; shutil.rmtree(D, ignore_errors=True); os.makedirs(D); P = D + '/a.kimo'
+D = __import__('tempfile').mkdtemp(prefix='kimo-hbind-'); P = D + '/a.kimo'
 def mk(exe=None):
     k = Kimo(exe=exe) if exe else Kimo(); c = k.call; c('project_set', width=320, height=180, fps=25); t = c('add_track')['track_id']
     for i in range(4): c('add_shape', track_id=t, shape='rect', width=10 + i, height=10, fill=[1, 1, 1, 1], start=i, duration=1)
@@ -24,7 +24,7 @@ c('save_project', path=P, with_history=True); r = c2('load_project', path=P, wit
 r = c('save_project', path=P, with_history=True, history_steps=0); print('steps=0:', r); assert r['undo_steps'] == 0 and r['checkpoints'] == 1
 r = c2('load_project', path=P, with_history=True); assert r['undo_steps'] == 0 and r['checkpoints'] == 1, r
 # 5: project bytes identical to reference binary
-ex = os.environ.get('KIMO_ORACLE', '/tmp/kimo-oracle')
+ex = os.environ.get('KIMO_ORACLE', os.path.join(__import__('tempfile').gettempdir(), 'kimo-oracle'))
 if os.path.exists(ex):
     ka, ca, _ = mk(ex); kb, cb, _ = mk(); ca('save_project', path=D + '/ref.kimo'); cb('save_project', path=D + '/new.kimo')
     assert open(D + '/ref.kimo', 'rb').read() == open(D + '/new.kimo', 'rb').read(), 'project bytes differ from reference'; print('project bytes identical to reference binary')

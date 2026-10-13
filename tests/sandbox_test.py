@@ -1,4 +1,4 @@
-import sys,os,time,subprocess,json; sys.path.insert(0,'/home/sandbox/kimo/examples')
+import sys,os,time,subprocess,json; sys.path.insert(0,__import__('os').path.join(__import__('os').path.dirname(__import__('os').path.abspath(__file__)),'..','examples'))
 from mcp_client import Kimo
 def attempt(k,tool,**a):
     try: r=k.rpc("tools/call",{"name":tool,"arguments":a}); return r["isError"], r["content"][0]["text"][:140]
