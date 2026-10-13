@@ -502,11 +502,11 @@ fn ann_scene(w: u32, h: u32, bg: f64) -> Session {
 fn ann_lint(s: &mut Session, annotate: bool) -> Value { c(s, "lint_frame", json!({"time":1,"checks":["safe_zone"],"profile":"title_safe","annotate":annotate})) }
 #[test]
 fn annotation_stroke_follows_the_formula_at_three_sizes() {
-    for (w, h, want) in [(256u32, 256u32, 2i64), (480, 270, 2), (1920, 1080, 7)] {
+    for (w, h, want) in [(256u32, 256u32, 2i64), (480, 270, 2), (1920, 1080, 2)] {
         let mut s = ann_scene(w, h, 0.0);
         let r = ann_lint(&mut s, true);
         let a = &r["frames"][0]["annotation"];
-        assert_eq!(a["stroke_px"], want, "{w}x{h}: max(2, round(min(w,h)/160))");
+        assert_eq!(a["stroke_px"], want, "{w}x{h}: max(2, round(0.25u)), u = min(w,h)/135");
     }
 }
 #[test]
@@ -537,4 +537,30 @@ fn annotation_never_changes_the_findings() {
     let (on, off) = (ann_lint(&mut s, true), ann_lint(&mut s, false));
     assert_eq!(on["frames"][0]["findings"], off["frames"][0]["findings"]);
     assert!(off["frames"][0]["annotation"].is_null());
+}
+#[test]
+fn chip_to_coloured_stroke_gap_is_exactly_one_u_on_every_chip_of_a_multi_chip_frame() {
+    // Naman 4:14: colour-to-colour 8 px at 1080p (1u): chip fill edge to the coloured stroke's outer edge, uniform across all chips of one frame (3 findings, 3 chips)
+    let (w, h) = (1920u32, 1080u32);
+    let mut s = Session::new();
+    c(&mut s, "project_set", json!({"width":w,"height":h,"fps":24}));
+    let t = c(&mut s, "add_track", json!({}))["track_id"].as_str().unwrap().to_string();
+    c(&mut s, "add_clip", json!({"track_id":t,"source_type":"gradient","color":[0.0,0.0,0.0],"color2":[0.0,0.0,0.0],"start":0,"duration":6}));
+    for (i, y) in [-330.0, 0.0, 330.0].iter().enumerate() {
+        let t2 = c(&mut s, "add_track", json!({}))["track_id"].as_str().unwrap().to_string();
+        let id = c(&mut s, "add_text", json!({"track_id":t2,"text":format!("Edge {i}"),"start":0,"duration":6,"size":(h as f64) / 8.0,"color":[0.5,0.5,0.5]}))["clip_id"].as_str().unwrap().to_string();
+        c(&mut s, "set_property", json!({"clip_id":id,"property":"x","value":(w as f64) * 0.42}));
+        c(&mut s, "set_property", json!({"clip_id":id,"property":"y","value":*y}));
+    }
+    let r = ann_lint(&mut s, true); let a = &r["frames"][0]["annotation"];
+    let (chips, boxes, sp) = (a["chips"].as_array().unwrap(), a["boxes"].as_array().unwrap(), a["stroke_px"].as_f64().unwrap());
+    assert!(chips.len() >= 3, "multi-chip frame needs >= 3 chips, got {}", chips.len());
+    let rc = |v: &Value| -> Vec<f64> { v["rect"].as_array().unwrap().iter().map(|x| x.as_f64().unwrap()).collect() };
+    let mut gaps = vec![];
+    for n in 0..3 {
+        let (c0, b0) = (rc(&chips[n]), rc(&boxes[n])); let e = [b0[0] - sp, b0[1] - sp, b0[2] + 2.0 * sp, b0[3] + 2.0 * sp];
+        let g = if c0[1] + c0[3] <= e[1] { e[1] - (c0[1] + c0[3]) } else if c0[1] >= e[1] + e[3] { c0[1] - (e[1] + e[3]) } else if c0[0] + c0[2] <= e[0] { e[0] - (c0[0] + c0[2]) } else { c0[0] - (e[0] + e[2]) };
+        gaps.push(g);
+    }
+    assert!(gaps.iter().all(|g| (*g - 8.0).abs() < 1e-9), "chip fill to coloured stroke gaps {gaps:?} must all be exactly 8 px at 1080p");
 }

@@ -25,7 +25,7 @@ fn with_dim(dim: f64, feather: f64) -> (Session, Vec<f32>, Vec<f32>, Value) {
 fn inside_untouched_outside_dimmed() {
     let (_s, plain, f, _) = with_dim(0.5, 0.0);
     for (x, y) in [(110, 110), (128, 128), (150, 140)] { for ch in 0..3 { assert_eq!(px(&plain, x, y, ch), px(&f, x, y, ch), "inside ({x},{y}) ch{ch}"); } }
-    for (x, y) in [(10, 10), (240, 30), (30, 200), (200, 240)] { for ch in 0..3 { let want = px(&plain, x, y, ch) * 0.5; assert!((px(&f, x, y, ch) - want).abs() <= 1.0 / 255.0, "outside ({x},{y}) ch{ch}: {} vs {want}", px(&f, x, y, ch)); } }
+    for (x, y) in [(10, 10), (240, 30), (30, 200), (200, 240)] { for ch in 0..3 { let tint = [0.02f32, 0.03, 0.09][ch]; let want = px(&plain, x, y, ch) * 0.5 + 0.5 * tint; assert!((px(&f, x, y, ch) - want).abs() <= 1.0 / 255.0, "outside ({x},{y}) ch{ch}: {} vs {want}", px(&f, x, y, ch)); } }
 }
 #[test]
 fn dim_zero_is_bit_identical() {
@@ -42,7 +42,22 @@ fn feather_ramp_monotonic_and_symmetric() {
     let right: Vec<f32> = (134..=186).map(dark).collect();
     for w in right.windows(2) { assert!(w[1] >= w[0] - 1e-4, "right ramp must rise monotonically out of the hole: {w:?}"); }
     for d in 0..24 { let (l, r) = (dark(95 - d), dark(160 + d)); assert!((l - r).abs() < 0.02, "asymmetric at offset {d}: {l} vs {r}"); }
-    assert!(dark(60) > 0.97 && dark(128) < 0.03);
+    // the dim layer is the dark blue-shifted tint (0.02, 0.03, 0.09), so full darkness is 1 - tint/base, not 1
+    assert!(dark(60) > 0.9 && dark(128) < 0.03);
+}
+#[test]
+fn feather_param_is_the_10_90_ramp_width_with_a_clean_profile_and_a_bit_equal_hole() {
+    // premium spec (the 2.5% step cap holds for ramps >= 38 px: smootherstep peak slope is 0.951 / ramp per px): feather_px = 10-90% ramp width in px, smootherstep, ramp grows outward only, max adjacent step <= 2.5%
+    let (_s, plain, f, _) = with_dim(1.0, 40.0);
+    let tint = 0.02f32;
+    let cov = |x: usize| (px(&plain, x, 128, 0) - px(&f, x, 128, 0)) / (px(&plain, x, 128, 0) - tint).max(1e-6); // 0 in the hole, 1 far outside
+    let xs: Vec<usize> = (8..=96).rev().collect(); // walking left from the hole edge at x=96
+    let at = |q: f32| xs.iter().position(|&x| cov(x) >= q).map(|i| xs[i] as f32);
+    let w = at(0.1).unwrap() - at(0.9).unwrap();
+    assert!((w.abs() - 40.0).abs() <= 1.0, "10-90 ramp width {w} px must equal feather_px 40 within 1 px");
+    let max_step = xs.windows(2).map(|p| (cov(p[1]) - cov(p[0])).abs()).fold(0.0f32, f32::max);
+    assert!(max_step <= 0.025, "max adjacent step {max_step} must be <= 2.5%");
+    for x in 96..160 { assert_eq!(px(&plain, x, 128, 0), px(&f, x, 128, 0), "hole pixel x={x} must be bit-equal (the ramp never enters the hole)"); }
 }
 #[test]
 fn box_clipped_to_canvas_and_typed_errors() {

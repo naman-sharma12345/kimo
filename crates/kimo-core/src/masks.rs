@@ -42,7 +42,7 @@ pub const MODES: &[&str] = &["add", "subtract", "intersect", "xor", "lighten", "
 
 pub fn defaults(kind: &str) -> Vec<(&'static str, f64)> {
     match kind {
-        "rect" => vec![("cx", 0.5), ("cy", 0.5), ("w", 0.5), ("h", 0.5), ("rot", 0.0), ("round", 0.0)],
+        "rect" => vec![("cx", 0.5), ("cy", 0.5), ("w", 0.5), ("h", 0.5), ("rot", 0.0), ("round", 0.0), ("ramp", 0.0)],
         "ellipse" => vec![("cx", 0.5), ("cy", 0.5), ("w", 0.5), ("h", 0.5), ("rot", 0.0)],
         "linear" => vec![("angle", 0.0), ("pos", 0.5), ("soft", 0.1)],
         "radial" => vec![("cx", 0.5), ("cy", 0.5), ("r", 0.3), ("soft", 0.2)],
@@ -253,10 +253,10 @@ fn raw(l: &MaskLayer, f: &Frame, t: f64, ctx: &Ctx) -> Vec<f32> {
     let (w, h) = (f.w, f.h); let (wf, hf) = (w as f32, h as f32); let mut c = vec![0f32; w * h];
     match l.kind.as_str() {
         "rect" | "ellipse" => { let (cx, cy, mw, mh, rot) = (g(l, "cx", 0.5, t) * wf, g(l, "cy", 0.5, t) * hf, g(l, "w", 0.5, t) * wf / 2.0, g(l, "h", 0.5, t) * hf / 2.0, g(l, "rot", 0.0, t).to_radians());
-            let rr = g(l, "round", 0.0, t).clamp(0.0, 1.0) * mw.min(mh); let (s, co) = (rot.sin(), rot.cos()); let ell = l.kind == "ellipse";
+            let rr = g(l, "round", 0.0, t).clamp(0.0, 1.0) * mw.min(mh); let (s, co) = (rot.sin(), rot.cos()); let ell = l.kind == "ellipse"; let ramp = g(l, "ramp", 0.0, t); let wspan = (ramp / 0.5071).max(1e-3); // ramp = 10-90% width in canvas px, smootherstep profile, entirely outside the shape (smootherstep 10%..90% spans 0.5071 of its support)
             for y in 0..h { for x in 0..w { let (px, py) = (x as f32 + 0.5 - cx, y as f32 + 0.5 - cy); let (ux, uy) = (px * co + py * s, -px * s + py * co);
                 let d = if ell { let k = ((ux / mw.max(0.5)).powi(2) + (uy / mh.max(0.5)).powi(2)).sqrt(); (k - 1.0) * mw.min(mh) } else { let (qx, qy) = (ux.abs() - (mw - rr), uy.abs() - (mh - rr)); (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - rr };
-                c[y * w + x] = (0.5 - d).clamp(0.0, 1.0); } } }
+                c[y * w + x] = if ramp > 0.0 { let tt = (1.0 - d / wspan).clamp(0.0, 1.0); tt * tt * tt * (tt * (tt * 6.0 - 15.0) + 10.0) } else { (0.5 - d).clamp(0.0, 1.0) }; } } }
         "path" => { let leg = g(l, "legacy", 0.0, t) > 0.5; let pts = path_at(l, t); c = if leg { raster_path_legacy(&pts, l.closed, w, h) } else { raster_path(&pts, l.closed, w, h) };
             if !leg && pts.iter().any(|p| p.f > 0.0) { c = variable_feather(&pts, l.closed, &c, w, h, 0.0, h as f32 / 720.0); } }
         "linear" => { let (a, pos, soft) = (g(l, "angle", 0.0, t).to_radians(), g(l, "pos", 0.5, t), g(l, "soft", 0.1, t).max(1e-4)); let (dx, dy) = (a.cos(), a.sin()); let ext = (wf * dx.abs() + hf * dy.abs()).max(1.0);

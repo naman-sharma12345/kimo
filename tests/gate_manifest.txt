@@ -251,3 +251,4 @@ rust open_path_stroke fast
 rust blur_gaussian fast
 rust shoulder fast
 rust easing_presets fast
+py visual_baseline.py helper # visual tier: measured baseline table (callout, lint chips, spotlight) vs the premium spec, 1080p frames + 4x crops; needs a built kimo-mcp, ffmpeg, numpy; writes only to a temp dir, not a pass/fail proof
