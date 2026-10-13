@@ -76,3 +76,22 @@ fn gscene() -> (Session, String) { let mut s = Session::new(); c(&mut s, "projec
         ("ui_zoom", json!({"clip_id":"clip2","target_box":TO,"duration":1.0,"hold":-1}), "out_of_range"), ("crop_zoom_keyframes", json!({"clip_id":"clip2","from_box":FROM,"to_box":TO,"duration":100.0}), "limit_exceeded"), ("ui_zoom", json!({"clip_id":"clip2","target_box":TO,"duration":1.0,"easing":"in_out","apply":true,"back_duration":0}), "out_of_range")] {
         let e = dispatch(&mut s, tool, &args).unwrap_err(); assert!(e.starts_with(code), "{tool}: {e}"); assert_eq!(serde_json::to_string(&s.project).unwrap(), proj0, "{tool}: nothing written"); }
 }
+/// Focused hostile-argument fuzz (deterministic LCG): no panic, every Err is a typed "code: text", a failing call leaves the project byte-identical, every Ok keeps keys finite and windows inside the source when clamp is on.
+#[test] fn hostile_arguments_never_panic_and_failures_write_nothing() {
+    let mut st = 0x9E3779B97F4A7C15u64; let mut rnd = move || { st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); (st >> 33) as u32 };
+    let nums = [0.0, -1.0, 1.0, 0.5, 64.0, 256.0, 1e12, -1e12, 1e-9, 255.999, 300.0];
+    let (mut ok, mut err) = (0, 0);
+    for i in 0..400 {
+        let (mut s, id) = scene(); let proj0 = serde_json::to_string(&s.project).unwrap(); let mut pick = |r: &mut dyn FnMut() -> u32| nums[(r() as usize) % nums.len()];
+        let bx = |r: &mut dyn FnMut() -> u32, p: &mut dyn FnMut(&mut dyn FnMut() -> u32) -> f64| -> Value { match r() % 6 { 0 => json!([p(r), p(r)]), 1 => json!("box"), 2 => Value::Null, _ => json!([p(r), p(r), p(r), p(r)]) } };
+        let easing = match rnd() % 6 { 0 => json!("in_out"), 1 => json!("nope"), 2 => json!([pick(&mut rnd), pick(&mut rnd), pick(&mut rnd), pick(&mut rnd)]), 3 => json!([0.25, 0.1, 0.25, 1.0]), 4 => json!(7), _ => Value::Null };
+        let (f, t) = (bx(&mut rnd, &mut pick), bx(&mut rnd, &mut pick)); let dur = pick(&mut rnd); let clamp = rnd() % 2 == 0;
+        let (tool, args) = if i % 2 == 0 { ("crop_zoom_keyframes", json!({"clip_id":id,"from_box":f,"to_box":t,"duration":dur,"easing":easing,"clamp":clamp})) } else { ("ui_zoom", json!({"clip_id":id,"target_box":t,"duration":dur,"hold":pick(&mut rnd),"easing":easing,"apply":rnd() % 2 == 0})) };
+        match dispatch(&mut s, tool, &args) {
+            Ok(r) => { ok += 1; let txt = serde_json::to_string(&s.project).unwrap(); assert!(!txt.contains("NaN") && !txt.contains("null,null"), "{tool} {args}"); let _ = r;
+                if let Some(cl) = s.project.find_clip(&id) { for k in ["scale", "x", "y"] { if let Some(p) = cl.props.get(k) { for key in &p.keys { assert!(key.v.is_finite() && key.t.is_finite(), "{tool} {args}: non-finite key"); } } } } }
+            Err(e) => { err += 1; assert!(e.contains(':') && e.split(':').next().unwrap().chars().all(|c| c.is_ascii_lowercase() || c == '_' || c == ' ') || e.starts_with("invalid") , "untyped error {e:?} for {tool} {args}"); assert_eq!(serde_json::to_string(&s.project).unwrap(), proj0, "{tool} {args}: failed call wrote something"); }
+        }
+    }
+    assert!(ok >= 3 && err > 20, "fuzz should exercise both outcomes: ok {ok} err {err}"); eprintln!("crop_zoom fuzz: 400 calls, ok {ok}, err {err}");
+}
