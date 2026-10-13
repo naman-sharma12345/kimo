@@ -209,3 +209,38 @@ fn benchmark_256_prints_median_twenty_runs_no_gate() {
         (ms[9] + ms[10]) / 2.
     );
 }
+
+#[test]
+fn region_metrics_source_coordinates_and_inspection_hints() {
+    let (mut ss, _) = moved();
+    let r = diff(&mut ss, json!({"merge_px":0,"expect_bbox":[140,115,20,10]}));
+    for region in r["regions"].as_array().expect("regions (P1) missing") {
+        assert_eq!(region["area_px"].as_f64().unwrap(), 200.);
+        assert_eq!(region["mean_delta"].as_f64().unwrap(), 1.);
+        assert_eq!(region["max_delta"].as_f64().unwrap(), 1.);
+        let b = &region["bbox"];
+        assert_eq!(
+            region["centroid"][0].as_f64().unwrap(),
+            b[0].as_f64().unwrap() + 10.
+        );
+        assert_eq!(
+            region["centroid"][1].as_f64().unwrap(),
+            b[1].as_f64().unwrap() + 5.
+        );
+    }
+    for finding in r["findings"].as_array().unwrap() {
+        assert!(finding["fix_hint"].is_object());
+        for st in finding["next_steps"].as_array().unwrap() {
+            let cmd = kimo_core::commands::find_command(st["tool"].as_str().unwrap())
+                .expect("registered inspection tool");
+            let props = cmd.schema["properties"].as_object().unwrap();
+            for (k, v) in st["args"].as_object().unwrap() {
+                let sc = props.get(k).expect("known hint arg");
+                if sc["type"] == "number" {
+                    assert!(v.is_number())
+                }
+            }
+        }
+    }
+    assert!(r["next_steps"].as_array().unwrap().len() <= 3);
+}
