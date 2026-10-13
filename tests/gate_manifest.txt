@@ -238,3 +238,4 @@ py fresh_clone_row.py fast
 rust fix_hints fast
 
 rust loudness_range fast
+rust audio_pitch fast

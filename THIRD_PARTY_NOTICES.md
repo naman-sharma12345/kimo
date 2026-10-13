@@ -16,6 +16,7 @@ Kimo is MIT licensed (see LICENSE). The files below under `crates/kimo-core/src/
 | Kimo file | Origin | What |
 |---|---|---|
 | `crates/kimo-core/src/dsp/resample.rs` | beatbox-rs `src/resample.rs`, from SoundCraft `crates/dsp/src/offline.rs` (`SincTable`, `resample_channel`, `resample_ratio`, `bessel_i0`) | Kaiser windowed-sinc resampler and true-peak helper |
+| `crates/kimo-core/src/dsp/pitch.rs` | beatbox-rs `src/sc_dsp.rs` (`yin`), commit `907fb0a1c8a30c245facba58ea27df8366080526`, from SoundCraft `crates/dsp/src/pitch_detect.rs`, MIT OR Apache-2.0 used under MIT | YIN frame pitch; confidence, finite validation and guards added; pure std, no coupling |
 | `crates/kimo-core/src/dsp/fft.rs` | Kimo's own code, moved from `perception/audio_events.rs` | Radix-2 1024-point FFT |
 | `crates/kimo-core/src/dsp/mod.rs` | Kimo's own module file | Module index |
 

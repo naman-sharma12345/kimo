@@ -2,3 +2,5 @@
 //! Pure std DSP primitives shared by the audio tools: no new crates, no I/O, deterministic.
 pub mod fft;
 pub mod resample;
+
+pub mod pitch;
