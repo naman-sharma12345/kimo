@@ -63,6 +63,8 @@ fn d_oct() -> u32 { 1 }
 fn hash(mut x: u64) -> f64 { x = x.wrapping_add(0x9E3779B97F4A7C15); x = (x ^ (x >> 30)).wrapping_mul(0xBF58476D1CE4E5B9); x = (x ^ (x >> 27)).wrapping_mul(0x94D049BB133111EB); x ^= x >> 31; (x >> 11) as f64 / (1u64 << 53) as f64 }
 /// 1D smooth value noise in [-1, 1].
 pub fn noise(seed: u64, x: f64) -> f64 { let i = x.floor(); let f = x - i; let u = f * f * (3.0 - 2.0 * f); let a = hash(seed.wrapping_mul(0x9E37).wrapping_add(i as i64 as u64)) * 2.0 - 1.0; let b = hash(seed.wrapping_mul(0x9E37).wrapping_add((i + 1.0) as i64 as u64)) * 2.0 - 1.0; a + (b - a) * u }
+/// The two house easings (premium spec section 0): enter/settle and move-between-states.
+pub fn named_bezier(name: &str) -> Option<[f64; 4]> { match name { "ui_ease_out" => Some([0.16, 1.0, 0.3, 1.0]), "ui_ease_in_out" => Some([0.65, 0.0, 0.35, 1.0]), _ => None } }
 /// CSS-style cubic-bezier timing function y(x).
 pub fn bezier_ease(b: [f64; 4], x: f64) -> f64 { bez_solve(b[0], b[1], b[2], b[3], 1.0, x) }
 /// The one cubic solver behind `bez` and handles: x control points are clamped to [0,1] (monotone time), y control points are free.

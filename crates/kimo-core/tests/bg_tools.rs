@@ -66,7 +66,7 @@ fn bg_wave_chunks_share_boundary_samples_and_cover_everything() {
     let n = 48000 * 3; let data: Vec<f64> = (0..n).map(|i| ((i as f64) * 0.01).sin() * 0.5).collect();
     let a = dispatch(&mut s, "import_samples", &json!({"rate":48000,"channels":1,"data":[data]})).unwrap();
     let ta = dispatch(&mut s, "add_track", &json!({})).unwrap()["track_id"].as_str().unwrap().to_string();
-    let clip = dispatch(&mut s, "add_clip", &json!({"track_id":ta,"asset_id":a["asset_id"],"start":0,"duration":3})).unwrap()["clip_id"].as_str().unwrap().to_string();
+    let clip = dispatch(&mut s, "add_clip", &json!({"track_id":ta,"source_type":"media","asset_id":a["asset_id"],"start":0,"duration":3})).unwrap()["clip_id"].as_str().unwrap().to_string();
     let tv = dispatch(&mut s, "add_track", &json!({})).unwrap()["track_id"].as_str().unwrap().to_string();
     let args = |extra: Value| { let mut o = json!({"track":tv,"start":0,"duration":3,"source":"audio","audio":{"target":format!("clip:{clip}"),"start":0,"end":3,"hop_s":0.01,"chunk":true}}); for (k, v) in extra.as_object().unwrap() { o[k] = v.clone(); } o };
     let dry = dispatch(&mut s, "bg_wave", &args(json!({}))).unwrap();

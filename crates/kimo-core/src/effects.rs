@@ -35,7 +35,8 @@ pub const CATALOG: &[(&str, &str, &[(&str, f64, &str)])] = &[
     ("curves", "Luma S-curve", &[("amount", 0.0, "-1..1 (positive = more contrast S-curve)")]),
     ("teal_orange", "Hollywood teal/orange split tone", &[("amount", 0.5, "0..1")]),
     ("vignette", "Darkened edges", &[("amount", 0.5, "0..1"), ("softness", 0.5, "0..1")]),
-    ("blur", "Box-approx gaussian blur", &[("radius", 4.0, "pixels")]),
+    ("shoulder", "Highlight shoulder (E1): values at or below start pass unchanged, above it a smooth exponential roll-off with slope 1 at start approaches ceiling and never clips flat. Scales rgb by min(t(luma)/luma, t(brightest)/brightest), so chromaticity is kept and no channel passes the ceiling. Put it LAST in a stack that adds or screens light.", &[("start", 0.8, "0..1, where the roll-off begins"), ("ceiling", 0.92, "start..1, the asymptote (0.92 = 235 of 255, a bright core never reaches 255)")]),
+    ("blur", "Gaussian blur, sigma = radius / 2 px (true separable kernel up to sigma 8, three-box approximation with exact variance above)", &[("radius", 4.0, "pixels")]),
     ("glow", "Bloom on highlights", &[("amount", 0.5, "0..2"), ("radius", 12.0, "pixels"), ("threshold", 0.7, "0..1")]),
     ("bloom", "Light-intensity bloom: soft-knee bright-pass, multi-scale blur, energy-conserving by default", &[("amount", 0.6, "0..1 (conserve) or more"), ("threshold", 0.8, "luma where bloom starts"), ("knee", 0.2, "0..1 soft knee"), ("radius", 8.0, "base px, levels double it"), ("levels", 5.0, "1..7 scales"), ("conserve", 1.0, "1 = frame energy preserved, 0 = additive"), ("tint_r", 1.0, "bloom tint R"), ("tint_g", 1.0, "bloom tint G"), ("tint_b", 1.0, "bloom tint B")]),
     ("grain", "Film grain", &[("amount", 0.08, "0..0.5")]),
@@ -121,7 +122,11 @@ pub fn apply(kind: &str, params: &Params, strings: &BTreeMap<String, String>, f:
                 let v = 1.0 - a * ((r - (1.0 - s)).max(0.0) / s).powi(2).min(1.0);
                 let i = (y*f.w+x)*4; f.d[i]*=v; f.d[i+1]*=v; f.d[i+2]*=v; } }
         }
-        "blur" => { let r = p(params, "radius", 4.0, t) as usize; box_blur3(f, r); }
+        "shoulder" => { let st = (p(params, "start", 0.8, t) as f32).clamp(0.0, 0.999); let ce = (p(params, "ceiling", 0.92, t) as f32).clamp(st + 1e-3, 1.0); let span = ce - st;
+            let sh = move |v: f32| -> f32 { if !(v > st) { v } else { st + span * (1.0 - (-(v - st) / span).exp()) } };
+            // c_out = c * min(t(y)/y, t(max)/max): luminance-led so a saturated additive colour keeps its chromaticity, and the brightest channel is still capped at the ceiling
+            px(f, move |c| { let m = c[0].max(c[1]).max(c[2]); if !(m > st) { return c; } let y = lum(c); let km = sh(m) / m; let k = if y > st { (sh(y) / y).min(km) } else { km }; [c[0] * k, c[1] * k, c[2] * k] }); }
+        "blur" => { let r = p(params, "radius", 4.0, t); gaussian_blur(f, r as f64 / 2.0); } // E4: sigma = radius / 2 (the old box path quantized radius 1, 2 and 3 to one kernel)
         "glow" => {
             let a = p(params, "amount", 0.5, t); let r = p(params, "radius", 12.0, t) as usize; let th = p(params, "threshold", 0.7, t);
             let mut b = Frame { w: f.w, h: f.h, d: f.d.clone() };
@@ -281,6 +286,22 @@ pub fn apply(kind: &str, params: &Params, strings: &BTreeMap<String, String>, f:
 pub(crate) fn lum(c: [f32; 3]) -> f32 { 0.2126*c[0] + 0.7152*c[1] + 0.0722*c[2] }
 pub(crate) fn px(f: &mut Frame, op: impl Fn([f32; 3]) -> [f32; 3] + Sync) {
     let ptr=crate::par::SyncPtr(f.d.as_mut_ptr());crate::par::ranges(f.w*f.h,32768,|a,b|{let ptr=ptr;for i in a..b{let px=unsafe{std::slice::from_raw_parts_mut(ptr.0.add(i*4),4)};let o=op([px[0],px[1],px[2]]);px[0]=o[0];px[1]=o[1];px[2]=o[2];}});
+}
+/// Separable gaussian, clamped edges, all 4 channels. Up to sigma 8 an exact truncated (4 sigma) kernel; above, three boxes whose widths match the target variance (Kovesi).
+pub fn gaussian_blur(f: &mut Frame, sigma: f64) {
+    if !(sigma > 0.0) || !sigma.is_finite() || f.w == 0 || f.h == 0 { return; }
+    let (w, h) = (f.w, f.h);
+    if sigma > 8.0 {
+        let n = 3.0f64; let wi = (12.0 * sigma * sigma / n + 1.0).sqrt(); let mut wl = wi.floor() as i64; if wl % 2 == 0 { wl -= 1; } let wl = wl.max(1);
+        let m = ((12.0 * sigma * sigma - n * (wl * wl) as f64 - 4.0 * n * wl as f64 - 3.0 * n) / (-4.0 * wl as f64 - 4.0)).round() as i64;
+        let mut tmp = vec![0f32; f.d.len()];
+        for i in 0..3 { let width = if i < m { wl } else { wl + 2 }; let r = ((width - 1) / 2) as usize; blur_axis(&f.d, &mut tmp, w, h, r, true); blur_axis(&tmp, &mut f.d, w, h, r, false); }
+        return;
+    }
+    let rad = (sigma * 4.0).ceil().max(1.0) as usize; let mut k: Vec<f32> = (0..=2 * rad).map(|i| { let x = i as f64 - rad as f64; (-x * x / (2.0 * sigma * sigma)).exp() as f32 }).collect(); let tot: f32 = k.iter().sum(); for v in k.iter_mut() { *v /= tot; }
+    let mut tmp = vec![0f32; f.d.len()];
+    { let src = &f.d; crate::par::rows_mut(&mut tmp, w * 4, |y, out| { let row = &src[y * w * 4..(y + 1) * w * 4]; for x in 0..w { let mut acc = [0f32; 4]; for (ki, kv) in k.iter().enumerate() { let sx = (x as isize + ki as isize - rad as isize).clamp(0, w as isize - 1) as usize; for j in 0..4 { acc[j] += row[sx * 4 + j] * kv; } } out[x * 4..x * 4 + 4].copy_from_slice(&acc); } }); }
+    { let src = &tmp; crate::par::rows_mut(&mut f.d, w * 4, |y, out| { for x in 0..w { let mut acc = [0f32; 4]; for (ki, kv) in k.iter().enumerate() { let sy = (y as isize + ki as isize - rad as isize).clamp(0, h as isize - 1) as usize; for j in 0..4 { acc[j] += src[(sy * w + x) * 4 + j] * kv; } } out[x * 4..x * 4 + 4].copy_from_slice(&acc); } }); }
 }
 pub fn box_blur3(f: &mut Frame, r: usize) {
     if r == 0 || f.w == 0 || f.h == 0 { return; }

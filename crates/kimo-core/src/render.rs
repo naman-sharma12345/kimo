@@ -249,18 +249,20 @@ fn source_frame_h(p: &Project, c: &Clip, lt_in: f64, cache: &Cache) -> (Frame, O
         Source::Shape { shape, width, height, fill, stroke_width, stroke_color, sides, corner_radius } => {
             let (cx, cy) = (w as f64 / 2.0, h as f64 / 2.0); let (hw, hh) = (width / 2.0, height / 2.0);
             // signed distance (negative inside), then shape modifiers (offset/repeater/merge) from shapemods.rs
-            let pth = if shape == "path" { crate::shapemods::path_of(&c.effects, lt) } else { None };
+            let pth = if shape == "path" { crate::shapemods::path_of(&c.effects, lt).map(|p| if fill[0] < 0.0 { p.without_implicit_close() } else { p }) } else { None }; // stroke-only: an open path must not stroke its implicit closing chord
             let base = |x: f64, y: f64| -> f64 { let (px, py) = (x - cx, y - cy); match shape.as_str() {
                 "path" => match &pth { Some(p) => p.sd(px, py), None => 1e9 },
                 "ellipse" | "polygon" | "line" => crate::shapemods::sd(shape, *sides, hw, hh, *corner_radius, px, py),
                 _ => { let (qx, qy) = (px.abs() - hw + corner_radius, py.abs() - hh + corner_radius); (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - corner_radius } } };
-            let stack = crate::shapemods::build(&c.effects, base, cx, cy, lt); let sd = |x: f64, y: f64| (stack.dist)(x, y);
+            let mut stack = crate::shapemods::build(&c.effects, base, cx, cy, lt); if shape == "path" && fill[0] < 0.0 { stack.path = stack.path.take().map(|p| p.without_implicit_close()); } let sd = |x: f64, y: f64| (stack.dist)(x, y);
             // plain rect (exact SDF; the ellipse SDF is approximate and leaks past its box at extreme aspect ratios, found by shape_bound_equiv; no shape modifiers): every pixel farther than margin from the shape's bounding box has d >= 0.5 + stroke/2 and writes nothing, so skip it (bit-identical)
             let (mut bx0, mut bx1, mut by0, mut by1) = (0usize, w, 0usize, h);
             if SHAPE_BOUND.load(std::sync::atomic::Ordering::Relaxed) && !c.effects.iter().any(|e| e.kind.starts_with("shape_")) && shape.as_str() == "rect" { let m = 0.5 + stroke_width.max(0.0) / 2.0 + 4.0; bx0 = ((cx - hw - m).floor().max(0.0)) as usize; bx1 = (((cx + hw + m).ceil()).max(0.0) as usize).min(w); by0 = ((cy - hh - m).floor().max(0.0)) as usize; by1 = (((cy + hh + m).ceil()).max(0.0) as usize).min(h); hint = Some((bx0, by0, bx1, by1)); }
+            // a path's gradient spans its own bounding box (the Shape width/height of a path layer is not its extent)
+            let (gmid, gext) = match (&pth, shape.as_str()) { (Some(p), "path") => (((p.bbox[0] + p.bbox[2]) / 2.0, (p.bbox[1] + p.bbox[3]) / 2.0), ((p.bbox[2] - p.bbox[0]).abs(), (p.bbox[3] - p.bbox[1]).abs())), _ => ((0.0, 0.0), (*width, *height)) };
             let (fa, sa) = (prop_or(c, "fill_alpha", lt, 1.0).clamp(0.0, 1.0), prop_or(c, "stroke_alpha", lt, 1.0).clamp(0.0, 1.0)); // fill alpha, stroke alpha and layer opacity are three separate properties
             for y in by0..by1 { for x in bx0..bx1 { let d = sd(x as f64 + 0.5, y as f64 + 0.5); let inside = (0.5 - d).clamp(0.0, 1.0); if inside <= 0.0 && *stroke_width <= 0.0 { continue; }
-                let sk = if *stroke_width > 0.0 { (0.5 - (d.abs() - stroke_width / 2.0)).clamp(0.0, 1.0) * stack.trim_gate(x as f64 + 0.5 - cx, y as f64 + 0.5 - cy) } else { 0.0 }; let stroke_color = &stack.stroke_color(x as f64 + 0.5 - cx, y as f64 + 0.5 - cy, *width, *height, *stroke_color); let fl = if fill[0] < 0.0 { 0.0 } else if *stroke_width > 0.0 { (0.5 - (d + stroke_width / 2.0)).clamp(0.0, 1.0) } else { inside };
+                let sk = if *stroke_width > 0.0 { (0.5 - (d.abs() - stroke_width / 2.0)).clamp(0.0, 1.0) * stack.trim_gate(x as f64 + 0.5 - cx, y as f64 + 0.5 - cy) } else { 0.0 }; let stroke_color = &stack.stroke_color(x as f64 + 0.5 - cx - gmid.0, y as f64 + 0.5 - cy - gmid.1, gext.0, gext.1, *stroke_color); let fl = if fill[0] < 0.0 { 0.0 } else if *stroke_width > 0.0 { (0.5 - (d + stroke_width / 2.0)).clamp(0.0, 1.0) } else { inside };
                 let (fl, sk) = (fl * fa, sk * sa);
                 let i = (y * w + x) * 4; let a = (fl + sk * (1.0 - fl)).clamp(0.0, 1.0); if a <= 0.0 { continue; }
                 for j in 0..3 { f.d[i + j] = ((fill[j] * fl + stroke_color[j] * sk * (1.0 - fl)) / a) as f32; } f.d[i + 3] = a as f32; } }

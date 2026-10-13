@@ -151,6 +151,80 @@ fn emit(
     }
     out.push(json!({"code":code,"severity":severity,"layer":layer(c),"rect":rect,"measured":measured,"message":message}));
 }
+
+fn fill_px(f: &mut crate::effects::Frame, x0: i64, y0: i64, x1: i64, y1: i64, c: [f32; 3]) {
+    for y in y0.max(0)..y1.min(f.h as i64) { for x in x0.max(0)..x1.min(f.w as i64) { let i = (y as usize * f.w + x as usize) * 4; f.d[i] = c[0]; f.d[i + 1] = c[1]; f.d[i + 2] = c[2]; f.d[i + 3] = 1.0; } }
+}
+/// Severity colours chosen so each is at least 3:1 against both white and black.
+fn sev_colour(sev: &str) -> [f32; 3] { match sev { "error" => [1.0, 0.2, 0.1], "info" => [0.0, 0.55, 0.8], _ => [0.9, 0.35, 0.0] } }
+/// stroke px = max(2, round(min(w,h)/160))
+pub fn stroke_px(w: usize, h: usize) -> i64 { (((w.min(h)) as f64 / 160.0).round() as i64).max(2) }
+fn rects_hit(a: [i64; 4], b: [i64; 4]) -> bool { a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3] }
+/// Draws the report on the render copy only (findings are never touched): a stroke OUTSIDE each finding rect with a 1px dark halo, colour by severity,
+/// dashed safe-zone line and an edge marker for canvas-clipped rects, and up to 3 label chips ("code value") then "+n". Returns what it drew.
+fn draw_annotations(f: &mut crate::effects::Frame, findings: &[Value]) -> Value {
+    let (w, h) = (f.w as i64, f.h as i64); let s = stroke_px(f.w, f.h);
+    let mut boxes = vec![]; let mut min_contrast = f64::INFINITY; let mut zone_lines = 0; let mut markers = 0;
+    let mut obstacles: Vec<[i64; 4]> = vec![];
+    for row in findings {
+        let v: Vec<f64> = row["rect"].as_array().map(|a| a.iter().map(|x| x.as_f64().unwrap_or(0.0)).collect()).unwrap_or_default(); if v.len() != 4 { continue; }
+        let sev = row["severity"].as_str().unwrap_or("warn"); let col = sev_colour(sev);
+        let (x0, y0, x1, y1) = (v[0].floor() as i64, v[1].floor() as i64, (v[0] + v[2]).ceil() as i64, (v[1] + v[3]).ceil() as i64);
+        let inb = |x: i64, y: i64, a: i64, b: i64, c: i64, d: i64| x >= a && x < c && y >= b && y < d;
+        // halo (1px, dark) then the stroke, both outside the rect
+        for y in (y0 - s - 1).max(0)..(y1 + s + 1).min(h) { for x in (x0 - s - 1).max(0)..(x1 + s + 1).min(w) {
+            if inb(x, y, x0, y0, x1, y1) { continue; }
+            let ring = inb(x, y, x0 - s, y0 - s, x1 + s, y1 + s);
+            let i = (y as usize * f.w + x as usize) * 4;
+            if ring { let under = [f.d[i] as f64, f.d[i + 1] as f64, f.d[i + 2] as f64]; min_contrast = min_contrast.min(contrast_ratio([col[0] as f64, col[1] as f64, col[2] as f64], under)); f.d[i] = col[0]; f.d[i + 1] = col[1]; f.d[i + 2] = col[2]; f.d[i + 3] = 1.0; }
+            else { f.d[i] = 0.0; f.d[i + 1] = 0.0; f.d[i + 2] = 0.0; f.d[i + 3] = 1.0; }
+        } }
+        // the halo was drawn first-come in one pass; re-stroke over it is unnecessary because ring and halo never share a pixel
+        let mut clipped = vec![];
+        if x0 < 0 { fill_px(f, 0, y0.max(0), 3 * s, y1.min(h), col); clipped.push("left"); markers += 1; }
+        if y0 < 0 { fill_px(f, x0.max(0), 0, x1.min(w), 3 * s, col); clipped.push("top"); markers += 1; }
+        if x1 > w { fill_px(f, w - 3 * s, y0.max(0), w, y1.min(h), col); clipped.push("right"); markers += 1; }
+        if y1 > h { fill_px(f, x0.max(0), h - 3 * s, x1.min(w), h, col); clipped.push("bottom"); markers += 1; }
+        // dashed safe-zone line on each violated edge
+        if row["code"] == "safe_zone" && row["measured"]["zone"]["kind"] == "safe" {
+            let z: Vec<f64> = row["measured"]["zone"]["rect"].as_array().map(|a| a.iter().map(|x| x.as_f64().unwrap_or(0.0)).collect()).unwrap_or_default();
+            let o = &row["measured"]["outside_px"];
+            if z.len() == 4 {
+                let g = [0.1f32, 0.9, 0.4]; let (dash, gap) = (6 * s, 4 * s);
+                let mut vline = |x: i64, f: &mut crate::effects::Frame| { let mut y = 0; while y < h { fill_px(f, x - 1, y, x + s + 1, (y + dash).min(h), [0., 0., 0.]); fill_px(f, x, y, x + s, (y + dash).min(h), g); y += dash + gap; } zone_lines += 1; };
+                if o["left"].as_f64().unwrap_or(0.) > 0. { vline(z[0].round() as i64, f); }
+                if o["right"].as_f64().unwrap_or(0.) > 0. { vline((z[0] + z[2]).round() as i64 - s, f); }
+                let mut hline = |y: i64, f: &mut crate::effects::Frame| { let mut x = 0; while x < w { fill_px(f, x, y - 1, (x + dash).min(w), y + s + 1, [0., 0., 0.]); fill_px(f, x, y, (x + dash).min(w), y + s, g); x += dash + gap; } zone_lines += 1; };
+                if o["top"].as_f64().unwrap_or(0.) > 0. { hline(z[1].round() as i64, f); }
+                if o["bottom"].as_f64().unwrap_or(0.) > 0. { hline((z[1] + z[3]).round() as i64 - s, f); }
+            }
+        }
+        obstacles.push([x0 - s - 1, y0 - s - 1, x1 - x0 + 2 * s + 2, y1 - y0 + 2 * s + 2]);
+        boxes.push(json!({"code":row["code"],"severity":sev,"rect":row["rect"],"colour":col,"clipped_edges":clipped}));
+    }
+    // label chips: dark chip, light text, inside the canvas, clear of every box and of earlier chips
+    let size = ((f.w.min(f.h)) as f32 / 20.0).round().max(13.0); let (pad, ch_h) = ((size * 0.7).round() as i64, (size * 1.7).round() as i64);
+    let mut chips = vec![];
+    for (n, row) in findings.iter().enumerate() {
+        let txt = if n == 3 { format!("+{}", findings.len() - 3) } else if n > 3 { break } else {
+            let o = &row["measured"]["outside_px"]; let mut best: Option<(&str, f64)> = None;
+            for e in ["left", "top", "right", "bottom"] { let v = o[e].as_f64().unwrap_or(0.); if v > best.map(|b| b.1).unwrap_or(0.) { best = Some((e, v)); } }
+            match best { Some((e, v)) => format!("{} -{}px {}", row["code"].as_str().unwrap_or("finding"), v.round() as i64, e), None => row["code"].as_str().unwrap_or("finding").to_string() } };
+        let Ok(tw) = crate::text::label_width(&txt, size) else { continue };
+        let (cw, cx_h) = (tw.ceil() as i64 + 2 * pad, ch_h);
+        let r = row["rect"].as_array().map(|a| a.iter().map(|x| x.as_f64().unwrap_or(0.0)).collect::<Vec<_>>()).unwrap_or_else(|| vec![0.; 4]);
+        let (rx, ry, rw, rh) = (r[0].floor() as i64, r[1].floor() as i64, (r[2].ceil() as i64).max(1), (r[3].ceil() as i64).max(1));
+        let clampx = |x: i64| x.max(0).min((w - cw).max(0)); let clampy = |y: i64| y.max(0).min((h - cx_h).max(0));
+        let cands = [[clampx(rx), clampy(ry - s - 3 - cx_h)], [clampx(rx), clampy(ry + rh + s + 3)], [clampx(rx + rw + s + 3), clampy(ry)], [clampx(rx - s - 3 - cw), clampy(ry)], [0, 0], [clampx(w), clampy(h)]];
+        let boxr = [rx - s - 1, ry - s - 1, rw + 2 * s + 2, rh + 2 * s + 2];
+        let clear = |c: [i64; 4]| !rects_hit(c, boxr) && obstacles.iter().all(|o| !rects_hit(c, *o)) && chips.iter().all(|k: &Value| { let q: Vec<i64> = k["rect"].as_array().unwrap().iter().map(|x| x.as_i64().unwrap()).collect(); !rects_hit(c, [q[0], q[1], q[2], q[3]]) });
+        let pick = cands.iter().map(|p| [p[0], p[1], cw, cx_h]).find(|c| clear(*c)).unwrap_or([cands[0][0], cands[0][1], cw, cx_h]);
+        for y in pick[1].max(0)..(pick[1] + pick[3]).min(h) { for x in pick[0].max(0)..(pick[0] + pick[2]).min(w) { let i = (y as usize * f.w + x as usize) * 4; let (rr, ex) = (pick[3] as f64 / 2.0, (x as f64 + 0.5 - pick[0] as f64).min(pick[0] as f64 + pick[2] as f64 - x as f64 - 0.5)); let cy = (y as f64 + 0.5 - pick[1] as f64 - rr).abs(); let (dx, dy) = ((rr - ex).max(0.0), cy); if dx * dx + dy * dy > rr * rr { continue; } for k in 0..3 { f.d[i + k] = f.d[i + k] * 0.2 + 0.04 * 0.8; } } }
+        let _ = crate::text::draw_label(f, &txt, (pick[0] + pad) as f64, (pick[1] as f64 + (ch_h as f64 - size as f64 * 1.2) / 2.0), size, [1.0, 1.0, 1.0]);
+        chips.push(json!({"text":txt,"rect":pick}));
+    }
+    json!({"stroke_px": s, "boxes": boxes, "chips": chips, "zone_lines": zone_lines, "edge_markers": markers, "min_contrast_vs_frame": if min_contrast.is_finite() { json!(min_contrast) } else { Value::Null }, "note": "drawn on a render copy; findings are unchanged; stroke is outside the rect with a 1px dark halo, colour by severity (error red, warn orange, info cyan); green dashes are the safe-zone edge that was violated"})
+}
 pub fn boxed(f: &mut crate::effects::Frame, r: [f64; 4]) {
     let x0 = r[0].floor().max(0.).min(f.w as f64) as usize;
     let y0 = r[1].floor().max(0.).min(f.h as f64) as usize;
@@ -365,18 +439,7 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
             crate::render::prepare_at(&ss.project, &mut ss.cache, Some(*t))?;
             let mut f = crate::render::render_frame(&ss.project, *t, &ss.cache)?;
             crate::color::pipeline::output(&ss.project, &mut f)?;
-            for row in frow["findings"].as_array().unwrap() {
-                let v = row["rect"].as_array().unwrap();
-                boxed(
-                    &mut f,
-                    [
-                        v[0].as_f64().unwrap(),
-                        v[1].as_f64().unwrap(),
-                        v[2].as_f64().unwrap(),
-                        v[3].as_f64().unwrap(),
-                    ],
-                );
-            }
+            let ann = draw_annotations(&mut f, frow["findings"].as_array().unwrap());
             let path = std::env::temp_dir().join(format!(
                 "kimo-lint-{}-{}-{i}.png",
                 std::process::id(),
@@ -392,7 +455,7 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
                 h: f.h as u32,
                 mime: "image/png",
             });
-            frow["annotation"] = json!({"path":path});
+            frow["annotation"] = {let mut a = ann; a["path"] = json!(path); a};
         }
         frow["elapsed_ms"] = json!(start.elapsed().as_secs_f64() * 1000.);
         frames.push(frow);

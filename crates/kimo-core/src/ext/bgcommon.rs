@@ -101,7 +101,9 @@ pub fn finish(ss: &mut Session, c: &Common, params: Value, ops: Vec<Value>, clip
     let r = crate::commands::dispatch_nested(ss, "batch", &json!({"ops": ops, "atomic": true, "return": "full"}))?;
     if r["ok"] != true { return Err(format!("batch_failed: {}", r["failed"])); }
     let res = r["results"].as_array().ok_or("batch returned no results")?;
-    let ids: Vec<Value> = clip_ops.iter().filter_map(|op| res.iter().find(|x| x["id"] == *op).and_then(|x| x["result"]["clip_id"].as_str()).map(|s| json!(s))).collect();
+    let mut ids: Vec<Value> = clip_ops.iter().filter_map(|op| res.iter().find(|x| x["id"] == *op).and_then(|x| x["result"]["clip_id"].as_str()).map(|s| json!(s))).collect();
+    // batch drops result bodies when its reply is over its size cap (long audio expansions), so fall back to the clip ids it reports as created, in creation order
+    if ids.len() != clip_ops.len() { if let Some(c) = r["created"]["clip_ids"].as_array() { if c.len() == clip_ops.len() { ids = c.clone(); } } }
     if ids.len() != clip_ops.len() { return Err("internal: a background clip was not created".into()); }
     Ok(json!({"applied": true, "no_history": false, "expansion": ops, "params": params, "estimate": estimate, "clip_ids": ids, "next_steps": next_steps}))
 }

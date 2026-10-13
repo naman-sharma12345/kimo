@@ -3,7 +3,8 @@
 //! (trim, offset, merge, repeater, gradient stroke) work on any path. Coordinates are pixels relative to the canvas center.
 pub const MAX_SEGMENTS: usize = 6000;
 #[derive(Clone, Debug)]
-pub struct Path { pub segs: Vec<[f64; 4]>, pub cum: Vec<f64>, pub total: f64, pub bbox: [f64; 4], pub evenodd: bool, pub subpaths: usize }
+pub struct Path { pub segs: Vec<[f64; 4]>, pub cum: Vec<f64>, pub total: f64, pub bbox: [f64; 4], pub evenodd: bool, pub subpaths: usize, /// closing segments added for an open subpath that had no Z: they close the fill, a stroke must not draw them
+    pub implicit: Vec<[f64; 4]> }
 
 fn tokens(d: &str) -> Result<Vec<(char, Vec<f64>)>, String> {
     let b: Vec<char> = d.chars().collect(); let (mut i, mut out): (usize, Vec<(char, Vec<f64>)>) = (0, vec![]);
@@ -31,18 +32,18 @@ impl Path {
     pub fn from_tokens(toks: &[(char, Vec<f64>)], evenodd: bool) -> Result<Path, String> {
         let toks = toks.to_vec(); if toks.is_empty() { return Err("empty path".into()); }
         if toks[0].0.to_ascii_uppercase() != 'M' { return Err("path must start with M (moveto)".into()); }
-        let mut segs: Vec<[f64; 4]> = vec![]; let (mut cx, mut cy, mut sx, mut sy) = (0.0f64, 0.0f64, 0.0f64, 0.0f64); let (mut lcx, mut lcy) = (0.0f64, 0.0f64); let mut last = ' '; let mut subs = 0usize; let mut open = false;
+        let mut segs: Vec<[f64; 4]> = vec![]; let (mut cx, mut cy, mut sx, mut sy) = (0.0f64, 0.0f64, 0.0f64, 0.0f64); let (mut lcx, mut lcy) = (0.0f64, 0.0f64); let mut last = ' '; let mut subs = 0usize; let mut open = false; let mut implicit: Vec<[f64; 4]> = vec![]; let mut implicit: Vec<[f64; 4]> = vec![];
         let mut line = |segs: &mut Vec<[f64; 4]>, x0: f64, y0: f64, x1: f64, y1: f64| segs.push([x0, y0, x1, y1]);
-        macro_rules! close { () => { if open && ((cx - sx).abs() > 1e-9 || (cy - sy).abs() > 1e-9) { line(&mut segs, cx, cy, sx, sy); } cx = sx; cy = sy; open = false; } }
+        macro_rules! close { ($explicit:expr) => { if open && ((cx - sx).abs() > 1e-9 || (cy - sy).abs() > 1e-9) { line(&mut segs, cx, cy, sx, sy); if !$explicit { implicit.push([cx, cy, sx, sy]); } } cx = sx; cy = sy; open = false; } }
         for (cmd, a) in &toks {
             let rel = cmd.is_lowercase(); let up = cmd.to_ascii_uppercase();
             let need = match up { 'M' | 'L' | 'T' => 2, 'H' | 'V' => 1, 'C' => 6, 'S' | 'Q' => 4, 'A' => 7, _ => 0 };
-            if up == 'Z' { if !a.is_empty() { return Err("Z takes no numbers".into()); } close!(); last = 'Z'; continue; }
+            if up == 'Z' { if !a.is_empty() { return Err("Z takes no numbers".into()); } close!(true); last = 'Z'; continue; }
             if a.is_empty() || a.len() % need != 0 { return Err(format!("command '{cmd}' needs groups of {need} numbers, got {}", a.len())); }
             for (gi, g) in a.chunks(need).enumerate() {
                 let (ox, oy) = if rel { (cx, cy) } else { (0.0, 0.0) };
                 match up {
-                    'M' => { if gi == 0 { close!(); } let (x, y) = (g[0] + ox, g[1] + oy); if gi == 0 { sx = x; sy = y; cx = x; cy = y; subs += 1; open = true; } else { line(&mut segs, cx, cy, x, y); cx = x; cy = y; } last = if gi == 0 { 'M' } else { 'L' }; }
+                    'M' => { if gi == 0 { close!(false); } let (x, y) = (g[0] + ox, g[1] + oy); if gi == 0 { sx = x; sy = y; cx = x; cy = y; subs += 1; open = true; } else { line(&mut segs, cx, cy, x, y); cx = x; cy = y; } last = if gi == 0 { 'M' } else { 'L' }; }
                     'L' => { let (x, y) = (g[0] + ox, g[1] + oy); line(&mut segs, cx, cy, x, y); cx = x; cy = y; last = 'L'; }
                     'H' => { let x = g[0] + ox; line(&mut segs, cx, cy, x, cy); cx = x; last = 'L'; }
                     'V' => { let y = g[0] + oy; line(&mut segs, cx, cy, cx, y); cy = y; last = 'L'; }
@@ -78,11 +79,19 @@ impl Path {
                 if segs.len() > MAX_SEGMENTS { return Err(format!("path too complex (> {MAX_SEGMENTS} flattened segments)")); }
             }
         }
-        close!(); segs.retain(|s| (s[2] - s[0]).hypot(s[3] - s[1]) > 1e-12);
+        close!(false); segs.retain(|s| (s[2] - s[0]).hypot(s[3] - s[1]) > 1e-12);
         if segs.is_empty() { return Err("path has no drawable segments".into()); }
         let (mut cum, mut tot) = (Vec::with_capacity(segs.len()), 0.0); let mut bb = [f64::MAX, f64::MAX, f64::MIN, f64::MIN];
         for s in &segs { cum.push(tot); tot += (s[2] - s[0]).hypot(s[3] - s[1]); for (x, y) in [(s[0], s[1]), (s[2], s[3])] { bb[0] = bb[0].min(x); bb[1] = bb[1].min(y); bb[2] = bb[2].max(x); bb[3] = bb[3].max(y); } }
-        Ok(Path { segs, cum, total: tot, bbox: bb, evenodd, subpaths: subs })
+        Ok(Path { segs, cum, total: tot, bbox: bb, evenodd, subpaths: subs, implicit })
+    }
+    /// The same path without the implicit closing segments: what a stroke-only (no fill) open path should draw. Explicit Z closes stay.
+    pub fn without_implicit_close(&self) -> Path {
+        if self.implicit.is_empty() { return self.clone(); }
+        let segs: Vec<[f64; 4]> = self.segs.iter().filter(|s| !self.implicit.iter().any(|i| i == *s)).copied().collect(); if segs.is_empty() { return self.clone(); }
+        let (mut cum, mut tot) = (Vec::with_capacity(segs.len()), 0.0); let mut bb = [f64::MAX, f64::MAX, f64::MIN, f64::MIN];
+        for s in &segs { cum.push(tot); tot += (s[2] - s[0]).hypot(s[3] - s[1]); for (x, y) in [(s[0], s[1]), (s[2], s[3])] { bb[0] = bb[0].min(x); bb[1] = bb[1].min(y); bb[2] = bb[2].max(x); bb[3] = bb[3].max(y); } }
+        Path { segs, cum, total: tot, bbox: bb, evenodd: self.evenodd, subpaths: self.subpaths, implicit: vec![] }
     }
     /// Unsigned distance and arc-length fraction (0..1 over the whole path) of the nearest point.
     pub fn nearest(&self, px: f64, py: f64) -> (f64, f64) {

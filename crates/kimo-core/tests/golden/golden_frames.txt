@@ -4,9 +4,9 @@ shapes@0.9 f32=25b6fcc40defa58d rgba8=4298fd065302c4bd
 text@0.1 f32=1065f793774bedfb rgba8=c7adb15fbe5ad0bf
 text@0.5 f32=1065f793774bedfb rgba8=c7adb15fbe5ad0bf
 text@0.9 f32=1065f793774bedfb rgba8=c7adb15fbe5ad0bf
-fx_stack@0.1 f32=0d39330c7802b83f rgba8=2216447a48d8bfd0
-fx_stack@0.5 f32=0d39330c7802b83f rgba8=2216447a48d8bfd0
-fx_stack@0.9 f32=0d39330c7802b83f rgba8=2216447a48d8bfd0
+fx_stack@0.1 f32=f10da97d938acdd9 rgba8=dfd6e03345b52a5d
+fx_stack@0.5 f32=f10da97d938acdd9 rgba8=dfd6e03345b52a5d
+fx_stack@0.9 f32=f10da97d938acdd9 rgba8=dfd6e03345b52a5d
 color@0.1 f32=7823a01d09fd61a5 rgba8=44e049ca82510885
 color@0.5 f32=7823a01d09fd61a5 rgba8=44e049ca82510885
 color@0.9 f32=7823a01d09fd61a5 rgba8=44e049ca82510885

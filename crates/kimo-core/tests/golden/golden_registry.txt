@@ -9,7 +9,7 @@ add_clip be500ff5ffa4a7e8
 add_counter 2cfd3406e38575f3
 add_detection_box e740cc0690940b44
 add_dim_mask 2cad78d93df4bd4d
-add_effect e6816644952085e2
+add_effect 4a684ca328990600
 add_emitter 940e20f3bb9b947f
 add_glitch_confetti ea3c9845ccf22d20
 add_hud_frame 4518e23cbffd7cd9
@@ -49,13 +49,16 @@ audit_color_output 58cf03598cf93fb6
 auto_duck 9765e1ee86c49428
 bake_property 389f09faed23fecf
 batch ef0c6c2068bb9798
+bg_grid e7713a171653a769
+bg_orbs 61a7aa7fd0ea99f4
+bg_wave 32c8d432ade67a4a
 bind_beats 2d8bcd8a43d9aad9
 bind_shared_grade_graphs d163ca88fc64bb1d
 burn_in 0df91ac9090a9beb
 cache_clear 6022ac3871ddd27b
 cache_set_budget 422160a7f6a95562
 cache_stats fda818c878e0e6dc
-callout_card dd3ec2c74afd7d3f
+callout_card e22766eab10028e6
 camera_solve_info 68eba83a999378cc
 cancel_job 71597b2319b6d6cf
 checkpoint 4063b9f4243b3a4e
@@ -248,7 +251,7 @@ set_grade_output 6560facb5fcf1afa
 set_grade_scopes 10538c1f26d81a94
 set_hdr_mastering 7f72fec86997f9fc
 set_keyframe 69209ab2dee909f0
-set_keyframe_bezier cad87fc6c4b57af8
+set_keyframe_bezier 8d20db9f708651da
 set_keyframes 659d40c8bc88da07
 set_layer_style a7045f9a4236ee69
 set_light 5b677c590887db11

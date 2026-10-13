@@ -487,3 +487,54 @@ fn gradient_contrast_distribution_and_opacity_are_reported() {
         "{r}"
     );
 }
+
+// ---- ARCH ruling 11:10: lint_frame annotation legibility ----
+fn ann_scene(w: u32, h: u32, bg: f64) -> Session {
+    let mut s = Session::new();
+    c(&mut s, "project_set", json!({"width":w,"height":h,"fps":24}));
+    let t = c(&mut s, "add_track", json!({}))["track_id"].as_str().unwrap().to_string();
+    c(&mut s, "add_clip", json!({"track_id":t,"source_type":"gradient","color":[bg,bg,bg],"color2":[bg,bg,bg],"start":0,"duration":6}));
+    let t2 = c(&mut s, "add_track", json!({}))["track_id"].as_str().unwrap().to_string();
+    let id = c(&mut s, "add_text", json!({"track_id":t2,"text":"Too close to the edge","start":0,"duration":6,"size":(h as f64) / 8.0,"color":[0.5,0.5,0.5]}))["clip_id"].as_str().unwrap().to_string();
+    c(&mut s, "set_property", json!({"clip_id":id,"property":"x","value":(w as f64) * 0.42}));
+    s
+}
+fn ann_lint(s: &mut Session, annotate: bool) -> Value { c(s, "lint_frame", json!({"time":1,"checks":["safe_zone"],"profile":"title_safe","annotate":annotate})) }
+#[test]
+fn annotation_stroke_follows_the_formula_at_three_sizes() {
+    for (w, h, want) in [(256u32, 256u32, 2i64), (480, 270, 2), (1920, 1080, 7)] {
+        let mut s = ann_scene(w, h, 0.0);
+        let r = ann_lint(&mut s, true);
+        let a = &r["frames"][0]["annotation"];
+        assert_eq!(a["stroke_px"], want, "{w}x{h}: max(2, round(min(w,h)/160))");
+    }
+}
+#[test]
+fn annotation_box_contrast_is_at_least_3_to_1_on_white_and_black() {
+    for bg in [0.0, 1.0] {
+        let mut s = ann_scene(256, 256, bg);
+        let a = ann_lint(&mut s, true)["frames"][0]["annotation"].clone();
+        assert!(a["min_contrast_vs_frame"].as_f64().unwrap() >= 3.0, "bg {bg}: {a}");
+    }
+}
+#[test]
+fn annotation_chip_is_inside_the_canvas_clear_of_the_box_and_labels_the_measure() {
+    let mut s = ann_scene(256, 256, 0.0);
+    let r = ann_lint(&mut s, true); let a = &r["frames"][0]["annotation"];
+    let chips = a["chips"].as_array().unwrap(); assert!(!chips.is_empty());
+    let c0: Vec<f64> = chips[0]["rect"].as_array().unwrap().iter().map(|x| x.as_f64().unwrap()).collect();
+    assert!(c0[0] >= 0.0 && c0[1] >= 0.0 && c0[0] + c0[2] <= 256.0 && c0[1] + c0[3] <= 256.0, "chip inside canvas {c0:?}");
+    let v: Vec<f64> = a["boxes"][0]["rect"].as_array().unwrap().iter().map(|x| x.as_f64().unwrap()).collect();
+    let hit = c0[0] < v[0] + v[2] && v[0] < c0[0] + c0[2] && c0[1] < v[1] + v[3] && v[1] < c0[1] + c0[3];
+    assert!(!hit, "chip {c0:?} is clear of the rect {v:?}");
+    let t = chips[0]["text"].as_str().unwrap(); assert!(t.starts_with("safe_zone -") && t.contains("px "), "{t}");
+    assert!(a["zone_lines"].as_i64().unwrap() >= 1, "the violated safe-zone edge is drawn: {a}");
+    assert!(a["edge_markers"].as_i64().unwrap() >= 1, "the canvas-clipped edge gets a marker: {a}");
+}
+#[test]
+fn annotation_never_changes_the_findings() {
+    let mut s = ann_scene(256, 256, 0.0);
+    let (on, off) = (ann_lint(&mut s, true), ann_lint(&mut s, false));
+    assert_eq!(on["frames"][0]["findings"], off["frames"][0]["findings"]);
+    assert!(off["frames"][0]["annotation"].is_null());
+}
