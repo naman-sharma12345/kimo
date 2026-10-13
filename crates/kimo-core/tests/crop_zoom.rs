@@ -60,3 +60,19 @@ fn gscene() -> (Session, String) { let mut s = Session::new(); c(&mut s, "projec
     assert_eq!(serde_json::to_string(&s1.project.tracks).unwrap(), serde_json::to_string(&s2.project.tracks).unwrap(), "apply:true == ops by hand");
     c(&mut s2, "undo", json!({})); assert_eq!(serde_json::to_string(&s2.project).unwrap(), proj0, "one undo step restores the project");
 }
+#[test] fn ui_zoom_returns_the_expansion_and_apply_equals_it_by_hand() {
+    let a = |ap: bool| json!({"clip_id":"clip2","target_box":TO,"duration":1.0,"hold":0.5,"easing":"in_out","apply":ap});
+    let (mut s1, _) = scene(); let proj0 = serde_json::to_string(&s1.project).unwrap(); let r = c(&mut s1, "ui_zoom", a(false)); assert_eq!(r["applied"], false); assert_eq!(serde_json::to_string(&s1.project).unwrap(), proj0, "default changes nothing");
+    let ops = r["expansion"].as_array().unwrap().clone(); assert_eq!(ops.len(), 2); assert!(ops.iter().all(|o| o["tool"] == "crop_zoom_keyframes")); assert_eq!(r["params_used"]["full_box"], json!([0, 0, 256, 256]));
+    for op in &ops { c(&mut s1, op["tool"].as_str().unwrap(), op["args"].clone()); }
+    let (mut s2, id) = scene(); c(&mut s2, "ui_zoom", a(true));
+    assert_eq!(serde_json::to_string(&s1.project.tracks).unwrap(), serde_json::to_string(&s2.project.tracks).unwrap(), "apply:true == expansion by hand");
+    near(win_at(&s2, &id, 0.), FROM, "start full frame"); near(win_at(&s2, &id, 1.0), TO, "at target"); near(win_at(&s2, &id, 1.25), TO, "hold"); near(win_at(&s2, &id, 1.5), TO, "hold end"); near(win_at(&s2, &id, 2.5), FROM, "back to full");
+    c(&mut s2, "undo", json!({})); assert_eq!(serde_json::to_string(&s2.project).unwrap(), proj0, "one undo step");
+}
+#[test] fn bad_arguments_fail_with_typed_errors_before_any_key_is_written() {
+    let (mut s, _) = scene(); let proj0 = serde_json::to_string(&s.project).unwrap();
+    for (tool, args, code) in [("ui_zoom", json!({"clip_id":"clip2","target_box":[0,0,-5,10],"duration":1.0}), "invalid_box"), ("ui_zoom", json!({"clip_id":"clip2","target_box":TO,"duration":0}), "out_of_range"), ("ui_zoom", json!({"clip_id":"clip2","target_box":TO,"duration":1.0,"easing":"wobble"}), "invalid_ease"),
+        ("ui_zoom", json!({"clip_id":"clip2","target_box":TO,"duration":1.0,"hold":-1}), "out_of_range"), ("crop_zoom_keyframes", json!({"clip_id":"clip2","from_box":FROM,"to_box":TO,"duration":100.0}), "limit_exceeded"), ("ui_zoom", json!({"clip_id":"clip2","target_box":TO,"duration":1.0,"easing":"in_out","apply":true,"back_duration":0}), "out_of_range")] {
+        let e = dispatch(&mut s, tool, &args).unwrap_err(); assert!(e.starts_with(code), "{tool}: {e}"); assert_eq!(serde_json::to_string(&s.project).unwrap(), proj0, "{tool}: nothing written"); }
+}

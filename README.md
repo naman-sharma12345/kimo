@@ -11,7 +11,7 @@ MCP-first. Every feature is a tool call. Written in Rust, runs on a 2 GB box.<br
 <p align="center">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-F4F0E8?labelColor=0E0E12">
   <img alt="language" src="https://img.shields.io/badge/rust-core-FF5C28?labelColor=0E0E12">
-  <img alt="tools" src="https://img.shields.io/badge/MCP%20tools-329%20(v3)-F4F0E8?labelColor=0E0E12">
+  <img alt="tools" src="https://img.shields.io/badge/MCP%20tools-330%20(v3)-F4F0E8?labelColor=0E0E12">
   <img alt="fuzz" src="https://img.shields.io/badge/tool%20fuzz-9359%20calls%2C%200%20failures-FF5C28?labelColor=0E0E12">
 </p>
 
@@ -31,7 +31,7 @@ Export manifests (U3a): `export_manifest` hashes every clip (content minus names
 
 **v1.0.0.** 255 tools, fuzzed (9359 calls, 0 failures). `main` is the stable v1. The `v2` branch carries the v2 work (263 tools, fuzzed: 9549 calls, 0 failures; see patches/MANIFEST.md for the unit-by-unit changelog).
 
-**v3 branch (2.0.0-dev.1, in development).** 329 tools, fuzzed (6497 calls, 0 failures). `kimo_info` reports the build: version, git commit, project schema version, enabled features, ffmpeg/ffprobe versions. Saved projects carry a `kimo` block (schema_version, created_with, last_saved_with; set `KIMO_NO_IDENTITY=1` to omit it) and export reports carry the same identity. `add_shape` alpha semantics changed: the fill alpha no longer folds into layer opacity. Fill alpha (`fill_alpha`), stroke alpha (`stroke_alpha`) and layer opacity are separate animatable properties, so a hollow ring (fill alpha 0) keeps its stroke. Invalid enum values now error (tool input only; saved projects with old values still load and render as before): add_text align, set_mask shape, add_particles kind, add_text_animator unit, add_transition kind/ease and set_blend mode used to be accepted silently; every rejection lists the allowed values. Old saved projects are unchanged (a project without the new properties renders as before).
+**v3 branch (2.0.0-dev.1, in development).** 330 tools, fuzzed (6497 calls, 0 failures). `kimo_info` reports the build: version, git commit, project schema version, enabled features, ffmpeg/ffprobe versions. Saved projects carry a `kimo` block (schema_version, created_with, last_saved_with; set `KIMO_NO_IDENTITY=1` to omit it) and export reports carry the same identity. `add_shape` alpha semantics changed: the fill alpha no longer folds into layer opacity. Fill alpha (`fill_alpha`), stroke alpha (`stroke_alpha`) and layer opacity are separate animatable properties, so a hollow ring (fill alpha 0) keeps its stroke. Invalid enum values now error (tool input only; saved projects with old values still load and render as before): add_text align, set_mask shape, add_particles kind, add_text_animator unit, add_transition kind/ease and set_blend mode used to be accepted silently; every rejection lists the allowed values. Old saved projects are unchanged (a project without the new properties renders as before).
 
 Chunked export jobs (RV-6): `export_job_start` renders picture-only chunks in the background (poll with `job_status`, stop with `cancel_job`, continue with `resume_job`) and joins them with one continuous audio stream. A chunk is reused only when its dependency key (see `export_manifest`) matches AND the chunk file's sha256 still verifies; the result lists which chunks were reused or rendered and why. `force:true` re-renders everything. Cancel keeps finished chunks and marks the unfinished one `.partial`; `resume_job` refuses with `resume_mismatch` naming the first differing dependency if the project changed. ETA stays null until 3 chunks have been measured.
 
@@ -266,7 +266,7 @@ Call a group with `{"action": "<tool name>", "args": {...}}`, for example `{"nam
 
 ## v3 tool listing (327 registry tools)
 
-This is the list the v3 build registers (read from `tools/list` of the grouped server plus `kimo_describe group=<name>`, 328 tools in 14 groups; the grouped `tools/list` itself shows 14 group tools plus `search_tools`, `kimo_describe`, `kimo_enable_group`). The release tag `v3.0.0` points at commit `b7faad6`; the build still reports version `2.0.0-dev.1` from `kimo --version` and `kimo_info`. Get any tool's arguments with `kimo tools describe <name>` or `kimo_describe`, and find tools by words with `search_tools`.
+This is the list the v3 build registers (read from `tools/list` of the grouped server plus `kimo_describe group=<name>`, 329 tools in 14 groups; the grouped `tools/list` itself shows 14 group tools plus `search_tools`, `kimo_describe`, `kimo_enable_group`). The release tag `v3.0.0` points at commit `b7faad6`; the build still reports version `2.0.0-dev.1` from `kimo --version` and `kimo_info`. Get any tool's arguments with `kimo tools describe <name>` or `kimo_describe`, and find tools by words with `search_tools`.
 
 | Group | Tools |
 |---|---|

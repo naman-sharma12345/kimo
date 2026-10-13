@@ -69,7 +69,7 @@ contact_sheet 4c3841fa11139b4c
 copy_curve 5560581f371d7986
 corner_disagreement 364bb4e3f8409a46
 create_shared_grade_graph 58fa459ac9911fc4
-crop_zoom_keyframes e0484354421f6e48
+crop_zoom_keyframes 2b8d50169fadda2f
 decompose_track_homography f43e9c6e1eecb210
 delete_clip f4a1f352f81309a7
 delete_track e83a622c3e4b81fe
@@ -320,6 +320,7 @@ transcript_to_captions 0d1a83fbc417d412
 transform_ocio_samples ad7789db9675f480
 transform_ocio_view_samples e683538a9a10b10c
 trim_clip 8f95b5cb7a988af8
+ui_zoom 3779991d29710c9b
 undistort_clip 070c6703ea0b998f
 undo 3a20d8fe69b6597d
 ungroup_clip e4719e10ac442585
