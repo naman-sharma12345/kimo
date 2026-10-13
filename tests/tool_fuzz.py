@@ -1,11 +1,12 @@
 """Robustness runner: calls every MCP tool with hostile args. Fails on crash, hang, or non-JSON reply.
 Usage (from repo root): python3 tests/tool_fuzz.py   (KIMO_FUZZ_SMOKE=1 for the 4-calls-per-tool smoke, KIMO_BIN to pick the binary)"""
-import json, os, subprocess, sys, select, time
-EXE = os.environ.get("KIMO_BIN", "target/release/kimo-mcp")
+import atexit, json, os, shutil, subprocess, sys, select, tempfile, time
+EXE = os.path.abspath(os.environ.get("KIMO_BIN", "target/release/kimo-mcp"))
+SCRATCH = tempfile.mkdtemp(prefix="kimo-fuzz-"); atexit.register(shutil.rmtree, SCRATCH, ignore_errors=True)   # hostile calls write relative paths (project.kimo, media/, manifests): run the server here, never in the repo
 SMOKE = os.environ.get("KIMO_FUZZ_SMOKE") == "1"   # fast tier: every tool still gets 4 hostile calls (fixed, no randomness), full tier runs everything
 class S:
     def __init__(s):
-        s.p = subprocess.Popen([EXE], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True); s.i = 0; s.rpc("initialize", {})
+        s.p = subprocess.Popen([EXE], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=SCRATCH); s.i = 0; s.rpc("initialize", {})
     def rpc(s, m, params, to=60):
         s.i += 1; s.p.stdin.write(json.dumps({"jsonrpc": "2.0", "id": s.i, "method": m, "params": params}) + "\n"); s.p.stdin.flush()
         r, _, _ = select.select([s.p.stdout], [], [], to)
