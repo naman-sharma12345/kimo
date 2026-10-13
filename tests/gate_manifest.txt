@@ -239,3 +239,4 @@ rust fix_hints fast
 
 rust loudness_range fast
 rust audio_pitch fast
+rust crop_zoom fast

@@ -81,11 +81,10 @@ fn times(ss: &Session, a: &Value, cap: usize) -> Result<Vec<f64>, String> {
 fn layer(c: &Clip) -> Value {
     json!({"id":c.id,"name":c.name,"role":c.role})
 }
-fn bounds(p: &crate::model::Project, c: &Clip, t: f64) -> Option<([f64; 4], f64)> {
-    let lt = crate::render::clip_local_time(c, t);
-    let q = crate::render::resolve_xform(p, c, lt);
+/// Source layer size in canvas px at scale 1 (shape size, canvas for solid/gradient, media fitted by its fit mode). None when the layer has no drawn bounds.
+pub(crate) fn source_size(p: &crate::model::Project, c: &Clip, lt: f64) -> Option<(f64, f64)> {
     let (w, h) = (p.width as f64, p.height as f64);
-    let (sw, sh) = match &c.source {
+    Some(match &c.source {
         Source::Shape { width, height, .. } => (*width, *height),
         Source::Solid { .. } | Source::Gradient { .. } => (w, h),
         Source::Media { asset } => {
@@ -108,7 +107,13 @@ fn bounds(p: &crate::model::Project, c: &Clip, t: f64) -> Option<([f64; 4], f64)
             )
         }
         _ => return None,
-    };
+        })
+}
+fn bounds(p: &crate::model::Project, c: &Clip, t: f64) -> Option<([f64; 4], f64)> {
+    let lt = crate::render::clip_local_time(c, t);
+    let q = crate::render::resolve_xform(p, c, lt);
+    let (w, h) = (p.width as f64, p.height as f64);
+    let (sw, sh) = source_size(p, c, lt)?;
     let (r, sc) = (q.rotation.to_radians(), q.scale);
     let (mut x0, mut y0, mut x1, mut y1) = (
         f64::INFINITY,

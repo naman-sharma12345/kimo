@@ -104,3 +104,35 @@ pub fn commands() -> Vec<Command> { vec![
     Command { name: "bake_property", description: "Turn ANY animated property (keys, easing, expressions) into dense raw linear keys you can edit, then drop its expression ops. start/end seconds in clip time, with fps (keys per second) or n (key count, at least 2). Existing keys inside the range are replaced. Returns max_error: an estimate of the worst gap to the original curve, sampled at segment midpoints (not a bound; raise fps/n to shrink it). The expression ops are dropped for the WHOLE property: when the baked range does not cover the clip span (camera: project span) outside_range_changed is true. end_requested appears when fps made the last key fall short of end. Target a clip property (clip_id + property, effect_id for an effect param) or a camera field (camera:true + property). Undoable.", mutates: true,
         schema: obj(vec![("clip_id", s("clip (omit for camera)")), ("property", s("property name, effect param, or camera field")), ("effect_id", s("optional: effect whose param is baked")), ("camera", json!({"type":"boolean"})), ("start", json!({"type":"number"})), ("end", json!({"type":"number"})), ("fps", json!({"type":"number","description":"keys per second"})), ("n", json!({"type":"integer","description":"key count (instead of fps)"})), ("drop_expression", json!({"type":"boolean","description":"default true; false is rejected because baked keys already include the expression"}))], &["property", "start", "end"]), run: bake_property },
 ] }
+
+// ---- crop_zoom maths (pure, no session): a visible window over a clip as scale + position keyframes ----
+/// Box `[x, y, w, h]` in canvas px. Transform convention (render::resolve_xform): a source point p shows at canvas W/2 + x + s*(p - W/2).
+pub type Box4 = [f64; 4];
+/// Grow `b` around its centre to the canvas aspect so the whole box stays visible ("pad": extra source shows around it). Returns the window and whether the aspect differed.
+pub fn fit_window(b: Box4, cw: f64, ch: f64) -> (Box4, bool) {
+    let (ba, ca) = (b[2] / b[3], cw / ch); if (ba - ca).abs() <= 1e-9 * ca { return (b, false); }
+    let (w, h) = if ba < ca { (b[3] * ca, b[3]) } else { (b[2], b[2] / ca) };
+    ([b[0] + b[2] / 2. - w / 2., b[1] + b[3] / 2. - h / 2., w, h], true)
+}
+/// Linear interpolation of two windows (position and size in px) at eased progress `e`.
+pub fn lerp_box(a: Box4, b: Box4, e: f64) -> Box4 { [0, 1, 2, 3].map(|i| a[i] + (b[i] - a[i]) * e) }
+/// Move/shrink `w` into `src` (same aspect kept). Returns the window and whether it changed.
+pub fn clamp_window(w: Box4, src: Box4) -> (Box4, bool) {
+    let k = (src[2] / w[2]).min(src[3] / w[3]).min(1.); let (nw, nh) = (w[2] * k, w[3] * k);
+    let cx = (w[0] + w[2] / 2.).clamp(src[0] + nw / 2., src[0] + src[2] - nw / 2.); let cy = (w[1] + w[3] / 2.).clamp(src[1] + nh / 2., src[1] + src[3] - nh / 2.);
+    let o = [cx - nw / 2., cy - nh / 2., nw, nh]; let ch = (0..4).any(|i| (o[i] - w[i]).abs() > 1e-9); (o, ch)
+}
+/// (scale, x, y) that make the window fill the canvas.
+pub fn window_to_xform(w: Box4, cw: f64, ch: f64) -> (f64, f64, f64) { let s = cw / w[2]; (s, -s * (w[0] + w[2] / 2. - cw / 2.), -s * (w[1] + w[3] / 2. - ch / 2.)) }
+/// Inverse of `window_to_xform`: the visible window for (scale, x, y).
+pub fn xform_to_window(s: f64, x: f64, y: f64, cw: f64, ch: f64) -> Box4 { let (w, h) = (cw / s, ch / s); [cw / 2. - x / s - w / 2., ch / 2. - y / s - h / 2., w, h] }
+/// Eased progress 0..1 using the real keyframe evaluator: `ease` is a name (linear|in|out|in_out|hold|out_quart|out_expo|out_back|in_out_quint|in_expo) or [x1,y1,x2,y2] (CSS cubic-bezier, x in 0..1).
+pub fn ease_at(ease: &Value, u: f64) -> Result<f64, String> {
+    let mut p = Prop::new(0.);
+    match ease {
+        Value::String(_) => { let e: Ease = serde_json::from_value(ease.clone()).map_err(|_| "invalid_ease: easing must be linear, in, out, in_out, hold, out_quart, out_expo, out_back, in_out_quint, in_expo or [x1,y1,x2,y2]".to_string())?; p.set_key(0., 0., e); p.set_key(1., 1., Ease::Linear); }
+        Value::Array(a) if a.len() == 4 && a.iter().all(|v| v.as_f64().map_or(false, f64::is_finite)) => { let b = [0, 1, 2, 3].map(|i| a[i].as_f64().unwrap()); if !(0. ..=1.).contains(&b[0]) || !(0. ..=1.).contains(&b[2]) { return Err("invalid_ease: cubic-bezier x1 and x2 must be within 0..1".into()); } p.set_key(0., 0., Ease::Linear); p.set_key(1., 1., Ease::Linear); p.keys[0].bez = Some(b); }
+        _ => return Err("invalid_ease: easing must be a name or [x1,y1,x2,y2]".into()),
+    }
+    Ok(p.raw(u.clamp(0., 1.)))
+}

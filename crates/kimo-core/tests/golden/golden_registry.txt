@@ -69,6 +69,7 @@ contact_sheet 4c3841fa11139b4c
 copy_curve 5560581f371d7986
 corner_disagreement 364bb4e3f8409a46
 create_shared_grade_graph 58fa459ac9911fc4
+crop_zoom_keyframes e0484354421f6e48
 decompose_track_homography f43e9c6e1eecb210
 delete_clip f4a1f352f81309a7
 delete_track e83a622c3e4b81fe
