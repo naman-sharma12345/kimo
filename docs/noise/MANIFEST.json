@@ -1,0 +1,47 @@
+{
+  "base": "2977b73751f1c9124501503e3cba0b9c33cc9413",
+  "branch": "instinct/wip-noise",
+  "status": "WIP uncompiled, unrendered, not merge-ready",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "4b842f51a6138f1a96babfb194fbdfdef43b3b138790d56d267ffae9e14b9c26"
+    },
+    {
+      "path": "crates/kimo-core/src/effects.rs",
+      "sha256": "06045845487af8f281f7716dc0d27293778543dd1068a8b67a4e1e7927763be1"
+    },
+    {
+      "path": "crates/kimo-core/src/ext/noise_tools.rs",
+      "sha256": "3714a3bbe2b1a51d0de9569e16547e4ac6b47c746005849af8ebe342d8c8ffa6"
+    },
+    {
+      "path": "crates/kimo-core/src/lib.rs",
+      "sha256": "24ca4ff87a33c5672e65e3a3e6e40f702b1c253b30c35ae07a4ab545a523556d"
+    },
+    {
+      "path": "crates/kimo-core/src/noise.rs",
+      "sha256": "df5bc315dce818729d8f54029d35cc4d71990d725e7cb9ceb017fb771197f952"
+    },
+    {
+      "path": "crates/kimo-core/src/toolgroups.rs",
+      "sha256": "76076fffd7efec2ca6e34cbcc7480746c737ce5fe9808ac79bb6aacd8e612d18"
+    },
+    {
+      "path": "crates/kimo-core/tests/coherent_noise.rs",
+      "sha256": "975286be405fdf2a414a7720b5e648de4b238c229ef66373aacf9a2671bb5d8c"
+    },
+    {
+      "path": "docs/noise/PLAN.md",
+      "sha256": "d7ac33bcb824a617456ec414087fbd693cac8536922a30ba7b239f0729b9ffa4"
+    },
+    {
+      "path": "docs/noise/VERIFY.md",
+      "sha256": "c015d282efeb6fce7f307593a315aff47b11d7d003a0475a54f70263659a6f09"
+    },
+    {
+      "path": "tests/noise_1080p.py",
+      "sha256": "933faba8d42c69595cea73a5ae8ada5a8ab47db334d99fa82f8cb7bf09ca4f96"
+    }
+  ]
+}

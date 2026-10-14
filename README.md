@@ -260,3 +260,11 @@ This is the list the v3 build registers (read from `tools/list` of the grouped s
 The README is updated with every product change. If a change adds, removes or regroups tools, or ships a new proof, the same commit updates this file.
 
 MIT licensed.
+
+## Coherent fields (feature-branch WIP)
+
+This feature branch adds original raw 2D Perlin/simplex fields, analytic gradients,
+MCP point sampling and an animatable noise effect. It is not part of the finalized
+v3 release. Compilation, numeric tests, warning delta and real 1080p visual
+sign-off are pending. No quality or production-readiness claim is made.
+See [the noise plan](docs/noise/PLAN.md) and [verification commands](docs/noise/VERIFY.md).
