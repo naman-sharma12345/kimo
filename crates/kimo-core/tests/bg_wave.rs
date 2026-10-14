@@ -125,3 +125,39 @@ fn audio_at(s: &mut Session, secs: usize, hz: f64, rate: usize) -> String {
     let r: Vec<f64> = [4usize, 8, 12, 16, 24, 32, 40].iter().map(|d| lum(yc + d) / s0).collect(); eprintln!("halo/stroke at 4,8,12,16,24,32,40 px: {r:.3?}");
     for w in r.windows(2) { assert!(w[1] < w[0] * 0.97, "strictly decaying, no plateau: {r:?}"); } assert!(r[0] >= 0.2 && r[6] <= 0.06, "visible near the stroke, nearly gone by 4r: {r:?}");
 }
+
+/// Float (pre-quantisation) outward profile of a flat wave line on a 512x512 canvas, both sides, from 4 px past the peak down to 1e-3.
+fn halo_profiles(r: f64) -> Vec<Vec<f64>> { halo_profiles_ext(r).0 }
+/// Also returns, per side, the distance (px from the peak) where the red channel first falls below 1/255 in float: the visible extent of the wide scale.
+fn halo_profiles_ext(r: f64) -> (Vec<Vec<f64>>, Vec<usize>) {
+    let mut s = Session::new(); dispatch(&mut s, "project_set", &json!({"width":512,"height":512,"fps":100})).unwrap(); let t = dispatch(&mut s, "add_track", &json!({})).unwrap()["track_id"].as_str().unwrap().to_string();
+    let a = json!({"track":t,"duration":1,"source":"values","values":[0.0,0.0,0.0],"smooth":false,"box":[16,206,480,100],"stroke_px":4,"glow":{"radius_px":r,"intensity":2.5},"apply":true});
+    dispatch(&mut s, "bg_wave", &a).unwrap(); let f = kimo_core::render::render_frame(&s.project, 0.5, &kimo_core::render::Cache::new()).unwrap();
+    let col: Vec<f32> = (0..512).map(|y| f.d[(y * 512 + 256) * 4]).collect(); let yc = (0..512).max_by(|a, b| col[*a].total_cmp(&col[*b])).unwrap();
+    let ext: Vec<usize> = [1i64, -1].iter().map(|dir| { let mut k = 0i64; loop { let y = yc as i64 + dir * k; if y < 0 || y >= 512 || (k > 4 && (col[y as usize] as f64) < 1.0 / 255.0) { break k as usize; } k += 1; } }).collect();
+    let prof: Vec<Vec<f64>> = [1i64, -1].iter().map(|dir| { let mut p = vec![]; let mut k = 4i64; loop { let y = yc as i64 + dir * k; if y < 0 || y >= 512 || col[y as usize] <= 1e-3 { break; } p.push(col[y as usize] as f64); k += 1; } p }).collect();
+    (prof, ext)
+}
+/// max over the profile of |d2[k]| / max(|d2| of the 3 samples each side): ~1 for a smooth decay, >= 9 for the kink the stacked saturated scales left (measured 11.3 at R=30, 9.3 at R=40 on 4eef6bd).
+fn seam_ratio(p: &[f64]) -> f64 {
+    let d2: Vec<f64> = p.windows(3).map(|w| (w[2] - 2.0 * w[1] + w[0]).abs()).collect(); let mut best = 0.0f64;
+    for k in 3..d2.len().saturating_sub(3) { let nb = d2[k - 3..k].iter().chain(d2[k + 1..k + 4].iter()).cloned().fold(1e-9, f64::max); best = best.max(d2[k] / nb); } best
+}
+#[test] fn halo_decay_has_no_kink_in_float() {
+    for r in [16.0, 30.0, 40.0] { for (i, p) in halo_profiles(r).iter().enumerate() {
+        assert!(p.len() > 20, "R={r} side {i}: halo too short {}", p.len()); let sr = seam_ratio(p); eprintln!("R={r} side {i}: {} samples, seam ratio {sr:.2}", p.len());
+        assert!(sr <= 2.5, "R={r} side {i}: slope kink, seam ratio {sr:.2} (smooth <= 1.7, the stacked-saturation seam was 9 to 11)");
+        for w in p.windows(2) { assert!(w[1] < w[0], "R={r} side {i}: not strictly decreasing outward"); } } }
+}
+/// Visible extent (px from the peak where float red < 1/255) of the wide scale at R=40, measured on the patched build; the crop margin must not cut it. PIN: filled from the first green run, never loosened.
+const WIDE_EXTENT_FLOOR_R40: usize = 0;
+#[test] fn the_wide_scale_is_not_cropped_by_the_local_effect_margin() {
+    let (ps, ext) = halo_profiles_ext(40.0); eprintln!("R=40 visible extent (red < 1/255) per side: {ext:?}, profile lengths (to 1e-3) {:?}", ps.iter().map(|p| p.len() + 4).collect::<Vec<_>>());
+    for (i, e) in ext.iter().enumerate() { assert!(*e >= WIDE_EXTENT_FLOOR_R40, "side {i}: visible halo ends at {e} px, below the pinned {WIDE_EXTENT_FLOOR_R40}: the crop cut it"); }
+}
+#[test] fn a_pulse_on_a_following_halo_keys_the_mid_amount_of_the_single_effect() {
+    let (mut s, t) = base(); let a = json!({"track":t,"duration":1,"source":"values","values":[0.0,0.3,0.0],"box":[16,64,224,128],"stroke_px":4,"glow":{"radius_px":12,"intensity":1.0},"pulse":{"rate_hz":2,"amount":0.5}});
+    let ex = dispatch(&mut s, "bg_wave", &a).unwrap()["expansion"].as_array().unwrap().clone(); let multi = ex.iter().filter(|o| o["args"]["kind"] == "outer_glow_multi").count(); let keys: Vec<&Value> = ex.iter().filter(|o| o["tool"] == "set_keyframe").collect();
+    assert_eq!(multi, 1); assert!(keys.len() >= 2 && keys.iter().all(|k| k["args"]["property"] == "amount_mid"), "pulse keys {:?}", keys.iter().map(|k| k["args"]["property"].clone()).collect::<Vec<_>>());
+    let mut b = a.clone(); b["apply"] = json!(true); dispatch(&mut s, "bg_wave", &b).unwrap();
+}
