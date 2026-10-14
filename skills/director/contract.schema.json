@@ -1,0 +1,687 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "kimo-director-1",
+        "kimo-director-2"
+      ]
+    },
+    "project": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "duration": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "fps": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 480
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 16384
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 16384
+        },
+        "timing_basis": {
+          "type": "string",
+          "enum": [
+            "audio_analysis",
+            "supplied_timestamps",
+            "estimated"
+          ]
+        },
+        "audio_master": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "title",
+        "duration",
+        "fps",
+        "width",
+        "height",
+        "timing_basis",
+        "audio_master"
+      ],
+      "additionalProperties": false
+    },
+    "visual_contract": {
+      "type": "object",
+      "properties": {
+        "palette": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lighting": {
+          "type": "string",
+          "minLength": 1
+        },
+        "optics": {
+          "type": "string",
+          "minLength": 1
+        },
+        "materials": {
+          "type": "string",
+          "minLength": 1
+        },
+        "motion_physics": {
+          "type": "string",
+          "minLength": 1
+        },
+        "continuity": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "palette",
+        "lighting",
+        "optics",
+        "materials",
+        "motion_physics",
+        "continuity"
+      ],
+      "additionalProperties": false
+    },
+    "scenes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "start": {
+            "type": "number",
+            "minimum": 0
+          },
+          "end": {
+            "type": "number",
+            "minimum": 0
+          },
+          "musical_role": {
+            "type": "string",
+            "minLength": 1
+          },
+          "energy": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          },
+          "lyrics": {
+            "type": "string",
+            "minLength": 1
+          },
+          "purpose": {
+            "type": "string",
+            "minLength": 1
+          },
+          "coverage_role": {
+            "type": "string",
+            "enum": [
+              "establishing",
+              "relation",
+              "hero_performance",
+              "angled_performance",
+              "moving_performance",
+              "performance_wide",
+              "reaction",
+              "narrative",
+              "detail",
+              "environment",
+              "symbolic"
+            ]
+          },
+          "performance_mode": {
+            "type": "string",
+            "enum": [
+              "direct_lipsync",
+              "expressive_performance",
+              "non_vocal_action",
+              "no_singer"
+            ]
+          },
+          "keyframe_prompt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "motion_prompt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "continuity_anchors": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "shots": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "start": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "end": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "framing": {
+                  "type": "string",
+                  "enum": [
+                    "extreme_wide",
+                    "wide",
+                    "medium_wide",
+                    "medium",
+                    "medium_close",
+                    "close",
+                    "extreme_close",
+                    "detail"
+                  ]
+                },
+                "orientation": {
+                  "type": "string",
+                  "enum": [
+                    "front",
+                    "three_quarter",
+                    "profile",
+                    "back",
+                    "none"
+                  ]
+                },
+                "movement": {
+                  "type": "string",
+                  "enum": [
+                    "locked",
+                    "push_in",
+                    "pull_out",
+                    "lateral_track",
+                    "follow",
+                    "pan",
+                    "tilt",
+                    "arc",
+                    "orbit",
+                    "crane",
+                    "handheld",
+                    "rack_focus",
+                    "zoom",
+                    "pedestal",
+                    "leading_track",
+                    "whip_pan",
+                    "body_mount"
+                  ]
+                },
+                "action": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "cut_motivation": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "start_state": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "end_state": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "camera_side": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "focus": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "light": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "has_vocals": {
+                  "type": "boolean"
+                },
+                "singer_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "mouth_visible": {
+                  "type": "boolean"
+                },
+                "lighting_contract": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "direction": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "softness": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "temperature": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "shadow_behavior": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "reflection_behavior": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "atmosphere": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "transition_cause": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "source",
+                    "direction",
+                    "softness",
+                    "temperature",
+                    "shadow_behavior",
+                    "reflection_behavior",
+                    "atmosphere",
+                    "transition_cause"
+                  ],
+                  "additionalProperties": false
+                },
+                "optics_contract": {
+                  "type": "object",
+                  "properties": {
+                    "perspective": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "focus_target": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "depth_of_field": {
+                      "type": "string",
+                      "enum": [
+                        "shallow",
+                        "moderate",
+                        "deep"
+                      ]
+                    },
+                    "focal_length_mm": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "subject_distance_m": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "shutter_degrees": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 360
+                    },
+                    "visible_effect": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "perspective",
+                    "focus_target",
+                    "depth_of_field",
+                    "focal_length_mm",
+                    "subject_distance_m",
+                    "shutter_degrees",
+                    "visible_effect"
+                  ],
+                  "additionalProperties": false
+                },
+                "movement_contract": {
+                  "type": "object",
+                  "properties": {
+                    "mount": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "start_position": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "end_position": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "direction": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "speed": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "acceleration": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "subject_relation": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "rationale": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "mount",
+                    "start_position",
+                    "end_position",
+                    "direction",
+                    "speed",
+                    "acceleration",
+                    "subject_relation",
+                    "rationale"
+                  ],
+                  "additionalProperties": false
+                },
+                "density": {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high"
+                  ]
+                },
+                "attention_target": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "start",
+                "end",
+                "framing",
+                "orientation",
+                "movement",
+                "action",
+                "cut_motivation",
+                "start_state",
+                "end_state",
+                "camera_side",
+                "focus",
+                "light",
+                "has_vocals",
+                "singer_count",
+                "mouth_visible"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1
+          },
+          "output_path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "generation_capability": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "single_shot_verified",
+              "multi_shot_verified"
+            ]
+          },
+          "capability_source": {
+            "type": "string",
+            "minLength": 1
+          },
+          "duration_exception": {
+            "type": "string",
+            "minLength": 1
+          },
+          "repetition_reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "continuity_break_reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "progression": {
+            "type": "object",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "narrative",
+                  "performance",
+                  "abstract"
+                ]
+              },
+              "cause": {
+                "type": "string",
+                "minLength": 1
+              },
+              "change": {
+                "type": "string",
+                "minLength": 1
+              },
+              "consequence": {
+                "type": "string",
+                "minLength": 1
+              },
+              "emotion_in": {
+                "type": "string",
+                "minLength": 1
+              },
+              "emotion_out": {
+                "type": "string",
+                "minLength": 1
+              },
+              "motif": {
+                "type": "string",
+                "minLength": 1
+              },
+              "motif_change": {
+                "type": "string",
+                "minLength": 1
+              },
+              "handoff_to_next": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "mode",
+              "cause",
+              "change",
+              "consequence",
+              "emotion_in",
+              "emotion_out",
+              "motif",
+              "motif_change",
+              "handoff_to_next"
+            ],
+            "additionalProperties": false
+          },
+          "references": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "identity",
+                    "first_frame",
+                    "last_frame",
+                    "location",
+                    "style",
+                    "camera_motion",
+                    "blocking",
+                    "audio"
+                  ]
+                },
+                "transfer": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "exclude": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "id",
+                "path",
+                "role",
+                "transfer",
+                "exclude"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "pacing_reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "start",
+          "end",
+          "musical_role",
+          "energy",
+          "lyrics",
+          "purpose",
+          "coverage_role",
+          "performance_mode",
+          "keyframe_prompt",
+          "motion_prompt",
+          "continuity_anchors",
+          "shots",
+          "output_path",
+          "generation_capability"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "assembly": {
+      "type": "object",
+      "properties": {
+        "output_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transition_policy": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "output_path",
+        "transition_policy"
+      ],
+      "additionalProperties": false
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "project",
+    "visual_contract",
+    "scenes",
+    "assembly",
+    "assumptions",
+    "open_questions"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Kimo agent-side director scene contract",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schema_version": {
+            "const": "kimo-director-2"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "scenes": {
+            "items": {
+              "required": [
+                "progression"
+              ],
+              "properties": {
+                "shots": {
+                  "items": {
+                    "required": [
+                      "lighting_contract",
+                      "optics_contract",
+                      "movement_contract",
+                      "density",
+                      "attention_target"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

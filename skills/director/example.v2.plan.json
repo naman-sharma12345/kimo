@@ -1,0 +1,196 @@
+{
+  "schema_version": "kimo-director-2",
+  "project": {
+    "title": "Platform - synthetic planning fixture",
+    "duration": 24,
+    "fps": 24,
+    "width": 1920,
+    "height": 1080,
+    "timing_basis": "estimated",
+    "audio_master": "input/song.wav"
+  },
+  "visual_contract": {
+    "palette": "charcoal and restrained amber",
+    "lighting": "overhead practical with readable shadows",
+    "optics": "wide geography then normal perspective",
+    "materials": "wet concrete, woven coat, textured highlights",
+    "motion_physics": "grounded steps and gradual camera acceleration",
+    "continuity": "same coat, platform and travel axis"
+  },
+  "scenes": [
+    {
+      "id": 0,
+      "start": 0,
+      "end": 12,
+      "musical_role": "verse",
+      "energy": "low",
+      "lyrics": "instrumental fixture, not an analyzed song",
+      "purpose": "Establish isolation",
+      "coverage_role": "environment",
+      "performance_mode": "no_singer",
+      "keyframe_prompt": "Single wide frame of a rain-soaked platform, one commuter small at frame left, soft overhead practical, wet concrete retaining texture.",
+      "motion_prompt": "0-12s: locked wide camera; commuter takes one step toward the platform edge, shoes stay grounded; hold for the distant train light.",
+      "continuity_anchors": [
+        "charcoal coat",
+        "platform overhead practical",
+        "rain"
+      ],
+      "output_path": "outputs/scene-00.mp4",
+      "generation_capability": "unknown",
+      "shots": [
+        {
+          "start": 0,
+          "end": 12,
+          "framing": "wide",
+          "orientation": "none",
+          "movement": "locked",
+          "action": "Step toward platform edge",
+          "cut_motivation": "Train light enters at phrase change",
+          "start_state": "Standing beside bench",
+          "end_state": "Near train door",
+          "camera_side": "platform side of travel axis",
+          "focus": "commuter",
+          "light": "soft overhead practical",
+          "has_vocals": false,
+          "singer_count": 0,
+          "mouth_visible": false,
+          "density": "low",
+          "attention_target": "commuter hand and silhouette",
+          "lighting_contract": {
+            "source": "platform practical",
+            "direction": "overhead",
+            "softness": "soft",
+            "temperature": "restrained warm",
+            "shadow_behavior": "readable grounded shadow",
+            "reflection_behavior": "wet platform reflections",
+            "atmosphere": "rain catches practical",
+            "transition_cause": "stable, no lighting transition"
+          },
+          "optics_contract": {
+            "perspective": "spatial wide",
+            "focus_target": "commuter",
+            "depth_of_field": "deep",
+            "focal_length_mm": 24,
+            "subject_distance_m": 8,
+            "shutter_degrees": 180,
+            "visible_effect": "subject grounded in platform geography"
+          },
+          "movement_contract": {
+            "mount": "tripod",
+            "start_position": "platform bench side",
+            "end_position": "same position",
+            "direction": "none",
+            "speed": "stationary",
+            "acceleration": "none",
+            "subject_relation": "same side of travel axis",
+            "rationale": "observe isolation"
+          }
+        }
+      ],
+      "progression": {
+        "mode": "narrative",
+        "cause": "Waiting for an arrival",
+        "change": "Approaches door",
+        "consequence": "Door is reachable",
+        "emotion_in": "Isolated",
+        "emotion_out": "Anticipating",
+        "motif": "amber arrival light",
+        "motif_change": "Distant light becomes near",
+        "handoff_to_next": "near train door"
+      },
+      "references": [],
+      "pacing_reason": "Hold the grounded action at measured phrase boundary"
+    },
+    {
+      "id": 1,
+      "start": 12,
+      "end": 24,
+      "musical_role": "chorus",
+      "energy": "high",
+      "lyrics": "instrumental fixture, not an analyzed song",
+      "purpose": "Reveal a connection",
+      "coverage_role": "narrative",
+      "performance_mode": "no_singer",
+      "keyframe_prompt": "Single medium three-quarter frame of a commuter turning toward a train door, same charcoal coat, soft overhead practical, readable hand silhouette.",
+      "motion_prompt": "0-12s: restrained lateral track follows one step to the doorway, foreground frame moves with coherent parallax; stop as the hand touches the door.",
+      "continuity_anchors": [
+        "charcoal coat",
+        "platform overhead practical",
+        "rain"
+      ],
+      "output_path": "outputs/scene-01.mp4",
+      "generation_capability": "unknown",
+      "shots": [
+        {
+          "start": 0,
+          "end": 12,
+          "framing": "medium",
+          "orientation": "three_quarter",
+          "movement": "lateral_track",
+          "action": "Touch the door",
+          "cut_motivation": "Hold on contact",
+          "start_state": "Near train door",
+          "end_state": "Hand on door",
+          "camera_side": "platform side of travel axis",
+          "focus": "commuter",
+          "light": "soft overhead practical",
+          "has_vocals": false,
+          "singer_count": 0,
+          "mouth_visible": false,
+          "density": "medium",
+          "attention_target": "commuter hand and silhouette",
+          "lighting_contract": {
+            "source": "platform practical",
+            "direction": "overhead",
+            "softness": "soft",
+            "temperature": "restrained warm",
+            "shadow_behavior": "readable grounded shadow",
+            "reflection_behavior": "wet platform reflections",
+            "atmosphere": "rain catches practical",
+            "transition_cause": "stable, no lighting transition"
+          },
+          "optics_contract": {
+            "perspective": "natural normal",
+            "focus_target": "commuter",
+            "depth_of_field": "moderate",
+            "focal_length_mm": 50,
+            "subject_distance_m": 3,
+            "shutter_degrees": 180,
+            "visible_effect": "subject grounded in platform geography"
+          },
+          "movement_contract": {
+            "mount": "slider",
+            "start_position": "doorway left",
+            "end_position": "doorway center",
+            "direction": "left to right",
+            "speed": "slow",
+            "acceleration": "gradual stop",
+            "subject_relation": "same side of travel axis",
+            "rationale": "follow approach"
+          }
+        }
+      ],
+      "progression": {
+        "mode": "narrative",
+        "cause": "Train has arrived",
+        "change": "Makes contact",
+        "consequence": "Boarding can begin",
+        "emotion_in": "Anticipating",
+        "emotion_out": "Ready",
+        "motif": "amber arrival light",
+        "motif_change": "Light reflected in door",
+        "handoff_to_next": "hold on hand contact"
+      },
+      "references": [],
+      "pacing_reason": "Hold the grounded action at measured phrase boundary"
+    }
+  ],
+  "assembly": {
+    "output_path": "outputs/final.mp4",
+    "transition_policy": "hard cut on train arrival, no automatic crossfade"
+  },
+  "assumptions": [
+    "Synthetic fixture only: audio and outputs do not exist. No generation or render verified."
+  ],
+  "open_questions": []
+}

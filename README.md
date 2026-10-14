@@ -55,6 +55,27 @@ Add a tool to the registry and it appears in the MCP server, the CLI, the fuzz t
 - **Measured, not claimed.** Every "better than X" line in FEATURES.md has a stated baseline and a measured number, including the cases where we lost.
 - **Fuzzed.** The v3 notes record 6497 fuzz calls with 0 failures at 327 tools. These numbers come from the project notes. They were not re-run for this README.
 
+## Director planning layer (this branch)
+
+[The agent-side director skill](skills/director/SKILL.md) adds editable scene/shot
+contracts and original directing rules synthesized from 21 credited repositories.
+The second pass covers physical lighting, optics and camera paths, beat progression,
+emotional rhythm, motifs, reference transfers and density/attention review.
+It is a planning aid, not a generator, preset or new MCP endpoint.
+
+```bash
+python3 skills/director/validate_plan.py skills/director/example.v2.plan.json
+python3 -m unittest discover -s skills/director -p 'test_*.py'
+python3 skills/director/validate_plan.py plan.json --batch --media-root /absolute/project
+```
+
+The batch is review-only existing registry commands. Bind real return IDs and
+inspect/probe actual media before applying it. [Schema](skills/director/contract.schema.json),
+[progression guide](skills/director/progression.md), [MCP map](skills/director/mcp-map.md),
+[source pins and licenses](skills/director/CREDITS.md). v1 contracts stay compatible.
+Examples are synthetic fixtures, not rendered films. No cargo or engine render
+is required or claimed by the director-layer tests.
+
 ## Install
 
 **Status of prebuilt downloads.** The v3.0.0 Linux (`.deb` and portable `tar.gz`) and Windows x64 assets are listed on the [Releases page](https://github.com/naman-sharma12345/kimo/releases) once they exist there. Windows x64 is built by a GitHub Actions runner and is not verified until the runner output exists. Until you see assets attached to a release, build from source. Older v1.0.0 downloads are a different, 255-tool build.
