@@ -32,7 +32,11 @@ pub(crate) fn orb_expression(o: &Orb, combine: &str) -> String {
 }
 /// Dither: +-amp LSB of seeded noise on every channel. amp 0 means no effect at all (bit-identical).
 pub(crate) fn dither_expression(amp: f64, seed: u64) -> String {
-    let s = n((seed % 65521) as f64); let k = n(amp * 2.0 / 255.0); let d = format!("((noise({s},x,y)-0.5)*{k})"); format!("vec4(r+{d},g+{d},b+{d},a)")
+    // TPDF dither, +-amp LSB peak (2 LSB peak-to-peak at amp 1), zero mean: the sum of two independent uniform draws minus 1.
+    // Each draw hashes (seed, frame time) first, so every frame gets a fresh pattern and the same frame repeats bit for bit.
+    let s = n((seed % 65521) as f64); let k = n(amp / 255.0);
+    let d = format!("((noise(noise({s},t,1),x,y)+noise(noise({s},t,2),x,y)-1)*{k})");
+    format!("vec4(r+{d},g+{d},b+{d},a)")
 }
 fn rgb(v: Option<&Value>, d: [f64; 3], what: &str, call: &str) -> Result<[f64; 3], String> {
     let Some(v) = v.filter(|v| !v.is_null()) else { return Ok(d) };
@@ -97,11 +101,12 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
         ops.push(json!({"id":id,"tool":"add_effect","args":args}));
         for k in &o.keys { for (p, v) in [("p0", k[1]), ("p1", k[2])] { ops.push(json!({"tool":"set_keyframe","args":{"clip_id":"$bg.clip_id","effect_id":format!("${id}.effect_id"),"property":p,"time":k[0],"value":v}})); keyed_n += 1; } }
     }
-    if dither > 0.0 { ops.push(json!({"id":"dither","tool":"add_effect","args":{"clip_id":"$bg.clip_id","kind":"pixel_expr","strings":{"expr":exprs[orbs.len()]}}})); }
     // finishing stack, in order: vignette (ambient falloff), grain (luma noise, seeded), shoulder LAST so nothing passes the ceiling
     if vignette > 0.0 { ops.push(json!({"tool":"add_effect","args":{"clip_id":"$bg.clip_id","kind":"vignette","params":{"amount":vignette,"softness":0.8}}})); }
     if grain > 0.0 { ops.push(json!({"tool":"add_effect","args":{"clip_id":"$bg.clip_id","kind":"grain","params":{"amount":grain}}})); }
     if ceiling < 1.0 { ops.push(json!({"tool":"add_effect","args":{"clip_id":"$bg.clip_id","kind":"shoulder","params":{"start":(ceiling - 0.12).max(0.0),"ceiling":ceiling}}})); }
+    // dither is the last stage of the stack, after the shoulder, so the 8-bit quantiser sees noise that nothing else reshapes
+    if dither > 0.0 { ops.push(json!({"id":"dither","tool":"add_effect","args":{"clip_id":"$bg.clip_id","kind":"pixel_expr","strings":{"expr":exprs[orbs.len()]}}})); }
     ops.extend(c.finish_ops("bg"));
     let params = { let mut p = c.echo(); p["orbs"] = json!(orbs.iter().map(|o| json!({"cx":o.cx,"cy":o.cy,"radius":o.radius,"color":o.color,"intensity":o.intensity,"falloff":o.falloff,"layer":o.layer,"orbit":o.orbit.map(|v| json!({"rx":v[0],"ry":v[1],"rate_hz":v[2],"phase":v[3]})),"keys":if o.keys.is_empty() { Value::Null } else { json!(o.keys.iter().map(|k| json!({"t":k[0],"cx":k[1],"cy":k[2]})).collect::<Vec<_>>()) }})).collect::<Vec<_>>());
         p["base"] = json!({"type":base_kind,"c1":c1,"c2":c2}); p["dither"] = json!(dither); p["vignette"] = json!(vignette); p["grain"] = json!(grain); p["ceiling"] = json!(ceiling); p["combine"] = json!(combine); p["order"] = json!("canonical: orbs are sorted before expansion, call order does not matter"); p };
