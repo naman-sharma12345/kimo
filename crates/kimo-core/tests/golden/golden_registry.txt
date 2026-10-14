@@ -8,7 +8,7 @@ add_captions 59f096446c4d0d66
 add_clip be500ff5ffa4a7e8
 add_counter 2cfd3406e38575f3
 add_detection_box e740cc0690940b44
-add_effect e6816644952085e2
+add_effect 61815eb9d10145fe
 add_emitter 940e20f3bb9b947f
 add_glitch_confetti ea3c9845ccf22d20
 add_hud_frame 4518e23cbffd7cd9
@@ -216,7 +216,9 @@ ripple_delete af7455d513b9e3c9
 ripple_trim 67fb9388eed31127
 roll_edit 0e15462a35d306ee
 roto_propagate d82172bedca52a94
+sample_field 00e7b2d0d2c14a73
 sample_linear_neutral f521f85a77fcec69
+sample_noise 0efa7d68b87bccf8
 sample_property 3994cff551e8910e
 save_project d51a7abb5be457b3
 session_stats 08b78ec5daffb184
