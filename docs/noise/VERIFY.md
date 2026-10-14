@@ -34,3 +34,5 @@ Do not use KIMO_UPDATE_GOLDEN=1 as a blanket fix. Stage only audited registry ad
 Inspect perlin-contact-sheet.png, simplex-contact-sheet.png, both 1to1-crop.png files and the original 1920x1080 PNGs. Repeat t=0 in shuffled frame order must be byte-identical. Check spatial smoothness, diagonal/lattice seams, grain crawling during advection, clipping from display gain/bias and consistency across time. The raw simplex scale is intentionally low; gain 10 in the proof is an explicit display mapping, not intrinsic normalization. Record any clipping and do not relabel it as signal range failure. Numeric bounds/derivatives must pass separately.
 
 The runner writes calls.json, server stderr and STATUS.txt; STATUS explicitly says visual inspection pending. Rendering files is not a sign-off. Correctness/premium labels remain pending until evidence is inspected.
+
+The explicit extended gate checklist in FIELD_UNITS.md includes range invariants, seeded determinism, gradient continuity, solenoidal curl divergence convergence, and actual 1080p aliasing/banding/warp-seam inspection. None has passed by declaration.
