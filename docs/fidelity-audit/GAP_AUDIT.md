@@ -1,0 +1,57 @@
+# Kimo visual-fidelity gap audit
+
+2026-10-14. Source checkpoint: main/tag v3.0.0, `273cf0b88c1d6d3d5bceb9af16ca7a1a5ef02384`.
+Source: https://github.com/naman-sharma12345/kimo . This is a static audit, not a fresh build or a visual review. No cargo was run. No tool or rendered feature was added. **Correctness: fresh execution unverified. Premium: pending.** Historical tests in the tree are evidence of intended coverage, not a claim that they passed today.
+
+## Honest diagnosis
+
+Kimo does not lack all lighting, all spatial cameras, all easing or all particle physics. Those capabilities already have implementations and registry entries. The gap is their depth, consistency across render paths, and proof at production resolution. Declaring them absent would send engineering effort in the wrong direction.
+
+No new footage was rendered or inspected in this audit. "Amateur" is therefore an engineering-risk diagnosis, not a measured visual verdict. The mechanisms below can produce flat materials, inconsistent highlights, clipped geometry, transparency errors, repetitive motion and implausible debris. A controlled frame/sequence suite must determine which actually dominate Naman's current films. More effect names will not fix these mechanisms.
+
+## Priority and evidence
+
+| ID / priority | Present, verified in source | Missing or limited in inspected path | Likely visible consequence and next primitive |
+|---|---|---|---|
+| LIGHT-1 / P0 | `lighting.rs` has Cook-Torrance/GGX-style specular, Schlick Fresnel, clearcoat, point/directional/spot lights, height-field relight. `set_light`, `set_material`, `set_relight` are in golden registry. | Scene3D uses a separate roughness-to-shininess, half-vector power lobe and separate local `Light`/object color schema, not the shared BRDF/material lookup. Render injects shared lighting for relight/fracture effects, not Scene3D source construction. | Same object/material can look different across effects. Unify material/light evaluation first; preserve legacy scenes explicitly, rather than silently changing saved looks. |
+| LIGHT-2 / P1 | Directional shadow map with 3x3 PCF exists; relight has ten-step height-field occlusion. Scene3D AO/environment approximations exist. | Scene3D point lights deliberately receive `None` shadows; fixed 1536 shadow map; analytic sky/light lobes, not image-based environment maps; no area-light sampling or material texture slots in these structs. Relight normals come from alpha/luma, not recovered 3D geometry. | Floating objects, generic highlights and flat-looking plates. Add bounded area light and environment sampling, point shadow support, real normal/height inputs. Do not market 2D relight as physically reconstructed lighting. |
+| CAMERA-1 / P0 | `three_d.rs` implements pinhole perspective, camera XYZ/pan/tilt/roll/FOV, plane inverse mapping and supersampling. Scene3D has actual triangle geometry, depth, parenting and shutter sampling. Camera tools are registered. | Focal distance in pixels derives from frame height/FOV; camera eye is `cam_z - focal`, coupling a FOV change to effective eye position. Scene3D drops a triangle if any vertex fails projection instead of clipping it at the near plane. | Zooms can alter apparent viewpoint; geometry can pop during fly-throughs. Define decoupled projection/filmback contract and clip triangles, with saved-project compatibility. |
+| CAMERA-2 / P1 | Scene3D DOF gathers 24 screen-space taps; object keys and parenting exist. | Camera is Euler/pinhole; no explicit filmback/focal-mm/aperture model here. Object keys use smoothstep for vector Euler angles, not scalar `Prop` curves/quaternion rotation. DOF is capped gather with no depth-aware foreground separation. | Wrong rotation route, generic lens look, blurred foreground/background bleeding. Add rotation interpolation and coherent curve control; physical lens parameters and depth-aware DOF only after oracle frames. |
+| NOISE-1 / P0 | `pixel_expr` and `shader_ops` provide per-pixel math, sampling, displacement, convolution and bounded expression evaluation. Keyframe wiggle is smooth 1D value noise. | Pixel `noise(seed,x,y)` hashes float bit patterns directly, without lattice interpolation. It is random hash noise, not continuous Perlin/simplex noise. No typed coherent multidimensional noise/fractal/derivative contract in the inspected shader API. | Crawling/discontinuous texture when coordinates move. Add deterministic continuous 2D/3D fields, FBM/ridged/domain warp/curl as explicit composable ops, including antialias/band-limit policy. |
+| EASE-1 / P2 | `keyframe.rs` already has cubic timing Bezier, in/out tangent handles, overshoot, damped closed-form springs in all damping regimes. `curves.rs` has independent numerical and rendered bbox assertions. Camera expressions are supported. | Light position/intensity keys and Scene3D object keys hardcode smoothstep; scalar handles are not their common representation. Public camera-key command advertises named easings; generic expressions support more. | Everything settles the same way in some subsystems. Reuse the existing curve evaluator across object/light channels rather than importing yet another easing library. |
+| PARTICLE-1 / P1 | Emitter forces, drag, attractor, vortex, trails, life interpolation, silhouette spawning/collisions and temporal blur exist. Physics has sphere proxies, spatial-hash collisions, quaternion orientation and baked stateless trajectories. | Main emitter is 2D; its turbulence is a trigonometric field, not divergence-free curl noise. It reintegrates age in 1..400 steps, so integration step changes with age. Colliders are discrete position tests. Physics bodies are spheres; pair contact radius is `(rA+rB)*0.8`; no general convex/mesh contacts/constraints/CCD in this module. | Patterned smoke/sparks, penetrating fast debris, proxy-shaped contacts. Prioritize deterministic fixed-step cached trajectories, curl fields and swept collision before fluid simulation. |
+| COMP-1 / P0 | Tracks, precomps, masks, alpha/luma mattes, five blend branches, float buffers and optional managed linear pipeline exist. Grade DAG validates cycles/budgets and supports RGB grade/parallel/layer nodes. | Grade DAG is not a general VFX graph: node whitelist, RGB-only mixers, first-input alpha preserved. Ordinary layer blend operates on accumulated destination RGB without explicit straight/premult conversion for nonlinear blend operators. On transparent canvases, correctness needs an independent alpha oracle. `unpremultiply` clips RGB to <=1. | Fringe/darkening/HDR loss risk in transparent or nested composites. Specify Porter-Duff/alpha/domain semantics, test numeric oracles and actual translucent frame stacks; add general typed VFX graph only with bounded lifetime/cache design. |
+| COMP-2 / P1 | Motion blur, float pixel import/read, shader operations and color DAG are available. | No arbitrary temporal/multi-input VFX nodes in grade whitelist; geometry depth and normals are internal rather than general graph channels. Transparent Scene3D objects sort by world-z center difference, not per-fragment camera-space depth; interpenetrating surfaces cannot be solved by this ordering. | Limited reuse of depth/normal-driven effects; incorrect overlapping glass from some views. Add depth/normal/motion channels and explicit transparent-order policy, not a black-box premium preset. |
+| PROOF-1 / P0 | Golden registry has 327 lines; golden frame harness has ten scenes at three times, 320x180, FNV hashes, fresh sessions and worker-count comparison. | Hash stability is not a quality oracle. That suite does not by itself establish physical accuracy, premium taste, 1080p/4K detail or long temporal stability. Historical FEATURES rows are explicitly pinned to older checkpoints and cannot override newer source. | A stable bad frame can pass. Add frame/sequence oracles and independent human/reference comparison; preserve correctness and premium labels separately. |
+
+## Evidence map (paths are relative to checkpoint)
+
+- `crates/kimo-core/src/lighting.rs`: 15-35 light/material data; 44-55 light-key interpolation; 77-87 BRDF; 102-157 relight/preview.
+- `crates/kimo-core/src/scene3d.rs`: 10-23 object/light schema; 61-72 smoothstep keys; 98-100 analytic environment; 116-139 draw ordering, lights/shadows, projection and specular; 147-159 screen-space AO/DOF/output.
+- `crates/kimo-core/src/three_d.rs`: 9-16 camera props; 32-35 projector focal/eye; 86-91 world projection.
+- `crates/kimo-core/src/keyframe.rs`: 3-16 curves/handles; 35-56 spring/Bezier expressions and response; 60-63 smooth value noise; 64-69 cubic solver; 130-144 handle evaluation.
+- `crates/kimo-core/src/pixel_expr.rs`: 283-289 float-bit hash noise. `effects.rs`: 22-25 shader catalog and 74-82 dispatch.
+- `crates/kimo-core/src/particles.rs`: 7-37 emitter/collider schema; 120-133 adaptive-age integration and trigonometric forces; 139-146 compositing.
+- `crates/kimo-core/src/physics.rs`: 1-4 proxy/fixed-step contract; 22-48 baking/contact solve, including the 0.8 radius factor; 51-69 circle-proxy 2D physics.
+- `crates/kimo-core/src/render.rs`: 279 Scene3D render; 428-448 blend; 484 scene lighting injection; 541-542 unpremultiply. `color/node_graph.rs`: 4 whitelist; 12 validation; 35-43 RGB-only mixing and alpha.
+- `crates/kimo-core/tests/golden_frames.rs`: scene builders and hash/worker determinism harness. `tests/golden/golden_registry.txt`: 327 registered schema baselines. `tests/curves.rs`: analytic spring/Bezier tests and frame bounding-box assertions.
+
+This is bounded path inspection, not proof of global nonexistence. A primitive missing from one public struct/path may exist elsewhere on another branch. This audit says what main's inspected paths implement and where their contracts stop.
+
+## Required acceptance bar before landing executable tools
+
+1. Every new public primitive: registry/schema, serialization/backward compatibility, unit oracle, invalid/NaN/resource input checks, no net-new warnings against the parent's 40-warning baseline.
+2. Real rendered frames at 320x180 and 1920x1080: black/white checker, translucent edges, signed HDR, near-plane crossing, rotated camera, intersecting transparency, known normals and metal/dielectric materials. Inspect actual pixels, not only hashes.
+3. Sequences: seeded noise advected subpixel, fast thin debris, light moves, focus pulls, curve continuity and nested alpha. Compare shuffled frame order and worker counts.
+4. Correctness pass can be awarded only after executed tests plus real renders. Premium remains pending until controlled reference comparison is inspected. No "100% working" claim.
+5. No cargo here: ENGINE-2 owns the serial build window. This docs-only WIP can be reviewed now; no executable integration is represented as ready.
+
+## First work units
+
+- A: Alpha/HDR blend oracle and near-plane clipping contracts (highest correctness risk).
+- B: Coherent noise/derivative API and seeded trajectory contract (highest reusable shader/particle gain).
+- C: Shared shading adapter with explicit legacy mode, not silent scene changes.
+- D: Curve unification for object/light motion, quaternion semantics and camera projection separation.
+- E: Typed multi-input VFX graph and depth/normal/motion outputs with bounded memory.
+
+Do not begin with "add all Blender". Each work unit needs a mathematical reference, source/license decision, MCP path and frame acceptance test. Survey ranks and integration specifications follow separately.
