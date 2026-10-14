@@ -14,3 +14,43 @@ use kimo_core::uv_math::{push,radial};
 #[test]fn spherical_scale_invariant_and_finite_large_coordinates(){use kimo_core::uv_math::spherical;
  let a=spherical([1.,2.,3.]).unwrap();let b=spherical([1e100,2e100,3e100]).unwrap();for j in 0..2{assert!((a.uv[j]-b.uv[j]).abs()<1e-14);}
 }
+
+#[test]fn mapping_singular_outputs_are_finite_including_signed_zero(){
+ use kimo_core::uv_math::{polar,spherical,cylindrical};
+ for x in [0.0,-0.0]{for y in [0.0,-0.0]{
+  let p=polar([x,y]).unwrap();assert!(p.singular);assert_eq!(p.uv,[0.5,0.0]);
+  for z in [0.0,-0.0]{let s=spherical([x,y,z]).unwrap();assert!(s.singular);assert_eq!(s.uv,[0.5,0.5]);}
+  for height in [-f64::MAX,-1.0,0.0,1.0,f64::MAX]{
+   let c=cylindrical([x,height,y]).unwrap();assert!(c.singular);assert!(c.uv.iter().all(|v|v.is_finite()));assert_eq!(c.uv,[0.5,height]);
+  }
+ }}
+ for y in [-f64::MAX,-1.0,-f64::from_bits(1),f64::from_bits(1),1.0,f64::MAX]{
+  let s=spherical([0.0,y,-0.0]).unwrap();assert!(s.singular);assert_eq!(s.uv,[0.5,if y>0.0{0.0}else{1.0}]);
+ }
+}
+#[test]fn angular_wrap_is_canonical_and_seam_sides_are_modulo_close(){
+ use kimo_core::uv_math::{polar,spherical,cylindrical};
+ for z in [0.0,-0.0]{
+  assert_eq!(polar([-1.0,z]).unwrap().uv[0],0.0);
+  assert_eq!(spherical([-1.0,0.0,z]).unwrap().uv[0],0.0);
+  assert_eq!(cylindrical([-1.0,3.0,z]).unwrap().uv[0],0.0);
+ }
+ for epsilon in [1e-3,1e-9,1e-15]{
+  let a=polar([-1.0,epsilon]).unwrap().uv[0];let b=polar([-1.0,-epsilon]).unwrap().uv[0];
+  for u in [a,b]{assert!(u.is_finite()&&(0.0..1.0).contains(&u));}
+  let d=(a-b).abs();assert!(d.min(1.0-d)<epsilon);
+ }
+}
+#[test]fn mappings_extreme_finite_inputs_and_nonfinite_rejection(){
+ use kimo_core::uv_math::{polar,spherical,cylindrical,planar};
+ let tiny=f64::from_bits(1);
+ for point in [[tiny,tiny,tiny],[f64::MAX,f64::MAX,f64::MAX],[tiny,0.0,-tiny],[-f64::MAX,tiny,0.0]]{
+  let s=spherical(point).unwrap();assert!(s.uv.iter().all(|v|v.is_finite()));assert!((0.0..1.0).contains(&s.uv[0]));assert!((0.0..=1.0).contains(&s.uv[1]));assert!(!s.singular);
+ }
+ let small=spherical([tiny,tiny,tiny]).unwrap();let unit=spherical([1.0,1.0,1.0]).unwrap();assert_eq!(small,unit);
+ assert!(polar([f64::MAX,f64::MAX]).is_err());assert!(cylindrical([f64::MAX,0.0,f64::MAX]).is_err());
+ for bad in [f64::NAN,f64::INFINITY,f64::NEG_INFINITY]{
+  for axis in 0..3{let mut p=[1.0;3];p[axis]=bad;assert!(spherical(p).is_err());assert!(cylindrical(p).is_err());assert!(planar(p,0,1).is_err());}
+  assert!(polar([bad,0.0]).is_err());assert!(polar([0.0,bad]).is_err());
+ }
+}
