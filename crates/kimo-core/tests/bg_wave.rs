@@ -104,14 +104,14 @@ fn audio_at(s: &mut Session, secs: usize, hz: f64, rate: usize) -> String {
 }
 #[test] fn a_following_halo_may_exceed_the_old_amount_cap_of_4_but_a_pinned_halo_may_not() {
     let (mut s, t) = base(); let a = |g: Value| json!({"track":t,"duration":1,"source":"values","values":[0.0,0.3,0.0],"box":[16,64,224,128],"stroke_px":4,"glow":{"radius_px":40,"intensity":4.0},"gradient":g});
-    let amts = |r: &Value| -> Vec<f64> { r["expansion"].as_array().unwrap().iter().filter(|o| o["args"]["kind"] == "outer_glow").map(|o| o["args"]["params"]["amount"].as_f64().unwrap()).collect() };
+    let amts = |r: &Value| -> Vec<f64> { r["expansion"].as_array().unwrap().iter().flat_map(|o| { let p = &o["args"]["params"]; match o["args"]["kind"].as_str() { Some("outer_glow") => vec![p["amount"].as_f64().unwrap()], Some("outer_glow_multi") => vec![p["amount_wide"].as_f64().unwrap(), p["amount_mid"].as_f64().unwrap(), p["amount_tight"].as_f64().unwrap()], _ => vec![] } }).collect() }; // a following halo is ONE outer_glow_multi (wide, mid, tight amounts), a pinned one three outer_glow
     let on = amts(&dispatch(&mut s, "bg_wave", &a(json!({"from":[0.35,0.85,1],"to":[0.75,0.4,1]}))).unwrap()); let off = amts(&dispatch(&mut s, "bg_wave", &a(json!(false))).unwrap());
     eprintln!("outer_glow amounts following {on:?} pinned {off:?}"); assert_eq!(on.len(), 3); assert!(on.iter().cloned().fold(0.0, f64::max) > 4.0 && on.iter().all(|v| *v <= 10.0 + 1e-9), "follow lifts the cap to 10: {on:?}"); assert!(off.iter().all(|v| *v <= 4.0 + 1e-9), "a pinned halo keeps the cap of 4: {off:?}");
 }
 #[test] fn glow_scale_weights_are_0_55_0_33_0_12_when_following_and_0_5_0_3_0_2_when_pinned() {
     let (mut s, t) = base(); let (rad, inten, stroke) = (8.0f64, 0.1f64, 8.0f64);
     let a = |g: Value| json!({"track":t,"duration":1,"source":"values","values":[0.0,0.3,0.0],"box":[16,64,224,128],"stroke_px":stroke,"glow":{"radius_px":rad,"intensity":inten},"gradient":g});
-    let amts = |r: &Value| -> Vec<f64> { r["expansion"].as_array().unwrap().iter().filter(|o| o["args"]["kind"] == "outer_glow").map(|o| o["args"]["params"]["amount"].as_f64().unwrap()).collect() };
+    let amts = |r: &Value| -> Vec<f64> { r["expansion"].as_array().unwrap().iter().flat_map(|o| { let p = &o["args"]["params"]; match o["args"]["kind"].as_str() { Some("outer_glow") => vec![p["amount"].as_f64().unwrap()], Some("outer_glow_multi") => vec![p["amount_wide"].as_f64().unwrap(), p["amount_mid"].as_f64().unwrap(), p["amount_tight"].as_f64().unwrap()], _ => vec![] } }).collect() }; // a following halo is ONE outer_glow_multi (wide, mid, tight amounts), a pinned one three outer_glow
     let gs = |r: f64| (2.0 * r / stroke).max(1.0); let radii = [2.5 * rad, rad, rad / 3.0];
     let on = amts(&dispatch(&mut s, "bg_wave", &a(json!({"from":[0.35,0.85,1],"to":[0.75,0.4,1]}))).unwrap()); let off = amts(&dispatch(&mut s, "bg_wave", &a(json!(false))).unwrap());
     for (got, w, what) in [(&on, [0.12, 0.33, 0.55], "following"), (&off, [0.2, 0.3, 0.5], "pinned")] { assert_eq!(got.len(), 3); for k in 0..3 { let want = inten * w[k] * gs(radii[k]); assert!((got[k] - want).abs() < 1e-9, "{what} scale {k}: {} vs {want}", got[k]); } }

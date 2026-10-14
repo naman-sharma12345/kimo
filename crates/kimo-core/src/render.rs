@@ -787,7 +787,7 @@ pub fn dyn_text(text: &str, gt: f64, fps: f64) -> String {
 /// Local (spatially invariant) effects run on the layer's alpha bounding box plus a margin instead of the full canvas.
 /// Big win for small shapes with glow/blur/shadow (echo ghosts, particles, UI plates).
 fn apply_effects_local(effs: &[crate::model::Effect], f: &mut Frame, lt: f64, seed: u64) -> Result<(), String> {
-    const LOCAL: [&str; 7] = ["blur", "outer_glow", "drop_shadow", "glow", "choker", "feather_alpha", "outline"];
+    const LOCAL: [&str; 8] = ["blur", "outer_glow", "outer_glow_multi", "drop_shadow", "glow", "choker", "feather_alpha", "outline"];
     if effs.is_empty() { return Ok(()); }
     let (w, h) = (f.w, f.h);
     let mut bb: Option<(usize, usize, usize, usize)> = None; // x0,y0,x1,y1
@@ -799,7 +799,7 @@ fn apply_effects_local(effs: &[crate::model::Effect], f: &mut Frame, lt: f64, se
         let e = &effs[i];
         if need && LOCAL.contains(&e.kind.as_str()) {
             // run the whole consecutive run of local effects on one crop
-            let mut j = i; let mut mg = 0.0f64; while j < effs.len() && LOCAL.contains(&effs[j].kind.as_str()) { let rad = effs[j].params.get("radius").map(|p| p.at(lt)).unwrap_or(16.0).abs(); mg += rad * 3.0 + 12.0; j += 1; }
+            let mut j = i; let mut mg = 0.0f64; while j < effs.len() && LOCAL.contains(&effs[j].kind.as_str()) { let rad = effs[j].params.get("radius").map(|p| p.at(lt)).unwrap_or(16.0).abs() * if effs[j].kind == "outer_glow_multi" { 2.5 } else { 1.0 }; /* the wide scale is 2.5 x radius */ mg += rad * 3.0 + 12.0; j += 1; }
             let (x0, y0, x1, y1) = bb.unwrap(); let m = mg.ceil() as usize;
             let (cx0, cy0, cx1, cy1) = (x0.saturating_sub(m), y0.saturating_sub(m), (x1 + m).min(w - 1), (y1 + m).min(h - 1)); let (cw, ch) = (cx1 - cx0 + 1, cy1 - cy0 + 1);
             let mut cf = Frame::new(cw, ch); for y in 0..ch { cf.d[y * cw * 4..(y + 1) * cw * 4].copy_from_slice(&f.d[((y + cy0) * w + cx0) * 4..((y + cy0) * w + cx0 + cw) * 4]); }
