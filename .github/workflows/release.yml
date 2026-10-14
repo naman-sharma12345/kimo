@@ -64,7 +64,7 @@ jobs:
         run: |
           bin=target/${{ matrix.target }}/release/kimo-mcp
           if [ "${{ matrix.target }}" = x86_64-unknown-linux-musl ]; then
-            file "$bin" | grep -q 'statically linked'
+            file "$bin" | grep -Eq 'statically linked|static-pie linked'
           fi
           out=$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | KIMO_FONTS=$PWD/fonts "$bin")
           echo "$out" | head -1 | grep -q '"serverInfo"'
@@ -84,12 +84,40 @@ jobs:
           (cd dist && tar -czf "$name.tar.gz" "$name" && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
           echo "name=$name" >> "$GITHUB_OUTPUT"
 
+      - name: Build .deb (static x86_64 build only)
+        if: matrix.suffix == 'linux-x86_64-static'
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then dv="${GITHUB_REF_NAME#v}"; else dv="0~${GITHUB_SHA::8}"; fi
+          d="dist/kimo_${dv}_amd64"
+          mkdir -p "$d/DEBIAN" "$d/usr/lib/kimo/bin" "$d/usr/lib/kimo/fonts" "$d/usr/bin" "$d/usr/share/doc/kimo"
+          install -m755 target/${{ matrix.target }}/release/kimo-mcp "$d/usr/lib/kimo/bin/kimo-mcp"
+          strip "$d/usr/lib/kimo/bin/kimo-mcp" || true
+          ln -s /usr/lib/kimo/bin/kimo-mcp "$d/usr/bin/kimo-mcp"
+          cp fonts/*.ttf "$d/usr/lib/kimo/fonts/"
+          cp README.md FEATURES.md LICENSE "$d/usr/share/doc/kimo/"
+          cat > "$d/DEBIAN/control" <<CTRL
+          Package: kimo
+          Version: ${dv}
+          Architecture: amd64
+          Maintainer: naman-sharma12345
+          Depends: ffmpeg
+          Description: MCP-first video editor (stdio MCP server)
+           kimo-mcp speaks the Model Context Protocol over stdin/stdout.
+           Bundled fonts live in /usr/lib/kimo/fonts, found relative to the binary.
+          CTRL
+          dpkg-deb --root-owner-group --build "$d" "dist/kimo_${dv}_amd64.deb"
+          dpkg-deb --info "dist/kimo_${dv}_amd64.deb"
+          (cd dist && sha256sum "kimo_${dv}_amd64.deb" > "kimo_${dv}_amd64.deb.sha256")
+          echo "debname=kimo_${dv}_amd64" >> "$GITHUB_ENV"
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.pkg.outputs.name }}
           path: |
             dist/${{ steps.pkg.outputs.name }}.tar.gz
             dist/${{ steps.pkg.outputs.name }}.tar.gz.sha256
+            dist/*.deb
+            dist/*.deb.sha256
 
   windows:
     name: build (windows-x86_64)
@@ -112,7 +140,9 @@ jobs:
       - name: Build and package Windows
         shell: pwsh
         run: |
-          $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"').Matches[0].Groups[1].Value
+          # Tag builds take the version from the tag (v3.0.0 -> 3.0.0); other runs use Cargo.toml.
+          if ($env:GITHUB_REF -like 'refs/tags/v*') { $version = $env:GITHUB_REF_NAME.Substring(1) }
+          else { $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"').Matches[0].Groups[1].Value }
           ./packaging/windows/build.ps1 -Version $version
       - uses: actions/upload-artifact@v4
         with:
