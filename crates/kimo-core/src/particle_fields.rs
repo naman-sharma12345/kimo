@@ -28,8 +28,9 @@ pub fn simulate(mut s:State,forces:&[Force],planes:&[Plane],dt:f64,steps:u32)->R
  validate(&s,forces,planes,dt,steps)?;
  let count=(steps as usize).checked_add(1).ok_or("trajectory size overflow")?;
  crate::resource_limits::reserve(count.checked_mul(std::mem::size_of::<State>()).ok_or("trajectory allocation overflow")?)?;
+ let start=std::time::Instant::now();let timeout=crate::resource_limits::current().expr_timeout_ms;
  let mut out=Vec::new();out.try_reserve_exact(count).map_err(|e|e.to_string())?;out.push(s.clone());
- for _ in 0..steps{crate::guard::check();let a=acceleration(&s,forces);for j in 0..3{s.velocity[j]+=a[j]*dt;}
+ for _ in 0..steps{crate::guard::check();if timeout.map(|ms|start.elapsed().as_millis()>u128::from(ms)).unwrap_or(false){return Err("particle simulation timed out".into());}let a=acceleration(&s,forces);for j in 0..3{s.velocity[j]+=a[j]*dt;}
   // Resolve initial penetration separately, then swept motion under held step velocity.
   for p in planes{let d=dot(p.normal,s.position)-p.offset-s.radius;if d<0.0{for j in 0..3{s.position[j]-=p.normal[j]*d;}}}
   let mut remaining=dt;
