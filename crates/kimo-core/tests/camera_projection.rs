@@ -1,0 +1,8 @@
+use kimo_core::camera_projection::{Camera,Vertex,clip};
+fn cam()->Camera{Camera{eye:[0.0,0.0,-10.0],pan:0.0,tilt:0.0,roll:0.0,sensor_height:24.0,focal_length:50.0,near:1.0}}
+fn v(x:f64,y:f64,z:f64,a:f64)->Vertex{Vertex{position:[x,y,z],attributes:vec![a]}}
+#[test]fn focal_changes_only_projection_not_view_pose(){let a=cam();let b=Camera{focal_length:100.0,..a};assert_eq!(a.view([2.0,3.0,0.0]).unwrap(),b.view([2.0,3.0,0.0]).unwrap());let p=a.project([2.0,3.0,0.0],1920,1080).unwrap().unwrap();let q=b.project([2.0,3.0,0.0],1920,1080).unwrap().unwrap();assert!((q[0]-960.0-2.0*(p[0]-960.0)).abs()<1e-9);assert_eq!(a.eye,b.eye);}
+#[test]fn near_inside_outside_and_crossings(){for(z,count)in [([2.0,2.0,2.0],1),([0.0,0.0,0.0],0),([2.0,0.0,0.0],1),([0.0,2.0,2.0],2)]{let out=clip([v(-1.0,0.0,z[0],0.0),v(1.0,0.0,z[1],1.0),v(0.0,1.0,z[2],2.0)],1.0).unwrap();assert_eq!(out.len(),count);assert!(out.iter().flatten().all(|p|p.position[2]>=1.0));}}
+#[test]fn attributes_interpolate_at_crossing(){let out=clip([v(0.0,0.0,0.0,0.0),v(2.0,0.0,2.0,2.0),v(0.0,2.0,2.0,4.0)],1.0).unwrap();let p=out.iter().flatten().find(|p|p.position==[1.0,0.0,1.0]).unwrap();assert_eq!(p.attributes,[1.0]);}
+#[test]fn invalid_rejected_and_onplane_deduplicated(){assert!(clip([v(0.0,0.0,0.0,0.0),v(1.0,0.0,2.0,0.0),v(0.0,1.0,2.0,0.0)],0.0).is_err());assert!(Camera{near:f64::NAN,..cam()}.project([0.0;3],10,10).is_err());let t=[v(0.0,0.0,1.0,0.0),v(1.0,0.0,2.0,1.0),v(0.0,1.0,0.0,2.0)];assert_eq!(clip(t,1.0).unwrap().len(),1);}
+#[test]fn all_axes_rotation_and_eye_translation_finite(){for a in [-180.0,-90.0,0.0,90.0,180.0]{let c=Camera{pan:a,tilt:a*.3,roll:a*.2,..cam()};assert!(c.view([1.0,2.0,3.0]).unwrap().iter().all(|x|x.is_finite()));}}

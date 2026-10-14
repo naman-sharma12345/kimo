@@ -1,0 +1,10 @@
+use super::kit::*;
+pub fn commands()->Vec<Command>{vec![
+ Command{name:"camera_project_points",mutates:false,description:"Explicit-pose physical pinhole projection. Focal length and sensor height change projection only, never eye. Raw math command; does not alter legacy project camera.",schema:obj(vec![("camera",json!({"type":"object"})),("points",json!({"type":"array","maxItems":65536})),("width",json!({"type":"integer","minimum":1})),("height",json!({"type":"integer","minimum":1}))],&["camera","points","width","height"]),run:|_,a|{
+  let camera:crate::camera_projection::Camera=serde_json::from_value(a.get("camera").ok_or("camera required")?.clone()).map_err(|e|e.to_string())?;
+  let points:Vec<[f64;3]>=serde_json::from_value(a.get("points").ok_or("points required")?.clone()).map_err(|e|e.to_string())?;
+  if points.len()>65536||points.len() as u64>crate::resource_limits::current().max_samples{return Err("camera sample limit exceeded".into());}
+  let dim=|k:&str|->Result<u32,String>{a.get(k).and_then(Value::as_u64).and_then(|v|u32::try_from(v).ok()).filter(|v|*v>0).ok_or_else(||format!("{k} positive u32 required"))};let(w,h)=(dim("width")?,dim("height")?);
+  let result=points.into_iter().map(|p|camera.project(p,w,h)).collect::<Result<Vec<_>,_>>()?;Ok(json!({"projected":result,"vertical_fov_degrees":camera.vertical_fov()?,"eye":camera.eye}))}},
+ Command{name:"camera_clip_triangle",mutates:false,description:"Clip one camera-space triangle against a positive near plane, interpolating explicit affine attribute channels. Returns zero, one or two triangles; raw math only, legacy renderer unchanged.",schema:obj(vec![("triangle",json!({"type":"array","minItems":3,"maxItems":3})),("near",n("positive camera-space near plane"))],&["triangle","near"]),run:|_,a|{let tri:[crate::camera_projection::Vertex;3]=serde_json::from_value(a.get("triangle").ok_or("triangle required")?.clone()).map_err(|e|e.to_string())?;Ok(json!({"triangles":crate::camera_projection::clip(tri,num_arg(a,"near")?)?}))}}
+]}

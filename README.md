@@ -260,3 +260,9 @@ This is the list the v3 build registers (read from `tools/list` of the grouped s
 The README is updated with every product change. If a change adds, removes or regroups tools, or ships a new proof, the same commit updates this file.
 
 MIT licensed.
+
+## Camera math primitives (feature-branch WIP)
+
+Explicit-pose projection and camera-space near-plane clipping are drafted as raw
+MCP math tools. Uncompiled, unrendered, not integrated into the legacy renderer.
+They do not yet fix existing Scene3D output. See [camera WIP](docs/camera/WIP.md).

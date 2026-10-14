@@ -1,0 +1,30 @@
+{
+  "base": "2977b73751f1c9124501503e3cba0b9c33cc9413",
+  "status": "WIP math only; renderer unchanged",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "dca6dc6f20a513331045d8e912bbd4c8ea70b588c2f22e1c78f4c5ba1e7c6179"
+    },
+    {
+      "path": "crates/kimo-core/src/camera_projection.rs",
+      "sha256": "9973ab75be46d4da2cb29d8fa6f18857383e43973bbe0e42bf5f39a41f3511e3"
+    },
+    {
+      "path": "crates/kimo-core/src/ext/camera_projection_tools.rs",
+      "sha256": "be2b07ebbfec99bfc97a415a0aafbf5a934acd6b828e7de0674cf251656a9e8c"
+    },
+    {
+      "path": "crates/kimo-core/src/lib.rs",
+      "sha256": "28dddbcffc123bd23bdf3a19e7be03f3da4a083db60b16e99ae45adc71c82187"
+    },
+    {
+      "path": "crates/kimo-core/tests/camera_projection.rs",
+      "sha256": "11e7853cf3871037916fa751cc5bfa98d9b976ba26eadc9cb015dafaa1d70aa2"
+    },
+    {
+      "path": "docs/camera/WIP.md",
+      "sha256": "c025961d6fa44b12c791b938ceaccddb26e94caf7e5665b2556e26ba72c2b9a6"
+    }
+  ]
+}
