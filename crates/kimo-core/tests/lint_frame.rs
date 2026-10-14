@@ -563,4 +563,7 @@ fn chip_to_coloured_stroke_gap_is_exactly_one_u_on_every_chip_of_a_multi_chip_fr
         gaps.push(g);
     }
     assert!(gaps.iter().all(|g| (*g - 8.0).abs() < 1e-9), "chip fill to coloured stroke gaps {gaps:?} must all be exactly 8 px at 1080p");
+    // report-only fields: the reported gap_px equals the measured gap on every chip, the side is named, nothing was dropped
+    for n in 0..3 { assert_eq!(chips[n]["gap_px"].as_f64().unwrap(), gaps[n], "chip {n} reported gap_px vs measured"); assert!(["above", "below", "left", "right"].contains(&chips[n]["placement"].as_str().unwrap()), "chip {n} placement {}", chips[n]["placement"]); }
+    assert_eq!(a["dropped_chips"].as_array().unwrap().len(), 0, "no chip dropped when the label font resolves");
 }

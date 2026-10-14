@@ -207,13 +207,13 @@ fn draw_annotations(f: &mut crate::effects::Frame, findings: &[Value]) -> Value 
     // label chips: dark chip, light text, inside the canvas, clear of every box and of earlier chips
     // chip metrics in u = min(w,h)/135: label 2.5u (20 px at 1080p, never below 12), padding 1u x 0.625u (8 x 5), radius 0.5u
     let u = (f.w.min(f.h)) as f32 / 135.0; let size = (2.5 * u).round().max(12.0); let (pad, ch_h) = ((u.round() as i64).max(4), ((0.729 * size) + 2.0 * (0.625 * u).round().max(3.0)).round() as i64); let crad = (0.5 * u).round().max(2.0) as f64; let gap1 = (u.round() as i64).max(2); // 1u clear gap between the chip fill and the COLOURED stroke (Naman 4:14: colour to colour, the 1px dark halos sit inside the gap)
-    let mut chips = vec![];
+    let mut chips = vec![]; let mut dropped: Vec<Value> = vec![];
     for (n, row) in findings.iter().enumerate() {
         let txt = if n == 3 { format!("+{}", findings.len() - 3) } else if n > 3 { break } else {
             let o = &row["measured"]["outside_px"]; let mut best: Option<(&str, f64)> = None;
             for e in ["left", "top", "right", "bottom"] { let v = o[e].as_f64().unwrap_or(0.); if v > best.map(|b| b.1).unwrap_or(0.) { best = Some((e, v)); } }
             match best { Some((e, v)) => format!("{} -{}px {}", row["code"].as_str().unwrap_or("finding"), v.round() as i64, e), None => row["code"].as_str().unwrap_or("finding").to_string() } };
-        let Ok(tw) = crate::text::label_width(&txt, size) else { continue };
+        let Ok(tw) = crate::text::label_width(&txt, size) else { dropped.push(json!({"finding": n, "text": txt, "reason": "label_font_unavailable"})); continue };
         let (cw, cx_h) = (tw.ceil() as i64 + 2 * pad, ch_h);
         let r = row["rect"].as_array().map(|a| a.iter().map(|x| x.as_f64().unwrap_or(0.0)).collect::<Vec<_>>()).unwrap_or_else(|| vec![0.; 4]);
         let (rx, ry, rw, rh) = (r[0].floor() as i64, r[1].floor() as i64, (r[2].ceil() as i64).max(1), (r[3].ceil() as i64).max(1));
@@ -221,7 +221,9 @@ fn draw_annotations(f: &mut crate::effects::Frame, findings: &[Value]) -> Value 
         let cands = [[clampx(rx), clampy(ry - s - gap1 - cx_h)], [clampx(rx), clampy(ry + rh + s + gap1)], [clampx(rx + rw + s + gap1), clampy(ry)], [clampx(rx - s - gap1 - cw), clampy(ry)], [0, 0], [clampx(w), clampy(h)]];
         let boxr = [rx - s - 1, ry - s - 1, rw + 2 * s + 2, rh + 2 * s + 2];
         let clear = |c: [i64; 4]| !rects_hit(c, boxr) && obstacles.iter().all(|o| !rects_hit(c, *o)) && chips.iter().all(|k: &Value| { let q: Vec<i64> = k["rect"].as_array().unwrap().iter().map(|x| x.as_i64().unwrap()).collect(); !rects_hit(c, [q[0], q[1], q[2], q[3]]) });
-        let pick = cands.iter().map(|p| [p[0], p[1], cw, cx_h]).find(|c| clear(*c)).unwrap_or([cands[0][0], cands[0][1], cw, cx_h]);
+        let at = cands.iter().map(|p| [p[0], p[1], cw, cx_h]).position(|c| clear(c)); let pick = at.map(|i| [cands[i][0], cands[i][1], cw, cx_h]).unwrap_or([cands[0][0], cands[0][1], cw, cx_h]);
+        // report-only: which side the chip took and its real chip-to-coloured-stroke gap (null for the corner fallbacks), no effect on drawing
+        let (placement, gap_px): (&str, Value) = match at { Some(0) => ("above", json!((ry - s) - (pick[1] + pick[3]))), Some(1) => ("below", json!(pick[1] - (ry + rh + s))), Some(2) => ("right", json!(pick[0] - (rx + rw + s))), Some(3) => ("left", json!((rx - s) - (pick[0] + pick[2]))), Some(_) => ("corner", Value::Null), None => ("fallback_overlap", Value::Null) };
         // rounded rect (radius 0.5u): severity fill at 0.92 alpha with a 1px dark halo just outside
         let fill = chip_fill(if n == 3 { "" } else { row["severity"].as_str().unwrap_or("warn") });
         let lum = |c: [f32; 3]| { let l = |v: f32| { let v = v as f64; if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) } }; 0.2126 * l(c[0]) + 0.7152 * l(c[1]) + 0.0722 * l(c[2]) };
@@ -234,9 +236,9 @@ fn draw_annotations(f: &mut crate::effects::Frame, findings: &[Value]) -> Value 
             if d <= 0.0 { for k in 0..3 { f.d[i + k] = f.d[i + k] * 0.08 + fill[k] * 0.92; } } else if d <= 1.0 { for k in 0..3 { f.d[i + k] *= 0.4; } }
         } }
         let _ = crate::text::draw_label(f, &txt, (pick[0] + pad) as f64, { let (asc, cap) = crate::text::label_metrics(size).unwrap_or((size * 0.93, size * 0.73)); pick[1] as f64 + ch_h as f64 / 2.0 + cap as f64 / 2.0 - asc as f64 }, size, txt_col);
-        chips.push(json!({"text":txt,"rect":pick}));
+        chips.push(json!({"text":txt,"rect":pick,"placement":placement,"gap_px":gap_px}));
     }
-    json!({"stroke_px": s, "boxes": boxes, "chips": chips, "zone_lines": zone_lines, "edge_markers": markers, "min_contrast_vs_frame": if min_contrast.is_finite() { json!(min_contrast) } else { Value::Null }, "note": "drawn on a render copy; findings are unchanged; stroke is outside the rect with a 1px dark halo, colour by severity (error red, warn orange, info cyan); green dashes are the safe-zone edge that was violated"})
+    json!({"stroke_px": s, "boxes": boxes, "chips": chips, "dropped_chips": dropped, "zone_lines": zone_lines, "edge_markers": markers, "min_contrast_vs_frame": if min_contrast.is_finite() { json!(min_contrast) } else { Value::Null }, "note": "drawn on a render copy; findings are unchanged; stroke is outside the rect with a 1px dark halo, colour by severity (error red, warn orange, info cyan); green dashes are the safe-zone edge that was violated"})
 }
 pub fn boxed(f: &mut crate::effects::Frame, r: [f64; 4]) {
     let x0 = r[0].floor().max(0.).min(f.w as f64) as usize;
