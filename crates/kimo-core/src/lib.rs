@@ -72,3 +72,7 @@ pub mod editorial;
 
 pub mod timecode;
 
+
+pub mod noise;
+
+pub mod noise_fields;

@@ -19,6 +19,8 @@ pub(crate) fn p(m: &Params, k: &str, def: f64, t: f64) -> f32 { m.get(k).map(|x|
 
 /// (kind, description, [(param, default, description)]) - drives list_effects and tool schemas.
 pub const CATALOG: &[(&str, &str, &[(&str, f64, &str)])] = &[
+    ("field_operator", "Raw selected 2D operator. strings.field is JSON with op worley|fbm|warp|curl and explicit config matching sample_field. RGB is selected scalar/component*gain+bias; alpha unchanged. Point sampled. No implicit bundled fractal/warp.", &[("frequency",8.,"coordinate scale per frame height"),("offset_x",0.,"field units"),("offset_y",0.,"field units"),("rate_x",0.,"field units/s"),("rate_y",0.,"field units/s"),("gain",1.,"display/output gain"),("bias",0.,"display/output bias"),("amount",1.,"0..1 mix")]),
+    ("coherent_noise", "Raw signed 2D coherent field; strings.kind perlin|simplex, strings.seed u64 decimal. RGB mixes with field*gain+bias, alpha unchanged. Coordinates pixel-center/frame-height * frequency + offset + rate*t. Point-sampled, not antialiased. No FBM/warp/curl bundled.", &[("frequency",8.,"cycles per frame height"),("offset_x",0.,"field units"),("offset_y",0.,"field units"),("rate_x",0.,"field units/s"),("rate_y",0.,"field units/s"),("amount",1.,"0..1 mix"),("gain",1.,"raw signed gain"),("bias",0.,"raw bias")]),
     ("displace", "Bilinear UV offset by aux_path pixel asset or strings.expr field; edge clamp|wrap|transparent", &[("amount_x",0.,"UV scale"),("amount_y",0.,"UV scale"),("neutral",0.5,"zero offset field value")]),
     ("convolution", "Float convolution strings.kernel odd square flat JSON array (default [1] identity); no creative clamps", &[("divisor",1.,"nonzero"),("bias",0.,"RGB bias")]),
     ("grade", "Raw gain/lift primitive in working (linear) space: RGB_out=RGB*gain+lift; alpha preserved; separate from grade-graph nodes", &[("gain_r",1.,"red gain"),("gain_g",1.,"green gain"),("gain_b",1.,"blue gain"),("lift_r",0.,"red lift"),("lift_g",0.,"green lift"),("lift_b",0.,"blue lift")]),
@@ -71,6 +73,8 @@ pub const CATALOG: &[(&str, &str, &[(&str, f64, &str)])] = &[
 ];
 
 pub fn apply(kind: &str, params: &Params, strings: &BTreeMap<String, String>, f: &mut Frame, t: f64, seed: u64) -> Result<(), String> {
+    if kind == "field_operator" { return crate::noise_fields::apply(params,strings,f,t); }
+    if kind == "coherent_noise" { return crate::noise::apply(params,strings,f,t); }
     if ["displace","convolution","grade"].contains(&kind){return crate::shader_ops::apply(kind,params,strings,f,t);}
     if kind == "pixel_expr" {
         let source=strings.get("expr").cloned().unwrap_or_else(||format!("vec4({},{},{},{})",strings.get("r").map(String::as_str).unwrap_or("r"),strings.get("g").map(String::as_str).unwrap_or("g"),strings.get("b").map(String::as_str).unwrap_or("b"),strings.get("a").map(String::as_str).unwrap_or("a")));
