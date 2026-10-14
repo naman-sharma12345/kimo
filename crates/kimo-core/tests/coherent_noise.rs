@@ -35,8 +35,8 @@ fn points()->Vec<[f64;2]> {(0..501).map(|i| [i as f64*0.137-30.0,i as f64*0.293-
     assert!(registry_ref().iter().any(|c|c.name=="sample_noise"));assert_eq!(kimo_core::toolgroups::group_of("sample_noise"),"effects");
     for (name,k) in [("perlin",Kind::Perlin),("simplex",Kind::Simplex)] {
         // the sandbox caps JSON numbers at +-1e8 (guard.rs), so the MCP path can only carry seeds in range; u64::MAX stays raw-only (line above)
-        let r=dispatch(&mut ss,"sample_noise",&json!({"kind":name,"seed":123456789u64,"points":q})).unwrap();
-        for (i,p) in q.iter().enumerate(){let v=sample(k,123456789,p[0],p[1]).unwrap();assert_eq!(r["samples"][i]["value"].as_f64().unwrap(),v.value);}
+        let r=dispatch(&mut ss,"sample_noise",&json!({"kind":name,"seed":87654321u64,"points":q})).unwrap();
+        for (i,p) in q.iter().enumerate(){let v=sample(k,87654321,p[0],p[1]).unwrap();assert_eq!(r["samples"][i]["value"].as_f64().unwrap(),v.value);}
     }
     for a in [json!({"kind":"wrong","seed":1,"points":[]}),json!({"kind":"perlin","seed":-1,"points":[]}),json!({"kind":"perlin","seed":1.5,"points":[]}),json!({"kind":"perlin","seed":1,"points":[[0]]}),json!({"kind":"perlin","seed":u64::MAX,"points":[[0,0]]})] {assert!(dispatch(&mut ss,"sample_noise",&a).is_err());}
 }
@@ -73,5 +73,16 @@ fn points()->Vec<[f64;2]> {(0..501).map(|i| [i as f64*0.137-30.0,i as f64*0.293-
         for y in 0..80 {for x in 0..80 {let v=sample(k,291,x as f64*0.083+0.17,y as f64*0.091+0.31).unwrap().value;sum+=v;sum2+=v*v;count+=1.0;}}
         assert!(sum2/count-(sum/count).powi(2)>1e-6);
         assert_ne!(sample(k,291,0.17,0.31).unwrap(),sample(k,291,0.31,0.17).unwrap());
+    }
+}
+#[test] fn lattice_gradients_do_not_collapse_into_stripes() {
+    // 1080p perlin renders showed a columnar stripe band (field x 9.8..13.6 at seed 20261014,
+    // advecting with the field): the FNV-1a gradient hash correlates angles for small lattice
+    // coordinates. Worst column had 9-10/16 near-horizontal gradients (|gy| < 0.15) for seeds
+    // 0, 1 and 20261014 (python-exact replica of the hash). sample() at an integer coordinate
+    // returns that lattice point's gradient vector, so this checks the hash via the pub API.
+    for seed in [0u64, 1, 20261014] {
+        for i in 0..16 { let nh = (0..16).filter(|&j| sample(Kind::Perlin, seed, i as f64, j as f64).unwrap().gradient[1].abs() < 0.15).count();
+            assert!(nh <= 5, "seed {seed} column {i}: {nh}/16 near-horizontal lattice gradients (axis-aligned stripe band; a healthy hash gives <= 5)"); }
     }
 }
