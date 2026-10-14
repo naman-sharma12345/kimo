@@ -40,3 +40,19 @@ use serde_json::json;
         let before=f.d.clone();let mut p=Params::new();p.insert("frequency".into(),Prop::new(1e30));assert!(kimo_core::effects::apply("field_operator",&p,&strings,&mut f,0.25,0).is_err());assert_eq!(before,f.d);
     }
 }
+
+#[test]fn curl_divergence_converges_over_epsilon_sizes(){
+    for k in [Kind::Perlin,Kind::Simplex]{
+        let mut errors=Vec::new();
+        for e in [1e-2,1e-3,1e-4]{
+            let mut total=0.0f64;
+            for n in 0..40{let(x,y)=(n as f64*0.173+0.211,n as f64*0.237-3.817);
+                let dx=(curl(k,9,x+e,y,1.3,0.7).unwrap()[0]-curl(k,9,x-e,y,1.3,0.7).unwrap()[0])/(2.0*e);
+                let dy=(curl(k,9,x,y+e,1.3,0.7).unwrap()[1]-curl(k,9,x,y-e,1.3,0.7).unwrap()[1])/(2.0*e);
+                total+=(dx+dy).abs();
+            }errors.push(total/40.0);
+        }
+        assert!(errors[2]<errors[0]*0.05+1e-8,"{k:?} divergence error {errors:?}");
+        assert!(errors[2]<1e-5,"{k:?} divergence error {errors:?}");
+    }
+}
