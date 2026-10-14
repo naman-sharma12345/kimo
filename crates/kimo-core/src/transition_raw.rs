@@ -11,6 +11,8 @@ pub enum Edge {Clamp,Repeat,Transparent}
 #[derive(Clone,Debug,Serialize,Deserialize)]
 #[serde(tag="kind",rename_all="snake_case",deny_unknown_fields)]
 pub enum Operator {
+ Crossfade,
+ Slide {from_offset:[f64;2],to_offset:[f64;2]},
  Luma {smoothing:f64},
  DirectionalWarp {direction:[f64;2],smoothing:f64,distortion:f64},
  CrossZoom {center:[f64;2],strength:f64,samples:u16},
@@ -44,6 +46,8 @@ pub fn render(a:&Frame,b:&Frame,map:Option<&Frame>,t:f64,op:&Operator,edge:Edge)
  let scalar=matches!(op,Operator::Luma{..}|Operator::Displacement{..});
  if scalar{let f=map.ok_or("scalar map required")?;valid(f)?;if (f.w,f.h)!=(a.w,a.h){return Err("scalar map size differs".into());}}
  match op{
+ Operator::Crossfade=>{},
+ Operator::Slide{from_offset,to_offset}=>{if from_offset.iter().chain(to_offset.iter()).any(|v|!v.is_finite()){return Err("finite slide UV offsets required".into());}},
  Operator::Luma{smoothing}=>{if !smoothing.is_finite()||!(0.0..=1.0).contains(smoothing){return Err("smoothing 0..1 required".into());}if map.unwrap().d.chunks_exact(4).any(|p|!(0.0..=1.0).contains(&p[0])){return Err("luma map red 0..1 required".into());}},
  Operator::DirectionalWarp{direction,smoothing,distortion}=>{if direction.iter().any(|v|!v.is_finite())||direction.iter().all(|v|*v==0.0)||!smoothing.is_finite()||!(0.0..=1.0).contains(smoothing)||!distortion.is_finite(){return Err("finite nonzero direction, smoothing0..1 and finite distortion required".into());}},
  Operator::CrossZoom{center,strength,samples}=>{if center.iter().any(|v|!v.is_finite())||!strength.is_finite()||!(1..=128).contains(samples){return Err("finite center/strength, samples1..128 required".into());}},
@@ -55,6 +59,8 @@ pub fn render(a:&Frame,b:&Frame,map:Option<&Frame>,t:f64,op:&Operator,edge:Edge)
  for y in 0..a.h{crate::guard::check();for x in 0..a.w{
  let uv=[(x as f64+0.5)/a.w as f64,(y as f64+0.5)/a.h as f64];let i=(y*a.w+x)*4;
  let c=match op{
+ Operator::Crossfade=>{let premult=|f:&Frame|{let alpha=f.d[i+3] as f64;[f.d[i] as f64*alpha,f.d[i+1] as f64*alpha,f.d[i+2] as f64*alpha,alpha]};mix(premult(a),premult(b),t)},
+ Operator::Slide{from_offset,to_offset}=>{let u=std::array::from_fn(|j|uv[j]+t*from_offset[j]);let v=std::array::from_fn(|j|uv[j]+(1.0-t)*to_offset[j]);mix(sample(a,u,edge)?,sample(b,v,edge)?,t)},
  Operator::Luma{smoothing}=>{let l=map.unwrap().d[i] as f64;let w=1.0-smooth(t-smoothing*0.5,t+smoothing*0.5,l);mix(sample(a,uv,edge)?,sample(b,uv,edge)?,w)},
  Operator::Displacement{strength,neutral}=>{let d=map.unwrap().d[i] as f64-neutral;let u=std::array::from_fn(|j|uv[j]+t*d*strength[j]);let v=std::array::from_fn(|j|uv[j]-(1.0-t)*d*strength[j]);mix(sample(a,u,edge)?,sample(b,v,edge)?,t)},
  Operator::DirectionalWarp{direction,smoothing,distortion}=>{
