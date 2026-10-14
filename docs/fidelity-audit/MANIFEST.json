@@ -1,0 +1,361 @@
+{
+  "base": "273cf0b88c1d6d3d5bceb9af16ca7a1a5ef02384",
+  "scope": "docs-only WIP, no engine tests or renders",
+  "files": [
+    {
+      "path": "docs/fidelity-audit/GAP_AUDIT.md",
+      "sha256": "959b905eec7acd478451ff7bcea0134baf032312a1ab83ad03ba26a282d62fa8",
+      "bytes": 11504
+    },
+    {
+      "path": "docs/fidelity-audit/PORT_PLAN.md",
+      "sha256": "64eb1e490ad427b24aaa4d667b1871ff9f6ca8bdd4809ce45e85d667d56c347b",
+      "bytes": 13927
+    },
+    {
+      "path": "docs/fidelity-audit/README.md",
+      "sha256": "4ab14eb917121b6936ecd4cbe52a66dbe1732c882162bc673083160d1c6b9ee4",
+      "bytes": 1162
+    },
+    {
+      "path": "docs/fidelity-audit/REPOSITORY_SURVEY.md",
+      "sha256": "7f3d79adfc79cbc0159deee04d3307387f0ef590983f43502d7204cd0b1626c1",
+      "bytes": 36234
+    },
+    {
+      "path": "docs/fidelity-audit/SOURCE_EVIDENCE.md",
+      "sha256": "9284c5dc7646d986a90317a6092b90ec49076d16bf91509a73a31bc252c76288",
+      "bytes": 32209
+    },
+    {
+      "path": "docs/fidelity-audit/VERIFICATION.md",
+      "sha256": "37165e122b051b00e2d9a5f0e90fd8f024232a442b3dad961e0364db6f59f301",
+      "bytes": 2660
+    },
+    {
+      "path": "docs/fidelity-audit/inspected-sources.json",
+      "sha256": "a4f40c2f7817c19a61e7e107826eff5ab693e899604c6856cd0310b69b838e91",
+      "bytes": 13078
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/3b1b__manim.txt",
+      "sha256": "fe450f4b69c56c80e4ba2f3226174d1af417e7c1728362ed81a8f6c0b909eb43",
+      "bytes": 1077
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/AcademySoftwareFoundation__Imath.txt",
+      "sha256": "c20236d3b39fd20eba8e3d1fb3b892a5483df2e7d8d61bf43f165d3fac22f601",
+      "bytes": 1497
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/AcademySoftwareFoundation__MaterialX.txt",
+      "sha256": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9",
+      "bytes": 10173
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/AcademySoftwareFoundation__OpenColorIO.txt",
+      "sha256": "82a40c52065ee968aa62015735e84378ac11425db7a233e6a2dcd2c83fc24276",
+      "bytes": 1485
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/AcademySoftwareFoundation__OpenImageIO.txt",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "bytes": 11357
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/AcademySoftwareFoundation__OpenShadingLanguage.txt",
+      "sha256": "e71783cf069a74ccd462ced30e3b0220c0da3b6524b2acc6af2439150ad32b60",
+      "bytes": 1543
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/AcademySoftwareFoundation__openexr.txt",
+      "sha256": "84853c91d4c2e0310741d4773469d98bb93e61029608e0ba0882a3fffdf330bd",
+      "bytes": 1501
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/AcademySoftwareFoundation__openfx.txt",
+      "sha256": "63b0f0533a90223e7dbe5dd50b94821b069672f91797ac03dbbad496b4ca7d9b",
+      "bytes": 1532
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/AcademySoftwareFoundation__openvdb.txt",
+      "sha256": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9",
+      "bytes": 10173
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/AcademySoftwareFoundation__rez.txt",
+      "sha256": "1195dff0c1a0a89b20da3c31077bbb7ac2c32ac747a5796283ae4e4bfbf4f034",
+      "bytes": 10176
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/Auburn__FastNoise2.txt",
+      "sha256": "6a772f6fa13928b07693cc8643dac0284910ea031b82cba1b49e51a36616cddf",
+      "bytes": 1068
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/Auburn__FastNoiseLite.txt",
+      "sha256": "9e5450dbf46eeea5c8ba222b4a2f0ab6ff5edbb52d87ca187b6ff48c3076986e",
+      "bytes": 1121
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/BabylonJS__Babylon.js.txt",
+      "sha256": "3a1160f88f3ffdafee129832f8bf5806073f77a43962f15a13ab63f1a5047372",
+      "bytes": 9155
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/CGAL__cgal.txt",
+      "sha256": "7807dd601df7c67ade8edb67e4764ae70ac9e667637234c6184646625d886b03",
+      "bytes": 774
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/FFmpeg__FFmpeg.txt",
+      "sha256": "e6dc72d5665a1ebd6dcc841de59278dad4ca77ecc47b03f1064a55c3e9ea8bb8",
+      "bytes": 4352
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/GNOME__gegl.txt",
+      "sha256": "91426ca32752da845045a6b642613dea8172948023604f350c4b9997f05fb45c",
+      "bytes": 35149
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/InteractiveComputerGraphics__PositionBasedDynamics.txt",
+      "sha256": "1c360573be5b890ea7c798436315d5c30d361c5f74450625d32697f8ad83d73f",
+      "bytes": 1110
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/InteractiveComputerGraphics__SPlisHSPlasH.txt",
+      "sha256": "b2213790912208c7eb78d7a90279eed306160d3b3dcace89dd71dc65863cd54c",
+      "bytes": 1077
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/LuxCoreRender__LuxCore.txt",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bytes": 11358
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/NatronGitHub__Natron.txt",
+      "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
+      "bytes": 18092
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/NatronGitHub__openfx.txt",
+      "sha256": "803f3e9bef696eb8e1ab1c50bfc10d462c5fa38101643cc8170018380ac7a989",
+      "bytes": 1645
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/PixarAnimationStudios__OpenSubdiv.txt",
+      "sha256": "9211071ceaea05cec948f44a025ede3030f41506960d68b50e7ddb6edc2abe5b",
+      "bytes": 10186
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/Razaekel__noise-rs.txt",
+      "sha256": "a94639c2c01e34e8c751d7688d5999c7f5b986fb83a5fbe8d2c9763e6cef8cb2",
+      "bytes": 1075
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/SRombauts__SimplexNoise.txt",
+      "sha256": "a0e78ed441d61fdd454ca40fc39d82d10b58d895186c6e32e465f03343ae38d0",
+      "bytes": 1121
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/appleseedhq__appleseed.txt",
+      "sha256": "67ab82c6f3b067c64d7a36ddf3fc238dd096a669076bff4e5a7e3a09dedad9e7",
+      "bytes": 1162
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/ashima__webgl-noise.txt",
+      "sha256": "bdafce1bb01517c9ae6c4f3620c01340790b5e9d039ae9e356347d1174250916",
+      "bytes": 1145
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/blender__blender.txt",
+      "sha256": "952ebe39410a7628a831eab2fc91dc65c2becd057b3b2bd46297751e14e47d15",
+      "bytes": 300
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/bulletphysics__bullet3.txt",
+      "sha256": "885cd516a8420acb7c3e0b1a7119913b686495001ae564e3229740460e8cff59",
+      "bytes": 1022
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/dimforge__nalgebra.txt",
+      "sha256": "ceacfa4d7fa67df64ab09a56fe248c50a3bfc9bc00374d69bd74ad763b14b89c",
+      "bytes": 11347
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/dimforge__parry.txt",
+      "sha256": "ceacfa4d7fa67df64ab09a56fe248c50a3bfc9bc00374d69bd74ad763b14b89c",
+      "bytes": 11347
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/dimforge__rapier.txt",
+      "sha256": "ceacfa4d7fa67df64ab09a56fe248c50a3bfc9bc00374d69bd74ad763b14b89c",
+      "bytes": 11347
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/doyubkim__fluid-engine-dev.txt",
+      "sha256": "ce03615c5dc74807ebcfbff81bc4ac114046d5cf551e4febcdc652ec0f85e13c",
+      "bytes": 1076
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/dyne__frei0r.txt",
+      "sha256": "2cfcc9fddf1aacc0ea99460bb84532d9ace3b339c133fa5df00e29d37d08b409",
+      "bytes": 18002
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/erincatto__box2d.txt",
+      "sha256": "68a3e676d7e94093b102d5cba0d4e04af812040d6f230c3db67a6664574e43d2",
+      "bytes": 1067
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/gl-transitions__gl-transitions.txt",
+      "sha256": "0db684e0150546743ae96d8ecf083be716786d834af7dbf8170ee8b6c247978d",
+      "bytes": 1297
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/google__filament.txt",
+      "sha256": "02d70b593dd8e9355dd8e1ca8d13c303bee5bcaf3065b66ff6e4f534e1e6a2c1",
+      "bytes": 11362
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/gpuweb__gpuweb.txt",
+      "sha256": "472e2c73a56b38a4facd79baf6898a5e27feca0070d8144041a6dd2a1a2cfc59",
+      "bytes": 3852
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/halide__Halide.txt",
+      "sha256": "f8dfa0ece6635d3c5b8c65120e6c3aa94a80df77e023f24df35570b70f79ebfc",
+      "bytes": 14716
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/jrouwe__JoltPhysics.txt",
+      "sha256": "800abe35d64ad9defd636ff1ee8c961e06f0ebca3ef8d10083e8aa0e8ef86ac3",
+      "bytes": 1052
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/jwinarske__shadertoy-cxx.txt",
+      "sha256": "c44fa0af195f5781e3cc6fdf502e73b2eb86a18459365d109f54577283e371cb",
+      "bytes": 1083
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/keijiro__NoiseShader.txt",
+      "sha256": "bdafce1bb01517c9ae6c4f3620c01340790b5e9d039ae9e356347d1174250916",
+      "bytes": 1145
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/kfrlib__kfr.txt",
+      "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
+      "bytes": 18092
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/linebender__tiny-skia.txt",
+      "sha256": "6d41e05f1d54fe726997cb0334ec539f1dff50600b1d5d90462ec2b392770ced",
+      "bytes": 1564
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/linebender__vello.txt",
+      "sha256": "adf157330f722fe7cfd5964a2a6974eff851b718228c6735724a11706e6f4dec",
+      "bytes": 1057
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/manimCommunity__manim.txt",
+      "sha256": "c6a922fc1cfaed7ac0f87aa1dc77ebf5a3c8d1ccc5ab01da33153f0d013bf019",
+      "bytes": 1072
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/metaory__shadertoy2webgl.txt",
+      "sha256": "605490940c5f9a852d28e2e94e7cd1896d5d5aa9bb13c96ed1d3ee782e525e98",
+      "bytes": 1064
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/mitsuba-renderer__mitsuba3.txt",
+      "sha256": "8f9d91002eabbe1667a2394b51e28b38162ff5889aca3245179d0e8aa153fa2c",
+      "bytes": 2190
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/mltframework__mlt.txt",
+      "sha256": "592987e8510228d546540b84a22444bde98e48d03078d3b2eefcd889bec5ce8c",
+      "bytes": 26521
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/mltframework__shotcut.txt",
+      "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+      "bytes": 35147
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/mmp__pbrt-v4.txt",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bytes": 11358
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/motion-canvas__motion-canvas.txt",
+      "sha256": "b3f12201916c5d478263cd210cf17f3d0c007d03bd574e0b77cac6307953068e",
+      "bytes": 1070
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/mrdoob__three.js.txt",
+      "sha256": "8b378ebe60e2fe500158cb0ac71cb5e8b7d92953c2abcc63a0eb90499653b5bc",
+      "bytes": 1081
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/olive-editor__olive.txt",
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+      "bytes": 35149
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/opencv__opencv.txt",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bytes": 11358
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/patriciogonzalezvivo__lygia.txt",
+      "sha256": "dc2e99a14e22b22bfb984ce3c69b57ebf739aeba6186951d00a00a56f03c5c30",
+      "bytes": 3097
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/pixijs__pixijs.txt",
+      "sha256": "5ce7447bc57f7349ffc48338782fbcabe613696e00712b20d66bc58e780f9473",
+      "bytes": 1092
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/pmndrs__postprocessing.txt",
+      "sha256": "b7650918449bd5fb011ce30ce0e5bcda27aa9639db1fb3aef8c67c32945237f2",
+      "bytes": 858
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/reindernijhoff__shadertoy-package.txt",
+      "sha256": "888f110744d957614b9be75b7aeb778335645d1e35b8f354435203d3a281cc29",
+      "bytes": 1072
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/remotion-dev__remotion.txt",
+      "sha256": "bd65083b940f61904f6ef298aade918a7cad72a3e35bc406e36fab365844b673",
+      "bytes": 2823
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/servo__webrender.txt",
+      "sha256": "3db78572e8657cca9e9446ce56a057b8a981eb41af318c49a5fe08e7a10fa52a",
+      "bytes": 15647
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/stegu__webgl-noise.txt",
+      "sha256": "bdafce1bb01517c9ae6c4f3620c01340790b5e9d039ae9e356347d1174250916",
+      "bytes": 1145
+    },
+    {
+      "path": "docs/fidelity-audit/license-evidence/videolan__vlc.txt",
+      "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
+      "bytes": 18092
+    },
+    {
+      "path": "docs/fidelity-audit/survey.json",
+      "sha256": "c4239b5db541692800351e690c6c821b62e613f39223ea4a97483f8262a1aab5",
+      "bytes": 131802
+    },
+    {
+      "path": "docs/fidelity-audit/verify_docs.py",
+      "sha256": "df583c6638397f669c5a49c9755896ce1ce3ceb5f2d6ec7a793c03e92955e210",
+      "bytes": 1445
+    }
+  ]
+}

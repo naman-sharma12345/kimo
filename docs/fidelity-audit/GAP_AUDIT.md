@@ -26,7 +26,7 @@ No new footage was rendered or inspected in this audit. "Amateur" is therefore a
 
 ## Evidence map (paths are relative to checkpoint)
 
-- `crates/kimo-core/src/lighting.rs`: 15-35 light/material data; 44-55 light-key interpolation; 77-87 BRDF; 102-157 relight/preview.
+- `crates/kimo-core/src/lighting.rs`: 15-35 light/material data; 45-56 light-key interpolation; 84-96 BRDF; 102-157 relight/preview.
 - `crates/kimo-core/src/scene3d.rs`: 10-23 object/light schema; 61-72 smoothstep keys; 98-100 analytic environment; 116-139 draw ordering, lights/shadows, projection and specular; 147-159 screen-space AO/DOF/output.
 - `crates/kimo-core/src/three_d.rs`: 9-16 camera props; 32-35 projector focal/eye; 86-91 world projection.
 - `crates/kimo-core/src/keyframe.rs`: 3-16 curves/handles; 35-56 spring/Bezier expressions and response; 60-63 smooth value noise; 64-69 cubic solver; 130-144 handle evaluation.

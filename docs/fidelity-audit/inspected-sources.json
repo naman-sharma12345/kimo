@@ -1,0 +1,341 @@
+[
+  {
+    "repo": "Auburn/FastNoiseLite",
+    "path": "Rust/src/lib.rs",
+    "pin": "785f37a9ad76e283586a379675085f2063ae03f7",
+    "source_url": "https://raw.githubusercontent.com/Auburn/FastNoiseLite/785f37a9ad76e283586a379675085f2063ae03f7/Rust/src/lib.rs",
+    "url_verified": true,
+    "sha256": "fe6528b871e1256e6fcc408e938db12f9035a6bba282253d9c9de8915f87178c",
+    "inspected_spans": [
+      [
+        1,
+        25
+      ],
+      [
+        650,
+        660
+      ],
+      [
+        1026,
+        1070
+      ],
+      [
+        2094,
+        2126
+      ]
+    ],
+    "note": "Quintic lattice Perlin and bounded octave FBM, with domain warp entry points. Existing Rust source is a candidate adapter, not a new evaluator dependency by default."
+  },
+  {
+    "repo": "ashima/webgl-noise",
+    "path": "src/noise3D.glsl",
+    "pin": "6abed1e77ed1e18b181627c35f688eb30c9fe75e",
+    "source_url": "https://raw.githubusercontent.com/ashima/webgl-noise/6abed1e77ed1e18b181627c35f688eb30c9fe75e/src/noise3D.glsl",
+    "url_verified": true,
+    "sha256": "bf18982b8edd25218b5096cba6f7838a0508416be51acd1fd88d0ba8acb5169e",
+    "inspected_spans": [
+      [
+        1,
+        116
+      ]
+    ],
+    "note": "Textureless simplex gradients, permutation polynomial and compact-support contributions; GLSL-to-Rust port requires explicit float/reference policy."
+  },
+  {
+    "repo": "ashima/webgl-noise",
+    "path": "src/psrdnoise2D.glsl",
+    "pin": "6abed1e77ed1e18b181627c35f688eb30c9fe75e",
+    "source_url": "https://raw.githubusercontent.com/ashima/webgl-noise/6abed1e77ed1e18b181627c35f688eb30c9fe75e/src/psrdnoise2D.glsl",
+    "url_verified": true,
+    "sha256": "1565234e052c520742483da77cee6b40a1c1fdf94587d3cf933d1dfd6e31df9f",
+    "inspected_spans": [
+      [
+        1,
+        75
+      ]
+    ],
+    "note": "Periodic rotating-gradient derivative contract; header warns about rare lattice precision artifacts, so do not adopt without continuity tests."
+  },
+  {
+    "repo": "SRombauts/SimplexNoise",
+    "path": "src/SimplexNoise.cpp",
+    "pin": "175add2d2a9ba99a43320b66bb87bb21b879b0f5",
+    "source_url": "https://raw.githubusercontent.com/SRombauts/SimplexNoise/175add2d2a9ba99a43320b66bb87bb21b879b0f5/src/SimplexNoise.cpp",
+    "url_verified": true,
+    "sha256": "71ea9417a0960ade39fdfee9e8d25104d2bf4690286eab1f609c8a40f15f29e0",
+    "inspected_spans": [
+      [
+        1,
+        28
+      ]
+    ],
+    "note": "File provenance explicitly credits Gustavson/Eastman and MIT; only header inspected, implementation not reviewed."
+  },
+  {
+    "repo": "gl-transitions/gl-transitions",
+    "path": "transitions/CrossZoom.glsl",
+    "pin": "b2dfdcfbec079af4a05306d32b9366aa495c5155",
+    "source_url": "https://raw.githubusercontent.com/gl-transitions/gl-transitions/b2dfdcfbec079af4a05306d32b9366aa495c5155/transitions/CrossZoom.glsl",
+    "url_verified": true,
+    "sha256": "a30adba2a78deac0ac114a30ea285e972fdd7d488ed0cde90e15bc0eef333e84",
+    "inspected_spans": [
+      [
+        1,
+        68
+      ]
+    ],
+    "note": "MIT file, weighted radial zoom samples and progress-controlled dissolve. Keep rectalogic/gre/glfx attribution chain; no blanket shader-bundle license."
+  },
+  {
+    "repo": "gl-transitions/gl-transitions",
+    "path": "transitions/Directional.glsl",
+    "pin": "b2dfdcfbec079af4a05306d32b9366aa495c5155",
+    "source_url": "https://raw.githubusercontent.com/gl-transitions/gl-transitions/b2dfdcfbec079af4a05306d32b9366aa495c5155/transitions/Directional.glsl",
+    "url_verified": true,
+    "sha256": "fd217e157ec516a0770d4cf4e343b5d92b147b88ea3075842f16adcc5c3e7341",
+    "inspected_spans": [
+      [
+        1,
+        25
+      ]
+    ],
+    "note": "MIT file; raw coordinate push/wrap, independently parameterize direction and progress."
+  },
+  {
+    "repo": "motion-canvas/motion-canvas",
+    "path": "packages/core/src/tweening/tween.ts",
+    "pin": "7b91435c301d530351dcf5ebb91dd139c002e405",
+    "source_url": "https://raw.githubusercontent.com/motion-canvas/motion-canvas/7b91435c301d530351dcf5ebb91dd139c002e405/packages/core/src/tweening/tween.ts",
+    "url_verified": true,
+    "sha256": "a97974e00a462c1b13996ec325b719a0e60ff3860ccc22fca7a83073b6912f58",
+    "inspected_spans": [
+      [
+        1,
+        40
+      ]
+    ],
+    "note": "Logical end time differs from discrete frame advancement; preserve exact end-time accounting and callbacks."
+  },
+  {
+    "repo": "motion-canvas/motion-canvas",
+    "path": "packages/core/src/tweening/tween.test.ts",
+    "pin": "7b91435c301d530351dcf5ebb91dd139c002e405",
+    "source_url": "https://raw.githubusercontent.com/motion-canvas/motion-canvas/7b91435c301d530351dcf5ebb91dd139c002e405/packages/core/src/tweening/tween.test.ts",
+    "url_verified": true,
+    "sha256": "f35b01f5a58ffb83b0cca755925672f08ba7a719d04d2e182e36752e5789ec1e",
+    "inspected_spans": [
+      [
+        1,
+        80
+      ]
+    ],
+    "note": "Duration invariance at 24/60 fps and accumulated time offsets; adapt tests, not TS runtime."
+  },
+  {
+    "repo": "motion-canvas/motion-canvas",
+    "path": "packages/core/src/tweening/spring.ts",
+    "pin": "7b91435c301d530351dcf5ebb91dd139c002e405",
+    "source_url": "https://raw.githubusercontent.com/motion-canvas/motion-canvas/7b91435c301d530351dcf5ebb91dd139c002e405/packages/core/src/tweening/spring.ts",
+    "url_verified": true,
+    "sha256": "529743b4f317731feffcc43b6fb40cc83254870ae0173ce9cb62a3120b5beac6",
+    "inspected_spans": [
+      [
+        1,
+        85
+      ]
+    ],
+    "note": "Mass/stiffness/damping validation and initial-velocity API; Kimo already has analytic springs, do not replace with an integrator."
+  },
+  {
+    "repo": "google/filament",
+    "path": "shaders/src/surface_brdf.fs",
+    "pin": "cfb8e32833013d8531e64f2bfccfe8ce815797ff",
+    "source_url": "https://raw.githubusercontent.com/google/filament/cfb8e32833013d8531e64f2bfccfe8ce815797ff/shaders/src/surface_brdf.fs",
+    "url_verified": true,
+    "sha256": "c0d76d244ace64a35beb331784f5358a5863de351643fcb702eb66e7cb84b9f2",
+    "inspected_spans": [
+      [
+        1,
+        85
+      ],
+      [
+        120,
+        170
+      ]
+    ],
+    "note": "GGX/Smith/Schlick variants and anisotropy; port small attributed scalar math only, not Filament renderer or mobile precision macros."
+  },
+  {
+    "repo": "dimforge/parry",
+    "path": "src/query/shape_cast/shape_cast_ball_ball.rs",
+    "pin": "b3c3584ce9be9bf6edb821fd7548b817087131ff",
+    "source_url": "https://raw.githubusercontent.com/dimforge/parry/b3c3584ce9be9bf6edb821fd7548b817087131ff/src/query/shape_cast/shape_cast_ball_ball.rs",
+    "url_verified": true,
+    "sha256": "17d0def3152276ae39b6a17603ec11893aef7b932d4984cffef7f08ae2ca52dc",
+    "inspected_spans": [
+      [
+        1,
+        100
+      ]
+    ],
+    "note": "Translational sphere sweep via relative ray; maximum time, penetration status and witness/normal outputs are valuable raw contracts."
+  },
+  {
+    "repo": "erincatto/box2d",
+    "path": "src/distance.c",
+    "pin": "ac7c751eaeddbabdc1c4d41ae4f3a25d78627790",
+    "source_url": "https://raw.githubusercontent.com/erincatto/box2d/ac7c751eaeddbabdc1c4d41ae4f3a25d78627790/src/distance.c",
+    "url_verified": true,
+    "sha256": "2f70c6e12ac54c884177b3ec8078536d38b984847d931a5bf49d52d6459dc097",
+    "inspected_spans": [
+      [
+        614,
+        687
+      ],
+      [
+        1148,
+        1190
+      ]
+    ],
+    "note": "Conservative shape advancement and bounded TOI iteration; larger dependencies and remaining solve path not reviewed."
+  },
+  {
+    "repo": "InteractiveComputerGraphics/PositionBasedDynamics",
+    "path": "PositionBasedDynamics/PositionBasedDynamics.cpp",
+    "pin": "10a70bc146a97873dc3c8fef372f5217e010542e",
+    "source_url": "https://raw.githubusercontent.com/InteractiveComputerGraphics/PositionBasedDynamics/10a70bc146a97873dc3c8fef372f5217e010542e/PositionBasedDynamics/PositionBasedDynamics.cpp",
+    "url_verified": true,
+    "sha256": "9eab9c633258bb58bab99f9ed979da0ac9eb1499d86829b7637d28650eb84a52",
+    "inspected_spans": [
+      [
+        1,
+        85
+      ]
+    ],
+    "note": "Inverse-mass distance projection and dihedral gradients; constraints should be explicit primitives, with zero-length/degenerate guards."
+  },
+  {
+    "repo": "mrdoob/three.js",
+    "path": "src/cameras/PerspectiveCamera.js",
+    "pin": "7d0d76bd6cd69a95c01e2913eed5b86ff758ca91",
+    "source_url": "https://raw.githubusercontent.com/mrdoob/three.js/7d0d76bd6cd69a95c01e2913eed5b86ff758ca91/src/cameras/PerspectiveCamera.js",
+    "url_verified": true,
+    "sha256": "1cc44938885f785649a978ecb6f57c444561381ddab24de19fc59b400009b111",
+    "inspected_spans": [
+      [
+        150,
+        220
+      ]
+    ],
+    "note": "Film gauge/focal length/FOV conversion independent of eye position; port math/API contract to native code, no JS runtime."
+  },
+  {
+    "repo": "linebender/tiny-skia",
+    "path": "src/blend_mode.rs",
+    "pin": "5d4754777746eef0828be166896eaf482c49f8f2",
+    "source_url": "https://raw.githubusercontent.com/linebender/tiny-skia/5d4754777746eef0828be166896eaf482c49f8f2/src/blend_mode.rs",
+    "url_verified": true,
+    "sha256": "841dcc8eb96fe11fc2316fa0a4ff47c29fd837990ce8c1d8be5fcf08f6c86d19",
+    "inspected_spans": [
+      [
+        1,
+        85
+      ]
+    ],
+    "note": "Explicit Porter-Duff vs artistic blend taxonomy; BSD 3-clause root observed."
+  },
+  {
+    "repo": "linebender/tiny-skia",
+    "path": "src/pipeline/highp.rs",
+    "pin": "5d4754777746eef0828be166896eaf482c49f8f2",
+    "source_url": "https://raw.githubusercontent.com/linebender/tiny-skia/5d4754777746eef0828be166896eaf482c49f8f2/src/pipeline/highp.rs",
+    "url_verified": true,
+    "sha256": "81388733345dbae3d29cbf758831809847bb1aa30a13f600d0672409bce38416",
+    "inspected_spans": [
+      [
+        669,
+        695
+      ]
+    ],
+    "note": "Premultiplied source-over multiply-add; implementation reference only for own signed-HDR numeric oracle."
+  },
+  {
+    "repo": "mmp/pbrt-v4",
+    "path": "src/pbrt/cameras.cpp",
+    "pin": "b4ce9687e6c695f5582997c61b0c66cf064bdb4a",
+    "source_url": "https://raw.githubusercontent.com/mmp/pbrt-v4/b4ce9687e6c695f5582997c61b0c66cf064bdb4a/src/pbrt/cameras.cpp",
+    "url_verified": true,
+    "sha256": "ad642074b4dc4f897dd3af0a975728d59660933f475f685419c36a30e7907f3a",
+    "inspected_spans": [
+      [
+        1,
+        28
+      ],
+      [
+        285,
+        340
+      ]
+    ],
+    "note": "Apache camera file; thin lens aperture disk sampling and focal plane rays; preserve CPU budget and avoid adopting full path tracer."
+  },
+  {
+    "repo": "Razaekel/noise-rs",
+    "path": "src/core/worley.rs",
+    "pin": "77de33887620c2a7e7263b1d30ef46afbfe705b6",
+    "source_url": "https://raw.githubusercontent.com/Razaekel/noise-rs/77de33887620c2a7e7263b1d30ef46afbfe705b6/src/core/worley.rs",
+    "url_verified": true,
+    "sha256": "bc07a0f0eb245ef991c3767032dd5051f7633cf5ea3f9939060edfdb878896c8",
+    "inspected_spans": [
+      [
+        1,
+        100
+      ]
+    ],
+    "note": "Cellular metrics, hash-derived cell features and neighbor pruning. Current excerpt is partial; F1/F2 brute-force oracle needed before reuse."
+  },
+  {
+    "repo": "AcademySoftwareFoundation/MaterialX",
+    "path": "libraries/stdlib/genglsl/lib/mx_noise.glsl",
+    "pin": "5ed154ef9ab5f45c6cf17d158830f8a637593857",
+    "source_url": "https://raw.githubusercontent.com/AcademySoftwareFoundation/MaterialX/5ed154ef9ab5f45c6cf17d158830f8a637593857/libraries/stdlib/genglsl/lib/mx_noise.glsl",
+    "url_verified": true,
+    "sha256": "5dfc4ec072be4a43c54e96bffa6f0b6aa8f347b81f20cd4126aead98af43fb92",
+    "inspected_spans": [
+      [
+        1,
+        55
+      ]
+    ],
+    "note": "Important file-level BSD-3-Clause lineage from OSL despite Apache root; retain original Sony notice. Algorithm body not yet reviewed."
+  },
+  {
+    "repo": "AcademySoftwareFoundation/OpenShadingLanguage",
+    "path": "src/liboslexec/opnoise.cpp",
+    "pin": "0dc86fc3e30d5417492397646abc1b98490a10b2",
+    "source_url": "https://raw.githubusercontent.com/AcademySoftwareFoundation/OpenShadingLanguage/0dc86fc3e30d5417492397646abc1b98490a10b2/src/liboslexec/opnoise.cpp",
+    "url_verified": true,
+    "sha256": "9f8abe2bc843cc83e689ab62fdd92b500db1e97d5e7acccd8eed803c8e1ec763",
+    "inspected_spans": [
+      [
+        1,
+        75
+      ]
+    ],
+    "note": "BSD-3-Clause header and derivative/type dispatch boundary; no LLVM runtime adoption proposed."
+  },
+  {
+    "repo": "manimCommunity/manim",
+    "path": "manim/animation/animation.py",
+    "pin": "622520d34190062f32d68af066c80f1c937fc8bf",
+    "source_url": "https://raw.githubusercontent.com/ManimCommunity/manim/622520d34190062f32d68af066c80f1c937fc8bf/manim/animation/animation.py",
+    "url_verified": true,
+    "sha256": "be310092d2bd6283faf4b3f2e36f661024964e558176312a5a0dfe2c974eca5f",
+    "inspected_spans": [
+      [
+        1,
+        70
+      ]
+    ],
+    "note": "Fixed runtime, lag ratio and rate function contracts; native sequencing ideas only, no Python dependency."
+  }
+]

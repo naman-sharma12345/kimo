@@ -51,10 +51,10 @@ Checkpoint 273cf0b88c1d6d3d5bceb9af16ca7a1a5ef02384. Kimo original source only, 
 77:     if m.albedo.map_or(false, |a| a.iter().any(|x| !x.is_finite() || *x < 0.0 || *x > 4.0)) || m.emissive.iter().any(|x| !x.is_finite() || *x < 0.0) { return Err("albedo/emissive must be finite and >= 0".into()); }
 78:     Ok(())
 79: }
-80: 
+80:
 81: fn norm(v: [f64; 3]) -> [f64; 3] { let m = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-12); [v[0] / m, v[1] / m, v[2] / m] }
 82: fn dot(a: [f64; 3], b: [f64; 3]) -> f64 { a[0] * b[0] + a[1] * b[1] + a[2] * b[2] }
-83: 
+83:
 84: /// Cook-Torrance BRDF value times n.l for one light. Returns (diffuse weight, specular weight); the caller multiplies diffuse by albedo.
 85: pub fn brdf(n: [f64; 3], l: [f64; 3], v: [f64; 3], m: &Material, albedo: [f64; 3]) -> ([f64; 3], [f64; 3]) {
 86:     let ndl = dot(n, l).max(0.0); if ndl <= 0.0 { return ([0.0; 3], [0.0; 3]); }
@@ -66,7 +66,7 @@ Checkpoint 273cf0b88c1d6d3d5bceb9af16ca7a1a5ef02384. Kimo original source only, 
 ```rust
 102:             for y in 0..h { if y + r < h { acc += t[(y + r) * w + x]; cnt += 1.0; } if y > r { acc -= t[(y - r - 1) * w + x]; cnt -= 1.0; } a[y * w + x] = acc / cnt; } } }
 103: }
-104: 
+104:
 105: /// Lighting vector, attenuation and cone factor for pixel position `pt` (frame-height units, z = surface height).
 106: pub fn light_at(l: &LightDef, pt: [f64; 3]) -> ([f64; 3], f64) {
 107:     match l.kind.as_str() {
@@ -246,7 +246,7 @@ Checkpoint 273cf0b88c1d6d3d5bceb9af16ca7a1a5ef02384. Kimo original source only, 
 45: }
 46: impl Traj { pub fn at(&self, i: usize, t: f64) -> ([f64; 3], [f64; 4]) { let f = (t / self.dt).max(0.0); let a = (f.floor() as usize).min(self.n - 1); let b = (a + 1).min(self.n - 1); let u = f - f.floor(); let (x, y) = (self.data[i][a], self.data[i][b]);
 47:     let l = |k: usize| x[k] as f64 * (1.0 - u) + y[k] as f64 * u; ([l(0), l(1), l(2)], qnorm([l(3), l(4), l(5), l(6)])) } }
-48: 
+48:
 ```
 
 ## render.rs:428-448
@@ -270,9 +270,9 @@ Checkpoint 273cf0b88c1d6d3d5bceb9af16ca7a1a5ef02384. Kimo original source only, 
 443:         }
 444:     }
 445: }
-446: 
+446:
 447: pub fn render_frame(p: &Project, t: f64, cache: &Cache) -> Result<Frame, String> { render_frame_opts(p, t, cache, false) }
-448: 
+448:
 ```
 
 ## render.rs:541-542
@@ -315,4 +315,22 @@ Checkpoint 273cf0b88c1d6d3d5bceb9af16ca7a1a5ef02384. Kimo original source only, 
 41:  // Grading/mixers own RGB only, and retain the first input alpha exactly.
 42:  for(i,px)in out.d.chunks_exact_mut(4).enumerate(){px[3]=ins[0].d[i*4+3];}super::frame::validate(&out)?;stats.evaluated_nodes+=1;cache.insert(id.clone(),Arc::new(out));drop(ins);
 43:  for src in &n.inputs{let count=uses.get_mut(src).unwrap();*count-=1;if *count==0{cache.remove(src);}}
+```
+
+## lighting.rs:84-96 (BRDF full relevant range)
+
+```rust
+84: /// Cook-Torrance BRDF value times n.l for one light. Returns (diffuse weight, specular weight); the caller multiplies diffuse by albedo.
+85: pub fn brdf(n: [f64; 3], l: [f64; 3], v: [f64; 3], m: &Material, albedo: [f64; 3]) -> ([f64; 3], [f64; 3]) {
+86:     let ndl = dot(n, l).max(0.0); if ndl <= 0.0 { return ([0.0; 3], [0.0; 3]); }
+87:     let h = norm([l[0] + v[0], l[1] + v[1], l[2] + v[2]]); let ndh = dot(n, h).max(0.0); let ndv = dot(n, v).max(1e-3); let vdh = dot(v, h).max(0.0);
+88:     let lobe = |rough: f64| { let a = (rough * rough).max(1e-4); let a2 = a * a; let d = a2 / (std::f64::consts::PI * (ndh * ndh * (a2 - 1.0) + 1.0).powi(2)); let k = (rough + 1.0).powi(2) / 8.0; let g = (ndl / (ndl * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k)); (d, g) };
+89:     let f0d = ((m.ior - 1.0) / (m.ior + 1.0)).powi(2); let fw = (1.0 - vdh).powi(5);
+90:     let (d, g) = lobe(m.roughness); let mut spec = [0.0; 3]; let mut diff = [0.0; 3];
+91:     for j in 0..3 { let f0 = f0d * (1.0 - m.metal) + albedo[j] * m.metal; let f = f0 + (1.0 - f0) * fw; spec[j] = d * g * f / (4.0 * ndv);
+92:         diff[j] = albedo[j] * (1.0 - m.metal) * (1.0 - f) * ndl; }
+93:     if m.clearcoat > 0.0 { let (d2, g2) = lobe(0.06); let f = 0.04 + 0.96 * fw; let c = m.clearcoat * d2 * g2 * f / (4.0 * ndv); for j in 0..3 { spec[j] += c; diff[j] *= 1.0 - m.clearcoat * f; } }
+94:     (diff, spec)
+95: }
+96:
 ```
