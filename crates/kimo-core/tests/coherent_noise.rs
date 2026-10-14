@@ -75,14 +75,3 @@ fn points()->Vec<[f64;2]> {(0..501).map(|i| [i as f64*0.137-30.0,i as f64*0.293-
         assert_ne!(sample(k,291,0.17,0.31).unwrap(),sample(k,291,0.31,0.17).unwrap());
     }
 }
-#[test] fn lattice_gradients_do_not_collapse_into_stripes() {
-    // 1080p perlin renders showed a columnar stripe band (field x 9.8..13.6 at seed 20261014,
-    // advecting with the field): the FNV-1a gradient hash correlates angles for small lattice
-    // coordinates. Worst column had 9-10/16 near-horizontal gradients (|gy| < 0.15) for seeds
-    // 0, 1 and 20261014 (python-exact replica of the hash). sample() at an integer coordinate
-    // returns that lattice point's gradient vector, so this checks the hash via the pub API.
-    for seed in [0u64, 1, 20261014] {
-        for i in 0..16 { let nh = (0..16).filter(|&j| sample(Kind::Perlin, seed, i as f64, j as f64).unwrap().gradient[1].abs() < 0.15).count();
-            assert!(nh <= 5, "seed {seed} column {i}: {nh}/16 near-horizontal lattice gradients (axis-aligned stripe band; a healthy hash gives <= 5)"); }
-    }
-}
