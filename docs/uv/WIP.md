@@ -9,3 +9,9 @@ No cargo/compilation/test execution/renderer/1080p evidence. Tests are draft end
 ```sh
 CARGO_BUILD_JOBS=1 cargo test --profile gate -p kimo-core --test uv_math --test registry_lint --test registry_unique --test ext_registry -- --test-threads=1
 ```
+
+## Raw mapping extension (still uncompiled)
+
+Planar picks two distinct axes 0..2 and returns raw unbounded coordinates. Polar maps xy to (atan2(y,x)/tau+.5, radius). Cylindrical is Y-axis: (atan2(z,x)/tau+.5, y). Spherical is Y-up: azimuth from xz, inclination acos(y/r)/pi. No implicit rotation, scale, repeat, aspect, camera or projection presets. Caller owns transforms and wrapping. Negative-X angular seam is explicit; zero radius/poles return declared fallback u=.5 with singular=true. Seam discontinuities and singular derivatives are mathematical properties, not hidden smoothing. No texture sampler, renderer or bandlimit is bundled.
+
+Tests draft cardinal axes/poles/origin/seam, raw planar magnitudes, scale-invariant spherical coordinates and invalid axis handling. Real 1080p checker/texture render proof remains pending. No macro wrapper or preset is introduced.
