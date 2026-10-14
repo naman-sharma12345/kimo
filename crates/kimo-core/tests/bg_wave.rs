@@ -150,7 +150,7 @@ fn seam_ratio(p: &[f64]) -> f64 {
         for w in p.windows(2) { assert!(w[1] < w[0], "R={r} side {i}: not strictly decreasing outward"); } } }
 }
 /// Visible extent (px from the peak where float red < 1/255) of the wide scale at R=40, measured on the patched build; the crop margin must not cut it. PIN: filled from the first green run, never loosened.
-const WIDE_EXTENT_FLOOR_R40: usize = 0;
+const WIDE_EXTENT_FLOOR_R40: usize = 82;
 #[test] fn the_wide_scale_is_not_cropped_by_the_local_effect_margin() {
     let (ps, ext) = halo_profiles_ext(40.0); eprintln!("R=40 visible extent (red < 1/255) per side: {ext:?}, profile lengths (to 1e-3) {:?}", ps.iter().map(|p| p.len() + 4).collect::<Vec<_>>());
     for (i, e) in ext.iter().enumerate() { assert!(*e >= WIDE_EXTENT_FLOOR_R40, "side {i}: visible halo ends at {e} px, below the pinned {WIDE_EXTENT_FLOOR_R40}: the crop cut it"); }
