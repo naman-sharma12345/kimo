@@ -260,3 +260,8 @@ This is the list the v3 build registers (read from `tools/list` of the grouped s
 The README is updated with every product change. If a change adds, removes or regroups tools, or ships a new proof, the same commit updates this file.
 
 MIT licensed.
+
+## Particle simulation primitive (feature-branch WIP)
+
+Uncompiled raw fixed-step 3D trajectory + force/swept-plane math. No emitter or
+renderer adapter yet, no visual sign-off. See [particle WIP](docs/particles/WIP.md).
