@@ -31,6 +31,25 @@ The target is the surface of CapCut, After Effects, Premiere and DaVinci Resolve
 - **Few entry points.** `tools/list` returns 16 grouped tools (15.7 KB) instead of 255 (176 KB), measured 11.2x smaller (compact JSON, v1.0.0). Every individual tool is still callable by its own name.
 - **Fuzzed.** 255 tools, 9359 calls, 0 failures, before anything is published.
 
+## Director planning layer (this branch)
+
+[The agent-side director skill](skills/director/SKILL.md) turns a brief into editable
+scene and shot contracts: song phrase budgets, varied coverage, optics/light/material
+choices, separate still/motion prompts and selective lip-sync eligibility. It is a
+planning aid, not a media generator or a new MCP endpoint.
+
+```bash
+python3 skills/director/validate_plan.py skills/director/example.plan.json
+python3 -m unittest discover -s skills/director -p 'test_*.py'
+python3 skills/director/validate_plan.py plan.json --batch --media-root /absolute/project
+```
+
+The last command emits a **review-only** assembly batch using existing registry
+primitives. Resolve symbolic IDs from real command results and inspect actual media
+before applying it. [Schema](skills/director/contract.schema.json),
+[MCP map](skills/director/mcp-map.md), [research credits](skills/director/CREDITS.md).
+The included plan is a synthetic test fixture, not a rendered showcase.
+
 ## Install
 
 **Download a binary (Linux x86_64, static, no dependencies except ffmpeg):**

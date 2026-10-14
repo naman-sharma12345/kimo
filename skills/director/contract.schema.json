@@ -1,0 +1,385 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "kimo-director-1"
+      ]
+    },
+    "project": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "duration": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "fps": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 480
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 16384
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 16384
+        },
+        "timing_basis": {
+          "type": "string",
+          "enum": [
+            "audio_analysis",
+            "supplied_timestamps",
+            "estimated"
+          ]
+        },
+        "audio_master": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "title",
+        "duration",
+        "fps",
+        "width",
+        "height",
+        "timing_basis",
+        "audio_master"
+      ],
+      "additionalProperties": false
+    },
+    "visual_contract": {
+      "type": "object",
+      "properties": {
+        "palette": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lighting": {
+          "type": "string",
+          "minLength": 1
+        },
+        "optics": {
+          "type": "string",
+          "minLength": 1
+        },
+        "materials": {
+          "type": "string",
+          "minLength": 1
+        },
+        "motion_physics": {
+          "type": "string",
+          "minLength": 1
+        },
+        "continuity": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "palette",
+        "lighting",
+        "optics",
+        "materials",
+        "motion_physics",
+        "continuity"
+      ],
+      "additionalProperties": false
+    },
+    "scenes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "start": {
+            "type": "number",
+            "minimum": 0
+          },
+          "end": {
+            "type": "number",
+            "minimum": 0
+          },
+          "musical_role": {
+            "type": "string",
+            "minLength": 1
+          },
+          "energy": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          },
+          "lyrics": {
+            "type": "string",
+            "minLength": 1
+          },
+          "purpose": {
+            "type": "string",
+            "minLength": 1
+          },
+          "coverage_role": {
+            "type": "string",
+            "enum": [
+              "establishing",
+              "relation",
+              "hero_performance",
+              "angled_performance",
+              "moving_performance",
+              "performance_wide",
+              "reaction",
+              "narrative",
+              "detail",
+              "environment",
+              "symbolic"
+            ]
+          },
+          "performance_mode": {
+            "type": "string",
+            "enum": [
+              "direct_lipsync",
+              "expressive_performance",
+              "non_vocal_action",
+              "no_singer"
+            ]
+          },
+          "keyframe_prompt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "motion_prompt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "continuity_anchors": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "shots": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "start": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "end": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "framing": {
+                  "type": "string",
+                  "enum": [
+                    "extreme_wide",
+                    "wide",
+                    "medium_wide",
+                    "medium",
+                    "medium_close",
+                    "close",
+                    "extreme_close",
+                    "detail"
+                  ]
+                },
+                "orientation": {
+                  "type": "string",
+                  "enum": [
+                    "front",
+                    "three_quarter",
+                    "profile",
+                    "back",
+                    "none"
+                  ]
+                },
+                "movement": {
+                  "type": "string",
+                  "enum": [
+                    "locked",
+                    "push_in",
+                    "pull_out",
+                    "lateral_track",
+                    "follow",
+                    "pan",
+                    "tilt",
+                    "arc",
+                    "orbit",
+                    "crane",
+                    "handheld",
+                    "rack_focus",
+                    "zoom"
+                  ]
+                },
+                "action": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "cut_motivation": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "start_state": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "end_state": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "camera_side": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "focus": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "light": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "has_vocals": {
+                  "type": "boolean"
+                },
+                "singer_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "mouth_visible": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "start",
+                "end",
+                "framing",
+                "orientation",
+                "movement",
+                "action",
+                "cut_motivation",
+                "start_state",
+                "end_state",
+                "camera_side",
+                "focus",
+                "light",
+                "has_vocals",
+                "singer_count",
+                "mouth_visible"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1
+          },
+          "output_path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "generation_capability": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "single_shot_verified",
+              "multi_shot_verified"
+            ]
+          },
+          "capability_source": {
+            "type": "string",
+            "minLength": 1
+          },
+          "duration_exception": {
+            "type": "string",
+            "minLength": 1
+          },
+          "repetition_reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "continuity_break_reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "start",
+          "end",
+          "musical_role",
+          "energy",
+          "lyrics",
+          "purpose",
+          "coverage_role",
+          "performance_mode",
+          "keyframe_prompt",
+          "motion_prompt",
+          "continuity_anchors",
+          "shots",
+          "output_path",
+          "generation_capability"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "assembly": {
+      "type": "object",
+      "properties": {
+        "output_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transition_policy": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "output_path",
+        "transition_policy"
+      ],
+      "additionalProperties": false
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "project",
+    "visual_contract",
+    "scenes",
+    "assembly",
+    "assumptions",
+    "open_questions"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Kimo agent-side director scene contract"
+}

@@ -1,0 +1,81 @@
+"""Fast contract gates; no cargo, engine execution, network or generation."""
+import copy
+import importlib.util
+import json
+from pathlib import Path
+import unittest
+
+HERE=Path(__file__).resolve().parent
+spec=importlib.util.spec_from_file_location('director_validator',HERE/'validate_plan.py')
+v=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(v)
+BASE=json.loads((HERE/'example.plan.json').read_text())
+
+class ContractTests(unittest.TestCase):
+    def setUp(self): self.p=copy.deepcopy(BASE)
+    def valid(self): self.assertTrue(v.validate(self.p)['valid'],v.validate(self.p))
+    def invalid(self): self.assertFalse(v.validate(self.p)['valid'])
+    def test_example(self): self.valid()
+    def test_root_list(self): self.p=[]; self.invalid()
+    def test_empty_scenes(self): self.p['scenes']=[]; self.invalid()
+    def test_null_scene(self): self.p['scenes'][0]=None; self.invalid()
+    def test_missing_project(self): del self.p['project']; self.invalid()
+    def test_unknown_field(self): self.p['preset']='magic'; self.invalid()
+    def test_nonfinite(self): self.p['project']['duration']=float('nan'); self.invalid()
+    def test_infinity(self): self.p['project']['fps']=float('inf'); self.invalid()
+    def test_bool_number(self): self.p['project']['duration']=True; self.invalid()
+    def test_numeric_string(self): self.p['scenes'][0]['start']='0'; self.invalid()
+    def test_duplicate_id(self): self.p['scenes'][1]['id']=0; self.invalid()
+    def test_gap(self): self.p['scenes'][1]['start']+=.01; self.invalid()
+    def test_overlap(self): self.p['scenes'][1]['start']-=.01; self.invalid()
+    def test_short_tail(self): self.p['scenes'][1]['end']=14; self.invalid()
+    def test_duration_exception(self):
+        s=self.p['scenes'][1]; s['end']=14; s['duration_exception']='2s outro, measured phrase boundary'
+        s['shots'][0]['end']=2; self.p['project']['duration']=14; self.valid()
+    def test_final_duration(self): self.p['project']['duration']=25; self.invalid()
+    def test_reverse_shot(self): self.p['scenes'][0]['shots'][0]['end']=0; self.invalid()
+    def test_shot_gap(self): self.p['scenes'][0]['shots'][0]['start']=1; self.invalid()
+    def test_shot_overflow(self): self.p['scenes'][0]['shots'][0]['end']=13; self.invalid()
+    def test_whitespace_prompt(self): self.p['scenes'][0]['motion_prompt']='  '; self.invalid()
+    def test_collision(self): self.p['scenes'][1]['output_path']=self.p['scenes'][0]['output_path']; self.invalid()
+    def test_final_collision(self): self.p['assembly']['output_path']=self.p['scenes'][0]['output_path']; self.invalid()
+    def test_audio_collision(self): self.p['assembly']['output_path']=self.p['project']['audio_master']; self.invalid()
+    def test_unknown_capability_multi(self):
+        s=self.p['scenes'][0]; second=copy.deepcopy(s['shots'][0]); s['shots'][0]['end']=6; second['start']=6
+        s['shots'].append(second); self.invalid()
+    def test_source_required(self): self.p['scenes'][0]['generation_capability']='single_shot_verified'; self.invalid()
+    def test_repeat_warning(self):
+        self.p['scenes'][1]['shots'][0]['framing']='wide'; self.p['scenes'][1]['shots'][0]['movement']='locked'
+        self.valid(); self.assertTrue(any('repeated' in x for x in v.validate(self.p)['warnings']))
+    def test_invalid_lipsync(self): self.p['scenes'][0]['performance_mode']='direct_lipsync'; self.invalid()
+    def test_valid_lipsync_geometry(self):
+        s=self.p['scenes'][0]; s['performance_mode']='direct_lipsync'
+        s['shots'][0].update(has_vocals=True,singer_count=1,mouth_visible=True,orientation='front',framing='close')
+        self.valid()
+    def test_unsafe_lipsync_move(self):
+        s=self.p['scenes'][0]; s['performance_mode']='direct_lipsync'
+        s['shots'][0].update(has_vocals=True,singer_count=1,mouth_visible=True,orientation='front',framing='close',movement='orbit')
+        self.invalid()
+    def test_batch_transparent(self):
+        b=v.compile_batch(self.p); self.assertTrue(b['review_only']); self.assertTrue(b['id_binding_required'])
+        self.assertEqual(len(b['commands']),8)
+        self.assertEqual(b['commands'][-1]['args']['start'],12)
+        self.assertFalse(any(x['command']=='export' for x in b['commands']))
+    def test_huge_integer(self): self.p['project']['fps']=10**1000; self.invalid()
+    def test_negative_time(self): self.p['scenes'][0]['start']=-1; self.invalid()
+    def test_enum_error(self): self.p['scenes'][0]['shots'][0]['movement']='epic'; self.invalid()
+    def test_empty_shots(self): self.p['scenes'][0]['shots']=[]; self.invalid()
+    def test_path_normalization(self):
+        self.p['scenes'][1]['output_path']='outputs/../outputs/scene-00.mp4'; self.invalid()
+    def test_absolute_imports(self):
+        b=v.compile_batch(self.p,'/tmp/director-media')
+        self.assertEqual(b['commands'][2]['args']['path'],'/tmp/director-media/input/song.wav')
+    def test_exact_shot_coverage(self):
+        s=self.p['scenes'][0]; other=copy.deepcopy(s['shots'][0]); s['shots'][0]['end']=6; other['start']=6
+        s['shots'].append(other); s['generation_capability']='multi_shot_verified'; s['capability_source']='fixture only, not a real capability claim'; self.valid()
+    def test_batch_commands_exist(self):
+        source=(HERE.parent.parent/'crates/kimo-core/src/commands.rs').read_text()
+        for row in v.compile_batch(self.p)['commands']:
+            self.assertIn('name: "'+row['command']+'"',source)
+
+if __name__=='__main__': unittest.main()
