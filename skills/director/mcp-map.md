@@ -2,7 +2,7 @@
 
 Source-grounded against `main` 273cf0b88c1d6d3d5bceb9af16ca7a1a5ef02384:
 `crates/kimo-core/src/commands.rs`, `commands/tools_*.rs`, `ext/audio_probe.rs`, `ext/contact_sheet.rs`, `ext/lint_frame.rs`, `toolgroups.rs`, `crates/kimo-mcp/src/main.rs`.
-This branch does not add a Rust command. Check the connected server's tool descriptions before executing, because another branch may expose different schemas. Do not guess tool names or provider features.
+The director layer does not add a Rust command. Check the connected server's tool descriptions before executing, because another branch may expose different schemas. Do not guess tool names or provider features.
 
 | Plan intent | Existing primitive | Important boundary |
 |---|---|---|

@@ -59,6 +59,7 @@ def validate(data):
     # Less than a frame: floating serialization noise is accepted, real gaps are not.
     tolerance = min(1e-6, 0.01/fps)
     cursor, previous, outputs = 0., None, set()
+    distinct_openings, opening_run, longest_run = set(), 0, 0
     audio = data['project']['audio_master']
     def same(a,b): return abs(a-b) <= tolerance
     for i, scene in enumerate(data['scenes']):
@@ -93,6 +94,9 @@ def validate(data):
                 warnings.append(f'{label}: constant high density; inspect rhythm or record pacing_reason')
         first = scene['shots'][0]
         signature = (first['framing'], first['movement'])
+        distinct_openings.add(signature)
+        opening_run = opening_run + 1 if previous and previous[0] == signature else 1
+        longest_run = max(longest_run, opening_run)
         if previous and signature == previous[0] and not scene.get('repetition_reason'):
             warnings.append(f'{label}: repeated opening; revise or record repetition_reason')
         if previous and first['start_state'] != previous[1] and not scene.get('continuity_break_reason'):
@@ -110,6 +114,12 @@ def validate(data):
                     shot['movement'] not in ('locked','push_in')):
                     errors.append(f'{label} shot {j}: ineligible direct lip-sync geometry/audio')
         if not same(local, duration): errors.append(f'{label}: shots must cover scene-local duration')
+    policy = data.get('coverage_policy')
+    if policy:
+        if len(distinct_openings) < policy['minimum_distinct_openings']:
+            warnings.append('Coverage policy: fewer distinct openings than requested; review deliberate repetition')
+        if longest_run > policy['maximum_identical_opening_run']:
+            warnings.append('Coverage policy: identical opening run exceeds requested limit; review pacing contrast')
     if not same(cursor, data['project']['duration']): errors.append('timeline does not cover project duration')
     if os.path.normpath(audio) == os.path.normpath(data['assembly']['output_path']): errors.append('final output would overwrite audio master')
     if data['project']['timing_basis'] == 'estimated': warnings.append('Timing is estimated; verify against audio before assembly')

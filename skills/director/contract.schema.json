@@ -425,6 +425,14 @@
                 "attention_target": {
                   "type": "string",
                   "minLength": 1
+                },
+                "lens_rationale": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "light_change_reason": {
+                  "type": "string",
+                  "minLength": 1
                 }
               },
               "required": [
@@ -635,6 +643,29 @@
         "type": "string",
         "minLength": 1
       }
+    },
+    "coverage_policy": {
+      "type": "object",
+      "properties": {
+        "minimum_distinct_openings": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maximum_identical_opening_run": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "minimum_distinct_openings",
+        "maximum_identical_opening_run",
+        "rationale"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [

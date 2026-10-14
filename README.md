@@ -55,7 +55,7 @@ Add a tool to the registry and it appears in the MCP server, the CLI, the fuzz t
 - **Measured, not claimed.** Every "better than X" line in FEATURES.md has a stated baseline and a measured number, including the cases where we lost.
 - **Fuzzed.** The v3 notes record 6497 fuzz calls with 0 failures at 327 tools. These numbers come from the project notes. They were not re-run for this README.
 
-## Director planning layer (this branch)
+## Director planning layer
 
 [The agent-side director skill](skills/director/SKILL.md) adds editable scene/shot
 contracts and original directing rules synthesized from 21 credited repositories.

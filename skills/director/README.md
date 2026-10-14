@@ -53,3 +53,9 @@ creative changes. References declare transfer and exclusions; duplicate IDs fail
 payoff, action settling time, contrast and source conflicts. Numeric optics are
 planning values, not automatically executable camera commands. Source capabilities
 are not promoted into facts, and references are never uploaded by the validator.
+
+An optional plan-wide `coverage_policy` declares the desired number of distinct
+opening compositions and maximum identical-opening run, with a rationale.
+Violations produce review warnings, never forced changes. Optional shot-level
+`lens_rationale` and `light_change_reason` connect physical choices to story and
+continuity rather than treating parameters as decoration.

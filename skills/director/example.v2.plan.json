@@ -84,7 +84,9 @@
             "acceleration": "none",
             "subject_relation": "same side of travel axis",
             "rationale": "observe isolation"
-          }
+          },
+          "lens_rationale": "Keep train and commuter in shared geography",
+          "light_change_reason": "No change; same platform practical across continuous action"
         }
       ],
       "progression": {
@@ -167,7 +169,9 @@
             "acceleration": "gradual stop",
             "subject_relation": "same side of travel axis",
             "rationale": "follow approach"
-          }
+          },
+          "lens_rationale": "Read the contact gesture without losing doorway context",
+          "light_change_reason": "No change; same platform practical across continuous action"
         }
       ],
       "progression": {
@@ -192,5 +196,10 @@
   "assumptions": [
     "Synthetic fixture only: audio and outputs do not exist. No generation or render verified."
   ],
-  "open_questions": []
+  "open_questions": [],
+  "coverage_policy": {
+    "minimum_distinct_openings": 2,
+    "maximum_identical_opening_run": 1,
+    "rationale": "Contrast geography with embodied action; not a universal film rule"
+  }
 }

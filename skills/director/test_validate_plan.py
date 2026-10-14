@@ -116,6 +116,17 @@ class ExtendedContracts(unittest.TestCase):
         s=self.p['scenes'][0]['progression']; s['consequence']=s['cause']
         self.assertTrue(any('unchanged' in x for x in self.result()['warnings']))
     def test_v1_compatibility(self): self.assertTrue(v.validate(BASE)['valid'])
+    def test_invalid_coverage_policy(self): self.p['coverage_policy']['minimum_distinct_openings']=0; self.invalid()
+    def test_boolean_coverage_count(self): self.p['coverage_policy']['maximum_identical_opening_run']=True; self.invalid()
+    def test_coverage_count_warning(self):
+        self.p['coverage_policy']['minimum_distinct_openings']=3
+        self.assertTrue(self.result()['valid']); self.assertTrue(any('fewer distinct' in x for x in self.result()['warnings']))
+    def test_run_warning(self):
+        self.p['scenes'][1]['shots'][0]['framing']='wide'; self.p['scenes'][1]['shots'][0]['movement']='locked'
+        self.assertTrue(self.result()['valid']); self.assertTrue(any('opening run' in x for x in self.result()['warnings']))
+    def test_optional_coverage_policy(self): del self.p['coverage_policy']; self.assertTrue(self.result()['valid'])
+    def test_empty_lens_rationale(self): self.p['scenes'][0]['shots'][0]['lens_rationale']=' '; self.invalid()
+    def test_empty_light_change_reason(self): self.p['scenes'][0]['shots'][0]['light_change_reason']=' '; self.invalid()
     def test_v2_batch_unchanged_primitives(self): self.assertEqual(len(v.compile_batch(self.p)['commands']),8)
 
 if __name__=='__main__': unittest.main()
