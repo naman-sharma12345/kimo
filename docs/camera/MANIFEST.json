@@ -20,7 +20,7 @@
     },
     {
       "path": "crates/kimo-core/tests/camera_projection.rs",
-      "sha256": "11e7853cf3871037916fa751cc5bfa98d9b976ba26eadc9cb015dafaa1d70aa2"
+      "sha256": "a875d57c706166d67108bbfb1ddbc79239130c674bafdc1630deed40d2fdf4fd"
     },
     {
       "path": "docs/camera/WIP.md",
