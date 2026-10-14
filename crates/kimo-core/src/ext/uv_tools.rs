@@ -1,0 +1,5 @@
+use super::kit::*;
+pub fn commands()->Vec<Command>{vec![Command{name:"effect_uv_sample",mutates:false,description:"Raw UV math: push samples explicit from/to coordinates and ownership weights; radial samples one point toward a center. No rendered transition, easing, blur stack or hidden preset.",schema:obj(vec![("op",json!({"type":"string","enum":["push","radial"]})),("uv",json!({"type":"array","minItems":2,"maxItems":2})),("progress",n("push progress 0..1")),("direction",json!({"type":"array","minItems":2,"maxItems":2})),("center",json!({"type":"array","minItems":2,"maxItems":2})),("fraction",n("radial sample 0..1")),("strength",n("raw radial strength"))],&["op","uv"]),run:|_,a|{
+ let pair=|k:&str|->Result<[f64;2],String>{serde_json::from_value(a.get(k).ok_or_else(||format!("{k} required"))?.clone()).map_err(|e|e.to_string())};let uv=pair("uv")?;
+ match str_arg(a,"op")?{"push"=>Ok(json!(crate::uv_math::push(uv,num_arg(a,"progress")?,pair("direction")?)?)),"radial"=>Ok(json!({"uv":crate::uv_math::radial(uv,pair("center")?,num_arg(a,"fraction")?,num_arg(a,"strength")?)?})),s=>Err(format!("op must be push|radial, got '{s}'"))}
+}}]}

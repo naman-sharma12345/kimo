@@ -1,0 +1,4 @@
+use kimo_core::uv_math::{push,radial};
+#[test]fn push_endpoints_identity_and_zero_direction(){for uv in [[0.,0.],[0.5,0.5],[1.,1.]]{let a=push(uv,0.,[1.,0.]).unwrap();let b=push(uv,1.,[1.,0.]).unwrap();assert_eq!(a.from_uv,uv);assert_eq!(a.from_weight,1.);assert_eq!(b.to_uv,uv);assert_eq!(b.to_weight,1.);let z=push(uv,0.5,[0.,0.]).unwrap();assert_eq!(z.from_uv,uv);}}
+#[test]fn push_magnitude_not_sign_quantized(){let a=push([0.2,0.3],0.5,[0.4,0.8]).unwrap();assert_eq!(a.from_uv,[0.4,0.7]);assert!((a.to_uv[1]+0.1).abs()<1e-15);assert!(a.from_weight+a.to_weight<=1.);}
+#[test]fn radial_endpoints_and_independent_strength(){assert_eq!(radial([0.2,0.3],[0.5,0.5],0.,1.).unwrap(),[0.2,0.3]);assert_eq!(radial([0.2,0.3],[0.5,0.5],1.,1.).unwrap(),[0.5,0.5]);assert!(radial([0.,0.],[1.,1.],2.,1.).is_err());assert!(push([0.,0.],f64::NAN,[1.,0.]).is_err());}

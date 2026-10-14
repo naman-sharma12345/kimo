@@ -260,3 +260,8 @@ This is the list the v3 build registers (read from `tools/list` of the grouped s
 The README is updated with every product change. If a change adds, removes or regroups tools, or ships a new proof, the same commit updates this file.
 
 MIT licensed.
+
+## Raw UV math (feature-branch WIP)
+
+Uncompiled original push/radial coordinate primitives, MCP-callable but not a
+rendered transition. See [UV WIP](docs/uv/WIP.md). No visual sign-off.
