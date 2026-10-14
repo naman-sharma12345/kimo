@@ -260,3 +260,8 @@ This is the list the v3 build registers (read from `tools/list` of the grouped s
 The README is updated with every product change. If a change adds, removes or regroups tools, or ships a new proof, the same commit updates this file.
 
 MIT licensed.
+
+## Raw lighting interface (feature-branch WIP)
+
+Uncompiled numerical MCP access to existing light/BRDF primitives, not a new renderer.
+No 1080p or physical-quality sign-off. See [raw light WIP](docs/raw-lights/WIP.md).
