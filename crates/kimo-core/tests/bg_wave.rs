@@ -162,21 +162,21 @@ const WIDE_EXTENT_FLOOR_R40: usize = 0;
     let mut b = a.clone(); b["apply"] = json!(true); dispatch(&mut s, "bg_wave", &b).unwrap();
 }
 
-fn wave_over(bg: Option<[f64; 3]>, blend: Option<&str>) -> kimo_core::render::Frame {
+fn wave_over(bg: Option<[f64; 3]>, blend: Option<&str>) -> Vec<f32> {
     let mut s = Session::new(); dispatch(&mut s, "project_set", &json!({"width":640,"height":360,"fps":30})).unwrap();
     let t1 = dispatch(&mut s, "add_track", &json!({})).unwrap()["track_id"].as_str().unwrap().to_string(); let t2 = dispatch(&mut s, "add_track", &json!({})).unwrap()["track_id"].as_str().unwrap().to_string();
     if let Some(c) = bg { dispatch(&mut s, "add_clip", &json!({"track_id":t1,"source_type":"solid","color":c,"start":0,"duration":2})).unwrap(); }
     let mut a = json!({"track":t2,"duration":2,"source":"values","values":[0.5,0.5,0.5],"stroke_px":4,"glow":{"radius_px":15,"intensity":2.5},"apply":true}); if let Some(b) = blend { a["blend"] = json!(b); }
-    dispatch(&mut s, "bg_wave", &a).unwrap(); kimo_core::render::render_frame(&s.project, 0.5, &kimo_core::render::Cache::new()).unwrap()
+    dispatch(&mut s, "bg_wave", &a).unwrap(); kimo_core::render::render_frame(&s.project, 0.5, &kimo_core::render::Cache::new()).unwrap().d
 }
 #[test] fn a_wave_over_a_coloured_background_never_darkens_it_in_float() {
-    let f = wave_over(Some([0.35, 0.2, 0.5]), None); let px = |y: usize, j: usize| f.d[(y * 640 + 320) * 4 + j]; let far: Vec<f32> = (0..3).map(|j| px(2, j)).collect();
+    let f = wave_over(Some([0.35, 0.2, 0.5]), None); let px = |y: usize, j: usize| f[(y * 640 + 320) * 4 + j]; let far: Vec<f32> = (0..3).map(|j| px(2, j)).collect();
     let mut worst = 0.0f32; for y in 0..360 { for j in 0..3 { worst = worst.max(far[j] - px(y, j)); } }
     eprintln!("coloured bg {far:?}: deepest dip below the background over the column {worst:.4} (normal blend measured 0.0725 on G)");
     assert!(worst <= 1e-4, "the halo darkens the coloured background by {worst:.4} (opaque dark ring)");
 }
 #[test] fn the_screen_default_changes_nothing_on_black() {
     let (a, b) = (wave_over(None, Some("normal")), wave_over(None, None)); let mut worst = 0.0f32; let mut q8 = 0usize;
-    for i in 0..a.d.len() { worst = worst.max((a.d[i] - b.d[i]).abs()); if (a.d[i] * 255.0).round() != (b.d[i] * 255.0).round() { q8 += 1; } }
+    for i in 0..a.len() { worst = worst.max((a[i] - b[i]).abs()); if (a[i] * 255.0).round() != (b[i] * 255.0).round() { q8 += 1; } }
     eprintln!("black bg, normal vs default: max float diff {worst:e}, 8-bit mismatches {q8}"); assert!(worst < 1e-6 && q8 == 0, "{worst:e} {q8}");
 }
