@@ -1,6 +1,6 @@
 use kimo_core::uv_math::{push,radial};
 #[test]fn push_endpoints_identity_and_zero_direction(){for uv in [[0.,0.],[0.5,0.5],[1.,1.]]{let a=push(uv,0.,[1.,0.]).unwrap();let b=push(uv,1.,[1.,0.]).unwrap();assert_eq!(a.from_uv,uv);assert_eq!(a.from_weight,1.);assert_eq!(b.to_uv,uv);assert_eq!(b.to_weight,1.);let z=push(uv,0.5,[0.,0.]).unwrap();assert_eq!(z.from_uv,uv);}}
-#[test]fn push_magnitude_not_sign_quantized(){let a=push([0.2,0.3],0.5,[0.4,0.8]).unwrap();assert_eq!(a.from_uv,[0.4,0.7]);assert!((a.to_uv[1]+0.1).abs()<1e-15);assert!(a.from_weight+a.to_weight<=1.);}
+#[test]fn push_magnitude_not_sign_quantized(){let a=push([0.2,0.3],0.5,[0.4,0.8]).unwrap();assert_eq!(a.from_uv,[0.4,0.7]);assert_eq!(a.to_uv,a.from_uv);assert_eq!(a.from_weight+a.to_weight,1.);}
 #[test]fn radial_endpoints_and_independent_strength(){assert_eq!(radial([0.2,0.3],[0.5,0.5],0.,1.).unwrap(),[0.2,0.3]);assert_eq!(radial([0.2,0.3],[0.5,0.5],1.,1.).unwrap(),[0.5,0.5]);assert!(radial([0.,0.],[1.,1.],2.,1.).is_err());assert!(push([0.,0.],f64::NAN,[1.,0.]).is_err());}
 
 #[test]fn mappings_axes_poles_seams_and_unbounded_planar(){use kimo_core::uv_math::{polar,spherical,cylindrical,planar};
@@ -52,5 +52,36 @@ use kimo_core::uv_math::{push,radial};
  for bad in [f64::NAN,f64::INFINITY,f64::NEG_INFINITY]{
   for axis in 0..3{let mut p=[1.0;3];p[axis]=bad;assert!(spherical(p).is_err());assert!(cylindrical(p).is_err());assert!(planar(p,0,1).is_err());}
   assert!(polar([bad,0.0]).is_err());assert!(polar([0.0,bad]).is_err());
+ }
+}
+
+#[test]fn push_has_exactly_one_owner_over_time_and_pixel_grid(){
+ for d in [[1.0,0.0],[-1.0,0.0],[0.0,1.0],[0.0,-1.0],[1.0,1.0],[-1.0,1.0],[0.4,0.8],[3.0,-2.0],[0.0,0.0]]{
+  for step in 0..=100{let t=step as f64/100.0;for y in 0..33{for x in 0..65{
+   let uv=[x as f64/64.0,y as f64/32.0];let p=push(uv,t,d).unwrap();
+   assert_eq!(p.from_weight+p.to_weight,1.0);assert!(p.from_weight==0.0||p.to_weight==0.0);
+   let q=if p.from_weight==1.0{p.from_uv}else{p.to_uv};assert!(q.iter().all(|v|v.is_finite()&&(0.0..=1.0).contains(v)));
+   if t==0.0{assert_eq!(p.from_uv,uv);assert_eq!(p.from_weight,1.0);}if t==1.0{assert_eq!(p.to_uv,uv);assert_eq!(p.to_weight,1.0);}
+  }}}
+ }
+}
+#[test]fn cardinal_push_abuts_at_boundary_without_gutter(){
+ for t in [0.1,0.25,0.5,0.75,0.9]{
+  let boundary=1.0-t;let left=push([boundary-1e-10,0.5],t,[1.0,0.0]).unwrap();let right=push([boundary+1e-10,0.5],t,[1.0,0.0]).unwrap();
+  assert_eq!(left.from_weight,1.0);assert_eq!(right.to_weight,1.0);assert!((left.from_uv[0]-1.0).abs()<2e-10);assert!(right.to_uv[0].abs()<2e-10);
+ }
+ let corner=push([0.9,0.1],0.5,[1.0,1.0]).unwrap();assert_eq!(corner.to_weight,1.0);assert!(corner.to_uv.iter().all(|v|(0.0..1.0).contains(v)));
+}
+#[test]fn azimuth_continuity_away_from_seam_and_circular_continuity_at_seam(){
+ use kimo_core::uv_math::{polar,cylindrical,spherical};
+ let mut previous=None;
+ for i in 0..=10000{let theta=-std::f64::consts::PI+1e-6+(std::f64::consts::TAU-2e-6)*i as f64/10000.0;let (x,z)=(theta.cos(),theta.sin());
+  let u=polar([x,z]).unwrap().uv[0];assert!(u.is_finite()&&(0.0..1.0).contains(&u));
+  if let Some(p)=previous{assert!(u>=p);assert!(u-p<0.000101);}previous=Some(u);
+  assert_eq!(cylindrical([x,0.0,z]).unwrap().uv[0],u);assert_eq!(spherical([x,0.0,z]).unwrap().uv[0],u);
+ }
+ for epsilon in [f64::from_bits(1),1e-300,1e-16,1e-12,1e-9]{
+  let a=polar([-1.0,epsilon]).unwrap().uv[0];let b=polar([-1.0,-epsilon]).unwrap().uv[0];
+  assert!((0.0..1.0).contains(&a)&&(0.0..1.0).contains(&b));let d=(a-b).abs();assert!(d.min(1.0-d)<=epsilon+4.0*f64::EPSILON);
  }
 }

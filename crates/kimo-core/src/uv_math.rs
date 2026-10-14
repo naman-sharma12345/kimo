@@ -2,14 +2,19 @@
 use serde::{Serialize,Deserialize};
 #[derive(Clone,Copy,Debug,Serialize,Deserialize,PartialEq)]pub struct Sample{pub from_uv:[f64;2],pub to_uv:[f64;2],pub from_weight:f64,pub to_weight:f64}
 fn validate(uv:[f64;2],progress:f64,direction:[f64;2])->Result<(),String>{if uv.iter().chain(direction.iter()).chain([progress].iter()).any(|x|!x.is_finite())||!(0.0..=1.0).contains(&progress){return Err("finite UV/direction and progress 0..1 required".into());}Ok(())}
-/// Continuous direction magnitude, no component sign snapping. Each image slides
-/// by the specified vector; callers own sampling/edges. Exact endpoints defined.
+/// Outgoing coordinates offset by t*direction. Incoming B tiles the exposed
+/// region using fractional outgoing coordinates. Exactly one owner for every
+/// finite UV; no transparent gutters. Unit cardinal vectors give an ordinary
+/// abutting push. Diagonal/non-unit vectors require tiled incoming corners.
+/// Endpoints bypass wrapping and return the original selected coordinates.
 pub fn push(uv:[f64;2],progress:f64,direction:[f64;2])->Result<Sample,String>{validate(uv,progress,direction)?;
+ if progress==0.0{return Ok(Sample{from_uv:uv,to_uv:uv,from_weight:1.0,to_weight:0.0});}
+ if progress==1.0{return Ok(Sample{from_uv:uv,to_uv:uv,from_weight:0.0,to_weight:1.0});}
  let from=[uv[0]+progress*direction[0],uv[1]+progress*direction[1]];
- let to=[uv[0]-(1.0-progress)*direction[0],uv[1]-(1.0-progress)*direction[1]];
- if from.iter().chain(to.iter()).any(|x|!x.is_finite()){return Err("UV push overflow".into());}
- let inside=|q:[f64;2]|(0.0..=1.0).contains(&q[0])&&(0.0..=1.0).contains(&q[1]);
- let (a,b)=if progress==0.0{(1.0,0.0)}else if progress==1.0{(0.0,1.0)}else if inside(from){(1.0,0.0)}else if inside(to){(0.0,1.0)}else{(0.0,0.0)};
+ if from.iter().any(|x|!x.is_finite()){return Err("UV push overflow".into());}
+ let inside=from.iter().all(|q|(0.0..1.0).contains(q));
+ let to=from.map(|q|{let w=q.rem_euclid(1.0);if w>=1.0{0.0}else{w}});
+ let (a,b)=if inside{(1.0,0.0)}else{(0.0,1.0)};
  Ok(Sample{from_uv:from,to_uv:to,from_weight:a,to_weight:b})}
 /// A single radial sample along UV-to-center. Caller supplies sample fraction and
 /// blend progress independently. This is not a bundled cross-zoom effect.
@@ -25,7 +30,10 @@ pub fn planar(point:[f64;3],axis_u:u8,axis_v:u8)->Result<Mapping,String>{
  Ok(Mapping{uv:[point[axis_u as usize],point[axis_v as usize]],singular:false})
 }
 fn azimuth(x:f64,y:f64)->f64{
- (y.atan2(x)/std::f64::consts::TAU+0.5).rem_euclid(1.0)
+ let u=(y.atan2(x)/std::f64::consts::TAU+0.5).rem_euclid(1.0);
+ // Guard rem_euclid rounding to the upper bound. Seam-near values can
+ // quantize to the seam in f64; never return a gap or u=1.
+ if u>=1.0{0.0}else{u}
 }
 pub fn polar(point:[f64;2])->Result<Mapping,String>{
  if point.iter().any(|v|!v.is_finite()){return Err("polar point must be finite".into());}
