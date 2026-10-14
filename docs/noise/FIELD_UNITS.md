@@ -28,3 +28,12 @@ python3 tests/noise_fields_1080p.py --binary target/gate/kimo-mcp --output /tmp/
 Compare warnings per diagnostic against same-profile main, not only total count 40. Inspect exact 1080p originals, 1:1 crops and contact sheets for each type, across shuffled times. Repeated t=0 byte-equality is a numeric/render-repeat check, not visual approval. Preserve golden scene hashes; review expected registry additions separately rather than blindly updating golden files. All existing golden baselines are unchanged in this WIP.
 
 No camera/projection work proceeds before noise visual sign-off. No fluid, 3D force simulation or premium-quality claim follows from a noise operator.
+
+## Required explicit noise gate checklist
+
+- Numeric range invariants: conservative Perlin/simplex absolute value bounds, Worley F1<=F2<=sqrt(5), explicit FBM normalization, finite gradient/warp output. No empirical unit-range claim.
+- Seed determinism: repeated calls, shuffled coordinates/frame times and thread comparison; different seeds must change non-lattice samples.
+- Gradient continuity: lattice/simplex boundary approach from both sides, analytic vs central-difference derivatives, warp Jacobian and octave frequency-chain factors.
+- Solenoidal curl: finite-difference divergence approximately zero away from field nondifferentiabilities, convergence over multiple epsilon sizes, no spatial normalization/gain that silently breaks it.
+- Actual 1080p pixel inspection: aliasing during subpixel/temporal advection, banding in smooth ramps/low-amplitude output, diagonal/lattice seams and warp seams, clips from explicit display gain/bias. Inspect source originals and 1:1 crops, not only downscaled sheets. A smooth-looking static thumbnail is insufficient.
+- Visual sign-off is pending until images exist and are inspected. No camera/projection acceptance before this gate; separately drafted camera math is WIP only.
