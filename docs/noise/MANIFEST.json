@@ -1,0 +1,68 @@
+{
+  "base": "2977b73751f1c9124501503e3cba0b9c33cc9413",
+  "branch": "instinct/wip-noise-fields",
+  "status": "WIP; no Rust build/tests/renders executed",
+  "supersedes": "unit1 archive for this follow-on branch only; unit1 branch may remain for isolated first gate",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "b6fc0ba87bbe9ad244e2bbf59f887b1fe08cc54d9010c067ff288c05f18a15d3"
+    },
+    {
+      "path": "crates/kimo-core/src/effects.rs",
+      "sha256": "b8b853cc6f0ea934a3e9c22da0b8dd26fe0383cb80b76d419e7edd03077f7d2c"
+    },
+    {
+      "path": "crates/kimo-core/src/ext/field_tools.rs",
+      "sha256": "44f1eda4fe90b6693038d790d221ccfeefd8f3592cb173893e547e315905592a"
+    },
+    {
+      "path": "crates/kimo-core/src/ext/noise_tools.rs",
+      "sha256": "3714a3bbe2b1a51d0de9569e16547e4ac6b47c746005849af8ebe342d8c8ffa6"
+    },
+    {
+      "path": "crates/kimo-core/src/lib.rs",
+      "sha256": "691e264182af2155d564d5a4c9728672106d6e1a75f4ec08bbcf2e26f19f31d5"
+    },
+    {
+      "path": "crates/kimo-core/src/noise.rs",
+      "sha256": "df5bc315dce818729d8f54029d35cc4d71990d725e7cb9ceb017fb771197f952"
+    },
+    {
+      "path": "crates/kimo-core/src/noise_fields.rs",
+      "sha256": "7845e0a5f0557589e6faf06f0e56c836d1d64da6040e446979bbaaf5f058703e"
+    },
+    {
+      "path": "crates/kimo-core/src/toolgroups.rs",
+      "sha256": "034f675b7fca2cf1f8866caf61cf3dc11155a977706008217be27edcb4c446c4"
+    },
+    {
+      "path": "crates/kimo-core/tests/coherent_noise.rs",
+      "sha256": "be1c649fb840124ee66e7177a8f3e27eb25313a7db9f0fcd9506e1dc4b43b9dc"
+    },
+    {
+      "path": "crates/kimo-core/tests/noise_fields.rs",
+      "sha256": "4acf95ae3c6536eba2d8cdedfa7dcb67188f05510424ccc9e27254185d21b1f1"
+    },
+    {
+      "path": "docs/noise/FIELD_UNITS.md",
+      "sha256": "bb7785e7d9dfd7b4055f8ed1f30b7f786a558466b26c55feef3e08178cf22a37"
+    },
+    {
+      "path": "docs/noise/PLAN.md",
+      "sha256": "d7ac33bcb824a617456ec414087fbd693cac8536922a30ba7b239f0729b9ffa4"
+    },
+    {
+      "path": "docs/noise/VERIFY.md",
+      "sha256": "c015d282efeb6fce7f307593a315aff47b11d7d003a0475a54f70263659a6f09"
+    },
+    {
+      "path": "tests/noise_1080p.py",
+      "sha256": "933faba8d42c69595cea73a5ae8ada5a8ab47db334d99fa82f8cb7bf09ca4f96"
+    },
+    {
+      "path": "tests/noise_fields_1080p.py",
+      "sha256": "6e32f139b8d0b23fa73940c02663666738107502b479a4d19a7a71aa4c1216e0"
+    }
+  ]
+}
