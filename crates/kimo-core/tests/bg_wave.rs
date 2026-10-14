@@ -38,7 +38,7 @@ fn audio_at(s: &mut Session, secs: usize, hz: f64, rate: usize) -> String {
     let first = dry["expansion"][0]["args"]["points"].as_array().unwrap().clone(); assert_eq!(first.len(), 32);
     let top = first.iter().enumerate().min_by(|x, y| x.1[1].as_f64().unwrap().total_cmp(&y.1[1].as_f64().unwrap())).unwrap().0; // smallest y = loudest band
     let want = (1000f64 / 40.0).ln() / (16000f64 / 40.0).ln() * 31.0; assert!((top as f64 - want).abs() <= 1.5, "loudest band {top}, want about {want:.1}");
-    let pk: Vec<&Value> = dry["expansion"].as_array().unwrap().iter().filter(|o| o["tool"] == "set_keyframe").collect(); assert!(pk.len() >= 2 && pk.iter().all(|o| o["args"]["property"] == "amount"), "pulse keys on glow.amount");
+    let pk: Vec<&Value> = dry["expansion"].as_array().unwrap().iter().filter(|o| o["tool"] == "set_keyframe").collect(); assert!(pk.len() >= 2 && pk.iter().all(|o| o["args"]["property"] == "amount_mid"), "pulse keys on the single multi effect amount_mid");
     let (mut s2, _) = (Session::new(), 0); let _ = &mut s2;
     let r = dispatch(&mut s, "bg_wave", &a(true)).unwrap(); assert_eq!(r["expansion"], dry["expansion"], "apply == the dry-run expansion");
     kimo_core::par::set_threads(1); let f1 = kimo_core::render::render_frame(&s.project, 0.5, &kimo_core::render::Cache::new()).unwrap().d; kimo_core::par::set_threads(4); let f4 = kimo_core::render::render_frame(&s.project, 0.5, &kimo_core::render::Cache::new()).unwrap().d; kimo_core::par::set_threads(0);
