@@ -246,6 +246,7 @@ rust bg_grid fast
 rust bg_orbs fast
 rust bg_ops_limit fast
 rust bg_wave fast
+rust visual_manifest fast
 rust bg_visual skip # visual tier (Pass 2): renders contact sheets into $KIMO_VISUAL_DIR, inert without it; run by hand or by the visual tier
 rust open_path_stroke fast
 rust blur_gaussian fast
