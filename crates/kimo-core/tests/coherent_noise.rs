@@ -35,8 +35,8 @@ fn points()->Vec<[f64;2]> {(0..501).map(|i| [i as f64*0.137-30.0,i as f64*0.293-
     assert!(registry_ref().iter().any(|c|c.name=="sample_noise"));assert_eq!(kimo_core::toolgroups::group_of("sample_noise"),"effects");
     for (name,k) in [("perlin",Kind::Perlin),("simplex",Kind::Simplex)] {
         // the sandbox caps JSON numbers at +-1e8 (guard.rs), so the MCP path can only carry seeds in range; u64::MAX stays raw-only (line above)
-        let r=dispatch(&mut ss,"sample_noise",&json!({"kind":name,"seed":123456789u64,"points":q})).unwrap();
-        for (i,p) in q.iter().enumerate(){let v=sample(k,123456789,p[0],p[1]).unwrap();assert_eq!(r["samples"][i]["value"].as_f64().unwrap(),v.value);}
+        let r=dispatch(&mut ss,"sample_noise",&json!({"kind":name,"seed":87654321u64,"points":q})).unwrap();
+        for (i,p) in q.iter().enumerate(){let v=sample(k,87654321,p[0],p[1]).unwrap();assert_eq!(r["samples"][i]["value"].as_f64().unwrap(),v.value);}
     }
     for a in [json!({"kind":"wrong","seed":1,"points":[]}),json!({"kind":"perlin","seed":-1,"points":[]}),json!({"kind":"perlin","seed":1.5,"points":[]}),json!({"kind":"perlin","seed":1,"points":[[0]]}),json!({"kind":"perlin","seed":u64::MAX,"points":[[0,0]]})] {assert!(dispatch(&mut ss,"sample_noise",&a).is_err());}
 }
