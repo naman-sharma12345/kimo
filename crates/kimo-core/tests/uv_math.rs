@@ -85,3 +85,64 @@ use kimo_core::uv_math::{push,radial};
   assert!((0.0..1.0).contains(&a)&&(0.0..1.0).contains(&b));let d=(a-b).abs();assert!(d.min(1.0-d)<=epsilon+4.0*f64::EPSILON);
  }
 }
+
+/// Produces actual Rust-rendered 1080p PPM frames for external contact-sheet
+/// assembly. Not a golden update and never substitutes for visual inspection.
+/// Every sampler here is caller-side harness code: uv_math supplies coordinates only.
+#[test]#[ignore="1080p render gate after compile and functional tests"]
+fn render_1080p_uv_sources(){
+ use kimo_core::uv_math::{push,radial,polar,cylindrical,spherical,planar};
+ use std::{io::Write,path::PathBuf};
+ let dir=PathBuf::from(std::env::var("KIMO_UV_FRAMES").expect("set output directory"));std::fs::create_dir_all(&dir).unwrap();
+ let (w,h)=(1920usize,1080usize);
+ // procedural texture: 16.5-period u checker (seam stays visible), 9-period v checker,
+ // color ramps, opaque alpha; repeat-wrapped by the caller, as contracted.
+ let tex=|u:f64,v:f64|->[f32;4]{let uu=u.rem_euclid(1.0);let vv=v.rem_euclid(2.0);
+  let c=if (uu*16.5).floor()as i64%2==(vv*9.0).floor()as i64%2{0.85}else{0.15};
+  [c as f32,(uu*0.8+0.1)as f32,(vv*0.5+0.2).clamp(0.,1.)as f32,1.0]};
+ let px=|x:usize,y:usize|[(x as f64+0.5)/w as f64,(y as f64+0.5)/h as f64];
+ let write=|name:&str,f:&[[f32;4]]|{let mut file=std::fs::File::create(dir.join(format!("{name}.ppm"))).unwrap();
+  write!(file,"P6\n{w} {h}\n255\n").unwrap();
+  let mut rgb=Vec::with_capacity(w*h*3);
+  for p in f{for v in p.iter().take(3){rgb.push((v.clamp(0.,1.)*255.+0.5)as u8);}}
+  file.write_all(&rgb).unwrap();};
+ let mut frames:Vec<(String,Vec<[f32;4]>)>=Vec::new();
+ // polar: screen-centered pinwheel, seam must read at the negative-X ray (left middle)
+ let mut f=vec![[0.;4];w*h];
+ for y in 0..h{for x in 0..w{let [u,v]=px(x,y);let p=polar([(u-0.5)*4.0,(v-0.5)*4.0]).unwrap();
+  f[y*w+x]=if p.singular{[1.,0.,1.,1.]}else{tex(p.uv[0],p.uv[1]*0.25)};}}
+ frames.push(("polar".into(),f));
+ // cylindrical: fixed-depth direction field, u from xz azimuth, v raw height
+ let mut f2=vec![[0.;4];w*h];
+ for y in 0..h{for x in 0..w{let [u,v]=px(x,y);let p=cylindrical([(u-0.5)*4.0,(v-0.5)*2.25,1.5]).unwrap();
+  f2[y*w+x]=if p.singular{[1.,0.,1.,1.]}else{tex(p.uv[0],p.uv[1])};}}
+ frames.push(("cylindrical".into(),f2));
+ // spherical: direction field with fixed z=0.6; no exact poles in this scene
+ let mut f3=vec![[0.;4];w*h];
+ for y in 0..h{for x in 0..w{let [u,v]=px(x,y);let p=spherical([(u-0.5)*2.0,(0.5-v)*2.0,0.6]).unwrap();
+  f3[y*w+x]=if p.singular{[1.,0.,1.,1.]}else{tex(p.uv[0],p.uv[1]*2.0)};}}
+ frames.push(("spherical".into(),f3));
+ // planar: raw axis picks of a 3D point field; axes (2,0) of (x, wave, y)
+ let mut f4=vec![[0.;4];w*h];
+ for y in 0..h{for x in 0..w{let [u,v]=px(x,y);let p=planar([u*3.0,v*3.0,(u*u+v*v)*0.8],2,0).unwrap();
+  f4[y*w+x]=tex(p.uv[0]*0.5,p.uv[1]*0.5);}}
+ frames.push(("planar".into(),f4));
+ // push: checker A sliding out / inverted B sliding in, direction (0.35,0.12), three progress steps
+ let texb=|u:f64,v:f64|->[f32;4]{let uu=u.rem_euclid(1.0);let vv=v.rem_euclid(2.0);
+  let c=if (uu*16.5).floor()as i64%2==(vv*9.0).floor()as i64%2{0.2}else{0.9};
+  [(vv*0.5).clamp(0.,1.)as f32,c as f32,((1.0-uu)*0.7+0.2)as f32,1.0]};
+ for (name,t) in [("push-00",0.0),("push-02",0.5),("push-04",1.0)]{
+  let mut f5=vec![[0.;4];w*h];
+  for y in 0..h{for x in 0..w{let uv=px(x,y);let s=push(uv,t,[0.35,0.12]).unwrap();
+   assert_eq!(s.from_weight+s.to_weight,1.0);
+   let a=tex(s.from_uv[0],s.from_uv[1]);let b=texb(s.to_uv[0],s.to_uv[1]);
+   f5[y*w+x]=std::array::from_fn(|i|a[i]*s.from_weight as f32+b[i]*s.to_weight as f32);}}
+  frames.push((name.into(),f5));}
+ // radial: 24-sample zoom blur toward center, strength 0.55
+ let mut f6=vec![[0.;4];w*h];
+ for y in 0..h{for x in 0..w{let uv=px(x,y);let mut acc=[0f64;4];
+  for k in 0..24{let frac=(k as f64+0.5)/24.0;let q=radial(uv,[0.5,0.5],frac,0.55).unwrap();let c=tex(q[0],q[1]);for j in 0..4{acc[j]+=c[j]as f64;}}
+  f6[y*w+x]=std::array::from_fn(|i|(acc[i]/24.0)as f32);}}
+ frames.push(("radial".into(),f6));
+ for (name,f) in &frames{write(name,f);}
+}
