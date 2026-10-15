@@ -45,6 +45,20 @@ pub fn prefiltered_env(env:&EnvMap,dir:[f64;3],alpha:f64,samples:usize)->Result<
 pub fn irradiance_map(env:&EnvMap,width:usize,height:usize,samples:usize)->Result<EnvMap,String>{let mut out=Vec::with_capacity(width*height);if width==0||height==0||width>4096||height>4096{return Err("irradiance map size 1..=4096 per axis required".into());}for j in 0..height{for i in 0..width{crate::guard::check();let u=(i as f64+0.5)/width as f64;let v=(j as f64+0.5)/height as f64;let phi=(u-0.5)*std::f64::consts::TAU;let y=(v*std::f64::consts::PI).cos();let r=(v*std::f64::consts::PI).sin();let c=irradiance(env,[r*phi.cos(),y,r*phi.sin()],samples)?;out.push([c[0]as f32,c[1]as f32,c[2]as f32]);}}Ok(EnvMap{width,height,texels:out})}
 pub fn prefiltered_map(env:&EnvMap,width:usize,height:usize,alpha:f64,samples:usize)->Result<EnvMap,String>{let mut out=Vec::with_capacity(width*height);if width==0||height==0||width>4096||height>4096{return Err("prefiltered map 1..=4096 per axis required".into());}for j in 0..height{for i in 0..width{crate::guard::check();let u=(i as f64+0.5)/width as f64;let v=(j as f64+0.5)/height as f64;let phi=(u-0.5)*std::f64::consts::TAU;let y=(v*std::f64::consts::PI).cos();let r=(v*std::f64::consts::PI).sin();let c=prefiltered_env(env,[r*phi.cos(),y,r*phi.sin()],alpha,samples)?;out.push([c[0]as f32,c[1]as f32,c[2]as f32]);}}Ok(EnvMap{width,height,texels:out})}
 
+impl BrdfLut{
+ /// Bilinear sample at (ndotv, alpha) over texel centers, clamped to the grid.
+ pub fn sample(&self,ndotv:f64,alpha:f64)->Result<[f64;2],String>{if self.size==0||self.texels.len()!=self.size*self.size{return Err("lut buffers consistent required".into());}if !ndotv.is_finite()||!alpha.is_finite(){return Err("finite ndotv/alpha required".into());}let n=self.size as f64;let x=(ndotv.clamp(0.,1.)*n-0.5).clamp(0.,(self.size-1)as f64);let y=(alpha.clamp(0.,1.)*n-0.5).clamp(0.,(self.size-1)as f64);let x0=x.floor()as usize;let y0=y.floor()as usize;let fx=x-x0 as f64;let fy=y-y0 as f64;let x1=(x0+1).min(self.size-1);let y1=(y0+1).min(self.size-1);
+  let t=|xx:usize,yy:usize|self.texels[yy*self.size+xx];let mut out=[0.;2];for k in 0..1+1{let a=t(x0,y0)[k]as f64;let b=t(x1,y0)[k]as f64;let c=t(x0,y1)[k]as f64;let d=t(x1,y1)[k]as f64;out[k]=(1.-fy)*((1.-fx)*a+fx*b)+fy*((1.-fx)*c+fx*d);}Ok(out)}
+}
+/// Baked IBL set: cosine-convolved irradiance, per-alpha prefiltered levels, BRDF LUT.
+#[derive(Clone,Debug,Serialize,Deserialize)]pub struct IblSet{pub irradiance:EnvMap,pub prefiltered:Vec<EnvMap>,pub lut:BrdfLut}
+impl IblSet{
+ pub fn bake(env:&EnvMap,irr_size:[usize;2],pf_size:[usize;2],levels:usize,lut_size:usize,samples:usize)->Result<Self,String>{if levels==0||levels>16{return Err("prefilter levels 1..=16 required".into());}let irradiance=irradiance_map(env,irr_size[0],irr_size[1],samples)?;let mut prefiltered=Vec::with_capacity(levels);for l in 0..levels{let alpha=(l as f64+0.5)/levels as f64;prefiltered.push(prefiltered_map(env,pf_size[0],pf_size[1],alpha,samples)?);}Ok(Self{irradiance,prefiltered,lut:brdf_lut(lut_size,samples)?})}
+ pub fn validate(&self)->Result<(),String>{if self.prefiltered.is_empty()||self.prefiltered.len()>16{return Err("prefilter levels 1..=16 required".into());}Ok(())}
+ /// Prefiltered specular at (R, alpha): linear level selection + interpolation.
+ pub fn prefiltered_at(&self,r:[f64;3],alpha:f64)->Result<[f64;3],String>{self.validate()?;let l=self.prefiltered.len();let x=(alpha.clamp(0.,1.)*l as f64-0.5).clamp(0.,(l-1)as f64);let l0=x.floor()as usize;let l1=(l0+1).min(l-1);let f=x-l0 as f64;let a=self.prefiltered[l0].sample(r)?;if l0==l1{return Ok(a);}let b=self.prefiltered[l1].sample(r)?;Ok(std::array::from_fn(|k|a[k]*(1.-f)+b[k]*f))}
+}
+
 #[cfg(test)]
 mod tests{
  use super::*;

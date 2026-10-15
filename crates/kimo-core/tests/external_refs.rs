@@ -186,6 +186,10 @@ fn open_sites_are_classified() {
         ("render.rs", 15, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),
         ("shards.rs", 3, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),
         ("text.rs", 1, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),
+        ("threed/textured_fixture.rs", 1, "no project path: ignored frame-harness test pipes rendered frames to an ffmpeg stdin (-i -), output under the caller KIMO_TEXTURE_FRAMES dir"),
+        ("threed/lit_raster.rs", 6, "no project path: ignored frame-dump tests pipe rendered frames to ffmpeg stdin (-i -), output under the caller KIMO_PBR_FRAMES dir"),
+        ("threed/perspective.rs", 1, "no project path: ignored frame-dump test pipes rendered frames to an ffmpeg stdin (-i -), output under the caller KIMO_PRIMITIVE_FRAMES dir"),
+        ("threed/ingest.rs", 1, "no project path: ignored frame-dump test pipes rendered frames to an ffmpeg stdin (-i -), output under the caller KIMO_PBR_FRAMES dir"),
     ];
     let pat = ["\"-i\"", "File::open", "fs::read(", "read_to_string", "fs::metadata", "image::open", "from_file("];
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
