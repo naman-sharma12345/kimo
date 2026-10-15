@@ -135,6 +135,67 @@ pub fn cascaded_light_space(travel_direction:[f64;3],cam:&Camera,aspect:f64,near
  (0..cascades).map(|i|fit_cascade(travel_direction,cam,aspect,splits[i],splits[i+1],scene_aabb,map_size)).collect()
 }
 
+/// A built cascade set: the fits plus one shadow map per cascade. `blend_band` is the
+/// fraction of each cascade's depth range (measured from its far end) over which the
+/// receiver blends into the next cascade - C0 continuity across the boundary, so no
+/// seam popping. 0 = hard selection (documented: a visible seam is then possible).
+#[derive(Clone,Debug)]
+pub struct CascadedShadowMaps{
+ pub cascades:Vec<Cascade>,
+ pub maps:Vec<super::shadow::DirectionalShadowMap>,
+ pub blend_band:f64,
+}
+
+/// Allocate one map per cascade from existing fits.
+pub fn build_cascade_maps(cascades:Vec<Cascade>,map_size:usize,blend_band:f64)->Result<CascadedShadowMaps,String>{
+ if cascades.is_empty(){return Err("at least one cascade required".into());}
+ if map_size==0||map_size>4096{return Err("cascade map 1..4096 per axis".into());}
+ if !blend_band.is_finite()||!(0.0..0.5).contains(&blend_band){return Err("blend band in [0,0.5) required".into());}
+ let maps=cascades.iter().map(|c|super::shadow::DirectionalShadowMap{view:c.view,bounds:c.bounds,width:map_size,height:map_size,depth:vec![f64::INFINITY;map_size*map_size]}).collect();
+ Ok(CascadedShadowMaps{cascades,maps,blend_band})
+}
+
+/// Rasterize casters into EVERY cascade map (nearest wins per map; a caster outside a
+/// cascade's x/y fit simply covers nothing there).
+pub fn raster_cascades(positions:&[[f64;3]],indices:&[[u32;3]],csm:&mut CascadedShadowMaps)->Result<(),String>{
+ for m in csm.maps.iter_mut(){super::shadow::raster_depth(positions,indices,m)?;}
+ Ok(())
+}
+
+/// Cascade for a receiver at camera-space depth `d`, plus the blend factor toward the
+/// next cascade (0 outside the blend band). Depths at/below the first cascade's near
+/// clamp to cascade 0; at/above the last far clamp to the last cascade with factor 0.
+pub fn select_cascade(cascades:&[Cascade],blend_band:f64,d:f64)->Result<(usize,f64),String>{
+ if cascades.is_empty(){return Err("at least one cascade required".into());}
+ if !blend_band.is_finite()||!(0.0..0.5).contains(&blend_band){return Err("blend band in [0,0.5) required".into());}
+ if !d.is_finite()||d<=0.{return Err("positive finite camera depth required".into());}
+ let n=cascades.len();
+ for i in 0..n{
+  let c=&cascades[i];
+  if d>c.far&&i+1<n{continue;}
+  let i=i.min(n-1);let c=&cascades[i];
+  let start=c.far-blend_band*(c.far-c.near);
+  let width=c.far-start;
+  let t=if i+1<n&&width>0.{((d-start)/width).clamp(0.,1.)}else{0.};
+  return Ok((i,t));
+ }
+ Ok((n-1,0.))
+}
+
+/// CSM visibility: the receiver's cascade by camera depth, disk-PCF sampled, blended
+/// with the next cascade across the band. Bias and normal offset come from
+/// shadow::bias PER CASCADE MAP, so they scale with that cascade's texel size
+/// (no acne near, no peter-panning far - pinned in tests). n_dot_l<=0 -> 0.
+pub fn csm_visibility(csm:&CascadedShadowMaps,cam:&Camera,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius_texels:f64,px:usize,py:usize)->f64{
+ if n_dot_l<=0.{return 0.;}
+ let Ok(q)=cam.view(world)else{return 1.}; // degenerate receiver: lit (matches shadow.rs pinning)
+ let Ok((i,t))=select_cascade(&csm.cascades,csm.blend_band,q[2])else{return 1.;};
+ let v0=super::shadow::visibility_disk(&csm.maps[i],world,normal,n_dot_l,radius_texels,px,py);
+ if t<=0.{return v0;}
+ let v1=super::shadow::visibility_disk(&csm.maps[i+1],world,normal,n_dot_l,radius_texels,px,py);
+ v0*(1.-t)+v1*t
+}
+
 #[cfg(test)]mod tests{use super::*;
  fn cam()->Camera{Camera{eye:[2.,1.5,-3.],pan:324.79,tilt:18.,roll:0.,sensor_height:24.,focal_length:35.,near:0.1}}
  fn aabb()->[[f64;3];2]{[[-4.;3],[4.;3]]}
@@ -239,6 +300,135 @@ pub fn cascaded_light_space(travel_direction:[f64;3],cam:&Camera,aspect:f64,near
   assert!((a.slice_radius-b.slice_radius).abs()<1e-9,"radius stable under roll");
   assert_eq!(a.bounds,b.bounds,"snapped bounds identical under roll");
   assert_eq!(a.texel_world,b.texel_world,"texel size identical under roll");}
+ #[test]fn select_cascade_hard_and_blend_band(){
+  let c=cam();let dir=[0.3,-0.5,1.];
+  let fits=cascaded_light_space(dir,&c,16./9.,1.,9.,2,0.,aabb(),256).unwrap(); // uniform split: [1,5],[5,9]
+  // band 0: hard selection
+  assert_eq!(select_cascade(&fits,0.,1.0).unwrap(),(0,0.));
+  assert_eq!(select_cascade(&fits,0.,4.999).unwrap(),(0,0.));
+  assert_eq!(select_cascade(&fits,0.,5.0).unwrap(),(0,0.),"the lower cascade owns the split boundary (hard cut, band=0)");
+  assert_eq!(select_cascade(&fits,0.,1000.).unwrap(),(1,0.),"past the last far clamps to the last cascade");
+  assert!(select_cascade(&fits,0.,0.).is_err(),"non-positive depth typed");
+  assert!(select_cascade(&fits,0.5,3.).is_err(),"band 0.5 typed out");
+  // band 0.25: blends run only on non-last cascades (the last has no next map to blend toward)
+  let fits3=cascaded_light_space(dir,&c,16./9.,1.,9.,3,0.,aabb(),256).unwrap();
+  let c1=&fits3[1];let start1=c1.far-0.25*(c1.far-c1.near);let mid1=start1+0.5*(c1.far-start1);
+  assert_eq!(select_cascade(&fits3,0.25,start1-1e-3).unwrap(),(1,0.),"before the band: no blend");
+  let(i,t)=select_cascade(&fits3,0.25,mid1).unwrap();assert_eq!(i,1);assert!((t-0.5).abs()<1e-12,"mid-band t=0.5: {t}");
+  let(i,t)=select_cascade(&fits3,0.25,c1.far).unwrap();assert_eq!(i,1);assert_eq!(t,1.0,"at far the next cascade fully owns it");
+  let c0=&fits3[0];let start0=c0.far-0.25*(c0.far-c0.near);let mid0=start0+0.5*(c0.far-start0);
+  let(i,t)=select_cascade(&fits3,0.25,mid0).unwrap();assert_eq!(i,0);assert!((t-0.5).abs()<1e-12);
+  let(i,t)=select_cascade(&fits3,0.25,8.5).unwrap();assert_eq!(i,2);assert_eq!(t,0.,"the last cascade has no next map: never blends");
+ }
+ #[test]fn bias_scales_with_per_cascade_texel(){
+  let c=cam();let dir=[0.3,-0.5,1.];
+  let fits=cascaded_light_space(dir,&c,16./9.,0.5,64.,3,0.7,aabb(),256).unwrap();
+  let set=build_cascade_maps(fits,256,0.25).unwrap();
+  assert!(set.maps[0].bounds[1][0]-set.maps[0].bounds[0][0]<set.maps[2].bounds[1][0]-set.maps[2].bounds[0][0],"later cascades cover more");
+  let(b0,_)=crate::threed::shadow::bias(&set.maps[0],0.7);let(b2,_)=crate::threed::shadow::bias(&set.maps[2],0.7);
+  assert!(b2>b0*2.,"normal offset scales with the cascade texel: near {b0} far {b2}");
+  assert!(set.blend_band==0.25);
+  assert!(build_cascade_maps(vec![],256,0.25).is_err(),"empty typed");
+  assert!(select_cascade(&set.cascades,0.6,3.).is_err(),"band typed");}
+ fn csm_scene()->(Vec<[f64;3]>,Vec<[u32;3]>){
+  // ground quad y=0 spanning x,z in [-40,40]; occluder quad at y=2 over x,z in [-1,1]
+  let mut p=vec![[-40.,0.,-40.],[40.,0.,-40.],[40.,0.,40.],[-40.,0.,40.]];
+  let mut i=vec![[0u32,1,2],[0,2,3]];
+  let b=p.len() as u32;p.extend([[-1.,2.,-1.],[1.,2.,-1.],[1.,2.,1.],[-1.,2.,1.]]);i.extend([[b,b+1,b+2],[b,b+2,b+3]]);
+  (p,i)}
+ fn csm_set(cam:&Camera,near:f64,far:f64,n:usize)->CascadedShadowMaps{
+  let fits=cascaded_light_space([0.2,-1.,0.15],cam,16./9.,near,far,n,0.5,[[-40.,-1.,-40.],[40.,3.,40.]],256).unwrap();
+  let mut set=build_cascade_maps(fits,256,0.25).unwrap();
+  let(p,i)=csm_scene();raster_cascades(&p,&i,&mut set).unwrap();set}
+ #[test]fn csm_visibility_blends_c0_at_the_split(){
+  // camera high above the ground looking down: ground receivers sweep cascade depths
+  let c=Camera{eye:[0.,10.,-12.],pan:0.,tilt:40.,roll:0.,sensor_height:24.,focal_length:35.,near:0.1};
+  let set=csm_set(&c,1.,24.,3);
+  let split=set.cascades[0].far;
+  // place a receiver straight ahead of the camera at exactly the split depth
+  let w=world_from_camera(&c,[0.,0.,split]).expect("invertible pose");
+  let d=c.view(w).expect("in front")[2];
+  assert!((d-split).abs()<1e-9,"constructed receiver sits at the split: {d}");
+  let n=[0.,1.,0.];let nl={let ld=crate::threed::vertex_stream::unit([0.2,-1.,0.15].map(|v|-v)).unwrap();(0..3).map(|j|n[j]*ld[j]).sum::<f64>().max(0.)};
+  let(i,t)=select_cascade(&set.cascades,set.blend_band,split).unwrap();
+  assert_eq!(t,1.0,"at the split the blend fully selects the next cascade");
+  let blended=csm_visibility(&set,&c,w,n,nl,4.0,7,11);
+  let next_only=crate::threed::shadow::visibility_disk(&set.maps[i+1],w,n,nl,4.0,7,11);
+  assert!((blended-next_only).abs()<1e-9,"C0 at the split: blend matches the next cascade: {blended} vs {next_only}");
+ }
+ #[test]fn csm_no_acne_and_far_umbra_holds(){
+  let c=Camera{eye:[0.,10.,-12.],pan:0.,tilt:40.,roll:0.,sensor_height:24.,focal_length:35.,near:0.1};
+  let set=csm_set(&c,1.,24.,3);
+  let n=[0.,1.,0.];let nl={let ld=crate::threed::vertex_stream::unit([0.2,-1.,0.15].map(|v|-v)).unwrap();(0..3).map(|j|n[j]*ld[j]).sum::<f64>().max(0.)};
+  // no acne: open ground receivers are fully lit under every cascade (own depth is ground depth)
+  for z in [-30.,-10.,0.,10.,30.]{let v=csm_visibility(&set,&c,[15.,0.,z],n,nl,4.0,3,5);assert_eq!(v,1.0,"open ground lit at z={z}: {v}");}
+  // umbra: the occluder (x,z in [-1,1] at y=2) throws its footprint 2*(0.2,0.15)=(0.4,0.3)
+  // off axis along the light tilt, so receivers with (x+0.4, z+0.3) inside [-1,1] are shadowed
+  let mut shadowed=0;for z in [-1.,0.,0.5]{let v=csm_visibility(&set,&c,[0.,0.,z],n,nl,4.0,3,5);if v<0.5{shadowed+=1;}}
+  assert!(shadowed>=2,"receivers inside the footprint shadowed: {shadowed}");
+  // directly under the occluder center must be fully shadowed regardless of band
+  let v=csm_visibility(&set,&c,[-0.2,0.,-0.15],n,nl,4.0,3,5);
+  assert!(v<0.2,"umbra core dark: {v}");}
+ #[test]fn refit_under_sub_texel_motion_is_identical_or_one_texel(){
+  let c=Camera{eye:[0.,10.,-12.],pan:0.,tilt:40.,roll:0.,sensor_height:24.,focal_length:35.,near:0.1};
+  let a=csm_set(&c,1.,24.,3);
+  let r=[a.cascades[0].view[0][0],a.cascades[0].view[0][1],a.cascades[0].view[0][2]];
+  let mut c2=c.clone();for j in 0..3{c2.eye[j]+=0.37*a.cascades[0].texel_world*r[j];}
+  let b=csm_set(&c2,1.,24.,3);
+  for k in 0..3{
+   if a.cascades[k].bounds==b.cascades[k].bounds{
+    assert_eq!(a.maps[k].depth,b.maps[k].depth,"cascade {k}: identical bounds -> bit-identical map");
+   }else{
+    // one whole texel shift in x: the map content shifts with it (no fractional resample)
+    let dx=((b.cascades[k].bounds[0][0]-a.cascades[k].bounds[0][0])/a.cascades[k].texel_world).round();
+    assert!((dx.abs()-1.).abs()<1e-9,"cascade {k}: exactly one texel of shift: {dx}");
+    assert_eq!(a.cascades[k].bounds[0][1],b.cascades[k].bounds[0][1],"cascade {k}: y stable under x motion");}}
+ }
+ #[test]#[ignore="1080p CSM shadow frames for visual review"]fn dump_csm_frames(){
+  use std::io::Write;let dir=std::env::var("KIMO_CSM_FRAMES").expect("KIMO_CSM_FRAMES directory");std::fs::create_dir_all(&dir).unwrap();
+  let ground=crate::threed::primitives::generate(&crate::threed::primitives::Primitive::Cube{size:[80.,0.1,80.],subdivisions:1}).unwrap();
+  let moved=|g:&crate::threed::primitives::Geometry,d:[f64;3]|{let mut v=g.vertices.clone();for q in &mut v{for j in 0..3{q.position[j]+=d[j] as f32;}}crate::threed::vertex_stream::Stream{vertices:v,indices:g.indices.clone()}};
+  let b1=crate::threed::primitives::generate(&crate::threed::primitives::Primitive::Cube{size:[2.,2.,2.],subdivisions:1}).unwrap();
+  let b2=crate::threed::primitives::generate(&crate::threed::primitives::Primitive::Cube{size:[2.,4.,2.],subdivisions:1}).unwrap();
+  let streams=[moved(&ground,[0.,-0.06,10.]),moved(&b1,[-5.,1.,2.]),moved(&b2,[2.,2.,14.]),moved(&b1,[-2.,1.,30.]),moved(&b2,[6.,2.,44.])];
+  let mats=[crate::threed::pbr::Material{albedo:[0.75,0.72,0.68],metallic:0.,roughness:0.8},crate::threed::pbr::Material{albedo:[0.7,0.3,0.2],metallic:0.,roughness:0.5},crate::threed::pbr::Material{albedo:[0.2,0.4,0.75],metallic:0.1,roughness:0.35},crate::threed::pbr::Material{albedo:[0.3,0.65,0.3],metallic:0.,roughness:0.6},crate::threed::pbr::Material{albedo:[0.65,0.55,0.25],metallic:0.3,roughness:0.4}];
+  let draws:Vec<(&crate::threed::vertex_stream::Stream,&crate::threed::pbr::Material)>=streams.iter().zip(mats.iter()).map(|(s,m)|(s,m)).collect();
+  let cam=Camera{eye:[0.,9.,-14.],pan:0.,tilt:26.,roll:0.,sensor_height:24.,focal_length:35.,near:0.1};
+  let lights=[crate::threed::lighting_stage::Light::Directional{travel_direction:[0.35,-1.,0.3],radiance:[3.2,3.0,2.7]}];
+  let fits=cascaded_light_space([0.35,-1.,0.3],&cam,16./9.,0.5,80.,4,0.6,[[-40.,-1.,-30.],[40.,6.,50.]],512).unwrap();
+  eprintln!("CSM splits/texels:");for (i,c) in fits.iter().enumerate(){eprintln!("  cascade {i}: [{:.2},{:.2}] texel {:.4}",c.near,c.far,c.texel_world);}
+  let mut set=build_cascade_maps(fits,512,0.25).unwrap();
+  let(pos,idx): (Vec<[f64;3]>,Vec<[u32;3]>)={let mut p=vec![];let mut ii=vec![];for s in &streams{let base=p.len() as u32;for v in &s.vertices{p.push(v.position.map(|x|x as f64));}for t in &s.indices{ii.push([t[0]+base,t[1]+base,t[2]+base]);}}(p,ii)};
+  raster_cascades(&pos,&idx,&mut set).unwrap();
+  let dump=|name:&str,o:&crate::threed::lit_raster::Output|{let path=format!("{dir}/{name}.png");let mut c=std::process::Command::new("ffmpeg").args(["-v","error","-y","-f","rawvideo","-pix_fmt","rgba","-s","1920x1080","-i","-","-frames:v","1",&path]).stdin(std::process::Stdio::piped()).spawn().unwrap();c.stdin.take().unwrap().write_all(&crate::render::to_rgba8(&o.frame)).unwrap();assert!(c.wait().unwrap().success());eprintln!("wrote {path}");};
+  dump("csm-1080p-shadowed",&crate::threed::lit_raster::render_shadowed(&draws,&cam,1920,1080,&lights,&[Some(crate::threed::shadow::ShadowMapRef::Cascaded(&set))]).unwrap());
+  dump("csm-1080p-unshadowed",&crate::threed::lit_raster::render_multi(&draws,&cam,1920,1080,&lights).unwrap());
+  // camera-motion stability pair: sub-texel shift along the light r axis
+  let r=[set.cascades[0].view[0][0],set.cascades[0].view[0][1],set.cascades[0].view[0][2]];
+  let mut cam2=cam.clone();for j in 0..3{cam2.eye[j]+=0.4*set.cascades[0].texel_world*r[j];}
+  let fits2=cascaded_light_space([0.35,-1.,0.3],&cam2,16./9.,0.5,80.,4,0.6,[[-40.,-1.,-30.],[40.,6.,50.]],512).unwrap();
+  let mut set2=build_cascade_maps(fits2,512,0.25).unwrap();raster_cascades(&pos,&idx,&mut set2).unwrap();
+  for k in 0..4{let same=set.cascades[k].bounds==set2.cascades[k].bounds;eprintln!("  cascade {k} refit under 0.4-texel move: {}",if same{"identical"}else{"shifted whole texels"});}
+  dump("csm-1080p-shadowed-moved",&crate::threed::lit_raster::render_shadowed(&draws,&cam2,1920,1080,&lights,&[Some(crate::threed::shadow::ShadowMapRef::Cascaded(&set2))]).unwrap());
+ }
+ #[test]#[ignore="diagnostic probe"]fn dump_csm_probe(){
+  let ground=crate::threed::primitives::generate(&crate::threed::primitives::Primitive::Cube{size:[80.,0.1,80.],subdivisions:1}).unwrap();
+  let moved=|g:&crate::threed::primitives::Geometry,d:[f64;3]|{let mut v=g.vertices.clone();for q in &mut v{for j in 0..3{q.position[j]+=d[j] as f32;}}crate::threed::vertex_stream::Stream{vertices:v,indices:g.indices.clone()}};
+  let b2=crate::threed::primitives::generate(&crate::threed::primitives::Primitive::Cube{size:[2.,4.,2.],subdivisions:1}).unwrap();
+  let streams=[moved(&ground,[0.,-0.06,10.]),moved(&b2,[2.,2.,14.])];
+  let cam=Camera{eye:[0.,9.,-14.],pan:0.,tilt:26.,roll:0.,sensor_height:24.,focal_length:35.,near:0.1};
+  let fits=cascaded_light_space([0.35,-1.,0.3],&cam,16./9.,0.5,80.,4,0.6,[[-40.,-1.,-30.],[40.,6.,50.]],512).unwrap();
+  let mut set=build_cascade_maps(fits,512,0.25).unwrap();
+  let(pos,idx):(Vec<[f64;3]>,Vec<[u32;3]>)={let mut p=vec![];let mut ii=vec![];for s in &streams{let base=p.len() as u32;for v in &s.vertices{p.push(v.position.map(|x|x as f64));}for t in &s.indices{ii.push([t[0]+base,t[1]+base,t[2]+base]);}}(p,ii)};
+  raster_cascades(&pos,&idx,&mut set).unwrap();
+  let n=[0.,1.,0.];let ld=crate::threed::vertex_stream::unit([0.35,-1.,0.3].map(|v|-v)).unwrap();let nl=(0..3).map(|j|n[j]*ld[j]).sum::<f64>().max(0.);
+  for x in [3.05,3.2,3.5,4.,4.5,5.,5.4,5.6,6.,7.,8.]{
+   let w=[x,0.,14.];let d=cam.view(w).unwrap()[2];
+   let(i,tt)=select_cascade(&set.cascades,set.blend_band,d).unwrap();
+   let v=csm_visibility(&set,&cam,w,n,nl,2.0,0,0);
+   eprintln!("x={x:5.2} depth={d:6.2} cascade={i} t={tt:5.2} v={v:6.3}");
+  }
+ }
  #[test]fn cascaded_set_covers_range_and_grows(){
   let c=cam();let dir=[0.3,-0.5,1.];
   let set=cascaded_light_space(dir,&c,16./9.,0.1,100.,4,0.5,aabb(),512).unwrap();

@@ -204,7 +204,7 @@ pub struct PointCubeShadowMap{
 /// Borrowed shadow map of either kind. lit_raster::render_shadowed matches the kind
 /// against the light kind (mismatch is a typed error at validation).
 #[derive(Clone,Copy,Debug)]
-pub enum ShadowMapRef<'a>{Directional(&'a DirectionalShadowMap),PointCube(&'a PointCubeShadowMap)}
+pub enum ShadowMapRef<'a>{Directional(&'a DirectionalShadowMap),PointCube(&'a PointCubeShadowMap),Cascaded(&'a super::csm::CascadedShadowMaps)}
 
 pub const CUBE_FACE_FORWARD:[[f64;3];6]=[[1.,0.,0.],[-1.,0.,0.],[0.,1.,0.],[0.,-1.,0.],[0.,0.,1.],[0.,0.,-1.]];
 pub const CUBE_FACE_SEED:[[f64;3];6]=[[0.,1.,0.],[0.,1.,0.],[0.,0.,-1.],[0.,0.,1.],[0.,1.,0.],[0.,1.,0.]];
