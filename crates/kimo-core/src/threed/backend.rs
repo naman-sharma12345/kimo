@@ -12,3 +12,14 @@ pub async fn probe_software(software_only:bool)->Result<String,String>{
 }
 /// Readback row-stride plan for a future RGBA32f render attachment.
 pub fn readback_layout(w:usize,h:usize)->Result<(usize,usize),String>{if w==0||h==0||w>4096||h>4096{return Err("target1..4096 required".into());}let row=w.checked_mul(16).ok_or("row overflow")?;let padded=row.checked_add(255).ok_or("row overflow")?/256*256;let total=padded.checked_mul(h).ok_or("readback overflow")?;Ok((padded,total))}
+
+#[cfg(test)]
+mod tests{
+ use super::*;
+ #[test]fn readback_layout_rows_pad_to_256(){assert_eq!(readback_layout(1,1).unwrap(),(256,256));
+  assert_eq!(readback_layout(16,2).unwrap(),(256,512),"16 px * 16 B = 256 B row, already aligned");
+  assert_eq!(readback_layout(17,1).unwrap(),(512,512),"17 px * 16 B = 272 B row pads to 512");
+  assert_eq!(readback_layout(4096,4096).unwrap(),(65536,65536*4096),"max target fits without overflow");}
+ #[test]fn readback_layout_typed_errors(){assert_eq!(readback_layout(0,1).unwrap_err(),"target1..4096 required");
+  assert_eq!(readback_layout(1,4097).unwrap_err(),"target1..4096 required");}
+}

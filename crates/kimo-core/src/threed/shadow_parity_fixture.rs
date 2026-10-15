@@ -4,7 +4,6 @@
 //! material response; both paths share the same BRDF via lighting_stage). The raster path
 //! runs the shipping rotated-disk PCF (radius 4, Bevy D3D taps) vs the reference's hard
 //! ray - penumbra pixels absorb into the pinned band below. f32 (raster) vs f64 (raycast) interpolation also lands in the band.
-use super::*;
 use crate::threed::{self,primitives::{generate,Primitive},vertex_stream::Stream,texture_material::Surface,gltf_surface::Asset,lighting_stage::Light,pbr::Material};use crate::camera_projection::Camera;use threed::shadow;
 
 fn cube_at(size:[f64;3],off:[f64;3])->Stream{let g=generate(&Primitive::Cube{size,subdivisions:1}).unwrap();let mut s=Stream{vertices:g.vertices,indices:g.indices};for v in &mut s.vertices{for j in 0..3{v.position[j]+=off[j] as f32;}}s}
@@ -37,7 +36,7 @@ fn asset(streams:&[Stream])->Asset{Asset{streams:streams.to_vec(),surfaces:vec![
  let draws:Vec<(&Stream,&Material)>=streams.iter().zip(mat.iter()).map(|(s,m)|(s,m)).collect();
  let r_un=crate::threed::lit_raster::render_multi(&draws,&camera,96,54,&lights).unwrap();
  let map=map_for(&streams,256);
- let r_sh=crate::threed::lit_raster::render_shadowed(&draws,&camera,96,54,&lights,&[Some(&map)]).unwrap();
+ let r_sh=crate::threed::lit_raster::render_shadowed(&draws,&camera,96,54,&lights,&[Some(shadow::ShadowMapRef::Directional(&map))]).unwrap();
  let b_un=crate::threed::textured_bvh::render(&a,&camera,96,54,&lights,[0.;3]).unwrap();
  let b_sh=crate::threed::textured_bvh::render_shadowed(&a,&camera,96,54,&lights,[0.;3],Some(0)).unwrap();
  let mut n=0;let(mut within,mut maxd)=(0,0f64);

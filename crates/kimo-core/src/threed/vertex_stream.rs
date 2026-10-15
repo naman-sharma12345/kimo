@@ -17,4 +17,13 @@ pub fn derive_tangents(mut stream:Stream)->Result<Stream,String>{if stream.indic
  fn fixture()->Stream{Stream{vertices:vec![Vertex{position:[0.,0.,0.],normal:[0.,0.,1.],uv:[0.,0.],tangent:[1.,0.,0.,1.]},Vertex{position:[1.,0.,0.],normal:[0.,0.,1.],uv:[1.,0.],tangent:[1.,0.,0.,1.]},Vertex{position:[0.,1.,0.],normal:[0.,0.,1.],uv:[0.,1.],tangent:[1.,0.,0.,1.]}],indices:vec![[0,1,2]]}}
  #[test]fn abi_stream_invariants_and_tangent_generation(){assert_eq!(std::mem::size_of::<Vertex>(),48);let a=derive_tangents(fixture()).unwrap();assert_eq!(a.vertices[0].tangent,[1.,0.,0.,1.]);a.validate().unwrap();let mut b=fixture();b.vertices[1].uv=[-1.,0.];let b=derive_tangents(b).unwrap();assert_eq!(b.vertices[0].tangent,[-1.,0.,0.,-1.]);}
  #[test]fn bad_indices_nonfinite_and_singular_uv_rejected(){let mut a=fixture();a.indices[0][2]=9;assert!(a.validate().is_err());let mut a=fixture();a.vertices[0].position[0]=f32::NAN;assert!(a.validate().is_err());let mut a=fixture();for v in &mut a.vertices{v.uv=[0.;2];}assert!(derive_tangents(a).is_err());}
+ #[test]fn unit_scales_safely_and_pins_known_values(){assert_eq!(unit([1.,2.,2.]).unwrap(),[1./3.,2./3.,2./3.]);
+  let v=unit([1e308,1e308,1e308]).unwrap();for x in v{assert!((x-1.0/f64::sqrt(3.0)).abs()<1e-15,"max-abs prescale avoids hypot overflow");}
+  assert_eq!(unit([1e-308,0.,0.]).unwrap(),[1.,0.,0.],"tiny vector normalizes without underflow");
+  assert_eq!(unit([0.,0.,0.]).unwrap_err(),"nonzero vector required");
+  assert_eq!(unit([f64::NAN,0.,0.]).unwrap_err(),"finite vector required");}
+ #[test]fn arbitrary_tangent_orthogonal_unit_and_axis_switch(){assert_eq!(arbitrary_tangent([0.,0.,1.]).unwrap(),[0.,1.,0.,1.]);
+  assert_eq!(arbitrary_tangent([1.,0.,0.]).unwrap(),[0.,0.,1.,1.],"|nx|>=0.8 switches the reference axis");
+  for n in [[0.79,0.61,0.05],[0.81,0.3,-0.5],[-0.2,0.9,0.39],[0.1,-0.2,0.97]]{let t=arbitrary_tangent(n).unwrap();let l=(t[0]*t[0]+t[1]*t[1]+t[2]*t[2]).sqrt();assert!((l-1.).abs()<1e-6&&t[3]==1.,"unit tangent, w=1");let d=(0..3).map(|j|t[j]*n[j]).sum::<f32>();assert!(d.abs()<1e-6,"orthogonal to normal");}
+  assert!(arbitrary_tangent([0.,0.,0.]).is_err(),"zero normal rejected");}
 }

@@ -26,11 +26,14 @@ struct V { @builtin(position) clip:vec4<f32>, @location(0) world:vec3<f32>, @loc
  let t=(draw.world*vec4<f32>(tangent.xyz,0.0)).xyz;o.tangent=vec4<f32>(normalize(t-o.normal*dot(t,o.normal)),tangent.w*mat.flags.y);o.uv=uv;return o;
 }
 const PI:f32=3.141592653589793;
-fn g1(x:f32,a2:f32)->f32{return 2.0*x/(x+sqrt(a2+(1.0-a2)*x*x));}
 fn brdf(albedo:vec3<f32>,metal:f32,rough:f32,n:vec3<f32>,l:vec3<f32>,v:vec3<f32>)->vec3<f32>{
- let nl=dot(n,l);let nv=dot(n,v);if nl<=0.0||nv<=0.0{return vec3<f32>(0.0);}let h=normalize(l+v);let nh=clamp(dot(n,h),0.0,1.0);let vh=clamp(dot(v,h),0.0,1.0);let alpha=rough*rough;let a2=alpha*alpha;
- let denominator=nh*nh*(a2-1.0)+1.0;let d=a2/(PI*denominator*denominator);let g=g1(nl,a2)*g1(nv,a2);let f0=mix(vec3(0.04),albedo,metal);let f=f0+(vec3<f32>(1.0)-f0)*pow(1.0-vh,5.0);
- return (1.0-metal)*(vec3<f32>(1.0)-f)*albedo/PI+f*d*g/(4.0*nl*nv);
+ let nl=dot(n,l);let nv=dot(n,v);if nl<=0.0||nv<=0.0{return vec3<f32>(0.0);}let h=normalize(l+v);let nh=clamp(dot(n,h),0.0,1.0);let vh=clamp(dot(v,h),0.0,1.0);let alpha=max(rough*rough,0.001);let a2=alpha*alpha;
+ let denominator=nh*nh*(a2-1.0)+1.0;let d=a2/(PI*denominator*denominator);
+ // Height-correlated Smith visibility (Heitz 2014; includes 1/(4 nl nv)) - mirrors
+ // threed/pbr.rs sample() term-for-term (glTF-Sample-Renderer brdf.glsl, Apache-2.0).
+ let ggxv=nl*sqrt(nv*nv*(1.0-a2)+a2);let ggxl=nv*sqrt(nl*nl*(1.0-a2)+a2);let vis=0.5/(ggxv+ggxl);
+ let f0=mix(vec3(0.04),albedo,metal);let f=f0+(vec3<f32>(1.0)-f0)*pow(1.0-vh,5.0);
+ return (1.0-metal)*(vec3<f32>(1.0)-f)*albedo/PI+f*d*vis;
 }
 // time_count.z = shadowed light index (<0: none). shadow_texel = (1/w, 1/h, texel_world,
 // depth_norm_per_texel); shadow_params = (bias_const, bias_slope, normal_offset, disk_radius_texels),

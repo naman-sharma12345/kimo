@@ -87,8 +87,8 @@ pub fn render_cpu_shadowed(c:&Compiled,w:usize,h:usize,shadow:Option<(usize,&sup
  for d in &c.draws{baked.push(super::node_ingest::transform(&d.stream,d.world)?);}
  let materials:Vec<super::pbr::Material>=c.draws.iter().map(|d|surface_to_material(&d.surface)).collect();
  let refs:Vec<(&Stream,&super::pbr::Material)>=baked.iter().zip(materials.iter()).map(|(s,m)|(s,m)).collect();
- let mut slots:Vec<Option<&super::shadow::DirectionalShadowMap>>=vec![None;c.lights.len()];
- if let Some((i,m))=shadow{if i>=slots.len(){return Err("shadowed light index in range required".into());}slots[i]=Some(m);}
+ let mut slots:Vec<Option<super::shadow::ShadowMapRef>>=vec![None;c.lights.len()];
+ if let Some((i,m))=shadow{if i>=slots.len(){return Err("shadowed light index in range required".into());}slots[i]=Some(super::shadow::ShadowMapRef::Directional(m));}
  super::lit_raster::render_shadowed(&refs,&c.camera,w,h,&c.lights,&slots)}
 #[cfg(all(feature="mesh-import",feature="material-textures",feature="flat-sah"))]
 /// PL1b: render_wgpu + one optional directional shadow map (depth pre-pass + PCF).
