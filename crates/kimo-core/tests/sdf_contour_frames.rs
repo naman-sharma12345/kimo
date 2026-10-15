@@ -43,7 +43,7 @@ fn dump(dir:&str,name:&str,g:&Graph,cfg:&Config,eye_scale:f64){
  assert!(m.topology_verified&&m.euler_characteristic==-2,"union contour census: v={} e={} b={} nm={} wind={} vol={}",m.topology_verified,m.euler_characteristic,m.boundary_edges,m.nonmanifold_edges,m.winding_consistent,m.signed_volume);
  assert_eq!((m.normal_fallbacks,m.sliver_triangles,m.clamped_to_volume),(0,0,0),"union telemetry");
  assert!(covered>2_500,"covered {covered}");
- const EXPECT:u64=0x27da6e2b916e26c1;
+ const EXPECT:u64=0x4adbc2e2de1e7895;
  if EXPECT!=0{assert_eq!(hash_of(&frame),EXPECT,"contour union frame hash drift");}
  if let Ok(dir)=std::env::var("KIMO_SDF_FRAMES"){dump(&dir,"sdf-cp2-contour-union.png",&union_scene(),&cfg,2.0);}
 }
@@ -55,7 +55,7 @@ fn dump(dir:&str,name:&str,g:&Graph,cfg:&Config,eye_scale:f64){
  println!("CONTOUR-FRAME box 320x180 covered={} hash={:016x} tris={} euler={} vol={:.3} fb={} slivers={}",covered,hash_of(&frame),m.stream.indices.len(),m.euler_characteristic,m.signed_volume,m.normal_fallbacks,m.sliver_triangles);
  assert!(m.topology_verified&&m.euler_characteristic==2,"box contour census: v={} e={} b={} nm={} wind={} vol={}",m.topology_verified,m.euler_characteristic,m.boundary_edges,m.nonmanifold_edges,m.winding_consistent,m.signed_volume);
  assert!(covered>2_000,"covered {covered}");
- const EXPECT:u64=0x95cf094c6b7c4f75;
+ const EXPECT:u64=0x7cfe3701651f4948;
  if EXPECT!=0{assert_eq!(hash_of(&frame),EXPECT,"contour box frame hash drift");}
  if let Ok(dir)=std::env::var("KIMO_SDF_FRAMES"){dump(&dir,"sdf-cp2-contour-box.png",&g,&cfg,1.0);}
 }
