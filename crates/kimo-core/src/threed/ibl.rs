@@ -20,6 +20,31 @@ pub fn integrate_brdf(ndotv:f64,alpha:f64,samples:usize)->Result<[f64;2],String>
 #[derive(Clone,Debug,Serialize,Deserialize)]pub struct BrdfLut{pub size:usize,pub texels:Vec<[f32;2]>}
 pub fn brdf_lut(size:usize,samples:usize)->Result<BrdfLut,String>{if size==0||size>1024{return Err("lut size 1..=1024 required".into());}let mut texels=Vec::with_capacity(size*size);for r in 0..size{crate::guard::check();let alpha=(r as f64+0.5)/size as f64;for c in 0..size{let ndotv=(c as f64+0.5)/size as f64;let[a,b]=integrate_brdf(ndotv,alpha,samples)?;texels.push([a as f32,b as f32]);}}Ok(BrdfLut{size,texels})}
 
+/// Equirectangular environment map of linear radiance. Convention: u = atan2(z,x)/TAU + 0.5
+/// (wrapped), v = acos(y)/PI, +Y up. Bilinear sampling with wrapped u, clamped v.
+#[derive(Clone,Debug,Serialize,Deserialize)]pub struct EnvMap{pub width:usize,pub height:usize,pub texels:Vec<[f32;3]>}
+impl EnvMap{
+ pub fn from_fn(width:usize,height:usize,f:impl Fn([f64;3])->[f64;3])->Result<Self,String>{if width==0||height==0||width>4096||height>4096{return Err("env map 1..=4096 per axis required".into());}let mut texels=Vec::with_capacity(width*height);for j in 0..height{for i in 0..width{crate::guard::check();let u=(i as f64+0.5)/width as f64;let v=(j as f64+0.5)/height as f64;let phi=(u-0.5)*std::f64::consts::TAU;let y=(v*std::f64::consts::PI).cos();let r=(v*std::f64::consts::PI).sin();let c=f([r*phi.cos(),y,r*phi.sin()]);if c.iter().any(|v|!v.is_finite()){return Err("env generator must return finite radiance".into());}texels.push([c[0]as f32,c[1]as f32,c[2]as f32]);}}Ok(Self{width,height,texels})}
+ pub fn sample(&self,dir:[f64;3])->Result<[f64;3],String>{if self.width==0||self.height==0||self.texels.len()!=self.width*self.height{return Err("env map buffers consistent required".into());}if dir.iter().any(|v|!v.is_finite())||dir.iter().all(|v|*v==0.0){return Err("finite nonzero direction required".into());}let l=(dir[0]*dir[0]+dir[1]*dir[1]+dir[2]*dir[2]).sqrt();let d=[dir[0]/l,dir[1]/l,dir[2]/l];let u=d[2].atan2(d[0])/std::f64::consts::TAU+0.5;let v=d[1].clamp(-1.,1.).acos()/std::f64::consts::PI;
+  let x=u*self.width as f64-0.5;let y=(v*self.height as f64-0.5).clamp(0.,(self.height-1)as f64);let x0=x.floor();let fx=x-x0;let y0=y.floor()as usize;let fy=y-y0 as f64;let i0=(x0 as i64).rem_euclid(self.width as i64)as usize;let i1=(i0+1)%self.width;let j1=(y0+1).min(self.height-1);let mut out=[0.;3];
+  for(w_,j,i)in[((1.-fx)*(1.-fy),y0,i0),(fx*(1.-fy),y0,i1),((1.-fx)*fy,j1,i0),(fx*fy,j1,i1)]{for k in 0..3{out[k]+=w_*self.texels[j*self.width+i][k]as f64;}}Ok(out)}
+}
+fn tangent_basis(n:[f64;3])->([f64;3],[f64;3]){let cr=|a:[f64;3],b:[f64;3]|[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];let un=|a:[f64;3]|{let l=(a[0]*a[0]+a[1]*a[1]+a[2]*a[2]).sqrt();[a[0]/l,a[1]/l,a[2]/l]};let t=if n[2].abs()<0.999{un(cr([0.,0.,1.],n))}else{un(cr([1.,0.,0.],n))};(t,cr(n,t))}
+fn valid_dir_samples(name:&str,d:[f64;3],samples:usize)->Result<(),String>{if d.iter().any(|v|!v.is_finite())||d.iter().all(|v|*v==0.0)||samples==0||samples>65536{return Err(format!("finite nonzero {name} direction and 1..=65536 samples required"));}Ok(())}
+/// Diffuse irradiance: cosine-convolved environment, raw (unnormalized by PI); shading
+/// divides by PI so a constant env returns env*albedo. Cosine-weighted Monte Carlo.
+pub fn irradiance(env:&EnvMap,n:[f64;3],samples:usize)->Result<[f64;3],String>{valid_dir_samples("irradiance",n,samples)?;let nl=(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]).sqrt();let n=[n[0]/nl,n[1]/nl,n[2]/nl];let(t,b)=tangent_basis(n);let mut acc=[0.;3];
+ for i in 0..samples{let xi=hammersley(i,samples);let phi=std::f64::consts::TAU*xi[0];let cos_t=xi[1].sqrt();let sin_t=(1.0-xi[1]).max(0.0).sqrt();let l=[t[0]*sin_t*phi.cos()+b[0]*sin_t*phi.sin()+n[0]*cos_t,t[1]*sin_t*phi.cos()+b[1]*sin_t*phi.sin()+n[1]*cos_t,t[2]*sin_t*phi.cos()+b[2]*sin_t*phi.sin()+n[2]*cos_t];let c=env.sample(l)?;for k in 0..3{acc[k]+=c[k];}}
+ Ok(acc.map(|v|v*std::f64::consts::PI/samples as f64))}
+/// Specular prefiltered environment for one lookup direction and alpha (split-sum first
+/// sum): GGX importance samples around the reflection direction, nl-weighted average.
+pub fn prefiltered_env(env:&EnvMap,dir:[f64;3],alpha:f64,samples:usize)->Result<[f64;3],String>{valid_dir_samples("prefilter",dir,samples)?;if !alpha.is_finite()||!(0.0..=1.0).contains(&alpha)||alpha==0.0{return Err("finite 0<alpha<=1 required".into());}let dl=(dir[0]*dir[0]+dir[1]*dir[1]+dir[2]*dir[2]).sqrt();let n=[dir[0]/dl,dir[1]/dl,dir[2]/dl];let(t,b)=tangent_basis(n);let mut acc=[0.;3];let mut tw=0.;
+ for i in 0..samples{let h=importance_sample_ggx(hammersley(i,samples),alpha);let lt=[2.0*h[2]*h[0],2.0*h[2]*h[1],2.0*h[2]*h[2]-1.0];let lw=[t[0]*lt[0]+b[0]*lt[1]+n[0]*lt[2],t[1]*lt[0]+b[1]*lt[1]+n[1]*lt[2],t[2]*lt[0]+b[2]*lt[1]+n[2]*lt[2]];let nl=lw[0]*n[0]+lw[1]*n[1]+lw[2]*n[2];if nl>0.{let c=env.sample(lw)?;for k in 0..3{acc[k]+=c[k]*nl;}tw+=nl;}}
+ if tw<=0.0{return Err("prefilter samples all below horizon".into());}Ok(acc.map(|v|v/tw))}
+/// Full-map bakes for the shading path.
+pub fn irradiance_map(env:&EnvMap,width:usize,height:usize,samples:usize)->Result<EnvMap,String>{let mut out=Vec::with_capacity(width*height);if width==0||height==0||width>4096||height>4096{return Err("irradiance map size 1..=4096 per axis required".into());}for j in 0..height{for i in 0..width{crate::guard::check();let u=(i as f64+0.5)/width as f64;let v=(j as f64+0.5)/height as f64;let phi=(u-0.5)*std::f64::consts::TAU;let y=(v*std::f64::consts::PI).cos();let r=(v*std::f64::consts::PI).sin();let c=irradiance(env,[r*phi.cos(),y,r*phi.sin()],samples)?;out.push([c[0]as f32,c[1]as f32,c[2]as f32]);}}Ok(EnvMap{width,height,texels:out})}
+pub fn prefiltered_map(env:&EnvMap,width:usize,height:usize,alpha:f64,samples:usize)->Result<EnvMap,String>{let mut out=Vec::with_capacity(width*height);if width==0||height==0||width>4096||height>4096{return Err("prefiltered map 1..=4096 per axis required".into());}for j in 0..height{for i in 0..width{crate::guard::check();let u=(i as f64+0.5)/width as f64;let v=(j as f64+0.5)/height as f64;let phi=(u-0.5)*std::f64::consts::TAU;let y=(v*std::f64::consts::PI).cos();let r=(v*std::f64::consts::PI).sin();let c=prefiltered_env(env,[r*phi.cos(),y,r*phi.sin()],alpha,samples)?;out.push([c[0]as f32,c[1]as f32,c[2]as f32]);}}Ok(EnvMap{width,height,texels:out})}
+
 #[cfg(test)]
 mod tests{
  use super::*;
@@ -87,4 +112,36 @@ mod tests{
   assert_eq!(integrate_brdf(0.5,0.5,0).unwrap_err(),"finite 0<ndotv<=1, 0<alpha<=1, 1..=65536 samples required");
   assert_eq!(brdf_lut(0,16).unwrap_err(),"lut size 1..=1024 required");
   assert_eq!(brdf_lut(1025,16).unwrap_err(),"lut size 1..=1024 required");}
+ const ENV_W:usize=16;
+ const ENV_H:usize=8;
+ const IRR_CASES:[([f64;3],[f64;3]);3]=[
+([0.0, 1.0, 0.0],[2.34577067112141124e+00,1.18070319986390571e+00,4.03122900769657677e-01]),
+([0.0, -1.0, 0.0],[7.95821982468381983e-01,1.56819037202716349e+00,1.95307158942268733e+00]),
+([1.0, 0.0, 0.0],[1.57071539608477573e+00,1.37446701862306542e+00,1.17817817580629347e+00]),
+];
+ const PF_CASES:[([f64;3],f64,[f64;3]);3]=[
+([0.0, 1.0, 0.0],0.5,[7.48889145784454979e-01,3.75277713553887005e-01,1.26110854215545548e-01]),
+([0.3, 0.7, -0.6439500342258215],0.25,[7.32006050311738821e-01,3.79498487422066599e-01,1.42993949688263094e-01]),
+([1.0, 0.0, 0.0],1.0,[4.99641029347310861e-01,4.37589742663172077e-01,3.75358970652689083e-01]),
+];
+// analytic: irr(+y)=pi*cup=['2.356194', '1.178097', '0.392699'], irr(-y)=pi*cdn, irr(+x)=(pi/2)*(cup+cdn)
+
+ fn step_env()->EnvMap{EnvMap::from_fn(ENV_W,ENV_H,|d|if d[1]>0.{[0.75,0.375,0.125]}else{[0.25,0.5,0.625]}).unwrap()}
+ fn close3(a:[f64;3],b:[f64;3],tol:f64)->bool{(0..3).all(|i|(a[i]-b[i]).abs()<=tol*b[i].abs().max(1.0))}
+ #[test]fn irradiance_matches_python_oracle_and_analytic_step(){let env=step_env();for(n,want)in IRR_CASES{let got=irradiance(&env,n,1024).unwrap();assert!(close3(got,want,1e-12),"n {n:?}: got {got:?} want {want:?}");}
+  let up=irradiance(&env,[0.,1.,0.],1024).unwrap();let analytic=[std::f64::consts::PI*0.75,std::f64::consts::PI*0.375,std::f64::consts::PI*0.125];assert!(close3(up,analytic,0.03),"near-analytic above the step (texel blur band 3%)");
+  let x=irradiance(&env,[1.,0.,0.],1024).unwrap();let analytic=[std::f64::consts::FRAC_PI_2*1.0,std::f64::consts::FRAC_PI_2*0.875,std::f64::consts::FRAC_PI_2*0.75];assert!(close3(x,analytic,0.005),"side normal averages the step (band 0.5%)");}
+ #[test]fn prefilter_matches_python_oracle(){let env=step_env();for(d,a,want)in PF_CASES{let got=prefiltered_env(&env,d,a,1024).unwrap();assert!(close3(got,want,1e-12),"dir {d:?} alpha {a}: got {got:?} want {want:?}");}}
+ #[test]fn constant_env_identity_both_paths(){let env=EnvMap::from_fn(16,8,|_|[0.6,0.4,0.2]).unwrap();
+  for a in [0.001,0.25,1.0]{let c=prefiltered_env(&env,[0.3,0.7,-0.6],a,256).unwrap();assert!(close3(c,[0.6,0.4,0.2],1e-6),"constant env survives prefilter at alpha {a}");}
+  let c=irradiance(&env,[0.3,0.7,-0.6],256).unwrap();assert!(close3(c,[0.6*std::f64::consts::PI,0.4*std::f64::consts::PI,0.2*std::f64::consts::PI],1e-6),"constant env irradiance = pi*c");
+  let m=prefiltered_map(&env,8,4,0.5,64).unwrap();assert!(m.texels.iter().all(|t|close3(t.map(|v|v as f64),[0.6,0.4,0.2],1e-6)),"baked map constant");
+  let im=irradiance_map(&env,8,4,64).unwrap();assert!(im.texels.iter().all(|t|close3(t.map(|v|v as f64),[0.6*std::f64::consts::PI,0.4*std::f64::consts::PI,0.2*std::f64::consts::PI],1e-5)),"baked irradiance map constant*pi");}
+ #[test]fn env_sample_texel_centers_exact_and_typed_errors(){let env=step_env();let c=env.sample([0.,1.,0.]).unwrap();assert!((c[0]-0.75).abs()<1e-6,"north pole row all up-color");
+  assert_eq!(env.sample([0.,0.,0.]).unwrap_err(),"finite nonzero direction required");
+  assert_eq!(EnvMap::from_fn(0,8,|_|[0.;3]).unwrap_err(),"env map 1..=4096 per axis required");
+  assert_eq!(EnvMap::from_fn(8,8,|_|[f64::NAN;3]).unwrap_err(),"env generator must return finite radiance");
+  assert_eq!(irradiance(&env,[0.,0.,0.],64).unwrap_err(),"finite nonzero irradiance direction and 1..=65536 samples required");
+  assert_eq!(prefiltered_env(&env,[0.,1.,0.],0.,64).unwrap_err(),"finite 0<alpha<=1 required");
+  assert_eq!(prefiltered_env(&env,[0.,1.,0.],0.5,0).unwrap_err(),"finite nonzero prefilter direction and 1..=65536 samples required");}
 }
