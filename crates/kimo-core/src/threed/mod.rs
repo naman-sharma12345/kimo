@@ -21,6 +21,7 @@ pub mod textured_fixture;
 pub mod pbr_offscreen;
 pub mod sdf;
 pub mod pbr;
+pub mod ibl;
 pub mod cpu;
 pub mod backend;
 pub mod import;
