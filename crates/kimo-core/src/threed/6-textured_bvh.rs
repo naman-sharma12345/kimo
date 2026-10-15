@@ -1,0 +1,46 @@
+//! Primary-ray CPU textured GGX pass through external flat SAH index.
+//! Original interpolation/shading adapter. Not a replacement GPU raster backend.
+#[cfg(all(feature="mesh-import",feature="material-textures",feature="flat-sah"))]
+mod enabled{
+use super::super::{gltf_surface::Asset,flat_sah::Index,spatial::Ray,vertex_stream::unit,lighting_stage::Light};use crate::{camera_projection::Camera,effects::Frame};
+/// Positive-Z pinhole inversion consistent with Camera::view/project.
+fn ray(c:&Camera,x:usize,y:usize,w:usize,h:usize)->Result<[f64;3],String>{let f=h as f64*c.focal_length/c.sensor_height;let mut q=[(x as f64+0.5-w as f64*0.5)/f,(y as f64+0.5-h as f64*0.5)/f,1.];let(s,z)=c.roll.to_radians().sin_cos();q=[z*q[0]-s*q[1],s*q[0]+z*q[1],q[2]];let(s,z)=c.tilt.to_radians().sin_cos();q=[q[0],z*q[1]-s*q[2],s*q[1]+z*q[2]];let(s,z)=c.pan.to_radians().sin_cos();unit([z*q[0]+s*q[2],q[1],-s*q[0]+z*q[2]])}
+pub struct Output{pub frame:Frame,pub covered:usize,pub bvh_queries:usize}
+/// Reference-path shadows (PL1b): analytic shadow ray toward a directional light; any BVH hit => occluded (hard compare = PCF radius 0 semantics). Winding-AGNOSTIC: receivers can sit inside a single-sided caster volume (ground point under a cube) where the only surface along the ray is the back-facing exit face - culling it leaks light. Matches raster_depth both-windings. Receiver offset: 1e-4 world epsilon (the map texel offset has no meaning without a map; the parity band absorbs it).
+/// Semantics match shadow::visibility with PCF radius 0 EXACTLY (hard compare), giving the
+/// parity oracle for the raster + wgpu paths: a shadow ray from the bias-offset receiver
+/// toward the light; any BVH hit before infinity => occluded.
+pub fn shadow_visibility(_a:&Asset,indices:&[Index],point:[f64;3],normal:[f64;3],travel_direction:[f64;3])->Result<f64,String>{
+ // Winding-AGNOSTIC: receivers can sit inside a single-sided caster volume (ground point
+ // under a cube) where the only surface along the ray is the back-facing exit face - culling
+ // it leaks light. Matches raster_depth both-windings. Receiver offset: 1e-4 world epsilon
+ // (the map texel offset has no meaning without a map; the parity band absorbs it).
+ let eps=1e-4;
+ let o=std::array::from_fn(|j|point[j]+normal[j]*eps);
+ let d=unit(travel_direction.map(|v|-v))?; // toward the light
+ let r=Ray{origin:o,direction:d,t_min:1e-6,t_max:1e9};
+ for index in indices.iter(){
+  if let Some(_hit)=index.raycast_where(&r,false,|_triangle|true)?{return Ok(0.);}}
+ Ok(1.)}
+
+enum ShadowTarget{Directional([f64;3]),Point([f64;3])}
+/// Reference-path point shadows (PL2): shadow ray toward the light position; any BVH hit
+/// before the light => occluded (hard compare = cube PCF radius 0 semantics). Same
+/// winding-agnostic contract + 1e-4 receiver offset as the directional ray. t_max stops
+/// just short of the light so geometry AT the light cannot self-occlude.
+pub fn point_shadow_visibility(_a:&Asset,indices:&[Index],point:[f64;3],normal:[f64;3],position:[f64;3])->Result<f64,String>{
+ let eps=1e-4;
+ let o=std::array::from_fn(|j|point[j]+normal[j]*eps);
+ let d=std::array::from_fn(|j|position[j]-o[j]);
+ let dist=(d[0]*d[0]+d[1]*d[1]+d[2]*d[2]).sqrt();
+ if dist<=eps{return Ok(1.);} // receiver on the light: lit
+ let r=Ray{origin:o,direction:unit(d)?,t_min:1e-6,t_max:dist-1e-6};
+ for index in indices.iter(){
+  if let Some(_hit)=index.raycast_where(&r,false,|_triangle|true)?{return Ok(0.);}}
+ Ok(1.)}
+pub fn render_shadowed(a:&Asset,c:&Camera,w:usize,h:usize,lights:&[Light],ambient:[f64;3],shadow_index:Option<usize>)->Result<Output,String>{if shadow_index.is_none(){return render(a,c,w,h,lights,ambient);}let si=shadow_index.unwrap();let target=match lights.get(si){Some(Light::Directional{travel_direction,..})=>ShadowTarget::Directional(*travel_direction),Some(Light::Point{position,..})=>ShadowTarget::Point(*position),None=>return Err("shadowed light index in range required".into())};c.validate()?;super::super::lighting_stage::validate(lights)?;if w==0||h==0||w>1920||h>1080||a.streams.is_empty()||a.streams.len()>64||a.streams.len()!=a.surfaces.len(){return Err("target1..1920x1080, matched1..64 stream/material pairs".into());}for s in &a.surfaces{s.validate(&a.images)?;}let indices=a.streams.iter().map(Index::build).collect::<Result<Vec<_>,_>>()?;let mut frame=Frame::try_new(w,h)?;let mut covered=0usize;let mut queries=0usize;for y in 0..h{crate::guard::check();for x in 0..w{let direction=ray(c,x,y,w,h)?;let z=c.view(std::array::from_fn(|j|c.eye[j]+direction[j]))?[2];let r=Ray{origin:c.eye,direction,t_min:c.near/z,t_max:1e9};let mut nearest:Option<(usize,super::super::spatial::Hit)>=None;for(i,index)in indices.iter().enumerate(){queries+=1;if let Some(hit)=index.raycast_where(&r,false,|triangle|{if a.surfaces[i].double_sided{return true;}let v=a.streams[i].indices[triangle].map(|id|a.streams[i].vertices[id as usize].position.map(|v|v as f64));let e1:[f64;3]=std::array::from_fn(|j|v[1][j]-v[0][j]);let e2:[f64;3]=std::array::from_fn(|j|v[2][j]-v[0][j]);let n=[e1[1]*e2[2]-e1[2]*e2[1],e1[2]*e2[0]-e1[0]*e2[2],e1[0]*e2[1]-e1[1]*e2[0]];n.iter().zip(direction).map(|(a,b)|a*b).sum::<f64>()<=0.})?{if nearest.as_ref().map(|(_,b)|hit.t<b.t).unwrap_or(true){nearest=Some((i,hit));}}}if let Some((i,hit))=nearest{let s=&a.streams[i];let verts=s.indices[hit.triangle].map(|id|s.vertices[id as usize]);let interp=|f:fn(&super::super::primitives::Vertex,usize)->f32,j:usize|(0..3).map(|k|hit.barycentric[k]*f(&verts[k],j) as f64).sum::<f64>();let uv=std::array::from_fn(|j|interp(|v,j|v.uv[j],j));let mut n=unit(std::array::from_fn(|j|interp(|v,j|v.normal[j],j)))?;let mut t:[f64;4]=std::array::from_fn(|j|interp(|v,j|v.tangent[j],j));if n.iter().zip(direction).map(|(a,b)|a*b).sum::<f64>()>0.&&a.surfaces[i].double_sided{n=n.map(|v|-v);t[3]=-t[3];}let p=std::array::from_fn(|j|c.eye[j]+direction[j]*hit.t);let vis:Vec<f64>=(0..lights.len()).map(|j|if j==si{match target{ShadowTarget::Directional(t)=>shadow_visibility(a,&indices,p,n,t),ShadowTarget::Point(pos)=>point_shadow_visibility(a,&indices,p,n,pos)}}else{Ok(1.)}).collect::<Result<_,_>>()?;let color=a.surfaces[i].shade_shadowed(&a.images,uv,n,t,p,c.eye,lights,ambient,&vis)?;if color.iter().any(|v|!v.is_finite()||*v<0.||*v>f32::MAX as f64){return Err("texture radiance overflow".into());}let id=(y*w+x)*4;for j in 0..3{frame.d[id+j]=color[j] as f32;}frame.d[id+3]=1.;covered+=1;}}}Ok(Output{frame,covered,bvh_queries:queries})}
+pub fn render(a:&Asset,c:&Camera,w:usize,h:usize,lights:&[Light],ambient:[f64;3])->Result<Output,String>{c.validate()?;super::super::lighting_stage::validate(lights)?;if w==0||h==0||w>1920||h>1080||a.streams.is_empty()||a.streams.len()>64||a.streams.len()!=a.surfaces.len(){return Err("target1..1920x1080, matched1..64 stream/material pairs".into());}for s in &a.surfaces{s.validate(&a.images)?;}let indices=a.streams.iter().map(Index::build).collect::<Result<Vec<_>,_>>()?;let mut frame=Frame::try_new(w,h)?;let mut covered=0usize;let mut queries=0usize;for y in 0..h{crate::guard::check();for x in 0..w{let direction=ray(c,x,y,w,h)?;let z=c.view(std::array::from_fn(|j|c.eye[j]+direction[j]))?[2];let r=Ray{origin:c.eye,direction,t_min:c.near/z,t_max:1e9};let mut nearest:Option<(usize,super::super::spatial::Hit)>=None;for(i,index)in indices.iter().enumerate(){queries+=1;if let Some(hit)=index.raycast_where(&r,false,|triangle|{if a.surfaces[i].double_sided{return true;}let v=a.streams[i].indices[triangle].map(|id|a.streams[i].vertices[id as usize].position.map(|v|v as f64));let e1:[f64;3]=std::array::from_fn(|j|v[1][j]-v[0][j]);let e2:[f64;3]=std::array::from_fn(|j|v[2][j]-v[0][j]);let n=[e1[1]*e2[2]-e1[2]*e2[1],e1[2]*e2[0]-e1[0]*e2[2],e1[0]*e2[1]-e1[1]*e2[0]];n.iter().zip(direction).map(|(a,b)|a*b).sum::<f64>()<=0.})?{if nearest.as_ref().map(|(_,b)|hit.t<b.t).unwrap_or(true){nearest=Some((i,hit));}}}if let Some((i,hit))=nearest{let s=&a.streams[i];let verts=s.indices[hit.triangle].map(|id|s.vertices[id as usize]);let interp=|f:fn(&super::super::primitives::Vertex,usize)->f32,j:usize|(0..3).map(|k|hit.barycentric[k]*f(&verts[k],j) as f64).sum::<f64>();let uv=std::array::from_fn(|j|interp(|v,j|v.uv[j],j));let mut n=unit(std::array::from_fn(|j|interp(|v,j|v.normal[j],j)))?;let mut t:[f64;4]=std::array::from_fn(|j|interp(|v,j|v.tangent[j],j));if n.iter().zip(direction).map(|(a,b)|a*b).sum::<f64>()>0.&&a.surfaces[i].double_sided{n=n.map(|v|-v);t[3]=-t[3];}let p=std::array::from_fn(|j|c.eye[j]+direction[j]*hit.t);let color=a.surfaces[i].shade(&a.images,uv,n,t,p,c.eye,lights,ambient)?;if color.iter().any(|v|!v.is_finite()||*v<0.||*v>f32::MAX as f64){return Err("texture radiance overflow".into());}let id=(y*w+x)*4;for j in 0..3{frame.d[id+j]=color[j] as f32;}frame.d[id+3]=1.;covered+=1;}}}Ok(Output{frame,covered,bvh_queries:queries})}
+}
+#[cfg(all(test,feature="mesh-import",feature="material-textures",feature="flat-sah"))]#[path="shadow_parity_fixture.rs"]mod parity_tests;
+#[cfg(all(test,feature="mesh-import",feature="material-textures",feature="flat-sah"))]#[path="point_shadow_parity_fixture.rs"]mod point_parity_tests;
+#[cfg(all(feature="mesh-import",feature="material-textures",feature="flat-sah"))]pub use enabled::{render,render_shadowed,shadow_visibility,point_shadow_visibility,Output};
