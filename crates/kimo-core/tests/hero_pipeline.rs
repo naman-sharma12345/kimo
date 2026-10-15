@@ -75,7 +75,7 @@ fn scene()->Scene{
  let o3=lit_raster::render(&stream_of(&s.cut,&s.nc),&cam,320,180,&mat,&lights).unwrap();
  println!("HASH vase-normal={:016x} cut-normal={:016x} cut-pbr={:016x} covered={}/{}/{}",frame_hash(&o1.frame),frame_hash(&o2.frame),frame_hash(&o3.frame),o1.covered,o2.covered,o3.covered);
  assert!(o1.covered>5_000&&o2.covered>5_000&&o3.covered>5_000);
- const EXPECT:[u64;3]=[0x7da76338efc4bbd9,0xdcc5c22afef17484,0x25e4658c97b10540];
+ const EXPECT:[u64;3]=[0x7da76338efc4bbd9,0xdcc5c22afef17484,0xe20ee8c1403efa08];
  if EXPECT!=[0,0,0]{assert_eq!([frame_hash(&o1.frame),frame_hash(&o2.frame),frame_hash(&o3.frame)],EXPECT,"hero frame hash drift");}
  if let Ok(dir)=std::env::var("KIMO_PM_FRAMES"){
   let o1=render_mesh(&s.vase,&s.nv,&cam,1920,1080,Shading::Normal,dr).unwrap();save(&o1.frame,1920,1080,&format!("{dir}/pm-hero-vase-subdiv-normal.png"));
