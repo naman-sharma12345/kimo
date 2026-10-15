@@ -31,6 +31,7 @@ pub mod perspective;
 pub mod vertex_stream;
 pub mod ingest;
 pub mod lighting_stage; pub mod shadow;
+pub mod csm;
 pub mod lit_raster;
 pub mod boolean;
 pub(crate) mod topo;

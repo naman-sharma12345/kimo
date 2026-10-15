@@ -49,9 +49,12 @@ pub fn shade_ibl(material:&Material,point:[f64;3],normal:[f64;3],eye:[f64;3],ibl
 ];
 
  fn white_ibl()->crate::threed::ibl::IblSet{let env=crate::threed::ibl::EnvMap::from_fn(16,8,|_|[1.;3]).unwrap();crate::threed::ibl::IblSet::bake(&env,[8,4],[8,4],4,64,1024).unwrap()}
- // Band: split-sum gates diffuse with the LUT (D*vis-weighted) F while the reference BRDF
- // gates with the directional F; measured max deviation 5.49% at grazing dielectric
- // (nv=0.4, r=0.3), 1.94% rough metal, <=0.08% mid-roughness metal. Smooth lobes (r<0.3)
+ // ACCEPTED THRESHOLD (2026-10-16): the split-sum vs Monte Carlo ceiling is 5.49%
+ // relative, measured at grazing dielectric (nv=0.4, r=0.3); 1.94% rough metal, <=0.08%
+ // mid-roughness metal. This is an approximation difference, not a bug: split-sum gates
+ // diffuse with the LUT (D*vis-weighted) F while the reference BRDF gates with the
+ // directional F. The assert band below is 7% (measured 5.49% + margin); tighten it only
+ // with a measured improvement, loosen it only with Naman's sign-off. Smooth lobes (r<0.3)
  // are excluded: uniform-hemisphere MC is too noisy to be an oracle there (a 12.6% "error"
  // at r=0.1 measured as pure estimator variance); smooth-lobe correctness is covered by
  // the 1e-12 LUT oracle in threed::ibl plus the constant-env prefilter identity.

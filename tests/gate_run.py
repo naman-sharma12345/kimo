@@ -36,8 +36,21 @@ for line in open("tests/gate_manifest.txt"):
 rc, out, sec = sh([sys.executable, "tests/gate_check.py"]); rows.append(("gate_check (manifest)", "pass" if rc == 0 else "fail", sec, out.strip().splitlines()[0] if out else ""))
 if rc: print(out)
 if not pyonly:
-    rc, out, sec = sh(["cargo", "test", "--profile", PROFILE, "-p", "kimo-core", "--lib"]); p, f = counts(out); rows.append(("rust lib", "pass" if rc == 0 else "fail", sec, f"{p} passed {f} failed"))
+    # Standard rust gate: ALL targets (lib + every integration test + doc tests), never
+    # --lib alone - a lib-only run lets integration/golden-hash regressions hide (2026-10-16:
+    # hero_pipeline and sdf_contour_frames drifted for weeks because they were not in the
+    # manifest). The manifest's per-test rust steps below are kept for per-suite timing.
+    rc, out, sec = sh(["cargo", "test", "--profile", PROFILE, "-p", "kimo-core"]); p, f = counts(out); rows.append(("rust all-targets", "pass" if rc == 0 else "fail", sec, f"{p} passed {f} failed"))
     if rc: print("\n".join(l for l in out.splitlines() if "FAILED" in l or "panicked" in l)[:2000])
+    # Every feature whose TEST binaries this machine can build and run. Two exclusions:
+    # native-ocio needs OCIO 2 headers (OCIO_INCLUDE_DIR); gpu3d test binaries OOM small
+    # gate machines at link time (wgpu static link; measured SIGKILL at 1.5 GB free on a
+    # 2 GB box, 2026-10-16). gpu3d coverage here is a full compile check instead; run its
+    # tests on a bigger machine. Add excluded features on machines that have the resources.
+    rc, out, sec = sh(["cargo", "test", "--profile", PROFILE, "-p", "kimo-core", "--features", "mesh-import,flat-sah,material-textures"]); p, f = counts(out); rows.append(("rust all-targets (features)", "pass" if rc == 0 else "fail", sec, f"{p} passed {f} failed"))
+    if rc: print("\n".join(l for l in out.splitlines() if "FAILED" in l or "panicked" in l)[:2000])
+    rc, out, sec = sh(["cargo", "check", "-p", "kimo-core", "--features", "gpu3d"]); rows.append(("rust check gpu3d", "pass" if rc == 0 else "fail", sec, ""))
+    if rc: print(out[-2000:])
 before = git_state()
 for kind, name, _ in ent:
     if kind == "rust":
