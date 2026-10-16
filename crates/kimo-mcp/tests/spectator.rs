@@ -25,13 +25,19 @@ fn run(spec: Option<&str>, reqs: &[Value]) -> Vec<u8> {
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).env_remove("KIMO_SPECTATOR").env_remove("KIMO_TOOLS");
     if let Some(s) = spec { cmd.env("KIMO_SPECTATOR", s); }
     let mut ch = cmd.spawn().expect("spawn kimo-mcp");
+    // Drain stdout on its own thread while stdin is fed: with thousands of requests the responses overflow the OS pipe
+    // buffer, and a harness that writes everything before reading anything deadlocks with the server (both block in
+    // pipe_write). A write error below is therefore a real early exit of the server, not back-pressure.
+    let mut stdout = ch.stdout.take().unwrap();
+    let reader = std::thread::spawn(move || { let mut buf = Vec::new(); std::io::Read::read_to_end(&mut stdout, &mut buf).map(|_| buf) });
     {
         let mut stdin = ch.stdin.take().unwrap();
         for r in reqs { writeln!(stdin, "{r}").unwrap(); }
     }
-    let out = ch.wait_with_output().unwrap();
-    assert!(out.status.success(), "kimo-mcp exited {:?}", out.status);
-    out.stdout
+    let stdout = reader.join().expect("stdout reader thread").expect("read kimo-mcp stdout");
+    let status = ch.wait().unwrap();
+    assert!(status.success(), "kimo-mcp exited {status:?}");
+    stdout
 }
 
 fn events_of(text: &str) -> Vec<Value> { text.lines().filter(|l| !l.trim().is_empty()).map(|l| serde_json::from_str(l).expect("each telemetry line is JSON")).collect() }
