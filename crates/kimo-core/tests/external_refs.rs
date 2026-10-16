@@ -190,6 +190,7 @@ fn open_sites_are_classified() {
         ("threed/lit_raster.rs", 6, "no project path: ignored frame-dump tests pipe rendered frames to ffmpeg stdin (-i -), output under the caller KIMO_PBR_FRAMES dir"),
         ("threed/perspective.rs", 1, "no project path: ignored frame-dump test pipes rendered frames to an ffmpeg stdin (-i -), output under the caller KIMO_PRIMITIVE_FRAMES dir"),
         ("threed/ingest.rs", 1, "no project path: ignored frame-dump test pipes rendered frames to an ffmpeg stdin (-i -), output under the caller KIMO_PBR_FRAMES dir"),
+        ("threed/csm.rs", 1, "no project path: ignored frame-dump test pipes rendered frames to an ffmpeg stdin (-i -), output under the caller KIMO_CSM_FRAMES dir"),
     ];
     let pat = ["\"-i\"", "File::open", "fs::read(", "read_to_string", "fs::metadata", "image::open", "from_file("];
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
