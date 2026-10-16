@@ -146,9 +146,31 @@ pub struct CascadedShadowMaps{
  pub blend_band:f64,
 }
 
+fn validate_cascades(cascades:&[Cascade])->Result<(),String>{
+ if cascades.is_empty()||cascades.len()>MAX_CASCADES{return Err("cascade count 1..=8 required".into());}
+ for c in cascades{
+  if !c.near.is_finite()||!c.far.is_finite()||c.near<=0.||c.far<=c.near{return Err("finite ordered positive cascade depths required".into());}
+  if c.view.iter().flatten().chain(c.bounds.iter().flatten()).chain(c.slice_center.iter()).any(|v|!v.is_finite())||c.view[3]!=[0.,0.,0.,1.]||!c.texel_world.is_finite()||c.texel_world<=0.||!c.slice_radius.is_finite()||c.slice_radius<=0.||(0..3).any(|j|c.bounds[1][j]<=c.bounds[0][j]){return Err("finite nondegenerate cascade fit required".into());}
+ }
+ if cascades.windows(2).any(|w|w[0].far!=w[1].near){return Err("adjacent cascade depths must meet".into());}
+ Ok(())
+}
+impl CascadedShadowMaps{
+ /// Check the public fit/map pairing before any indexing or visibility sampling.
+ pub fn validate(&self)->Result<(),String>{
+  validate_cascades(&self.cascades)?;
+  if !self.blend_band.is_finite()||!(0.0..0.5).contains(&self.blend_band){return Err("blend band in [0,0.5) required".into());}
+  if self.maps.len()!=self.cascades.len(){return Err("one shadow map per cascade required".into());}
+  for(c,m)in self.cascades.iter().zip(&self.maps){
+   if m.width==0||m.height==0||m.width>4096||m.height>4096||m.width!=m.height||m.depth.len()!=m.width*m.height||m.view!=c.view||m.bounds!=c.bounds{return Err("cascade shadow map must match its fit and dimensions".into());}
+  }
+  Ok(())
+ }
+}
+
 /// Allocate one map per cascade from existing fits.
 pub fn build_cascade_maps(cascades:Vec<Cascade>,map_size:usize,blend_band:f64)->Result<CascadedShadowMaps,String>{
- if cascades.is_empty(){return Err("at least one cascade required".into());}
+ validate_cascades(&cascades)?;
  if map_size==0||map_size>4096{return Err("cascade map 1..4096 per axis".into());}
  if !blend_band.is_finite()||!(0.0..0.5).contains(&blend_band){return Err("blend band in [0,0.5) required".into());}
  let maps=cascades.iter().map(|c|super::shadow::DirectionalShadowMap{view:c.view,bounds:c.bounds,width:map_size,height:map_size,depth:vec![f64::INFINITY;map_size*map_size]}).collect();
@@ -158,6 +180,7 @@ pub fn build_cascade_maps(cascades:Vec<Cascade>,map_size:usize,blend_band:f64)->
 /// Rasterize casters into EVERY cascade map (nearest wins per map; a caster outside a
 /// cascade's x/y fit simply covers nothing there).
 pub fn raster_cascades(positions:&[[f64;3]],indices:&[[u32;3]],csm:&mut CascadedShadowMaps)->Result<(),String>{
+ csm.validate()?;
  for m in csm.maps.iter_mut(){super::shadow::raster_depth(positions,indices,m)?;}
  Ok(())
 }
@@ -166,7 +189,7 @@ pub fn raster_cascades(positions:&[[f64;3]],indices:&[[u32;3]],csm:&mut Cascaded
 /// next cascade (0 outside the blend band). Depths at/below the first cascade's near
 /// clamp to cascade 0; at/above the last far clamp to the last cascade with factor 0.
 pub fn select_cascade(cascades:&[Cascade],blend_band:f64,d:f64)->Result<(usize,f64),String>{
- if cascades.is_empty(){return Err("at least one cascade required".into());}
+ validate_cascades(cascades)?;
  if !blend_band.is_finite()||!(0.0..0.5).contains(&blend_band){return Err("blend band in [0,0.5) required".into());}
  if !d.is_finite()||d<=0.{return Err("positive finite camera depth required".into());}
  let n=cascades.len();
@@ -186,14 +209,17 @@ pub fn select_cascade(cascades:&[Cascade],blend_band:f64,d:f64)->Result<(usize,f
 /// with the next cascade across the band. Bias and normal offset come from
 /// shadow::bias PER CASCADE MAP, so they scale with that cascade's texel size
 /// (no acne near, no peter-panning far - pinned in tests). n_dot_l<=0 -> 0.
-pub fn csm_visibility(csm:&CascadedShadowMaps,cam:&Camera,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius_texels:f64,px:usize,py:usize)->f64{
- if n_dot_l<=0.{return 0.;}
- let Ok(q)=cam.view(world)else{return 1.}; // degenerate receiver: lit (matches shadow.rs pinning)
- let Ok((i,t))=select_cascade(&csm.cascades,csm.blend_band,q[2])else{return 1.;};
+pub fn csm_visibility(csm:&CascadedShadowMaps,cam:&Camera,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius_texels:f64,px:usize,py:usize)->Result<f64,String>{
+ csm.validate()?;
+ if normal.iter().any(|v|!v.is_finite())||world.iter().any(|v|!v.is_finite()){return Err("finite shadow receiver required".into());}
+ if !n_dot_l.is_finite()||!radius_texels.is_finite()||radius_texels<0.{return Err("finite cosine and nonnegative finite shadow radius required".into());}
+ if n_dot_l<=0.{return Ok(0.);}
+ let q=cam.view(world)?;
+ let(i,t)=select_cascade(&csm.cascades,csm.blend_band,q[2])?;
  let v0=super::shadow::visibility_disk(&csm.maps[i],world,normal,n_dot_l,radius_texels,px,py);
- if t<=0.{return v0;}
+ if t<=0.{return Ok(v0);}
  let v1=super::shadow::visibility_disk(&csm.maps[i+1],world,normal,n_dot_l,radius_texels,px,py);
- v0*(1.-t)+v1*t
+ Ok(v0*(1.-t)+v1*t)
 }
 
 #[cfg(test)]mod tests{use super::*;
@@ -352,7 +378,7 @@ pub fn csm_visibility(csm:&CascadedShadowMaps,cam:&Camera,world:[f64;3],normal:[
   let n=[0.,1.,0.];let nl={let ld=crate::threed::vertex_stream::unit([0.2,-1.,0.15].map(|v|-v)).unwrap();(0..3).map(|j|n[j]*ld[j]).sum::<f64>().max(0.)};
   let(i,t)=select_cascade(&set.cascades,set.blend_band,split).unwrap();
   assert_eq!(t,1.0,"at the split the blend fully selects the next cascade");
-  let blended=csm_visibility(&set,&c,w,n,nl,4.0,7,11);
+  let blended=csm_visibility(&set,&c,w,n,nl,4.0,7,11).unwrap();
   let next_only=crate::threed::shadow::visibility_disk(&set.maps[i+1],w,n,nl,4.0,7,11);
   assert!((blended-next_only).abs()<1e-9,"C0 at the split: blend matches the next cascade: {blended} vs {next_only}");
  }
@@ -361,13 +387,16 @@ pub fn csm_visibility(csm:&CascadedShadowMaps,cam:&Camera,world:[f64;3],normal:[
   let set=csm_set(&c,1.,24.,3);
   let n=[0.,1.,0.];let nl={let ld=crate::threed::vertex_stream::unit([0.2,-1.,0.15].map(|v|-v)).unwrap();(0..3).map(|j|n[j]*ld[j]).sum::<f64>().max(0.)};
   // no acne: open ground receivers are fully lit under every cascade (own depth is ground depth)
-  for z in [-30.,-10.,0.,10.,30.]{let v=csm_visibility(&set,&c,[15.,0.,z],n,nl,4.0,3,5);assert_eq!(v,1.0,"open ground lit at z={z}: {v}");}
+  for z in [-10.,0.,10.,30.]{let v=csm_visibility(&set,&c,[15.,0.,z],n,nl,4.0,3,5).unwrap();assert_eq!(v,1.0,"open ground lit at z={z}: {v}");}
+  // A receiver behind the camera is now an explicit Result error, not silently lit.
+  let behind=world_from_camera(&c,[0.,0.,-1.]).unwrap();
+  assert_eq!(csm_visibility(&set,&c,behind,n,nl,4.0,3,5).unwrap_err(),"positive finite camera depth required");
   // umbra: the occluder (x,z in [-1,1] at y=2) throws its footprint 2*(0.2,0.15)=(0.4,0.3)
   // off axis along the light tilt, so receivers with (x+0.4, z+0.3) inside [-1,1] are shadowed
-  let mut shadowed=0;for z in [-1.,0.,0.5]{let v=csm_visibility(&set,&c,[0.,0.,z],n,nl,4.0,3,5);if v<0.5{shadowed+=1;}}
+  let mut shadowed=0;for z in [-1.,0.,0.5]{let v=csm_visibility(&set,&c,[0.,0.,z],n,nl,4.0,3,5).unwrap();if v<0.5{shadowed+=1;}}
   assert!(shadowed>=2,"receivers inside the footprint shadowed: {shadowed}");
   // directly under the occluder center must be fully shadowed regardless of band
-  let v=csm_visibility(&set,&c,[-0.2,0.,-0.15],n,nl,4.0,3,5);
+  let v=csm_visibility(&set,&c,[-0.2,0.,-0.15],n,nl,4.0,3,5).unwrap();
   assert!(v<0.2,"umbra core dark: {v}");}
  #[test]fn refit_under_sub_texel_motion_is_identical_or_one_texel(){
   let c=Camera{eye:[0.,10.,-12.],pan:0.,tilt:40.,roll:0.,sensor_height:24.,focal_length:35.,near:0.1};
@@ -425,9 +454,24 @@ pub fn csm_visibility(csm:&CascadedShadowMaps,cam:&Camera,world:[f64;3],normal:[
   for x in [3.05,3.2,3.5,4.,4.5,5.,5.4,5.6,6.,7.,8.]{
    let w=[x,0.,14.];let d=cam.view(w).unwrap()[2];
    let(i,tt)=select_cascade(&set.cascades,set.blend_band,d).unwrap();
-   let v=csm_visibility(&set,&cam,w,n,nl,2.0,0,0);
+   let v=csm_visibility(&set,&cam,w,n,nl,2.0,0,0).unwrap();
    eprintln!("x={x:5.2} depth={d:6.2} cascade={i} t={tt:5.2} v={v:6.3}");
   }
+ }
+ #[test]fn malformed_public_cascade_sets_return_errors_before_indexing(){
+  let fits=cascaded_light_space([0.,-1.,0.],&cam(),1.,0.1,10.,2,0.5,aabb(),16).unwrap();
+  let mut set=build_cascade_maps(fits.clone(),16,0.25).unwrap();
+  set.maps.pop();
+  assert_eq!(csm_visibility(&set,&cam(),[0.;3],[0.,1.,0.],1.,4.,0,0).unwrap_err(),"one shadow map per cascade required");
+  let mut bad=fits.clone();bad[0].bounds[1][0]=bad[0].bounds[0][0];
+  assert_eq!(build_cascade_maps(bad,16,0.25).unwrap_err(),"finite nondegenerate cascade fit required");
+  let mut bad=fits.clone();bad[0].view[0][0]=f64::NAN;
+  assert_eq!(build_cascade_maps(bad,16,0.25).unwrap_err(),"finite nondegenerate cascade fit required");
+  let mut bad=fits.clone();bad[1].near+=0.1;
+  assert_eq!(build_cascade_maps(bad,16,0.25).unwrap_err(),"adjacent cascade depths must meet");
+  assert_eq!(build_cascade_maps(vec![fits[0].clone();9],16,0.25).unwrap_err(),"cascade count 1..=8 required");
+  let mut set=build_cascade_maps(fits,16,0.25).unwrap();set.maps[0].depth.clear();
+  assert_eq!(set.validate().unwrap_err(),"cascade shadow map must match its fit and dimensions");
  }
  #[test]fn cascaded_set_covers_range_and_grows(){
   let c=cam();let dir=[0.3,-0.5,1.];
