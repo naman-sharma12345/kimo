@@ -39,7 +39,11 @@ impl Drop for Stopped<'_> { fn drop(&mut self) { self.0.fetch_add(1, SeqCst); } 
 /// V3-2 gate: thread_local! statics are per-render state hiding in thread storage. The current ones are inventoried below (render_state_leak.rs proves they do not
 /// leak between renders or change with the worker count). A new one needs either an entry here with a reason, or a `// thread-local-ok: <reason>` comment on the line above.
 #[test] fn no_new_thread_locals_outside_the_inventory() {
-    let allowed: &[(&str, usize)] = &[("render.rs", 6), ("frosted.rs", 3), ("shards.rs", 6), ("guard.rs", 1), ("lighting.rs", 1), ("particles.rs", 3)];
+    // par.rs (1, LOCAL, v5 c2dceb8): a per-thread cap on par's worker count, set once by the spectator's dedicated preview thread so its
+    // background renders use at most half the cores while tool calls on other threads stay uncapped (a process-wide value would throttle
+    // the calls). It holds no render state: par's outputs are bit-identical for any worker count, and every tool call runs on a fresh
+    // guarded thread where the cap is 0, so nothing carries between renders or calls.
+    let allowed: &[(&str, usize)] = &[("render.rs", 6), ("frosted.rs", 3), ("shards.rs", 6), ("guard.rs", 1), ("lighting.rs", 1), ("particles.rs", 3), ("par.rs", 1)];
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"); let mut files = vec![]; walk(&root, &mut files); let mut bad = vec![];
     for f in files { let text = std::fs::read_to_string(&f).unwrap(); let lines: Vec<&str> = text.lines().collect();
         let n = lines.iter().enumerate().filter(|(i, l)| l.contains("thread_local!") && !(*i > 0 && lines[i - 1].contains("thread-local-ok:"))).count();

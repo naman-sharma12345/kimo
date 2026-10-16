@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 static OVERRIDE: AtomicUsize = AtomicUsize::new(0);
 /// Force the worker count (0 = auto). Used by benches/tests; KIMO_THREADS env also works.
 pub fn set_threads(n: usize) { OVERRIDE.store(n, Ordering::Relaxed); }
+/// Per-thread worker cap (0 = none), inventoried in tests/thread_hygiene.rs: only the spectator's preview thread sets it, for its own
+/// lifetime; it changes how many workers run, never what they compute (results are bit-identical for any count).
 thread_local! { static LOCAL: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 /// Cap the worker count for work started from the current thread only (0 = no cap), e.g. the spectator's
 /// background preview renderer, so it leaves cores free for tool calls. Other threads are unaffected.
