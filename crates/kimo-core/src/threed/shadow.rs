@@ -29,6 +29,14 @@ pub struct DirectionalShadowMap{
  pub depth:Vec<f64>,
 }
 
+impl DirectionalShadowMap{
+ /// Metadata and buffer shape validation; depth payload policy is caller-owned.
+ pub fn validate(&self)->Result<(),String>{
+  if self.width==0||self.height==0||self.width>4096||self.height>4096||self.depth.len()!=self.width*self.height{return Err("directional shadow map dimensions and depth length must match".into());}
+  if self.view.iter().flatten().chain(self.bounds.iter().flatten()).any(|v|!v.is_finite())||self.view[3]!=[0.,0.,0.,1.]||(0..3).any(|j|{let span=self.bounds[1][j]-self.bounds[0][j];!span.is_finite()||span<=0.}){return Err("finite affine directional view and positive finite bounds spans required".into());}
+  Ok(())
+ }
+}
 fn mv(m:&Matrix,v:[f64;4])->[f64;4]{std::array::from_fn(|i|m[i][0]*v[0]+m[i][1]*v[1]+m[i][2]*v[2]+m[i][3]*v[3])}
 fn sub(a:[f64;3],b:[f64;3])->[f64;3]{[a[0]-b[0],a[1]-b[1],a[2]-b[2]]}
 fn cross(a:[f64;3],b:[f64;3])->[f64;3]{[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]]}
@@ -82,7 +90,8 @@ pub fn bias(map:&DirectionalShadowMap,n_dot_l:f64)->(f64,f64){
 
 /// PCF visibility in [0,1]: fraction of taps where the (biased) receiver depth is nearer
  /// than the stored occluder depth. radius 0 = single-tap hard shadow.
-pub fn visibility(map:&DirectionalShadowMap,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius:i32)->f64{
+pub fn visibility(map:&DirectionalShadowMap,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius:i32)->Result<f64,String>{map.validate()?;Ok(visibility_validated(map,world,normal,n_dot_l,radius))}
+fn visibility_validated(map:&DirectionalShadowMap,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius:i32)->f64{
  let(no,db)=bias(map,n_dot_l);
  let p=std::array::from_fn(|j|world[j]+normal[j]*no);
  let Some((u,v,d))=shadow_uvz(map,p)else{return 1.}; // outside the map: lit (scene AABB covers casters+receivers)
@@ -112,8 +121,9 @@ pub const DISK_WEIGHTS:[f64;8]=[0.157112,0.157112,0.138651,0.130251,0.114946,0.1
 pub fn interleaved_gradient_noise(x:usize,y:usize)->f64{let v=52.9829189*(0.06711056*x as f64+0.00583715*y as f64).fract();v.fract()}
 /// visibility() with a rotated Gaussian disk instead of the 3x3 grid: same bias contract,
 /// same compare, dithered soft edges. radius_texels scales the disk in map texels.
-pub fn visibility_disk(map:&DirectionalShadowMap,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius_texels:f64,px:usize,py:usize)->f64{
- if n_dot_l<=0.||radius_texels<=0.{return if n_dot_l<=0.{0.}else{visibility(map,world,normal,n_dot_l,0)};}
+pub fn visibility_disk(map:&DirectionalShadowMap,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius_texels:f64,px:usize,py:usize)->Result<f64,String>{map.validate()?;Ok(visibility_disk_validated(map,world,normal,n_dot_l,radius_texels,px,py))}
+fn visibility_disk_validated(map:&DirectionalShadowMap,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius_texels:f64,px:usize,py:usize)->f64{
+ if n_dot_l<=0.||radius_texels<=0.{return if n_dot_l<=0.{0.}else{visibility_validated(map,world,normal,n_dot_l,0)};}
  let(no,dnb)=bias(map,n_dot_l);
  let p=std::array::from_fn(|j|world[j]+normal[j]*no);
  let Some((u,v,d))=shadow_uvz(map,p) else{return 1.};
@@ -397,6 +407,16 @@ pub fn raster_cube_depth_into(positions:&[[f64;3]],indices:&[[u32;3]],map:&mut P
 
 #[cfg(test)]mod tests{use super::*;
  fn box_aabb()->[[f64;3];2]{[[-1.;3],[1.;3]]}
+ #[test]fn directional_public_map_shape_errors_precede_sampling(){
+  let(view,bounds)=directional_light_space([0.,0.,1.],box_aabb()).unwrap();
+  let mut m=DirectionalShadowMap{view,bounds,width:1,height:1,depth:vec![]};
+  assert_eq!(visibility(&m,[0.;3],[0.,1.,0.],1.,0).unwrap_err(),"directional shadow map dimensions and depth length must match");
+  assert_eq!(visibility_disk(&m,[0.;3],[0.,1.,0.],1.,4.,0,0).unwrap_err(),"directional shadow map dimensions and depth length must match");
+  m.width=usize::MAX;
+  assert!(m.validate().is_err());
+  m.width=1;m.depth.push(f64::INFINITY);m.bounds[1][0]=m.bounds[0][0];
+  assert_eq!(m.validate().unwrap_err(),"finite affine directional view and positive finite bounds spans required");
+ }
  #[test]fn caster_indices_fail_before_depth_clear_or_indexing(){
   let(view,bounds)=directional_light_space([0.,0.,1.],box_aabb()).unwrap();
   let mut m=DirectionalShadowMap{view,bounds,width:2,height:2,depth:vec![0.25;4]};
@@ -428,20 +448,20 @@ pub fn raster_cube_depth_into(positions:&[[f64;3]],indices:&[[u32;3]],map:&mut P
   let pos=vec![[-2.,-2.,0.],[0.,-2.,0.],[0.,2.,0.],[-2.,2.,0.]];
   let idx=vec![[0u32,1,2],[0,2,3]];
   raster_depth(&pos,&idx,&mut map).unwrap();
-  let behind=visibility(&map,[-1.,0.,0.5],[0.,0.,-1.],1.0,0);let front=visibility(&map,[-1.,0.,-0.5],[0.,0.,-1.],1.0,0);
+  let behind=visibility(&map,[-1.,0.,0.5],[0.,0.,-1.],1.0,0).unwrap();let front=visibility(&map,[-1.,0.,-0.5],[0.,0.,-1.],1.0,0).unwrap();
   assert_eq!((behind,front),(0.0,1.0),"hard shadow: behind occluder {behind}, in front {front}");
-  let behind_g=visibility(&map,[-1.,0.,0.5],[0.,0.,-1.],0.8,0);assert_eq!(behind_g,0.0,"bias must not erase a real shadow at moderate incidence");
+  let behind_g=visibility(&map,[-1.,0.,0.5],[0.,0.,-1.],0.8,0).unwrap();assert_eq!(behind_g,0.0,"bias must not erase a real shadow at moderate incidence");
   // documented tradeoff: at grazing incidence (nl=0.3) the pinned slope bias CAN erase a
   // shallow shadow on a small map - the acne/peter-panning tradeoff is deliberate.
-  assert_eq!(visibility(&map,[-1.,0.,0.5],[0.,0.,-1.],0.3,0),1.0,"grazing bias erasure is the pinned contract (documented)");
+  assert_eq!(visibility(&map,[-1.,0.,0.5],[0.,0.,-1.],0.3,0).unwrap(),1.0,"grazing bias erasure is the pinned contract (documented)");
   // no self-shadow acne: a receiver ON the occluder plane stays lit under its own depth
-  let on=visibility(&map,[-1.,0.,0.],[0.,0.,-1.],1.0,0);assert_eq!(on,1.0,"bias prevents acne on the occluder plane");
+  let on=visibility(&map,[-1.,0.,0.],[0.,0.,-1.],1.0,0).unwrap();assert_eq!(on,1.0,"bias prevents acne on the occluder plane");
   // open half of the map: fully lit
-  let open=visibility(&map,[1.,0.,0.5],[0.,0.,-1.],1.0,0);assert_eq!(open,1.0,"no occluder texel -> lit");
+  let open=visibility(&map,[1.,0.,0.5],[0.,0.,-1.],1.0,0).unwrap();assert_eq!(open,1.0,"no occluder texel -> lit");
   // penumbra at the occluder silhouette (x=0): hard is binary, PCF straddles
   let edge_x=0.5/64.; // half a texel inside the covered half
-  let hard=visibility(&map,[-edge_x,0.,0.5],[0.,0.,-1.],1.0,0);
-  let soft=visibility(&map,[-edge_x,0.,0.5],[0.,0.,-1.],1.0,1);
+  let hard=visibility(&map,[-edge_x,0.,0.5],[0.,0.,-1.],1.0,0).unwrap();
+  let soft=visibility(&map,[-edge_x,0.,0.5],[0.,0.,-1.],1.0,1).unwrap();
   assert_eq!(hard,0.0,"single tap binary at the edge");
   assert!(soft>0.0&&soft<1.0,"PCF penumbra strictly between: {soft}");
  }

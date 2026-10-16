@@ -235,9 +235,9 @@ pub fn csm_visibility(csm:&CascadedShadowMaps,cam:&Camera,world:[f64;3],normal:[
  if n_dot_l<=0.{return Ok(0.);}
  let q=cam.view(world)?;
  let(i,t)=select_cascade(&csm.cascades,csm.blend_band,q[2])?;
- let v0=super::shadow::visibility_disk(&csm.maps[i],world,normal,n_dot_l,radius_texels,px,py);
+ let v0=super::shadow::visibility_disk(&csm.maps[i],world,normal,n_dot_l,radius_texels,px,py)?;
  if t<=0.{return Ok(v0);}
- let v1=super::shadow::visibility_disk(&csm.maps[i+1],world,normal,n_dot_l,radius_texels,px,py);
+ let v1=super::shadow::visibility_disk(&csm.maps[i+1],world,normal,n_dot_l,radius_texels,px,py)?;
  Ok(v0*(1.-t)+v1*t)
 }
 
@@ -437,7 +437,7 @@ pub fn csm_visibility(csm:&CascadedShadowMaps,cam:&Camera,world:[f64;3],normal:[
   let(i,t)=select_cascade(&set.cascades,set.blend_band,split).unwrap();
   assert_eq!(t,1.0,"at the split the blend fully selects the next cascade");
   let blended=csm_visibility(&set,&c,w,n,nl,4.0,7,11).unwrap();
-  let next_only=crate::threed::shadow::visibility_disk(&set.maps[i+1],w,n,nl,4.0,7,11);
+  let next_only=crate::threed::shadow::visibility_disk(&set.maps[i+1],w,n,nl,4.0,7,11).unwrap();
   assert!((blended-next_only).abs()<1e-9,"C0 at the split: blend matches the next cascade: {blended} vs {next_only}");
  }
  #[test]fn csm_no_acne_and_far_umbra_holds(){
