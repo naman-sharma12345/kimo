@@ -132,9 +132,16 @@ fn sample_map(map:&DirectionalShadowMap,u:f64,v:f64)->f64{
  let y=(v*map.height as f64).min(map.height as f64-1e-9) as usize;
  map.depth[y*map.width+x]}
 
+/// Validate all caster input before clearing or indexing a depth target.
+pub(super) fn validate_casters(positions:&[[f64;3]],indices:&[[u32;3]])->Result<(),String>{
+ if positions.iter().flatten().any(|v|!v.is_finite()){return Err("finite shadow caster positions required".into());}
+ if indices.iter().flatten().any(|i|*i as usize>=positions.len()){return Err("shadow caster index out of bounds".into());}
+ Ok(())
+}
 /// CPU light-POV depth rasterizer: world-space triangles -> nearest normalized depth.
 /// Same edge-function convention as lit_raster (top-left fill via positive barycentrics).
 pub fn raster_depth(positions:&[[f64;3]],indices:&[[u32;3]],map:&mut DirectionalShadowMap)->Result<(),String>{
+ validate_casters(positions,indices)?;
  if map.width==0||map.height==0||map.width>4096||map.height>4096{return Err("shadow map 1..4096 per axis".into());}
  if map.depth.len()!=map.width*map.height{return Err("shadow map depth buffer size mismatch".into());}
  for d in map.depth.iter_mut(){*d=f64::INFINITY;}
@@ -142,6 +149,7 @@ pub fn raster_depth(positions:&[[f64;3]],indices:&[[u32;3]],map:&mut Directional
 /// Accumulate one draw's casters into the map WITHOUT clearing (nearest wins across calls).
 /// raster_depth = clear + into; build multi-draw maps with one clear then into() per draw.
 pub fn raster_depth_into(positions:&[[f64;3]],indices:&[[u32;3]],map:&mut DirectionalShadowMap)->Result<(),String>{
+ validate_casters(positions,indices)?;
  if map.width==0||map.height==0||map.width>4096||map.height>4096{return Err("shadow map 1..4096 per axis".into());}
  if map.depth.len()!=map.width*map.height{return Err("shadow map depth buffer size mismatch".into());}
  let edge=|a:[f64;2],b:[f64;2],x:f64,y:f64|(b[0]-a[0])*(y-a[1])-(b[1]-a[1])*(x-a[0]);
@@ -345,12 +353,14 @@ pub fn cube_visibility_disk(map:&PointCubeShadowMap,world:[f64;3],normal:[f64;3]
 /// CPU light-POV cube depth: rasterize all 6 faces (nearest wins), clearing first.
 /// Persp-correct depth: 1/z is affine in screen space, so per-texel z = 1/(sum b_i/z_i).
 pub fn raster_cube_depth(positions:&[[f64;3]],indices:&[[u32;3]],map:&mut PointCubeShadowMap)->Result<(),String>{
+ validate_casters(positions,indices)?;
  if map.size==0||map.size>4096{return Err("cube shadow map 1..4096 per face axis".into());}
  if map.depth.len()!=6*map.size*map.size{return Err("cube shadow depth buffer size mismatch".into());}
  for d in map.depth.iter_mut(){*d=f64::INFINITY;}
  raster_cube_depth_into(positions,indices,map)}
 /// Accumulate one draw's casters into all faces WITHOUT clearing (nearest wins across calls).
 pub fn raster_cube_depth_into(positions:&[[f64;3]],indices:&[[u32;3]],map:&mut PointCubeShadowMap)->Result<(),String>{
+ validate_casters(positions,indices)?;
  if map.size==0||map.size>4096{return Err("cube shadow map 1..4096 per face axis".into());}
  if map.depth.len()!=6*map.size*map.size{return Err("cube shadow depth buffer size mismatch".into());}
  let edge=|a:[f64;2],b:[f64;2],x:f64,y:f64|(b[0]-a[0])*(y-a[1])-(b[1]-a[1])*(x-a[0]);
@@ -387,6 +397,14 @@ pub fn raster_cube_depth_into(positions:&[[f64;3]],indices:&[[u32;3]],map:&mut P
 
 #[cfg(test)]mod tests{use super::*;
  fn box_aabb()->[[f64;3];2]{[[-1.;3],[1.;3]]}
+ #[test]fn caster_indices_fail_before_depth_clear_or_indexing(){
+  let(view,bounds)=directional_light_space([0.,0.,1.],box_aabb()).unwrap();
+  let mut m=DirectionalShadowMap{view,bounds,width:2,height:2,depth:vec![0.25;4]};
+  assert_eq!(raster_depth(&[],&[[0,0,0]],&mut m).unwrap_err(),"shadow caster index out of bounds");
+  assert_eq!(m.depth,vec![0.25;4]);
+  assert_eq!(raster_depth_into(&[[0.;3]],&[[0,0,1]],&mut m).unwrap_err(),"shadow caster index out of bounds");
+  assert_eq!(raster_depth_into(&[[f64::NAN;3]],&[],&mut m).unwrap_err(),"finite shadow caster positions required");
+ }
  #[test]fn light_space_covers_aabb_and_is_deterministic(){
   let(v1,b1)=directional_light_space([0.3,-0.5,1.],box_aabb()).unwrap();
   let(v2,b2)=directional_light_space([0.3,-0.5,1.],box_aabb()).unwrap();
@@ -484,6 +502,12 @@ pub fn raster_cube_depth_into(positions:&[[f64;3]],indices:&[[u32;3]],map:&mut P
    for px in [0,7,31]{assert_eq!(cube_visibility_disk(&map,w,[0.,1.,0.],1.,4.,px,11),0.);}
   }}}}
   for w in [[3.,3.,3.],[-3.,3.,3.],[3.,-3.,-3.]]{assert_eq!(cube_visibility_disk(&map,w,[0.,1.,0.],1.,4.,7,11),0.);}
+ }
+ #[test]fn cube_caster_indices_fail_without_mutating_depth(){
+  let mut m=cube_map([0.;3],2);m.depth.fill(0.5);let before=m.depth.clone();
+  assert_eq!(raster_cube_depth(&[],&[[0,0,0]],&mut m).unwrap_err(),"shadow caster index out of bounds");
+  assert_eq!(raster_cube_depth_into(&[[0.;3]],&[[u32::MAX,0,0]],&mut m).unwrap_err(),"shadow caster index out of bounds");
+  assert_eq!(m.depth,before);
  }
  #[test]fn face_selection_is_major_axis_and_centers(){
   let map=cube_map([0.,0.,0.],16);

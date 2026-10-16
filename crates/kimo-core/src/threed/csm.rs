@@ -199,6 +199,7 @@ pub fn build_cascade_maps(cascades:Vec<Cascade>,map_size:usize,blend_band:f64)->
 /// cascade's x/y fit simply covers nothing there).
 pub fn raster_cascades(positions:&[[f64;3]],indices:&[[u32;3]],csm:&mut CascadedShadowMaps)->Result<(),String>{
  csm.validate()?;
+ super::shadow::validate_casters(positions,indices)?;
  for m in csm.maps.iter_mut(){super::shadow::raster_depth(positions,indices,m)?;}
  Ok(())
 }
