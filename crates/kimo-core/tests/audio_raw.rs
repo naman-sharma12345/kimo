@@ -76,11 +76,51 @@ fn malformed_fuzz_and_threads() {
 }
 use kimo_core::commands::{dispatch, dispatch_ex, Session};
 use serde_json::json;
+/// KIMO_ASSET_DIR is process-global and the asset store (assets::store_dir, audio_samples::store_audio) reads it at import time, so tests running in
+/// parallel in this binary must not see each other's value. Every test here that sets it or imports samples (the dependent readers) holds ASSET_ENV for
+/// its whole body through AssetDirGuard, which restores the previous value when dropped, including during a panic unwind. The tests that do neither
+/// (pure DSP / analytic response) need no lock.
+static ASSET_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+struct AssetDirGuard {
+    prev: Option<std::ffi::OsString>,
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+impl AssetDirGuard {
+    fn set(dir: &std::path::Path) -> Self {
+        // A panicking test poisons the mutex but its guard has already restored the variable, so the poison carries no bad state.
+        let lock = ASSET_ENV.lock().unwrap_or_else(|p| p.into_inner());
+        let prev = std::env::var_os("KIMO_ASSET_DIR");
+        std::env::set_var("KIMO_ASSET_DIR", dir);
+        AssetDirGuard { prev, _lock: lock }
+    }
+}
+impl Drop for AssetDirGuard {
+    // Runs before the fields drop, so the variable is restored while the lock is still held.
+    fn drop(&mut self) {
+        match self.prev.take() {
+            Some(v) => std::env::set_var("KIMO_ASSET_DIR", v),
+            None => std::env::remove_var("KIMO_ASSET_DIR"),
+        }
+    }
+}
+#[test]
+fn asset_dir_guard_restores_the_previous_value_even_on_panic() {
+    let before = { let _l = ASSET_ENV.lock().unwrap_or_else(|p| p.into_inner()); std::env::var_os("KIMO_ASSET_DIR") };
+    let tmp = std::env::temp_dir().join(format!("kimo-raw-guard-{}", std::process::id()));
+    let r = std::panic::catch_unwind(|| {
+        let _g = AssetDirGuard::set(&tmp);
+        assert_eq!(std::env::var_os("KIMO_ASSET_DIR").as_deref(), Some(tmp.as_os_str()));
+        panic!("deliberate panic while the guard is held");
+    });
+    assert!(r.is_err());
+    let _l = ASSET_ENV.lock().unwrap_or_else(|p| p.into_inner());
+    assert_eq!(std::env::var_os("KIMO_ASSET_DIR"), before, "the guard restored the previous value during unwind");
+}
 #[test]
 fn sample_api_roundtrip_formats_peaks_mixer_collect_limits() {
     let dir = std::env::temp_dir().join(format!("kimo-raw-api-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    std::env::set_var("KIMO_ASSET_DIR", &dir);
+    let _asset_env = AssetDirGuard::set(&dir);
     let mut s = Session::new();
     let planes = vec![
         (0..96)
@@ -227,7 +267,6 @@ fn sample_api_roundtrip_formats_peaks_mixer_collect_limits() {
     let e = dispatch_ex(&mut s, "read_samples", &json!({"target":target})).unwrap_err();
     assert!(e.message.contains("max_samples") && e.message.contains("set_limits"));
     std::fs::remove_dir_all(dir).unwrap();
-    std::env::remove_var("KIMO_ASSET_DIR");
 }
 #[test]
 fn analytic_response_matches_native_and_effect_defaults() {
@@ -255,7 +294,7 @@ fn analytic_response_matches_native_and_effect_defaults() {
 fn keyed_coefficients_rendered_fft_response_and_overflow_rejection() {
     let dir = std::env::temp_dir().join(format!("kimo-raw-key-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    std::env::set_var("KIMO_ASSET_DIR", &dir);
+    let _asset_env = AssetDirGuard::set(&dir);
     let mut s = Session::new();
     for hz in [100., 1000., 10000.] {
         let x: Vec<f32> = (0..48000)
@@ -351,7 +390,6 @@ fn keyed_coefficients_rendered_fft_response_and_overflow_rejection() {
     )
     .is_err());
     std::fs::remove_dir_all(dir).unwrap();
-    std::env::remove_var("KIMO_ASSET_DIR");
 }
 #[test]
 fn export_quantization_symmetric_dc_and_zero_crossing() {
@@ -428,7 +466,7 @@ fn export_quantization_symmetric_dc_and_zero_crossing() {
 fn api_fuzz_repeat_threads_native_mono_layout_and_errors() {
     let dir = std::env::temp_dir().join(format!("kimo-raw-edge-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    std::env::set_var("KIMO_ASSET_DIR", &dir);
+    let _asset_env = AssetDirGuard::set(&dir);
     let mut s = Session::new();
     let a = dispatch(
         &mut s,
@@ -499,13 +537,12 @@ fn api_fuzz_repeat_threads_native_mono_layout_and_errors() {
     .unwrap_err();
     assert!(e.message.contains("available decoded channels"));
     std::fs::remove_dir_all(dir).unwrap();
-    std::env::remove_var("KIMO_ASSET_DIR");
 }
 #[test]
 fn same_pcm_different_shape_distinct_asset_key_preserved_native() {
     let dir = std::env::temp_dir().join(format!("kimo-raw-shape-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    std::env::set_var("KIMO_ASSET_DIR", &dir);
+    let _asset_env = AssetDirGuard::set(&dir);
     let mut s = Session::new();
     let a = dispatch(
         &mut s,
@@ -556,5 +593,4 @@ fn same_pcm_different_shape_distinct_asset_key_preserved_native() {
     ];
     assert_eq!(read["data"], json!(expected));
     std::fs::remove_dir_all(dir).unwrap();
-    std::env::remove_var("KIMO_ASSET_DIR");
 }
