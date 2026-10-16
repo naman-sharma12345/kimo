@@ -242,7 +242,7 @@ fn tool_targets_params_fuzz_and_image() {
     );
     std::fs::copy(
         r["waveform"]["path"].as_str().unwrap(),
-        "/downloads/vad-waveform-proof.png",
+        std::env::temp_dir().join("vad-waveform-proof.png"),
     )
     .unwrap();
     for key in [
