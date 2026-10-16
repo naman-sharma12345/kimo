@@ -44,13 +44,23 @@ unsafe impl GlobalAlloc for Counting {
 #[derive(Clone, Debug)]
 pub struct Limits { pub max_num: f64, pub max_array: usize, pub max_string: usize, pub max_depth: usize, pub max_pixels: u64, pub max_fps: f64, pub max_clips: usize, pub max_duration_s: f64, pub mem_bytes: usize, pub timeout_s: u64, pub export_timeout_s: u64 }
 fn env<T: std::str::FromStr>(k: &str, d: T) -> T { std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d) }
-fn total_mem() -> usize {
-    let mut m = std::fs::read_to_string("/proc/meminfo").ok().and_then(|s| s.lines().find(|l| l.starts_with("MemTotal")).and_then(|l| l.split_whitespace().nth(1).and_then(|v| v.parse::<usize>().ok()))).map(|k| k * 1024).unwrap_or(8 << 30);
-    for f in ["/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"] { if let Some(v) = std::fs::read_to_string(f).ok().and_then(|s| s.trim().parse::<usize>().ok()) { if v > (64 << 20) && v < m { m = v; } } }
+fn total_mem() -> usize { let (mi, cg) = host_mem_sources(); total_mem_from(mi.as_deref(), &cg) }
+/// The host files memory detection reads: /proc/meminfo and the cgroup v2 / v1 memory limits (None when unreadable).
+fn host_mem_sources() -> (Option<String>, [Option<String>; 2]) {
+    (std::fs::read_to_string("/proc/meminfo").ok(), ["/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"].map(|f| std::fs::read_to_string(f).ok()))
+}
+/// Host/cgroup memory detection, separated from the file reads so it can be tested: physical RAM is /proc/meminfo's MemTotal (8 GiB when
+/// unreadable); a cgroup v2 `memory.max` or v1 `memory.limit_in_bytes` value lowers it when it is a number above 64 MiB and below physical RAM
+/// ("max" and v1's huge "unlimited" value are ignored).
+pub fn total_mem_from(meminfo: Option<&str>, cgroup_limits: &[Option<String>]) -> usize {
+    let mut m = meminfo.and_then(|s| s.lines().find(|l| l.starts_with("MemTotal")).and_then(|l| l.split_whitespace().nth(1).and_then(|v| v.parse::<usize>().ok()))).map(|k| k * 1024).unwrap_or(8 << 30);
+    for c in cgroup_limits { if let Some(v) = c.as_deref().and_then(|s| s.trim().parse::<usize>().ok()) { if v > (64 << 20) && v < m { m = v; } } }
     m
 }
+/// Default heap budget for a box with `total` bytes of memory (KIMO_MEM_MB unset): 55% of it.
+pub fn default_budget(total: usize) -> usize { total / 100 * 55 }
 impl Limits { pub fn from_env() -> Self { Limits { max_num: env("KIMO_MAX_NUM", 1e8), max_array: env("KIMO_MAX_ARRAY", 200_000), max_string: env("KIMO_MAX_STRING", 8 << 20), max_depth: env("KIMO_MAX_DEPTH", 40), max_pixels: env("KIMO_MAX_PIXELS", 40_000_000), max_fps: env("KIMO_MAX_FPS", 480.0), max_clips: env("KIMO_MAX_CLIPS", 200_000), max_duration_s: env("KIMO_MAX_DURATION_S", 86_400.0),
-    mem_bytes: env::<usize>("KIMO_MEM_MB", 0).checked_mul(1 << 20).filter(|v| *v > 0).unwrap_or(total_mem() / 100 * 55), timeout_s: env("KIMO_TIMEOUT_S", 600), export_timeout_s: env("KIMO_EXPORT_TIMEOUT_S", 7200) } } }
+    mem_bytes: env::<usize>("KIMO_MEM_MB", 0).checked_mul(1 << 20).filter(|v| *v > 0).unwrap_or(default_budget(total_mem())), timeout_s: env("KIMO_TIMEOUT_S", 600), export_timeout_s: env("KIMO_EXPORT_TIMEOUT_S", 7200) } } }
 pub fn limits() -> &'static Limits { static L: std::sync::OnceLock<Limits> = std::sync::OnceLock::new(); L.get_or_init(Limits::from_env) }
 /// Set the memory budget from the limits (called once at server start).
 pub fn init() { let b = match std::env::var("KIMO_MEMORY_BUDGET_BYTES") { Ok(v)=>{let b=v.parse::<usize>().expect("KIMO_MEMORY_BUDGET_BYTES must be integer");let ceiling=crate::resource_limits::memory_ceiling() as usize;if b>ceiling {panic!("KIMO_MEMORY_BUDGET_BYTES exceeds physical RAM minus 1 GiB ceiling {ceiling}")}b},Err(_)=>limits().mem_bytes }; BUDGET.store(b, Relaxed); HARD.store(b.saturating_add(b / 4).saturating_add(512 << 20).min(total_mem() / 100 * 85), Relaxed); }
@@ -63,11 +73,18 @@ fn mem_available() -> Option<usize> { std::fs::read_to_string("/proc/meminfo").o
 /// automatically when only the lighter encoder fits. With no budget installed (library use) there is no limit.
 pub fn export_plan(w: u32, h: u32, cpus: usize, want_low: bool) -> Result<(usize, bool), String> { export_plan_n(w, h, cpus, want_low, FRAME_BUFFERS_SAFE) }
 /// `export_plan` with an explicit per-frame buffer count (see `render::frame_buffers`).
-pub fn export_plan_n(w: u32, h: u32, cpus: usize, want_low: bool, bufs: usize) -> Result<(usize, bool), String> {
-    let b = BUDGET.load(Relaxed); if b == usize::MAX { return Ok((cpus.max(1), want_low)); }
+pub fn export_plan_n(w: u32, h: u32, cpus: usize, want_low: bool, bufs: usize) -> Result<(usize, bool), String> { export_plan_with(&MemProfile::host(), w, h, cpus, want_low, bufs) }
+/// The memory facts the export planner decides from: the installed heap budget (usize::MAX = none), the live heap bytes, and the kernel's
+/// MemAvailable. `host()` reads this process and machine; a test injects a fixed profile so the heuristic is checked independently of the box.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MemProfile { pub budget: usize, pub live: usize, pub available: Option<usize> }
+impl MemProfile { pub fn host() -> Self { MemProfile { budget: BUDGET.load(Relaxed), live: LIVE.load(Relaxed), available: mem_available() } } }
+/// `export_plan_n` on an explicit memory profile (the same heuristic; `export_plan_n` passes `MemProfile::host()`).
+pub fn export_plan_with(m: &MemProfile, w: u32, h: u32, cpus: usize, want_low: bool, bufs: usize) -> Result<(usize, bool), String> {
+    let b = m.budget; if b == usize::MAX { return Ok((cpus.max(1), want_low)); }
     let px = (w as usize).saturating_mul(h as usize); let per = px.saturating_mul(16 * bufs.max(1)).max(1);
     let scale = |full: usize| ((full as u128 * px as u128) / (1920u128 * 1080)) as usize;
-    let avail = b.saturating_sub(LIVE.load(Relaxed)).min(mem_available().unwrap_or(usize::MAX));
+    let avail = b.saturating_sub(m.live).min(m.available.unwrap_or(usize::MAX));
     let try_with = |low: bool| { let reserve = scale(if low { ENCODER_RSS_1080P_LOW } else { ENCODER_RSS_1080P }); if avail >= reserve + per { Some(((avail - reserve) / per).clamp(1, cpus.max(1))) } else { None } };
     if let Some(n) = try_with(want_low) { return Ok((n, want_low)); }
     if !want_low { if let Some(n) = try_with(true) { return Ok((n, true)); } }
@@ -133,3 +150,32 @@ pub fn run_tool_guarded(ss: &std::sync::Arc<std::sync::Mutex<crate::commands::Se
 
 pub mod limits;
 pub use limits::effective_limits;
+
+#[cfg(test)]
+mod mem_detection_tests {
+    use super::{default_budget, host_mem_sources, total_mem, total_mem_from};
+    const MI: &str = "MemTotal:        8131228 kB\nMemFree:  100 kB\nMemAvailable:    5000000 kB\n";
+    #[test]
+    fn meminfo_total_is_physical_ram_and_a_cgroup_limit_lowers_it() {
+        assert_eq!(total_mem_from(Some(MI), &[None, None]), 8131228 * 1024);
+        assert_eq!(total_mem_from(Some(MI), &[Some("2147483648\n".into()), None]), 2 << 30, "cgroup v2 memory.max");
+        assert_eq!(total_mem_from(Some(MI), &[None, Some("1073741824\n".into())]), 1 << 30, "cgroup v1 memory.limit_in_bytes");
+        assert_eq!(total_mem_from(Some(MI), &[Some("2147483648".into()), Some("1073741824".into())]), 1 << 30, "the smaller limit wins");
+    }
+    #[test]
+    fn unlimited_tiny_or_unreadable_cgroup_values_are_ignored() {
+        let phys = 8131228 * 1024;
+        assert_eq!(total_mem_from(Some(MI), &[Some("max\n".into()), None]), phys);
+        assert_eq!(total_mem_from(Some(MI), &[None, Some("9223372036854771712".into())]), phys, "v1 unlimited");
+        assert_eq!(total_mem_from(Some(MI), &[Some(format!("{}", 64 << 20)), None]), phys, "64 MiB or less is not a usable limit");
+        assert_eq!(total_mem_from(None, &[None, None]), 8 << 30, "no /proc/meminfo: 8 GiB");
+        assert_eq!(total_mem_from(Some("garbage"), &[Some("2147483648".into())]), 2 << 30);
+    }
+    #[test]
+    fn host_detection_reads_this_machine_and_the_default_budget_is_55_percent() {
+        let (mi, cg) = host_mem_sources();
+        let t = total_mem(); assert_eq!(t, total_mem_from(mi.as_deref(), &cg)); assert!(t > 64 << 20);
+        if let Some(s) = mi.as_deref() { assert!(t <= total_mem_from(Some(s), &[]), "a cgroup limit only ever lowers physical RAM"); }
+        assert_eq!(default_budget(1982 << 20) >> 20, 1090);
+    }
+}
