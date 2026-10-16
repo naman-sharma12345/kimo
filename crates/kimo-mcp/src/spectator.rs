@@ -81,7 +81,13 @@ pub fn init() {
 fn init_with(dest: Option<Dest>) {
     let sink = dest.and_then(|d| {
         let (tx, rx) = sync_channel::<Msg>(QUEUE);
-        std::thread::Builder::new().name("kimo-spectator".into()).spawn(move || writer(d, rx)).ok()?;
+        // The telemetry writer thread. Purpose: drain the bounded event queue to the sink so the request loop never blocks on I/O.
+        // Lifecycle: started at most once per process (init runs once, SINK is a OnceLock) and only when KIMO_SPECTATOR names a sink;
+        // it reconnects with backoff and lives until the process exits (SINK, which owns the sender, is never dropped). Join/cancel
+        // owner: detached by design, nothing joins it; `flush` gives a bounded best-effort drain before exit. Headless (KIMO_SPECTATOR
+        // unset or off): never started. Started through the engine's guarded spawn path; `init` runs at startup with no cancellation
+        // token installed, so the writer inherits none and no tool call's time limit can cancel it.
+        kimo_core::guard::spawn_builder_with_token(std::thread::Builder::new().name("kimo-spectator".into()), move || writer(d, rx)).ok()?;
         Some(Sink { tx })
     });
     let on = sink.is_some();

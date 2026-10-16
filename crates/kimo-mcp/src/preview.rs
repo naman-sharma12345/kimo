@@ -138,7 +138,14 @@ pub fn reconnected() {
     CV.notify_one();
 }
 
-fn ensure_thread() { THREAD.get_or_init(|| std::thread::Builder::new().name("kimo-preview".into()).spawn(run).is_ok()); }
+/// The preview renderer thread. Purpose: render live preview frames off the dispatch thread (module doc above).
+/// Lifecycle: started at most once per process (THREAD OnceLock) on the first wanted frame, then parked on CV while nothing is pending;
+/// it lives until the process exits. Join/cancel owner: detached by design, nothing joins it; process exit ends it. Each frame's work is
+/// cancelled through the preview's own CANCEL token (installed per frame in `run`), never by stopping the thread. Headless: never started
+/// without a spectator sink (KIMO_SPECTATOR unset), with no live listener, or with KIMO_SPECTATOR_FRAMES=0 (see `call_finished`).
+/// Started through the engine's guarded spawn path; its callers (the dispatch thread after a call, the spectator writer on reconnect)
+/// hold no cancellation token, so the thread inherits none and only ever runs under the preview's own token.
+fn ensure_thread() { THREAD.get_or_init(|| kimo_core::guard::spawn_builder_with_token(std::thread::Builder::new().name("kimo-preview".into()), run).is_ok()); }
 
 fn run() {
     let Some(ss) = SS.get() else { return };
