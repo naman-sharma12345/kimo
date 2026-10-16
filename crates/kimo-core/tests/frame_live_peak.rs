@@ -56,10 +56,12 @@ fn peak(s: &Session) -> usize {
 
 #[test] fn simple_1080p_scene_gets_two_workers_on_the_2gb_box() {
     let s = simple(); assert_eq!(kimo_core::render::frame_buffers(&s.project), 4);
-    std::env::set_var("KIMO_MEM_MB", "1090"); kimo_core::guard::init(); // 55% of a 1982 MB box
-    let avail = std::fs::read_to_string("/proc/meminfo").unwrap().lines().find(|l| l.starts_with("MemAvailable")).map(|l| l.split_whitespace().nth(1).unwrap().parse::<usize>().unwrap() / 1024).unwrap();
-    if avail < 1200 { eprintln!("SKIPPED worker assertion: only {avail} MB available"); return; }
-    let new = kimo_core::guard::export_plan_n(1920, 1080, 2, false, 4).unwrap().0; let old = kimo_core::guard::export_plan_n(1920, 1080, 2, false, 12).unwrap().0;
+    // A deterministic 2 GB box injected into the planner (the host's own RAM and budget play no part; host/cgroup detection is tested in
+    // guard.rs): 1982 MB physical, the default budget of 55% = 1090 MB, nothing live yet, and 1200 MB MemAvailable (the floor this test
+    // used to require of the host before asserting).
+    let box2g = kimo_core::guard::MemProfile { budget: kimo_core::guard::default_budget(1982 << 20), live: 0, available: Some(1200 << 20) };
+    assert_eq!(box2g.budget >> 20, 1090);
+    let new = kimo_core::guard::export_plan_with(&box2g, 1920, 1080, 2, false, 4).unwrap().0; let old = kimo_core::guard::export_plan_with(&box2g, 1920, 1080, 2, false, 12).unwrap().0;
     eprintln!("WORKERS simple 1080p, 2 cpus, 1090 MB budget: {old} (12 buffers) -> {new} (4 buffers)");
     assert_eq!(old, 1); assert_eq!(new, 2);
 }
