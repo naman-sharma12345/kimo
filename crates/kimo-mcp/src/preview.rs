@@ -4,8 +4,12 @@
 //! Only runs when telemetry is on AND the sink is connected (spectator.rs). The dispatch thread never renders and
 //! never waits: a mutating call only bumps a generation counter and notes the playhead under a small lock
 //! (`request`). One background thread (started on the first request) does the work, latest wins:
-//!   * it waits until no call is running and the calls have been quiet for `QUIET`, so a burst renders once after
-//!     the burst; a burst longer than `MAX_WAIT` still gets a frame between two calls every `MAX_WAIT`;
+//!   * it waits until no call is running and the calls have been quiet for `QUIET`, so a burst renders once after the
+//!     burst; a burst longer than `MAX_WAIT` still gets a frame between two calls every `MAX_WAIT`;
+//!   * the quiet time adapts to the call cadence (`quiet_for`): when mutating calls arrive less than `STREAM_GAP` apart
+//!     they are a stream, and a frame waits for a pause of twice that interval (at most `MAX_WAIT`), so a steady stream
+//!     coalesces into one frame per `MAX_WAIT` however fast a single frame renders; an isolated call still renders
+//!     after `QUIET`;
 //!   * it takes a copy of the project with `try_lock` (a hung tool holding the session only skips the frame),
 //!     renders at the playhead with its own decode cache, scales to at most `KIMO_SPECTATOR_FRAME_PX` wide
 //!     (default 640), encodes a PNG in process (png.rs) and emits `{"type":"frame_rendered","auto":true,"png_b64",...}`;
@@ -27,16 +31,31 @@ use std::time::{Duration, Instant};
 pub const QUIET: Duration = Duration::from_millis(40);
 /// Longest a pending frame waits during a continuous burst (it still only starts between two calls).
 pub const MAX_WAIT: Duration = Duration::from_millis(400);
+/// Mutating calls finishing closer together than this are a stream (see `quiet_for`).
+pub const STREAM_GAP: Duration = Duration::from_millis(200);
+
+/// Quiet time a pending frame needs after a call that finished `interval` after the previous mutating call (None: no
+/// previous call). Isolated calls: `QUIET`. A stream (interval under `STREAM_GAP`): twice the interval, so the next call
+/// of the same rhythm arrives before the frame starts and the stream coalesces; never more than `MAX_WAIT`, which stays
+/// the bound on how long a pending frame waits. Depends only on the call cadence, never on how fast a frame renders.
+pub fn quiet_for(interval: Option<Duration>) -> Duration {
+    match interval {
+        Some(i) if i < STREAM_GAP => (i * 2).clamp(QUIET, MAX_WAIT),
+        _ => QUIET,
+    }
+}
 
 /// Where the playhead should go after a call.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Hint { None, At(f64), Clip(f64, f64) }
 
-struct Pending { gen: u64, call_id: String, rev: u64, last: Instant }
+/// `quiet`: how long the calls must pause after `last` before this frame starts (`quiet_for`).
+struct Pending { gen: u64, call_id: String, rev: u64, last: Instant, quiet: Duration }
 /// `since`: when the oldest change not yet on screen was requested (drives `MAX_WAIT` and the overdue rule).
-struct State { gen: u64, pending: Option<Pending>, since: Option<Instant>, playhead: f64, duration: f64, last_call: String, last_rev: u64 }
+/// `prev_end`: when the previous wanted mutating call finished (drives the cadence in `quiet_for`).
+struct State { gen: u64, pending: Option<Pending>, since: Option<Instant>, playhead: f64, duration: f64, last_call: String, last_rev: u64, prev_end: Option<Instant> }
 
-static ST: Mutex<State> = Mutex::new(State { gen: 0, pending: None, since: None, playhead: 0.0, duration: 0.0, last_call: String::new(), last_rev: 0 });
+static ST: Mutex<State> = Mutex::new(State { gen: 0, pending: None, since: None, playhead: 0.0, duration: 0.0, last_call: String::new(), last_rev: 0, prev_end: None });
 static CV: Condvar = Condvar::new();
 static BUSY: AtomicBool = AtomicBool::new(false);
 static SS: OnceLock<Arc<Mutex<Session>>> = OnceLock::new();
@@ -87,7 +106,9 @@ pub fn call_finished(ss: &Arc<Mutex<Session>>, call_id: &str, rev: u64, mutated:
     if want {
         let now = Instant::now();
         g.since.get_or_insert(now);
-        g.pending = Some(Pending { gen: g.gen, call_id: call_id.to_string(), rev, last: now });
+        let quiet = quiet_for(g.prev_end.map(|p| now.duration_since(p)));
+        g.prev_end = Some(now);
+        g.pending = Some(Pending { gen: g.gen, call_id: call_id.to_string(), rev, last: now, quiet });
     }
     drop(g);
     if mutated { SS.get_or_init(|| ss.clone()); }
@@ -111,7 +132,7 @@ pub fn reconnected() {
     if g.gen == 0 || g.pending.is_some() { return; }
     let now = Instant::now();
     g.since.get_or_insert(now);
-    g.pending = Some(Pending { gen: g.gen, call_id: g.last_call.clone(), rev: g.last_rev, last: now });
+    g.pending = Some(Pending { gen: g.gen, call_id: g.last_call.clone(), rev: g.last_rev, last: now, quiet: QUIET });
     drop(g);
     ensure_thread();
     CV.notify_one();
@@ -141,13 +162,13 @@ fn run() {
                     None => None,
                     Some(q) => {
                         let waited = g.since.map_or(Duration::ZERO, |s| now.duration_since(s));
-                        let ready = now.duration_since(q.last) >= QUIET || waited >= MAX_WAIT;
+                        let ready = now.duration_since(q.last) >= q.quiet || waited >= MAX_WAIT;
                         // clear the token BEFORE reading BUSY: a call starting after this read cancels the render
                         tok.store(false, Ordering::SeqCst);
                         let busy = BUSY.load(Ordering::SeqCst);
                         if ready && !busy { break; }
                         // a call is running: sleep until it ends (every call end notifies); else until ready
-                        if busy { None } else { Some(QUIET.saturating_sub(now.duration_since(q.last)).min(MAX_WAIT.saturating_sub(waited)).max(Duration::from_millis(1))) }
+                        if busy { None } else { Some(q.quiet.saturating_sub(now.duration_since(q.last)).min(MAX_WAIT.saturating_sub(waited)).max(Duration::from_millis(1))) }
                     }
                 };
                 g = match wait {
@@ -271,6 +292,18 @@ mod tests {
         assert_eq!(place(1.0, Hint::Clip(0.0, 4.0), 10.0), 1.0, "already inside the touched clip: stays");
         assert_eq!(place(5.0, Hint::Clip(0.0, 4.0), 10.0), 2.0, "outside: middle of the clip");
         assert_eq!(place(7.0, Hint::None, 5.0), 5.0 - 1e-3, "timeline got shorter");
+    }
+    #[test]
+    fn quiet_time_follows_the_call_cadence_not_the_render_speed() {
+        let ms = Duration::from_millis;
+        assert_eq!(quiet_for(None), QUIET, "first call: QUIET");
+        assert_eq!(quiet_for(Some(ms(5000))), QUIET, "isolated call: QUIET");
+        assert_eq!(quiet_for(Some(STREAM_GAP)), QUIET, "at STREAM_GAP the calls are no longer a stream");
+        assert_eq!(quiet_for(Some(ms(2))), QUIET, "pipelined burst: never shorter than QUIET");
+        assert_eq!(quiet_for(Some(ms(55))), ms(110), "a 50 ms stream waits for a pause of twice its interval");
+        assert!(quiet_for(Some(ms(55))) > ms(55), "the next call of the same rhythm arrives before the frame starts");
+        assert_eq!(quiet_for(Some(ms(199))), ms(398));
+        for i in 0..400 { assert!(quiet_for(Some(ms(i))) <= MAX_WAIT && quiet_for(Some(ms(i))) >= QUIET); }
     }
     #[test]
     fn downscale_keeps_aspect_and_averages() {
