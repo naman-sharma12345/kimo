@@ -108,13 +108,25 @@ fn quarantine(dir: &std::path::Path, old: &Option<Value>) -> Vec<Value> {
 
 
 fn ffprobe(args: &[&str], p: &std::path::Path) -> Result<(String, String), String> { let o = std::process::Command::new("ffprobe").args(["-v", "error"]).args(args).arg(p).output().map_err(|e| format!("ffprobe: {e}"))?; Ok((String::from_utf8_lossy(&o.stdout).into_owned(), String::from_utf8_lossy(&o.stderr).trim().to_string())) }
+/// Parse the first row of `ffprobe -show_entries frame=key_frame,pict_type -of csv=p=0` by column: (key_frame, pict_type), in the order requested.
+/// ffprobe 5.x appends one empty trailing field for the frame's (empty) side-data section, so `1,I,` and `1,I` are the two documented forms;
+/// that single empty trailing field is the only extra accepted. Anything else (a missing column, a non-empty or second extra field, a key_frame that is
+/// not 0/1, an empty pict_type) is refused, so the caller still verifies both the key-frame flag and the picture type.
+pub fn parse_first_frame(row: &str) -> Result<(bool, String), String> {
+    let cols: Vec<&str> = row.split(',').collect();
+    let (kf, pt) = match cols.as_slice() { [kf, pt] | [kf, pt, ""] => (*kf, *pt), _ => return Err(format!("unexpected ffprobe frame row '{row}': expected 'key_frame,pict_type' with at most one empty trailing field")) };
+    let key = match kf { "1" => true, "0" => false, _ => return Err(format!("unexpected ffprobe key_frame '{kf}' in frame row '{row}'")) };
+    if pt.is_empty() { return Err(format!("ffprobe frame row '{row}' has no pict_type")); }
+    Ok((key, pt.to_string()))
+}
 /// Join contract: every chunk must start on a key frame (I) and share codec parameters; a chunk that does not cannot be stream-copied at a seam.
 pub fn chunk_contract(parts: &[String]) -> Result<(), String> {
     let mut first: Option<String> = None;
     for (i, f) in parts.iter().enumerate() {
         let pth = std::path::Path::new(f);
         let (fr, _) = ffprobe(&["-select_streams", "v:0", "-read_intervals", "%+#1", "-show_entries", "frame=key_frame,pict_type", "-of", "csv=p=0"], pth)?;
-        let l = fr.lines().next().unwrap_or("").trim().to_string(); if l != "1,I" { return Err(format!("join_contract: chunk {i} ({f}) does not start with a key frame (first frame is '{l}'); it cannot be stream-copied into the join")); }
+        let l = fr.lines().next().unwrap_or("").trim().to_string();
+        match parse_first_frame(&l) { Ok((true, pt)) if pt == "I" => {}, Ok(_) => return Err(format!("join_contract: chunk {i} ({f}) does not start with a key frame (first frame is '{l}'); it cannot be stream-copied into the join")), Err(e) => return Err(format!("join_contract: chunk {i} ({f}): {e}")) }
         let (par, _) = ffprobe(&["-select_streams", "v:0", "-show_entries", "stream=codec_name,profile,width,height,pix_fmt,r_frame_rate", "-of", "csv=p=0"], pth)?; let par = par.trim().to_string();
         match &first { None => first = Some(par), Some(f0) if *f0 != par => return Err(format!("join_contract: chunk {i} has codec parameters '{par}' but chunk 0 has '{f0}'")), _ => {} }
     }
@@ -250,3 +262,19 @@ pub fn commands() -> Vec<Command> { vec![
         schema: obj(vec![("path", s("output .mp4 path")), ("dir", s("chunk directory, default <path>.chunks")), ("crf", n("quality 0..51, default 18")), ("chunk_s", n("default: the original job's"))], &["path"]),
         run: |ss, a| start(ss, a, true) },
 ] }
+
+#[cfg(test)]
+mod first_frame_row_tests {
+    use super::parse_first_frame;
+    #[test]
+    fn both_documented_ffprobe_forms_parse_to_the_same_columns() {
+        assert_eq!(parse_first_frame("1,I").unwrap(), (true, "I".to_string()));
+        assert_eq!(parse_first_frame("1,I,").unwrap(), (true, "I".to_string()));
+        assert_eq!(parse_first_frame("0,P").unwrap(), (false, "P".to_string()));
+        assert_eq!(parse_first_frame("0,B,").unwrap(), (false, "B".to_string()));
+    }
+    #[test]
+    fn anything_beyond_one_empty_trailing_field_is_refused() {
+        for bad in ["", "1", "1,", ",I", "1,I,x", "1,I,,", "1,I,0", "I,1", "2,I", "true,I", " 1,I"] { assert!(parse_first_frame(bad).is_err(), "'{bad}' must be refused"); }
+    }
+}
