@@ -254,12 +254,26 @@ pub fn cube_bias(map:&PointCubeShadowMap,z:f64,n_dot_l:f64)->(f64,f64){
  let slope=slope.min(4.);
  (NORMAL_OFFSET_TEXELS*w,(BIAS_CONST_TEXELS+BIAS_SLOPE_TEXELS*slope)*w)}
 
+/// Reconstruct an off-face tap ray, select its neighboring face, and convert stored
+/// forward depth back to the ORIGINAL face's forward-depth units before comparison.
+/// Leaving the depth in neighbor units gives a false compare even with correct UVs.
 fn cube_sample(map:&PointCubeShadowMap,face:usize,u:f64,v:f64)->f64{
- if !(0.0..=1.0).contains(&u)||!(0.0..=1.0).contains(&v){return f64::INFINITY;} // off-map taps count lit
- // pinned texel addressing: identical to the directional maps (u*size truncated)
- let x=(u*map.size as f64).min(map.size as f64-1e-9) as usize;
- let y=(v*map.size as f64).min(map.size as f64-1e-9) as usize;
- map.depth[(face*map.size+y)*map.size+x]}
+ if !u.is_finite()||!v.is_finite(){return f64::INFINITY;}
+ let(mut f,mut uu,mut vv,mut scale)=(face,u,v,1.);
+ if !(0.0..=1.0).contains(&u)||!(0.0..=1.0).contains(&v){
+  let ray:[f64;3]=std::array::from_fn(|j|map.views[face][0][j]*(2.*u-1.)+map.views[face][1][j]*(2.*v-1.)+map.views[face][2][j]);
+  let axis=if ray[0].abs()>=ray[1].abs()&&ray[0].abs()>=ray[2].abs(){0}else if ray[1].abs()>=ray[2].abs(){1}else{2};
+  f=axis*2+usize::from(ray[axis]<0.);
+  let dot=|row:usize|(0..3).map(|j|map.views[f][row][j]*ray[j]).sum::<f64>();
+  scale=dot(2);
+  if !scale.is_finite()||scale<=0.{return f64::INFINITY;}
+  uu=(dot(0)/scale+1.)*0.5;vv=(dot(1)/scale+1.)*0.5;
+ }
+ // Preserve the pinned in-face texel addressing and radius-zero path.
+ let x=(uu.clamp(0.,1.)*map.size as f64).min(map.size as f64-1e-9) as usize;
+ let y=(vv.clamp(0.,1.)*map.size as f64).min(map.size as f64-1e-9) as usize;
+ map.depth[(f*map.size+y)*map.size+x]/scale
+}
 
 /// Local face-space depth gradient at a texel, world units per texel (max of the two
 /// axis magnitudes, central differences over finite neighbors; 0 when unknown). This is
@@ -443,6 +457,34 @@ pub fn raster_cube_depth_into(positions:&[[f64;3]],indices:&[[u32;3]],map:&mut P
   let c=[f[0]*dist,f[1]*dist,f[2]*dist];
   let corner=|s1:f64,s2:f64|{[c[0]+s1*r[0]+s2*u[0],c[1]+s1*r[1]+s2*u[1],c[2]+s1*r[2]+s2*u[2]]};
   (vec![corner(-half,-half),corner(half,-half),corner(half,half),corner(-half,half)],vec![[0u32,1,2],[0,2,3]])}
+ #[test]fn off_face_taps_use_neighbors_and_original_depth_units(){
+  let mut map=cube_map([1.,-2.,0.5],32);
+  // Analytic +X face: right is +Z, up is +Y. u=1.25 points along
+  // (1,0,1.5), so +Z owns the ray, neighbor u=1/6 and z_neighbor=1.5*z_X.
+  let i=(4*32+16)*32+5;map.depth[i]=3.;
+  assert_eq!(cube_sample(&map,0,1.25,0.5),2.);
+  assert_eq!(cube_sample(&map,0,0.5,0.5),f64::INFINITY);
+  for face in 0..6{
+   for(u,v)in[(-0.125,0.5),(1.125,0.5),(0.5,-0.125),(0.5,1.125),(-0.125,-0.125),(1.125,1.125)]{
+    // Constant forward depth on every neighboring face: the major component
+    // is 1.25 in source-face units for both edge and corner taps.
+    map.depth.fill(2.5);
+    assert!((cube_sample(&map,face,u,v)-2.).abs()<1e-12,"face {face}, uv {u} {v}");
+   }
+  }
+ }
+ #[test]fn enclosed_primitive_stays_shadowed_across_cube_ties(){
+  let g=crate::threed::primitives::generate(&crate::threed::primitives::Primitive::Cube{size:[2.,2.,2.],subdivisions:1}).unwrap();
+  let p:Vec<[f64;3]>=g.vertices.iter().map(|v|v.position.map(|x|x as f64)).collect();
+  let mut map=cube_map([0.;3],128);raster_cube_depth(&p,&g.indices,&mut map).unwrap();
+  // Sweep both sides of each pairwise major-axis tie plus three-face corners.
+  for axis in 0..3{for other in axis+1..3{for sign in [-1.,1.]{for e in [-1e-6,0.,1e-6]{
+   let mut w=[0.;3];w[axis]=3.;w[other]=sign*(3.+e);
+   assert_eq!(cube_visibility(&map,w,[0.,1.,0.],1.,2),0.);
+   for px in [0,7,31]{assert_eq!(cube_visibility_disk(&map,w,[0.,1.,0.],1.,4.,px,11),0.);}
+  }}}}
+  for w in [[3.,3.,3.],[-3.,3.,3.],[3.,-3.,-3.]]{assert_eq!(cube_visibility_disk(&map,w,[0.,1.,0.],1.,4.,7,11),0.);}
+ }
  #[test]fn face_selection_is_major_axis_and_centers(){
   let map=cube_map([0.,0.,0.],16);
   for i in 0..6{let f=CUBE_FACE_FORWARD[i];
