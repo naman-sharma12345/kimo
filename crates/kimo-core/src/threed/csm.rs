@@ -17,6 +17,15 @@ use super::vertex_stream::unit;
 use crate::camera_projection::Camera;
 
 pub const MAX_CASCADES:usize=8;
+/// Bound depth payload across the whole cascade set, not only each map axis.
+pub const MAX_CASCADE_DEPTH_BYTES:usize=128*1024*1024;
+fn cascade_depth_len(count:usize,map_size:usize)->Result<usize,String>{
+ let len=map_size.checked_mul(map_size).ok_or("cascade depth byte count overflow")?;
+ let bytes=len.checked_mul(count).and_then(|n|n.checked_mul(std::mem::size_of::<f64>())).ok_or("cascade depth byte count overflow")?;
+ if bytes>MAX_CASCADE_DEPTH_BYTES{return Err("cascade depth payload exceeds 128 MiB limit".into());}
+ Ok(len)
+}
+
 
 fn sub(a:[f64;3],b:[f64;3])->[f64;3]{[a[0]-b[0],a[1]-b[1],a[2]-b[2]]}
 fn cross(a:[f64;3],b:[f64;3])->[f64;3]{[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]]}
@@ -173,7 +182,12 @@ pub fn build_cascade_maps(cascades:Vec<Cascade>,map_size:usize,blend_band:f64)->
  validate_cascades(&cascades)?;
  if map_size==0||map_size>4096{return Err("cascade map 1..4096 per axis".into());}
  if !blend_band.is_finite()||!(0.0..0.5).contains(&blend_band){return Err("blend band in [0,0.5) required".into());}
- let maps=cascades.iter().map(|c|super::shadow::DirectionalShadowMap{view:c.view,bounds:c.bounds,width:map_size,height:map_size,depth:vec![f64::INFINITY;map_size*map_size]}).collect();
+ let len=cascade_depth_len(cascades.len(),map_size)?;
+ let mut maps=Vec::with_capacity(cascades.len());
+ for c in &cascades{
+  let mut depth=Vec::new();depth.try_reserve_exact(len).map_err(|_|"cascade depth allocation failed".to_string())?;depth.resize(len,f64::INFINITY);
+  maps.push(super::shadow::DirectionalShadowMap{view:c.view,bounds:c.bounds,width:map_size,height:map_size,depth});
+ }
  Ok(CascadedShadowMaps{cascades,maps,blend_band})
 }
 
@@ -457,6 +471,11 @@ pub fn csm_visibility(csm:&CascadedShadowMaps,cam:&Camera,world:[f64;3],normal:[
    let v=csm_visibility(&set,&cam,w,n,nl,2.0,0,0).unwrap();
    eprintln!("x={x:5.2} depth={d:6.2} cascade={i} t={tt:5.2} v={v:6.3}");
   }
+ }
+ #[test]fn aggregate_cascade_depth_budget_precedes_allocation(){
+  let fits=cascaded_light_space([0.,-1.,0.],&cam(),1.,0.1,10.,8,0.5,aabb(),4096).unwrap();
+  assert_eq!(build_cascade_maps(fits,4096,0.25).unwrap_err(),"cascade depth payload exceeds 128 MiB limit");
+  assert_eq!(cascade_depth_len(8,512).unwrap(),512*512);
  }
  #[test]fn malformed_public_cascade_sets_return_errors_before_indexing(){
   let fits=cascaded_light_space([0.,-1.,0.],&cam(),1.,0.1,10.,2,0.5,aabb(),16).unwrap();

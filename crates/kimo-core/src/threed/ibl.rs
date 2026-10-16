@@ -4,6 +4,26 @@
 //! glTF-reference height-correlated V_GGX (threed/pbr.rs). Formulas re-derived against the
 //! same integral; no upstream code copied. Zero new dependencies.
 use serde::{Serialize,Deserialize};
+/// Explicit maximum payload for one baked IBL set (does not include the source map).
+pub const MAX_IBL_BAKE_BYTES:usize=128*1024*1024;
+fn map_len(width:usize,height:usize,error:&str)->Result<usize,String>{
+ if width==0||height==0||width>4096||height>4096{return Err(error.into());}
+ width.checked_mul(height).ok_or_else(||error.into())
+}
+fn empty_texels<T>(len:usize)->Result<Vec<T>,String>{
+ let mut out=Vec::new();out.try_reserve_exact(len).map_err(|_|"IBL allocation failed".to_string())?;Ok(out)
+}
+fn bake_bytes(irr:[usize;2],pf:[usize;2],levels:usize,lut:usize,samples:usize)->Result<usize,String>{
+ if levels==0||levels>16{return Err("prefilter levels 1..=16 required".into());}
+ let ni=map_len(irr[0],irr[1],"irradiance map size 1..=4096 per axis required")?;
+ let np=map_len(pf[0],pf[1],"prefiltered map 1..=4096 per axis required")?;
+ if lut==0||lut>1024{return Err("lut size 1..=1024 required".into());}
+ if samples==0||samples>65536{return Err("bake samples 1..=65536 required".into());}
+ let bytes=np.checked_mul(levels).and_then(|v|v.checked_add(ni)).and_then(|v|v.checked_mul(std::mem::size_of::<[f32;3]>())).and_then(|v|lut.checked_mul(lut).and_then(|n|n.checked_mul(std::mem::size_of::<[f32;2]>())).and_then(|n|v.checked_add(n))).ok_or("IBL bake byte count overflow")?;
+ if bytes>MAX_IBL_BAKE_BYTES{return Err("IBL bake payload exceeds 128 MiB limit".into());}
+ Ok(bytes)
+}
+
 /// Deterministic low-discrepancy sequence (van der Corput radical inverse in base 2).
 fn hammersley(i:usize,n:usize)->[f64;2]{let x=i as f64/n as f64;let mut b=i;let mut inv=0.0;let mut f=0.5;while b>0{if b&1==1{inv+=f;}b>>=1;f*=0.5;}[x,inv]}
 /// GGX half-vector inverse-CDF sample in the tangent frame (N = +Z).
@@ -18,13 +38,13 @@ pub fn integrate_brdf(ndotv:f64,alpha:f64,samples:usize)->Result<[f64;2],String>
  Ok([a/samples as f64,b/samples as f64])}
 /// Preintegrated environment BRDF over a size x size (ndotv x alpha) grid; texel centers.
 #[derive(Clone,Debug,Serialize,Deserialize)]pub struct BrdfLut{pub size:usize,pub texels:Vec<[f32;2]>}
-pub fn brdf_lut(size:usize,samples:usize)->Result<BrdfLut,String>{if size==0||size>1024{return Err("lut size 1..=1024 required".into());}let mut texels=Vec::with_capacity(size*size);for r in 0..size{crate::guard::check();let alpha=(r as f64+0.5)/size as f64;for c in 0..size{let ndotv=(c as f64+0.5)/size as f64;let[a,b]=integrate_brdf(ndotv,alpha,samples)?;texels.push([a as f32,b as f32]);}}Ok(BrdfLut{size,texels})}
+pub fn brdf_lut(size:usize,samples:usize)->Result<BrdfLut,String>{if size==0||size>1024{return Err("lut size 1..=1024 required".into());}let mut texels=empty_texels(size*size)?;for r in 0..size{crate::guard::check();let alpha=(r as f64+0.5)/size as f64;for c in 0..size{let ndotv=(c as f64+0.5)/size as f64;let[a,b]=integrate_brdf(ndotv,alpha,samples)?;texels.push([a as f32,b as f32]);}}Ok(BrdfLut{size,texels})}
 
 /// Equirectangular environment map of linear radiance. Convention: u = atan2(z,x)/TAU + 0.5
 /// (wrapped), v = acos(y)/PI, +Y up. Bilinear sampling with wrapped u, clamped v.
 #[derive(Clone,Debug,Serialize,Deserialize)]pub struct EnvMap{pub width:usize,pub height:usize,pub texels:Vec<[f32;3]>}
 impl EnvMap{
- pub fn from_fn(width:usize,height:usize,f:impl Fn([f64;3])->[f64;3])->Result<Self,String>{if width==0||height==0||width>4096||height>4096{return Err("env map 1..=4096 per axis required".into());}let mut texels=Vec::with_capacity(width*height);for j in 0..height{for i in 0..width{crate::guard::check();let u=(i as f64+0.5)/width as f64;let v=(j as f64+0.5)/height as f64;let phi=(u-0.5)*std::f64::consts::TAU;let y=(v*std::f64::consts::PI).cos();let r=(v*std::f64::consts::PI).sin();let c=f([r*phi.cos(),y,r*phi.sin()]);if c.iter().any(|v|!v.is_finite()){return Err("env generator must return finite radiance".into());}texels.push([c[0]as f32,c[1]as f32,c[2]as f32]);}}Ok(Self{width,height,texels})}
+ pub fn from_fn(width:usize,height:usize,f:impl Fn([f64;3])->[f64;3])->Result<Self,String>{if width==0||height==0||width>4096||height>4096{return Err("env map 1..=4096 per axis required".into());}let mut texels=empty_texels(map_len(width,height,"env map 1..=4096 per axis required")?)?;for j in 0..height{for i in 0..width{crate::guard::check();let u=(i as f64+0.5)/width as f64;let v=(j as f64+0.5)/height as f64;let phi=(u-0.5)*std::f64::consts::TAU;let y=(v*std::f64::consts::PI).cos();let r=(v*std::f64::consts::PI).sin();let c=f([r*phi.cos(),y,r*phi.sin()]);if c.iter().any(|v|!v.is_finite()){return Err("env generator must return finite radiance".into());}texels.push([c[0]as f32,c[1]as f32,c[2]as f32]);}}Ok(Self{width,height,texels})}
  pub fn sample(&self,dir:[f64;3])->Result<[f64;3],String>{if self.width==0||self.height==0||self.texels.len()!=self.width*self.height{return Err("env map buffers consistent required".into());}if dir.iter().any(|v|!v.is_finite())||dir.iter().all(|v|*v==0.0){return Err("finite nonzero direction required".into());}let l=(dir[0]*dir[0]+dir[1]*dir[1]+dir[2]*dir[2]).sqrt();let d=[dir[0]/l,dir[1]/l,dir[2]/l];let u=d[2].atan2(d[0])/std::f64::consts::TAU+0.5;let v=d[1].clamp(-1.,1.).acos()/std::f64::consts::PI;
   let x=u*self.width as f64-0.5;let y=(v*self.height as f64-0.5).clamp(0.,(self.height-1)as f64);let x0=x.floor();let fx=x-x0;let y0=y.floor()as usize;let fy=y-y0 as f64;let i0=(x0 as i64).rem_euclid(self.width as i64)as usize;let i1=(i0+1)%self.width;let j1=(y0+1).min(self.height-1);let mut out=[0.;3];
   for(w_,j,i)in[((1.-fx)*(1.-fy),y0,i0),(fx*(1.-fy),y0,i1),((1.-fx)*fy,j1,i0),(fx*fy,j1,i1)]{for k in 0..3{out[k]+=w_*self.texels[j*self.width+i][k]as f64;}}Ok(out)}
@@ -42,8 +62,8 @@ pub fn prefiltered_env(env:&EnvMap,dir:[f64;3],alpha:f64,samples:usize)->Result<
  for i in 0..samples{let h=importance_sample_ggx(hammersley(i,samples),alpha);let lt=[2.0*h[2]*h[0],2.0*h[2]*h[1],2.0*h[2]*h[2]-1.0];let lw=[t[0]*lt[0]+b[0]*lt[1]+n[0]*lt[2],t[1]*lt[0]+b[1]*lt[1]+n[1]*lt[2],t[2]*lt[0]+b[2]*lt[1]+n[2]*lt[2]];let nl=lw[0]*n[0]+lw[1]*n[1]+lw[2]*n[2];if nl>0.{let c=env.sample(lw)?;for k in 0..3{acc[k]+=c[k]*nl;}tw+=nl;}}
  if tw<=0.0{return Err("prefilter samples all below horizon".into());}Ok(acc.map(|v|v/tw))}
 /// Full-map bakes for the shading path.
-pub fn irradiance_map(env:&EnvMap,width:usize,height:usize,samples:usize)->Result<EnvMap,String>{let mut out=Vec::with_capacity(width*height);if width==0||height==0||width>4096||height>4096{return Err("irradiance map size 1..=4096 per axis required".into());}for j in 0..height{for i in 0..width{crate::guard::check();let u=(i as f64+0.5)/width as f64;let v=(j as f64+0.5)/height as f64;let phi=(u-0.5)*std::f64::consts::TAU;let y=(v*std::f64::consts::PI).cos();let r=(v*std::f64::consts::PI).sin();let c=irradiance(env,[r*phi.cos(),y,r*phi.sin()],samples)?;out.push([c[0]as f32,c[1]as f32,c[2]as f32]);}}Ok(EnvMap{width,height,texels:out})}
-pub fn prefiltered_map(env:&EnvMap,width:usize,height:usize,alpha:f64,samples:usize)->Result<EnvMap,String>{let mut out=Vec::with_capacity(width*height);if width==0||height==0||width>4096||height>4096{return Err("prefiltered map 1..=4096 per axis required".into());}for j in 0..height{for i in 0..width{crate::guard::check();let u=(i as f64+0.5)/width as f64;let v=(j as f64+0.5)/height as f64;let phi=(u-0.5)*std::f64::consts::TAU;let y=(v*std::f64::consts::PI).cos();let r=(v*std::f64::consts::PI).sin();let c=prefiltered_env(env,[r*phi.cos(),y,r*phi.sin()],alpha,samples)?;out.push([c[0]as f32,c[1]as f32,c[2]as f32]);}}Ok(EnvMap{width,height,texels:out})}
+pub fn irradiance_map(env:&EnvMap,width:usize,height:usize,samples:usize)->Result<EnvMap,String>{let len=map_len(width,height,"irradiance map size 1..=4096 per axis required")?;let mut out=empty_texels(len)?;for j in 0..height{for i in 0..width{crate::guard::check();let u=(i as f64+0.5)/width as f64;let v=(j as f64+0.5)/height as f64;let phi=(u-0.5)*std::f64::consts::TAU;let y=(v*std::f64::consts::PI).cos();let r=(v*std::f64::consts::PI).sin();let c=irradiance(env,[r*phi.cos(),y,r*phi.sin()],samples)?;out.push([c[0]as f32,c[1]as f32,c[2]as f32]);}}Ok(EnvMap{width,height,texels:out})}
+pub fn prefiltered_map(env:&EnvMap,width:usize,height:usize,alpha:f64,samples:usize)->Result<EnvMap,String>{let len=map_len(width,height,"prefiltered map 1..=4096 per axis required")?;let mut out=empty_texels(len)?;for j in 0..height{for i in 0..width{crate::guard::check();let u=(i as f64+0.5)/width as f64;let v=(j as f64+0.5)/height as f64;let phi=(u-0.5)*std::f64::consts::TAU;let y=(v*std::f64::consts::PI).cos();let r=(v*std::f64::consts::PI).sin();let c=prefiltered_env(env,[r*phi.cos(),y,r*phi.sin()],alpha,samples)?;out.push([c[0]as f32,c[1]as f32,c[2]as f32]);}}Ok(EnvMap{width,height,texels:out})}
 
 impl BrdfLut{
  /// Bilinear sample at (ndotv, alpha) over texel centers, clamped to the grid.
@@ -53,7 +73,7 @@ impl BrdfLut{
 /// Baked IBL set: cosine-convolved irradiance, per-alpha prefiltered levels, BRDF LUT.
 #[derive(Clone,Debug,Serialize,Deserialize)]pub struct IblSet{pub irradiance:EnvMap,pub prefiltered:Vec<EnvMap>,pub lut:BrdfLut}
 impl IblSet{
- pub fn bake(env:&EnvMap,irr_size:[usize;2],pf_size:[usize;2],levels:usize,lut_size:usize,samples:usize)->Result<Self,String>{if levels==0||levels>16{return Err("prefilter levels 1..=16 required".into());}let irradiance=irradiance_map(env,irr_size[0],irr_size[1],samples)?;let mut prefiltered=Vec::with_capacity(levels);for l in 0..levels{let alpha=(l as f64+0.5)/levels as f64;prefiltered.push(prefiltered_map(env,pf_size[0],pf_size[1],alpha,samples)?);}Ok(Self{irradiance,prefiltered,lut:brdf_lut(lut_size,samples)?})}
+ pub fn bake(env:&EnvMap,irr_size:[usize;2],pf_size:[usize;2],levels:usize,lut_size:usize,samples:usize)->Result<Self,String>{bake_bytes(irr_size,pf_size,levels,lut_size,samples)?;let irradiance=irradiance_map(env,irr_size[0],irr_size[1],samples)?;let mut prefiltered=Vec::with_capacity(levels);for l in 0..levels{let alpha=(l as f64+0.5)/levels as f64;prefiltered.push(prefiltered_map(env,pf_size[0],pf_size[1],alpha,samples)?);}Ok(Self{irradiance,prefiltered,lut:brdf_lut(lut_size,samples)?})}
  pub fn validate(&self)->Result<(),String>{if self.prefiltered.is_empty()||self.prefiltered.len()>16{return Err("prefilter levels 1..=16 required".into());}Ok(())}
  /// Prefiltered specular at (R, alpha): linear level selection + interpolation.
  pub fn prefiltered_at(&self,r:[f64;3],alpha:f64)->Result<[f64;3],String>{self.validate()?;let l=self.prefiltered.len();let x=(alpha.clamp(0.,1.)*l as f64-0.5).clamp(0.,(l-1)as f64);let l0=x.floor()as usize;let l1=(l0+1).min(l-1);let f=x-l0 as f64;let a=self.prefiltered[l0].sample(r)?;if l0==l1{return Ok(a);}let b=self.prefiltered[l1].sample(r)?;Ok(std::array::from_fn(|k|a[k]*(1.-f)+b[k]*f))}
@@ -112,6 +132,15 @@ mod tests{
  ];
  // max A+B over oracle grid (F0=1 directional albedo, correlated single-scatter): 1.00003064171748624e+00
  fn close(a:f64,b:f64)->bool{(a-b).abs()<=1e-12*b.abs().max(1.0)}
+ #[test]fn invalid_bake_dimensions_and_aggregate_budget_fail_before_allocation(){
+  let env=EnvMap{width:1,height:1,texels:vec![[1.;3]]};
+  assert_eq!(irradiance_map(&env,usize::MAX,2,1).unwrap_err(),"irradiance map size 1..=4096 per axis required");
+  assert_eq!(prefiltered_map(&env,2,usize::MAX,0.5,1).unwrap_err(),"prefiltered map 1..=4096 per axis required");
+  assert_eq!(IblSet::bake(&env,[4096,4096],[4096,4096],16,1024,1).unwrap_err(),"IBL bake payload exceeds 128 MiB limit");
+  assert_eq!(bake_bytes([1,1],[2,2],2,2,1).unwrap(),12+2*4*12+4*8);
+  assert_eq!(IblSet::bake(&env,[1,1],[1,1],1,0,1).unwrap_err(),"lut size 1..=1024 required");
+  assert_eq!(IblSet::bake(&env,[1,1],[1,1],1,1,0).unwrap_err(),"bake samples 1..=65536 required");
+ }
  #[test]fn integrate_brdf_matches_python_oracle(){for (i,nv) in LUT_NDOTV.iter().enumerate(){for (j,alpha) in LUT_ALPHA.iter().enumerate(){let got=integrate_brdf(*nv,*alpha,LUT_SAMPLES).unwrap();let want=LUT_EXPECTED[i][j];assert!(close(got[0],want[0])&&close(got[1],want[1]),"nv {nv} alpha {alpha}: got {got:?} want {want:?}");}}}
  #[test]fn energy_and_smooth_limit_invariants(){for i in 0..5{for j in 0..6{let[a,b]=LUT_EXPECTED[i][j];assert!(a>=0.&&b>=0.,"non-negative scale/bias");assert!(a+b<=1.0001,"correlated single-scatter albedo <= 1 + sampling noise (measured grid max 1.0000306)");}}
   let[a,b]=integrate_brdf(0.95,0.001,1024).unwrap();assert!((a+b-1.0).abs()<1e-3,"smooth near-normal incidence conserves energy at F0=1 (measured 1.000003)");
