@@ -21,12 +21,14 @@ pub fn shade_shadowed(material:&Material,point:[f64;3],normal:[f64;3],eye:[f64;3
 /// * (F0*lut.x + lut.y); diffuse = irradiance(n)/PI * albedo * (1-metallic) * (1-F_ibl),
 /// matching the glTF energy gating used by sample(). Constant-env output agrees with a
 /// direct Monte Carlo integral of sample() to measured sampling noise (test-pinned band).
-pub fn shade_ibl(material:&Material,point:[f64;3],normal:[f64;3],eye:[f64;3],ibl:&super::ibl::IblSet)->Result<[f64;3],String>{
+pub fn shade_ibl(material:&Material,point:[f64;3],normal:[f64;3],eye:[f64;3],ibl:&super::ibl::IblSet)->Result<[f64;3],String>{ibl.validate()?;shade_ibl_validated(material,point,normal,eye,ibl)}
+/// Internal immutable-render path: caller must validate the entire IBL set once.
+pub(super) fn shade_ibl_validated(material:&Material,point:[f64;3],normal:[f64;3],eye:[f64;3],ibl:&super::ibl::IblSet)->Result<[f64;3],String>{
  if point.iter().chain(eye.iter()).any(|v|!v.is_finite()||v.abs()>1e9){return Err("bounded finite point/eye required".into());}
- let n=unit(normal)?;let view=unit(std::array::from_fn(|j|eye[j]-point[j]))?;sample(material,n,view,view)?;ibl.validate()?;
+ let n=unit(normal)?;let view=unit(std::array::from_fn(|j|eye[j]-point[j]))?;sample(material,n,view,view)?;
  let nv=dot(n,view);if nv<=0.0{return Ok([0.;3]);}
- let alpha=(material.roughness*material.roughness).max(0.001);let[scale,bias]=ibl.lut.sample(nv,alpha)?;
- let r=[2.0*nv*n[0]-view[0],2.0*nv*n[1]-view[1],2.0*nv*n[2]-view[2]];let pf=ibl.prefiltered_at(r,alpha)?;let irr=ibl.irradiance.sample(n)?;
+ let alpha=(material.roughness*material.roughness).max(0.001);let[scale,bias]=ibl.lut.sample_validated(nv,alpha)?;
+ let r=[2.0*nv*n[0]-view[0],2.0*nv*n[1]-view[1],2.0*nv*n[2]-view[2]];let pf=ibl.prefiltered_at_validated(r,alpha)?;let irr=ibl.irradiance.sample_validated(n)?;
  let mut out=[0.;3];for j in 0..3{let f0=0.04*(1.0-material.metallic)+material.albedo[j]*material.metallic;let f_ibl=(f0*scale+bias).clamp(0.,1.);out[j]=pf[j]*f_ibl+irr[j]/std::f64::consts::PI*material.albedo[j]*(1.0-material.metallic)*(1.0-f_ibl);}
  if out.iter().any(|v|!v.is_finite()||*v>f32::MAX as f64){return Err("radiance overflow".into());}Ok(out)}
 

@@ -24,6 +24,10 @@ fn bake_bytes(irr:[usize;2],pf:[usize;2],levels:usize,lut:usize,samples:usize)->
  Ok(bytes)
 }
 
+fn radiance_f32(c:[f64;3])->Result<[f32;3],String>{
+ if c.iter().any(|v|!v.is_finite()||v.abs()>f32::MAX as f64){return Err("radiance must be finite and representable as f32".into());}
+ Ok(c.map(|v|v as f32))
+}
 /// Deterministic low-discrepancy sequence (van der Corput radical inverse in base 2).
 fn hammersley(i:usize,n:usize)->[f64;2]{let x=i as f64/n as f64;let mut b=i;let mut inv=0.0;let mut f=0.5;while b>0{if b&1==1{inv+=f;}b>>=1;f*=0.5;}[x,inv]}
 /// GGX half-vector inverse-CDF sample in the tangent frame (N = +Z).
@@ -44,8 +48,17 @@ pub fn brdf_lut(size:usize,samples:usize)->Result<BrdfLut,String>{if size==0||si
 /// (wrapped), v = acos(y)/PI, +Y up. Bilinear sampling with wrapped u, clamped v.
 #[derive(Clone,Debug,Serialize,Deserialize)]pub struct EnvMap{pub width:usize,pub height:usize,pub texels:Vec<[f32;3]>}
 impl EnvMap{
- pub fn from_fn(width:usize,height:usize,f:impl Fn([f64;3])->[f64;3])->Result<Self,String>{if width==0||height==0||width>4096||height>4096{return Err("env map 1..=4096 per axis required".into());}let mut texels=empty_texels(map_len(width,height,"env map 1..=4096 per axis required")?)?;for j in 0..height{for i in 0..width{crate::guard::check();let u=(i as f64+0.5)/width as f64;let v=(j as f64+0.5)/height as f64;let phi=(u-0.5)*std::f64::consts::TAU;let y=(v*std::f64::consts::PI).cos();let r=(v*std::f64::consts::PI).sin();let c=f([r*phi.cos(),y,r*phi.sin()]);if c.iter().any(|v|!v.is_finite()){return Err("env generator must return finite radiance".into());}texels.push([c[0]as f32,c[1]as f32,c[2]as f32]);}}Ok(Self{width,height,texels})}
- pub fn sample(&self,dir:[f64;3])->Result<[f64;3],String>{if self.width==0||self.height==0||self.texels.len()!=self.width*self.height{return Err("env map buffers consistent required".into());}if dir.iter().any(|v|!v.is_finite())||dir.iter().all(|v|*v==0.0){return Err("finite nonzero direction required".into());}let l=(dir[0]*dir[0]+dir[1]*dir[1]+dir[2]*dir[2]).sqrt();let d=[dir[0]/l,dir[1]/l,dir[2]/l];let u=d[2].atan2(d[0])/std::f64::consts::TAU+0.5;let v=d[1].clamp(-1.,1.).acos()/std::f64::consts::PI;
+ pub fn validate(&self)->Result<(),String>{
+  let len=map_len(self.width,self.height,"env map buffers consistent required")?;
+  if self.texels.len()!=len{return Err("env map buffers consistent required".into());}
+  if self.texels.iter().flatten().any(|v|!v.is_finite()){return Err("env map texels finite required".into());}
+  Ok(())
+ }
+
+ pub fn from_fn(width:usize,height:usize,f:impl Fn([f64;3])->[f64;3])->Result<Self,String>{if width==0||height==0||width>4096||height>4096{return Err("env map 1..=4096 per axis required".into());}let mut texels=empty_texels(map_len(width,height,"env map 1..=4096 per axis required")?)?;for j in 0..height{for i in 0..width{crate::guard::check();let u=(i as f64+0.5)/width as f64;let v=(j as f64+0.5)/height as f64;let phi=(u-0.5)*std::f64::consts::TAU;let y=(v*std::f64::consts::PI).cos();let r=(v*std::f64::consts::PI).sin();let c=f([r*phi.cos(),y,r*phi.sin()]);if c.iter().any(|v|!v.is_finite()){return Err("env generator must return finite radiance".into());}texels.push(radiance_f32(c)?);}}Ok(Self{width,height,texels})}
+ pub fn sample(&self,dir:[f64;3])->Result<[f64;3],String>{self.validate()?;self.sample_validated(dir)}
+ // Only called after full buffer validation at an immutable public operation boundary.
+ pub(super) fn sample_validated(&self,dir:[f64;3])->Result<[f64;3],String>{if dir.iter().any(|v|!v.is_finite())||dir.iter().all(|v|*v==0.0){return Err("finite nonzero direction required".into());}let d=super::vertex_stream::unit(dir)?;let u=d[2].atan2(d[0])/std::f64::consts::TAU+0.5;let v=d[1].clamp(-1.,1.).acos()/std::f64::consts::PI;
   let x=u*self.width as f64-0.5;let y=(v*self.height as f64-0.5).clamp(0.,(self.height-1)as f64);let x0=x.floor();let fx=x-x0;let y0=y.floor()as usize;let fy=y-y0 as f64;let i0=(x0 as i64).rem_euclid(self.width as i64)as usize;let i1=(i0+1)%self.width;let j1=(y0+1).min(self.height-1);let mut out=[0.;3];
   for(w_,j,i)in[((1.-fx)*(1.-fy),y0,i0),(fx*(1.-fy),y0,i1),((1.-fx)*fy,j1,i0),(fx*fy,j1,i1)]{for k in 0..3{out[k]+=w_*self.texels[j*self.width+i][k]as f64;}}Ok(out)}
 }
@@ -53,30 +66,50 @@ fn tangent_basis(n:[f64;3])->([f64;3],[f64;3]){let cr=|a:[f64;3],b:[f64;3]|[a[1]
 fn valid_dir_samples(name:&str,d:[f64;3],samples:usize)->Result<(),String>{if d.iter().any(|v|!v.is_finite())||d.iter().all(|v|*v==0.0)||samples==0||samples>65536{return Err(format!("finite nonzero {name} direction and 1..=65536 samples required"));}Ok(())}
 /// Diffuse irradiance: cosine-convolved environment, raw (unnormalized by PI); shading
 /// divides by PI so a constant env returns env*albedo. Cosine-weighted Monte Carlo.
-pub fn irradiance(env:&EnvMap,n:[f64;3],samples:usize)->Result<[f64;3],String>{valid_dir_samples("irradiance",n,samples)?;let nl=(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]).sqrt();let n=[n[0]/nl,n[1]/nl,n[2]/nl];let(t,b)=tangent_basis(n);let mut acc=[0.;3];
- for i in 0..samples{let xi=hammersley(i,samples);let phi=std::f64::consts::TAU*xi[0];let cos_t=xi[1].sqrt();let sin_t=(1.0-xi[1]).max(0.0).sqrt();let l=[t[0]*sin_t*phi.cos()+b[0]*sin_t*phi.sin()+n[0]*cos_t,t[1]*sin_t*phi.cos()+b[1]*sin_t*phi.sin()+n[1]*cos_t,t[2]*sin_t*phi.cos()+b[2]*sin_t*phi.sin()+n[2]*cos_t];let c=env.sample(l)?;for k in 0..3{acc[k]+=c[k];}}
+pub fn irradiance(env:&EnvMap,n:[f64;3],samples:usize)->Result<[f64;3],String>{env.validate()?;irradiance_validated(env,n,samples)}
+fn irradiance_validated(env:&EnvMap,n:[f64;3],samples:usize)->Result<[f64;3],String>{valid_dir_samples("irradiance",n,samples)?;let n=super::vertex_stream::unit(n)?;let(t,b)=tangent_basis(n);let mut acc=[0.;3];
+ for i in 0..samples{let xi=hammersley(i,samples);let phi=std::f64::consts::TAU*xi[0];let cos_t=xi[1].sqrt();let sin_t=(1.0-xi[1]).max(0.0).sqrt();let l=[t[0]*sin_t*phi.cos()+b[0]*sin_t*phi.sin()+n[0]*cos_t,t[1]*sin_t*phi.cos()+b[1]*sin_t*phi.sin()+n[1]*cos_t,t[2]*sin_t*phi.cos()+b[2]*sin_t*phi.sin()+n[2]*cos_t];let c=env.sample_validated(l)?;for k in 0..3{acc[k]+=c[k];}}
  Ok(acc.map(|v|v*std::f64::consts::PI/samples as f64))}
 /// Specular prefiltered environment for one lookup direction and alpha (split-sum first
 /// sum): GGX importance samples around the reflection direction, nl-weighted average.
-pub fn prefiltered_env(env:&EnvMap,dir:[f64;3],alpha:f64,samples:usize)->Result<[f64;3],String>{valid_dir_samples("prefilter",dir,samples)?;if !alpha.is_finite()||!(0.0..=1.0).contains(&alpha)||alpha==0.0{return Err("finite 0<alpha<=1 required".into());}let dl=(dir[0]*dir[0]+dir[1]*dir[1]+dir[2]*dir[2]).sqrt();let n=[dir[0]/dl,dir[1]/dl,dir[2]/dl];let(t,b)=tangent_basis(n);let mut acc=[0.;3];let mut tw=0.;
- for i in 0..samples{let h=importance_sample_ggx(hammersley(i,samples),alpha);let lt=[2.0*h[2]*h[0],2.0*h[2]*h[1],2.0*h[2]*h[2]-1.0];let lw=[t[0]*lt[0]+b[0]*lt[1]+n[0]*lt[2],t[1]*lt[0]+b[1]*lt[1]+n[1]*lt[2],t[2]*lt[0]+b[2]*lt[1]+n[2]*lt[2]];let nl=lw[0]*n[0]+lw[1]*n[1]+lw[2]*n[2];if nl>0.{let c=env.sample(lw)?;for k in 0..3{acc[k]+=c[k]*nl;}tw+=nl;}}
+pub fn prefiltered_env(env:&EnvMap,dir:[f64;3],alpha:f64,samples:usize)->Result<[f64;3],String>{env.validate()?;prefiltered_env_validated(env,dir,alpha,samples)}
+fn prefiltered_env_validated(env:&EnvMap,dir:[f64;3],alpha:f64,samples:usize)->Result<[f64;3],String>{valid_dir_samples("prefilter",dir,samples)?;if !alpha.is_finite()||!(0.0..=1.0).contains(&alpha)||alpha==0.0{return Err("finite 0<alpha<=1 required".into());}let n=super::vertex_stream::unit(dir)?;let(t,b)=tangent_basis(n);let mut acc=[0.;3];let mut tw=0.;
+ for i in 0..samples{let h=importance_sample_ggx(hammersley(i,samples),alpha);let lt=[2.0*h[2]*h[0],2.0*h[2]*h[1],2.0*h[2]*h[2]-1.0];let lw=[t[0]*lt[0]+b[0]*lt[1]+n[0]*lt[2],t[1]*lt[0]+b[1]*lt[1]+n[1]*lt[2],t[2]*lt[0]+b[2]*lt[1]+n[2]*lt[2]];let nl=lw[0]*n[0]+lw[1]*n[1]+lw[2]*n[2];if nl>0.{let c=env.sample_validated(lw)?;for k in 0..3{acc[k]+=c[k]*nl;}tw+=nl;}}
  if tw<=0.0{return Err("prefilter samples all below horizon".into());}Ok(acc.map(|v|v/tw))}
 /// Full-map bakes for the shading path.
-pub fn irradiance_map(env:&EnvMap,width:usize,height:usize,samples:usize)->Result<EnvMap,String>{let len=map_len(width,height,"irradiance map size 1..=4096 per axis required")?;let mut out=empty_texels(len)?;for j in 0..height{for i in 0..width{crate::guard::check();let u=(i as f64+0.5)/width as f64;let v=(j as f64+0.5)/height as f64;let phi=(u-0.5)*std::f64::consts::TAU;let y=(v*std::f64::consts::PI).cos();let r=(v*std::f64::consts::PI).sin();let c=irradiance(env,[r*phi.cos(),y,r*phi.sin()],samples)?;out.push([c[0]as f32,c[1]as f32,c[2]as f32]);}}Ok(EnvMap{width,height,texels:out})}
-pub fn prefiltered_map(env:&EnvMap,width:usize,height:usize,alpha:f64,samples:usize)->Result<EnvMap,String>{let len=map_len(width,height,"prefiltered map 1..=4096 per axis required")?;let mut out=empty_texels(len)?;for j in 0..height{for i in 0..width{crate::guard::check();let u=(i as f64+0.5)/width as f64;let v=(j as f64+0.5)/height as f64;let phi=(u-0.5)*std::f64::consts::TAU;let y=(v*std::f64::consts::PI).cos();let r=(v*std::f64::consts::PI).sin();let c=prefiltered_env(env,[r*phi.cos(),y,r*phi.sin()],alpha,samples)?;out.push([c[0]as f32,c[1]as f32,c[2]as f32]);}}Ok(EnvMap{width,height,texels:out})}
+pub fn irradiance_map(env:&EnvMap,width:usize,height:usize,samples:usize)->Result<EnvMap,String>{let len=map_len(width,height,"irradiance map size 1..=4096 per axis required")?;env.validate()?;let mut out=empty_texels(len)?;for j in 0..height{for i in 0..width{crate::guard::check();let u=(i as f64+0.5)/width as f64;let v=(j as f64+0.5)/height as f64;let phi=(u-0.5)*std::f64::consts::TAU;let y=(v*std::f64::consts::PI).cos();let r=(v*std::f64::consts::PI).sin();let c=irradiance_validated(env,[r*phi.cos(),y,r*phi.sin()],samples)?;out.push(radiance_f32(c)?);}}Ok(EnvMap{width,height,texels:out})}
+pub fn prefiltered_map(env:&EnvMap,width:usize,height:usize,alpha:f64,samples:usize)->Result<EnvMap,String>{let len=map_len(width,height,"prefiltered map 1..=4096 per axis required")?;env.validate()?;let mut out=empty_texels(len)?;for j in 0..height{for i in 0..width{crate::guard::check();let u=(i as f64+0.5)/width as f64;let v=(j as f64+0.5)/height as f64;let phi=(u-0.5)*std::f64::consts::TAU;let y=(v*std::f64::consts::PI).cos();let r=(v*std::f64::consts::PI).sin();let c=prefiltered_env_validated(env,[r*phi.cos(),y,r*phi.sin()],alpha,samples)?;out.push(radiance_f32(c)?);}}Ok(EnvMap{width,height,texels:out})}
 
 impl BrdfLut{
+ pub fn validate(&self)->Result<(),String>{
+  if self.size==0||self.size>1024||self.texels.len()!=self.size*self.size{return Err("lut buffers consistent required".into());}
+  if self.texels.iter().flatten().any(|v|!v.is_finite()){return Err("lut texels finite required".into());}
+  Ok(())
+ }
+
  /// Bilinear sample at (ndotv, alpha) over texel centers, clamped to the grid.
- pub fn sample(&self,ndotv:f64,alpha:f64)->Result<[f64;2],String>{if self.size==0||self.texels.len()!=self.size*self.size{return Err("lut buffers consistent required".into());}if !ndotv.is_finite()||!alpha.is_finite(){return Err("finite ndotv/alpha required".into());}let n=self.size as f64;let x=(ndotv.clamp(0.,1.)*n-0.5).clamp(0.,(self.size-1)as f64);let y=(alpha.clamp(0.,1.)*n-0.5).clamp(0.,(self.size-1)as f64);let x0=x.floor()as usize;let y0=y.floor()as usize;let fx=x-x0 as f64;let fy=y-y0 as f64;let x1=(x0+1).min(self.size-1);let y1=(y0+1).min(self.size-1);
+ pub fn sample(&self,ndotv:f64,alpha:f64)->Result<[f64;2],String>{self.validate()?;self.sample_validated(ndotv,alpha)}
+ pub(super) fn sample_validated(&self,ndotv:f64,alpha:f64)->Result<[f64;2],String>{if !ndotv.is_finite()||!alpha.is_finite(){return Err("finite ndotv/alpha required".into());}let n=self.size as f64;let x=(ndotv.clamp(0.,1.)*n-0.5).clamp(0.,(self.size-1)as f64);let y=(alpha.clamp(0.,1.)*n-0.5).clamp(0.,(self.size-1)as f64);let x0=x.floor()as usize;let y0=y.floor()as usize;let fx=x-x0 as f64;let fy=y-y0 as f64;let x1=(x0+1).min(self.size-1);let y1=(y0+1).min(self.size-1);
   let t=|xx:usize,yy:usize|self.texels[yy*self.size+xx];let mut out=[0.;2];for k in 0..1+1{let a=t(x0,y0)[k]as f64;let b=t(x1,y0)[k]as f64;let c=t(x0,y1)[k]as f64;let d=t(x1,y1)[k]as f64;out[k]=(1.-fy)*((1.-fx)*a+fx*b)+fy*((1.-fx)*c+fx*d);}Ok(out)}
 }
 /// Baked IBL set: cosine-convolved irradiance, per-alpha prefiltered levels, BRDF LUT.
 #[derive(Clone,Debug,Serialize,Deserialize)]pub struct IblSet{pub irradiance:EnvMap,pub prefiltered:Vec<EnvMap>,pub lut:BrdfLut}
 impl IblSet{
  pub fn bake(env:&EnvMap,irr_size:[usize;2],pf_size:[usize;2],levels:usize,lut_size:usize,samples:usize)->Result<Self,String>{bake_bytes(irr_size,pf_size,levels,lut_size,samples)?;let irradiance=irradiance_map(env,irr_size[0],irr_size[1],samples)?;let mut prefiltered=Vec::with_capacity(levels);for l in 0..levels{let alpha=(l as f64+0.5)/levels as f64;prefiltered.push(prefiltered_map(env,pf_size[0],pf_size[1],alpha,samples)?);}Ok(Self{irradiance,prefiltered,lut:brdf_lut(lut_size,samples)?})}
- pub fn validate(&self)->Result<(),String>{if self.prefiltered.is_empty()||self.prefiltered.len()>16{return Err("prefilter levels 1..=16 required".into());}Ok(())}
+ pub fn validate(&self)->Result<(),String>{
+  if self.prefiltered.is_empty()||self.prefiltered.len()>16{return Err("prefilter levels 1..=16 required".into());}
+  self.irradiance.validate()?;self.lut.validate()?;
+  let mut bytes=self.irradiance.texels.len().checked_mul(std::mem::size_of::<[f32;3]>()).ok_or("IBL bake byte count overflow")?;
+  for m in &self.prefiltered{m.validate()?;bytes=bytes.checked_add(m.texels.len()*std::mem::size_of::<[f32;3]>()).ok_or("IBL bake byte count overflow")?;}
+  bytes=bytes.checked_add(self.lut.texels.len()*std::mem::size_of::<[f32;2]>()).ok_or("IBL bake byte count overflow")?;
+  if bytes>MAX_IBL_BAKE_BYTES{return Err("IBL bake payload exceeds 128 MiB limit".into());}
+  Ok(())
+ }
  /// Prefiltered specular at (R, alpha): linear level selection + interpolation.
- pub fn prefiltered_at(&self,r:[f64;3],alpha:f64)->Result<[f64;3],String>{self.validate()?;let l=self.prefiltered.len();let x=(alpha.clamp(0.,1.)*l as f64-0.5).clamp(0.,(l-1)as f64);let l0=x.floor()as usize;let l1=(l0+1).min(l-1);let f=x-l0 as f64;let a=self.prefiltered[l0].sample(r)?;if l0==l1{return Ok(a);}let b=self.prefiltered[l1].sample(r)?;Ok(std::array::from_fn(|k|a[k]*(1.-f)+b[k]*f))}
+ pub fn prefiltered_at(&self,r:[f64;3],alpha:f64)->Result<[f64;3],String>{self.validate()?;self.prefiltered_at_validated(r,alpha)}
+ pub(super) fn prefiltered_at_validated(&self,r:[f64;3],alpha:f64)->Result<[f64;3],String>{
+ if !alpha.is_finite()||!(0.0..=1.0).contains(&alpha){return Err("finite alpha in [0,1] required".into());}
+ let l=self.prefiltered.len();let x=(alpha.clamp(0.,1.)*l as f64-0.5).clamp(0.,(l-1)as f64);let l0=x.floor()as usize;let l1=(l0+1).min(l-1);let f=x-l0 as f64;let a=self.prefiltered[l0].sample_validated(r)?;if l0==l1{return Ok(a);}let b=self.prefiltered[l1].sample_validated(r)?;Ok(std::array::from_fn(|k|a[k]*(1.-f)+b[k]*f))}
 }
 
 #[cfg(test)]
@@ -132,6 +165,35 @@ mod tests{
  ];
  // max A+B over oracle grid (F0=1 directional albedo, correlated single-scatter): 1.00003064171748624e+00
  fn close(a:f64,b:f64)->bool{(a-b).abs()<=1e-12*b.abs().max(1.0)}
+ #[test]fn extreme_directions_normalize_without_overflow_or_underflow(){
+  let env=EnvMap::from_fn(4,2,|d|[d[0]+1.,d[1]+1.,d[2]+1.]).unwrap();
+  let want=env.sample([1.,2.,2.]).unwrap();
+  for d in [[1e300,2e300,2e300],[1e-300,2e-300,2e-300]]{
+   assert!(close3(env.sample(d).unwrap(),want,1e-12));
+   assert!(close3(irradiance(&env,d,16).unwrap(),irradiance(&env,[1.,2.,2.],16).unwrap(),1e-12));
+   assert!(close3(prefiltered_env(&env,d,0.5,16).unwrap(),prefiltered_env(&env,[1.,2.,2.],0.5,16).unwrap(),1e-12));
+  }
+ }
+ #[test]fn malformed_or_nonfinite_ibl_buffers_return_errors(){
+  assert_eq!(EnvMap::from_fn(1,1,|_|[f64::MAX;3]).unwrap_err(),"radiance must be finite and representable as f32");
+  assert_eq!(radiance_f32([f32::MAX as f64;3]).unwrap(),[f32::MAX;3]);
+  let bright=EnvMap{width:1,height:1,texels:vec![[f32::MAX;3]]};
+  assert_eq!(irradiance_map(&bright,1,1,16).unwrap_err(),"radiance must be finite and representable as f32");
+  let bad=EnvMap{width:usize::MAX,height:2,texels:vec![]};
+  assert_eq!(bad.sample([0.,1.,0.]).unwrap_err(),"env map buffers consistent required");
+  let env=EnvMap{width:1,height:1,texels:vec![[f32::INFINITY;3]]};
+  assert_eq!(irradiance(&env,[0.,1.,0.],1).unwrap_err(),"env map texels finite required");
+  let lut=BrdfLut{size:usize::MAX,texels:vec![]};
+  assert_eq!(lut.sample(0.5,0.5).unwrap_err(),"lut buffers consistent required");
+  let env=EnvMap{width:1,height:1,texels:vec![[1.;3]]};
+  let mut set=IblSet{irradiance:env.clone(),prefiltered:vec![env],lut:BrdfLut{size:1,texels:vec![[0.5,0.1]]}};
+  set.lut.texels[0][1]=f32::NAN;
+  assert_eq!(set.validate().unwrap_err(),"lut texels finite required");
+  set.lut.texels[0][1]=0.1;set.prefiltered[0].texels[0][0]=f32::NAN;
+  assert_eq!(set.validate().unwrap_err(),"env map texels finite required");
+  set.prefiltered[0].texels[0][0]=1.;
+  assert_eq!(set.prefiltered_at([0.,1.,0.],f64::NAN).unwrap_err(),"finite alpha in [0,1] required");
+ }
  #[test]fn invalid_bake_dimensions_and_aggregate_budget_fail_before_allocation(){
   let env=EnvMap{width:1,height:1,texels:vec![[1.;3]]};
   assert_eq!(irradiance_map(&env,usize::MAX,2,1).unwrap_err(),"irradiance map size 1..=4096 per axis required");
