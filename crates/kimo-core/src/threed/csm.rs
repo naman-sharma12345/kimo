@@ -231,7 +231,8 @@ pub fn select_cascade(cascades:&[Cascade],blend_band:f64,d:f64)->Result<(usize,f
 pub fn csm_visibility(csm:&CascadedShadowMaps,cam:&Camera,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius_texels:f64,px:usize,py:usize)->Result<f64,String>{
  csm.validate()?;
  if normal.iter().any(|v|!v.is_finite())||world.iter().any(|v|!v.is_finite()){return Err("finite shadow receiver required".into());}
- if !n_dot_l.is_finite()||!radius_texels.is_finite()||radius_texels<0.{return Err("finite cosine and nonnegative finite shadow radius required".into());}
+ super::shadow::validate_disk_radius(radius_texels)?;
+ if !n_dot_l.is_finite(){return Err("finite shadow cosine required".into());}
  if n_dot_l<=0.{return Ok(0.);}
  let q=cam.view(world)?;
  let(i,t)=select_cascade(&csm.cascades,csm.blend_band,q[2])?;
@@ -515,6 +516,11 @@ pub fn csm_visibility(csm:&CascadedShadowMaps,cam:&Camera,world:[f64;3],normal:[
    let v=csm_visibility(&set,&cam,w,n,nl,2.0,0,0).unwrap();
    eprintln!("x={x:5.2} depth={d:6.2} cascade={i} t={tt:5.2} v={v:6.3}");
   }
+ }
+ #[test]fn csm_rejects_invalid_radius_even_for_backfaces(){
+  let fits=cascaded_light_space([0.,-1.,0.],&cam(),1.,0.1,10.,1,0.5,aabb(),16).unwrap();
+  let set=build_cascade_maps(fits,16,0.).unwrap();
+  assert_eq!(csm_visibility(&set,&cam(),[0.;3],[0.,1.,0.],0.,-1.,0,0).unwrap_err(),"finite shadow disk radius 0..=32 texels required");
  }
  #[test]fn aggregate_cascade_depth_budget_precedes_allocation(){
   let fits=cascaded_light_space([0.,-1.,0.],&cam(),1.,0.1,10.,8,0.5,aabb(),4096).unwrap();

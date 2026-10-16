@@ -17,6 +17,14 @@ pub const BIAS_CONST_TEXELS:f64=1.0;
 pub const BIAS_SLOPE_TEXELS:f64=2.0;
 pub const NORMAL_OFFSET_TEXELS:f64=1.0;
 pub const PCF_RADIUS:i32=1; // 3x3 taps; 0 = single-tap hard shadow (matches raycast reference)
+/// Explicit work/support limit for public PCF and disk radii; no silent clamp.
+pub const MAX_FILTER_RADIUS_TEXELS:i32=32;
+fn validate_pcf_radius(radius:i32)->Result<(),String>{
+ if !(0..=MAX_FILTER_RADIUS_TEXELS).contains(&radius){return Err("shadow PCF radius 0..=32 texels required".into());}Ok(())
+}
+pub(super) fn validate_disk_radius(radius:f64)->Result<(),String>{
+ if !radius.is_finite()||!(0.0..=MAX_FILTER_RADIUS_TEXELS as f64).contains(&radius){return Err("finite shadow disk radius 0..=32 texels required".into());}Ok(())
+}
 
 #[derive(Clone,Debug)]
 pub struct DirectionalShadowMap{
@@ -90,7 +98,7 @@ pub fn bias(map:&DirectionalShadowMap,n_dot_l:f64)->(f64,f64){
 
 /// PCF visibility in [0,1]: fraction of taps where the (biased) receiver depth is nearer
  /// than the stored occluder depth. radius 0 = single-tap hard shadow.
-pub fn visibility(map:&DirectionalShadowMap,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius:i32)->Result<f64,String>{map.validate()?;Ok(visibility_validated(map,world,normal,n_dot_l,radius))}
+pub fn visibility(map:&DirectionalShadowMap,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius:i32)->Result<f64,String>{map.validate()?;validate_pcf_radius(radius)?;Ok(visibility_validated(map,world,normal,n_dot_l,radius))}
 fn visibility_validated(map:&DirectionalShadowMap,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius:i32)->f64{
  let(no,db)=bias(map,n_dot_l);
  let p=std::array::from_fn(|j|world[j]+normal[j]*no);
@@ -121,7 +129,7 @@ pub const DISK_WEIGHTS:[f64;8]=[0.157112,0.157112,0.138651,0.130251,0.114946,0.1
 pub fn interleaved_gradient_noise(x:usize,y:usize)->f64{let v=52.9829189*(0.06711056*x as f64+0.00583715*y as f64).fract();v.fract()}
 /// visibility() with a rotated Gaussian disk instead of the 3x3 grid: same bias contract,
 /// same compare, dithered soft edges. radius_texels scales the disk in map texels.
-pub fn visibility_disk(map:&DirectionalShadowMap,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius_texels:f64,px:usize,py:usize)->Result<f64,String>{map.validate()?;Ok(visibility_disk_validated(map,world,normal,n_dot_l,radius_texels,px,py))}
+pub fn visibility_disk(map:&DirectionalShadowMap,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius_texels:f64,px:usize,py:usize)->Result<f64,String>{map.validate()?;validate_disk_radius(radius_texels)?;Ok(visibility_disk_validated(map,world,normal,n_dot_l,radius_texels,px,py))}
 fn visibility_disk_validated(map:&DirectionalShadowMap,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius_texels:f64,px:usize,py:usize)->f64{
  if n_dot_l<=0.||radius_texels<=0.{return if n_dot_l<=0.{0.}else{visibility_validated(map,world,normal,n_dot_l,0)};}
  let(no,dnb)=bias(map,n_dot_l);
@@ -324,7 +332,7 @@ fn cube_depth_gradient(map:&PointCubeShadowMap,face:usize,u:f64,v:f64)->f64{
 /// reference). The acne offset moves the receiver along the light ray, so face/u/v
 /// never shift (see the PL2 section header); `normal` is kept for the shared call
 /// contract and enters the bias only through n_dot_l.
-pub fn cube_visibility(map:&PointCubeShadowMap,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius:i32)->Result<f64,String>{map.validate()?;Ok(cube_visibility_validated(map,world,normal,n_dot_l,radius))}
+pub fn cube_visibility(map:&PointCubeShadowMap,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius:i32)->Result<f64,String>{map.validate()?;validate_pcf_radius(radius)?;Ok(cube_visibility_validated(map,world,normal,n_dot_l,radius))}
 fn cube_visibility_validated(map:&PointCubeShadowMap,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius:i32)->f64{
  let _=normal; // offset is ray-based; the normal enters the bias via n_dot_l (see doc)
  if map.size==0||map.depth.len()!=6*map.size*map.size{return 1.;}
@@ -349,7 +357,7 @@ fn cube_visibility_validated(map:&PointCubeShadowMap,world:[f64;3],normal:[f64;3
 
 /// cube_visibility with the rotated Gaussian disk (same D3D taps/IGN as the directional
 /// disk): dithered soft edges, deterministic per pixel.
-pub fn cube_visibility_disk(map:&PointCubeShadowMap,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius_texels:f64,px:usize,py:usize)->Result<f64,String>{map.validate()?;Ok(cube_visibility_disk_validated(map,world,normal,n_dot_l,radius_texels,px,py))}
+pub fn cube_visibility_disk(map:&PointCubeShadowMap,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius_texels:f64,px:usize,py:usize)->Result<f64,String>{map.validate()?;validate_disk_radius(radius_texels)?;Ok(cube_visibility_disk_validated(map,world,normal,n_dot_l,radius_texels,px,py))}
 fn cube_visibility_disk_validated(map:&PointCubeShadowMap,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius_texels:f64,px:usize,py:usize)->f64{
  if n_dot_l<=0.||radius_texels<=0.{return if n_dot_l<=0.{0.}else{cube_visibility_validated(map,world,normal,n_dot_l,0)};}
  if map.size==0||map.depth.len()!=6*map.size*map.size{return 1.;}
@@ -419,6 +427,22 @@ pub fn raster_cube_depth_into(positions:&[[f64;3]],indices:&[[u32;3]],map:&mut P
 
 #[cfg(test)]mod tests{use super::*;
  fn box_aabb()->[[f64;3];2]{[[-1.;3],[1.;3]]}
+ #[test]fn public_filter_radius_errors_are_explicit(){
+  let(view,bounds)=directional_light_space([0.,0.,1.],box_aabb()).unwrap();
+  let m=DirectionalShadowMap{view,bounds,width:1,height:1,depth:vec![f64::INFINITY]};
+  let(views,near,far)=point_cube_light_space([0.;3],box_aabb(),0.05).unwrap();
+  let cube=PointCubeShadowMap{position:[0.;3],views,near,far,size:1,depth:vec![f64::INFINITY;6]};
+  for r in [-1,i32::MIN,i32::MAX,33]{
+   assert_eq!(visibility(&m,[0.;3],[0.,1.,0.],1.,r).unwrap_err(),"shadow PCF radius 0..=32 texels required");
+   assert_eq!(cube_visibility(&cube,[2.,0.,0.],[-1.,0.,0.],1.,r).unwrap_err(),"shadow PCF radius 0..=32 texels required");
+  }
+  for r in [-1.,f64::NAN,f64::INFINITY,33.]{
+   assert_eq!(visibility_disk(&m,[0.;3],[0.,1.,0.],0.,r,0,0).unwrap_err(),"finite shadow disk radius 0..=32 texels required");
+   assert_eq!(cube_visibility_disk(&cube,[2.,0.,0.],[-1.,0.,0.],0.,r,0,0).unwrap_err(),"finite shadow disk radius 0..=32 texels required");
+  }
+  assert!(visibility(&m,[0.;3],[0.,1.,0.],1.,32).unwrap().is_finite());
+  assert!(cube_visibility(&cube,[2.,0.,0.],[-1.,0.,0.],1.,32).unwrap().is_finite());
+ }
  #[test]fn directional_public_map_shape_errors_precede_sampling(){
   let(view,bounds)=directional_light_space([0.,0.,1.],box_aabb()).unwrap();
   let mut m=DirectionalShadowMap{view,bounds,width:1,height:1,depth:vec![]};
