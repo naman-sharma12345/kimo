@@ -6,10 +6,11 @@
 //!
 //! Fit contract: cascade i covers the camera frustum slice [c_i, c_{i+1}]. The slice's
 //! bounding SPHERE (translation-covariant, rotation-invariant) sets the map extent:
-//! texel size = sphere diameter / map_size, and the sphere center is snapped to that
-//! texel grid in light space. Snapping to ABSOLUTE grid multiples means sub-texel
-//! camera motion either leaves the snapped bounds identical or shifts them by a whole
-//! texel - never a fractional resample - which is the anti-shimmer property. Depth
+//! texel size = sphere diameter / (map_size - 1), reserving a half-texel
+//! snap margin. The bounds span exactly map_size actual raster texels. This is
+//! a grid-alignment contract, not proof of full anti-shimmer: raster depth,
+//! filtering, split transitions and moving-camera frames still need measurement.
+//! Depth
 //! (z) bounds cover the scene AABB in light space (casters outside the frustum slice
 //! still cast into it), with the same pad convention as directional_light_space.
 use super::mesh::Matrix;
@@ -80,7 +81,7 @@ pub fn frustum_slice_corners(cam:&Camera,aspect:f64,d0:f64,d1:f64)->Result<[[f64
 }
 
 /// One fitted cascade: the slice it covers, the world -> light view, the snapped ortho
-/// bounds in light space, and the world size of one map texel (diameter/map_size).
+/// bounds in light space, and the world size of one actual raster texel (bounds span/map_size).
 #[derive(Clone,Debug)]
 pub struct Cascade{
  pub near:f64,pub far:f64,
@@ -110,24 +111,27 @@ pub fn slice_sphere(corners:&[[f64;3];8])->([f64;3],f64){
  (c,r)
 }
 
-/// Fit one cascade over the slice [near, far]: extent from the slice sphere, center
-/// snapped OUTWARD-safe to the texel grid in light space (round to nearest multiple;
-/// the radius then grows by at most texel/2 per axis and coverage is re-widened by
-/// rounding the half-extent up to a whole number of texels).
+/// Fit a translation-invariant slice sphere on the actual N-texel raster grid.
+/// Reserve half a texel for center snapping: N*t/2 = radius + t/2.
+/// Odd resolutions snap centers to half-texels so both edges remain grid-aligned.
 pub fn fit_cascade(travel_direction:[f64;3],cam:&Camera,aspect:f64,near:f64,far:f64,scene_aabb:[[f64;3];2],map_size:usize)->Result<Cascade,String>{
  if scene_aabb.iter().flatten().any(|v|!v.is_finite()){return Err("finite scene bounds required".into());}
- if map_size==0||map_size>4096{return Err("cascade map 1..4096 per axis".into());}
- let corners=frustum_slice_corners(cam,aspect,near,far)?;
- let(center,radius)=slice_sphere(&corners);
+ if map_size<2||map_size>4096{return Err("cascade fit map 2..4096 per axis".into());}
+ // Validate the slice before deriving its radius in camera space, avoiding translation
+ // and roll dependent roundoff in world-space corner subtraction.
+ frustum_slice_corners(cam,aspect,near,far)?;
+ let center=world_from_camera(cam,[0.,0.,near+(far-near)*0.5])?;
+ let hy=cam.sensor_height/(2.*cam.focal_length);let hx=aspect*hy;
+ let radius=(far*hx).hypot(far*hy).hypot((far-near)*0.5);
  if !radius.is_finite()||radius<=0.{return Err("degenerate frustum slice".into());}
  let view=light_frame(travel_direction)?;
- let texel=(2.*radius)/map_size as f64;
+ let texel=(2.*radius)/(map_size-1) as f64;
  if !texel.is_finite()||texel<=0.{return Err("cascade texel size underflow".into());}
- // snap the slice center to the absolute texel grid in light space
  let cl=mv(&view,[center[0],center[1],center[2],1.]);
- let snapped=[(cl[0]/texel).round()*texel,(cl[1]/texel).round()*texel];
- // half-extent in whole texels, covering center offset + radius on both sides
- let half=(((radius+(cl[0]-snapped[0]).abs().max((cl[1]-snapped[1]).abs()))/texel).ceil()*texel).max(texel);
+ let phase=if map_size%2==0{0.}else{0.5};
+ let snap=|x:f64|((x/texel-phase).round()+phase)*texel;
+ let snapped=[snap(cl[0]),snap(cl[1])];
+ let half=map_size as f64*texel*0.5;
  let bounds=[[snapped[0]-half,snapped[1]-half,0.],[snapped[0]+half,snapped[1]+half,0.]];
  // depth from the scene AABB (casters outside the slice cast into it)
  let(mut lo,mut hi)=(f64::INFINITY,f64::NEG_INFINITY);
@@ -293,14 +297,53 @@ pub fn csm_visibility(csm:&CascadedShadowMaps,cam:&Camera,world:[f64;3],normal:[
    assert!(q[1]>=cs.bounds[0][1]-1e-9&&q[1]<=cs.bounds[1][1]+1e-9,"y covered: {q:?} vs {:?}",cs.bounds);}
   // snapped edges are absolute multiples of the texel size; extent is a whole texel count
   for j in 0..2{
-   assert!((cs.bounds[0][j]/cs.texel_world).fract().abs()<1e-9,"lo edge {j} on the grid");
-   assert!((cs.bounds[1][j]/cs.texel_world).fract().abs()<1e-9,"hi edge {j} on the grid");}
+   assert!((cs.bounds[0][j]/cs.texel_world-(cs.bounds[0][j]/cs.texel_world).round()).abs()<1e-9,"lo edge {j} on the grid");
+   assert!((cs.bounds[1][j]/cs.texel_world-(cs.bounds[1][j]/cs.texel_world).round()).abs()<1e-9,"hi edge {j} on the grid");}
   let nx=(cs.bounds[1][0]-cs.bounds[0][0])/cs.texel_world;
-  assert!((nx.round()-nx).abs()<1e-9&&nx>=512.,"extent a whole texel count >= map: {nx}");
+  assert!((nx.round()-nx).abs()<1e-9&&(nx-512.).abs()<1e-9,"extent exactly the raster resolution: {nx}");
   // depth covers every scene corner
   for k in 0..8{let p=[if k&1==0{-4.}else{4.},if k&2==0{-4.}else{4.},if k&4==0{-4.}else{4.}];
    let q=mv(&cs.view,[p[0],p[1],p[2],1.]);
    assert!(q[2]>=cs.bounds[0][2]&&q[2]<=cs.bounds[1][2],"scene corner {k} inside depth");}
+ }
+ #[test]fn fitted_grid_matches_real_raster_uv_for_even_and_odd_sizes(){
+  for size in [2,3,511,512]{
+   let c=cam();let a=fit_cascade([0.3,-0.5,1.],&c,16./9.,0.5,8.,aabb(),size).unwrap();
+   let map=build_cascade_maps(vec![a.clone()],size,0.).unwrap();
+   for j in 0..2{let actual=(a.bounds[1][j]-a.bounds[0][j])/size as f64;
+    assert!((actual-a.texel_world).abs()<1e-12*a.texel_world);
+    assert!((a.bounds[0][j]/actual-(a.bounds[0][j]/actual).round()).abs()<1e-9);
+   }
+   let world=a.slice_center;
+   let(u,v,_)=crate::threed::shadow::shadow_uvz(&map.maps[0],world).unwrap();
+   let mut moved=c;for j in 0..3{moved.eye[j]+=3.*a.texel_world*a.view[0][j];}
+   let b=fit_cascade([0.3,-0.5,1.],&moved,16./9.,0.5,8.,aabb(),size).unwrap();
+   let other=build_cascade_maps(vec![b],size,0.).unwrap();
+   // Read the real raster-coordinate mapping, not a nominal texel formula.
+   let q=mv(&other.maps[0].view,[world[0],world[1],world[2],1.]);
+   let uu=(q[0]-other.maps[0].bounds[0][0])/(other.maps[0].bounds[1][0]-other.maps[0].bounds[0][0]);
+   let vv=(q[1]-other.maps[0].bounds[0][1])/(other.maps[0].bounds[1][1]-other.maps[0].bounds[0][1]);
+   assert!(((uu-u)*size as f64+3.).abs()<1e-9);
+   assert!(((vv-v)*size as f64).abs()<1e-9);
+  }
+  assert_eq!(fit_cascade([0.,-1.,0.],&cam(),1.,0.5,8.,aabb(),1).unwrap_err(),"cascade fit map 2..4096 per axis");
+ }
+ #[test]fn sub_texel_camera_move_inside_snap_cell_preserves_primitive_depth(){
+  let dir=[0.3,-0.5,1.];let mut c=cam();
+  let initial=fit_cascade(dir,&c,16./9.,0.5,8.,aabb(),64).unwrap();
+  for axis in 0..2{let q=mv(&initial.view,[initial.slice_center[0],initial.slice_center[1],initial.slice_center[2],1.]);
+   let target=(initial.bounds[0][axis]+initial.bounds[1][axis])*0.5;
+   for j in 0..3{c.eye[j]+=(target-q[axis])*initial.view[axis][j];}
+  }
+  let a=fit_cascade(dir,&c,16./9.,0.5,8.,aabb(),64).unwrap();
+  let mut moved=c;for j in 0..3{moved.eye[j]+=0.4*a.texel_world*a.view[0][j];}
+  let b=fit_cascade(dir,&moved,16./9.,0.5,8.,aabb(),64).unwrap();
+  let g=crate::threed::primitives::generate(&crate::threed::primitives::Primitive::Cube{size:[2.,2.,2.],subdivisions:1}).unwrap();
+  let p:Vec<[f64;3]>=g.vertices.iter().map(|v|v.position.map(|v|v as f64)).collect();
+  let mut ma=build_cascade_maps(vec![a],64,0.).unwrap();let mut mb=build_cascade_maps(vec![b],64,0.).unwrap();
+  raster_cascades(&p,&g.indices,&mut ma).unwrap();raster_cascades(&p,&g.indices,&mut mb).unwrap();
+  assert_eq!(ma.maps[0].bounds,mb.maps[0].bounds);
+  assert_eq!(ma.maps[0].depth,mb.maps[0].depth);
  }
  #[test]fn anti_shimmer_integer_texel_motion_shifts_whole_texels(){
   let c=cam();let dir=[0.3,-0.5,1.];
