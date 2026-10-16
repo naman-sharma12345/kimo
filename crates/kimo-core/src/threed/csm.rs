@@ -116,6 +116,7 @@ pub fn slice_sphere(corners:&[[f64;3];8])->([f64;3],f64){
 /// Odd resolutions snap centers to half-texels so both edges remain grid-aligned.
 pub fn fit_cascade(travel_direction:[f64;3],cam:&Camera,aspect:f64,near:f64,far:f64,scene_aabb:[[f64;3];2],map_size:usize)->Result<Cascade,String>{
  if scene_aabb.iter().flatten().any(|v|!v.is_finite()){return Err("finite scene bounds required".into());}
+ if (0..3).any(|j|scene_aabb[1][j]<scene_aabb[0][j]||!(scene_aabb[1][j]-scene_aabb[0][j]).is_finite()){return Err("ordered finite-span scene bounds required".into());}
  if map_size<2||map_size>4096{return Err("cascade fit map 2..4096 per axis".into());}
  // Validate the slice before deriving its radius in camera space, avoiding translation
  // and roll dependent roundoff in world-space corner subtraction.
@@ -139,7 +140,8 @@ pub fn fit_cascade(travel_direction:[f64;3],cam:&Camera,aspect:f64,near:f64,far:
   let q=mv(&view,[p[0],p[1],p[2],1.]);lo=lo.min(q[2]);hi=hi.max(q[2]);}
  let rad=(0..3).map(|j|(scene_aabb[1][j]-scene_aabb[0][j])/2.).fold(0.,|s,d|s+d*d).sqrt();
  let pad=1e-3*(1.+rad);
- Ok(Cascade{near,far,view,bounds:[[bounds[0][0],bounds[0][1],lo-pad],[bounds[1][0],bounds[1][1],hi+pad]],texel_world:texel,slice_center:center,slice_radius:radius})
+ let fit=Cascade{near,far,view,bounds:[[bounds[0][0],bounds[0][1],lo-pad],[bounds[1][0],bounds[1][1],hi+pad]],texel_world:texel,slice_center:center,slice_radius:radius};
+ validate_cascades(std::slice::from_ref(&fit))?;Ok(fit)
 }
 
 /// Full cascade set: practical split over [near, far], one fit per cascade.
@@ -163,9 +165,32 @@ fn validate_cascades(cascades:&[Cascade])->Result<(),String>{
  if cascades.is_empty()||cascades.len()>MAX_CASCADES{return Err("cascade count 1..=8 required".into());}
  for c in cascades{
   if !c.near.is_finite()||!c.far.is_finite()||c.near<=0.||c.far<=c.near{return Err("finite ordered positive cascade depths required".into());}
-  if c.view.iter().flatten().chain(c.bounds.iter().flatten()).chain(c.slice_center.iter()).any(|v|!v.is_finite())||c.view[3]!=[0.,0.,0.,1.]||!c.texel_world.is_finite()||c.texel_world<=0.||!c.slice_radius.is_finite()||c.slice_radius<=0.||(0..3).any(|j|c.bounds[1][j]<=c.bounds[0][j]){return Err("finite nondegenerate cascade fit required".into());}
+  if c.view.iter().flatten().chain(c.bounds.iter().flatten()).chain(c.slice_center.iter()).any(|v|!v.is_finite())||c.view[3]!=[0.,0.,0.,1.]||!c.texel_world.is_finite()||c.texel_world<=0.||!c.slice_radius.is_finite()||c.slice_radius<=0.||(0..3).any(|j|{let span=c.bounds[1][j]-c.bounds[0][j];!span.is_finite()||span<=0.}){return Err("finite nondegenerate cascade fit required".into());}
+ }
+ for c in cascades{
+  for i in 0..3{for j in i..3{
+   let dot=(0..3).map(|k|c.view[i][k]*c.view[j][k]).sum::<f64>();
+   if !dot.is_finite()||(dot-if i==j{1.}else{0.}).abs()>1e-9{return Err("orthonormal cascade light basis required".into());}
+  }}
  }
  if cascades.windows(2).any(|w|w[0].far!=w[1].near){return Err("adjacent cascade depths must meet".into());}
+ Ok(())
+}
+fn validate_fit_resolution(c:&Cascade,size:usize)->Result<(),String>{
+ for j in 0..2{
+  let actual=(c.bounds[1][j]-c.bounds[0][j])/size as f64;
+  if (actual/c.texel_world-1.).abs()>1e-9{return Err("cascade texel_world must match actual map resolution".into());}
+ }
+ Ok(())
+}
+fn validate_map_payload_budget(maps:&[super::shadow::DirectionalShadowMap])->Result<(),String>{
+ let mut bytes=0usize;
+ for m in maps{
+  if m.width==0||m.height==0||m.width>4096||m.height>4096{return Err("cascade shadow map must match its fit and dimensions".into());}
+  let n=m.width.checked_mul(m.height).and_then(|v|v.checked_mul(std::mem::size_of::<f64>())).ok_or("cascade depth byte count overflow")?;
+  bytes=bytes.checked_add(n).ok_or("cascade depth byte count overflow")?;
+ }
+ if bytes>MAX_CASCADE_DEPTH_BYTES{return Err("cascade depth payload exceeds 128 MiB limit".into());}
  Ok(())
 }
 impl CascadedShadowMaps{
@@ -174,8 +199,11 @@ impl CascadedShadowMaps{
   validate_cascades(&self.cascades)?;
   if !self.blend_band.is_finite()||!(0.0..0.5).contains(&self.blend_band){return Err("blend band in [0,0.5) required".into());}
   if self.maps.len()!=self.cascades.len(){return Err("one shadow map per cascade required".into());}
+  validate_map_payload_budget(&self.maps)?;
   for(c,m)in self.cascades.iter().zip(&self.maps){
    if m.width==0||m.height==0||m.width>4096||m.height>4096||m.width!=m.height||m.depth.len()!=m.width*m.height||m.view!=c.view||m.bounds!=c.bounds{return Err("cascade shadow map must match its fit and dimensions".into());}
+   validate_fit_resolution(c,m.width)?;
+   if m.depth.iter().any(|d|d.is_nan()||*d==f64::NEG_INFINITY){return Err("cascade depth must be finite or positive infinity".into());}
   }
   Ok(())
  }
@@ -187,6 +215,7 @@ pub fn build_cascade_maps(cascades:Vec<Cascade>,map_size:usize,blend_band:f64)->
  if map_size==0||map_size>4096{return Err("cascade map 1..4096 per axis".into());}
  if !blend_band.is_finite()||!(0.0..0.5).contains(&blend_band){return Err("blend band in [0,0.5) required".into());}
  let len=cascade_depth_len(cascades.len(),map_size)?;
+ for c in &cascades{validate_fit_resolution(c,map_size)?;}
  let mut maps=Vec::with_capacity(cascades.len());
  for c in &cascades{
   let mut depth=Vec::new();depth.try_reserve_exact(len).map_err(|_|"cascade depth allocation failed".to_string())?;depth.resize(len,f64::INFINITY);
@@ -229,7 +258,10 @@ pub fn select_cascade(cascades:&[Cascade],blend_band:f64,d:f64)->Result<(usize,f
 /// shadow::bias PER CASCADE MAP, so they scale with that cascade's texel size
 /// (no acne near, no peter-panning far - pinned in tests). n_dot_l<=0 -> 0.
 pub fn csm_visibility(csm:&CascadedShadowMaps,cam:&Camera,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius_texels:f64,px:usize,py:usize)->Result<f64,String>{
- csm.validate()?;
+ csm.validate()?;csm_visibility_validated(csm,cam,world,normal,n_dot_l,radius_texels,px,py)
+}
+/// Immutable CPU render path: caller validates the full set once before pixel loops.
+pub(super) fn csm_visibility_validated(csm:&CascadedShadowMaps,cam:&Camera,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius_texels:f64,px:usize,py:usize)->Result<f64,String>{
  if normal.iter().any(|v|!v.is_finite())||world.iter().any(|v|!v.is_finite()){return Err("finite shadow receiver required".into());}
  super::shadow::validate_disk_radius(radius_texels)?;
  if !n_dot_l.is_finite(){return Err("finite shadow cosine required".into());}
@@ -516,6 +548,27 @@ pub fn csm_visibility(csm:&CascadedShadowMaps,cam:&Camera,world:[f64;3],normal:[
    let v=csm_visibility(&set,&cam,w,n,nl,2.0,0,0).unwrap();
    eprintln!("x={x:5.2} depth={d:6.2} cascade={i} t={tt:5.2} v={v:6.3}");
   }
+ }
+ #[test]fn csm_public_fits_reject_span_basis_texel_and_payload_errors(){
+  let fits=cascaded_light_space([0.,-1.,0.],&cam(),1.,0.1,10.,2,0.5,aabb(),16).unwrap();
+  let mut bad=fits.clone();bad[0].bounds[0][0]=-f64::MAX;bad[0].bounds[1][0]=f64::MAX;
+  assert_eq!(build_cascade_maps(bad,16,0.).unwrap_err(),"finite nondegenerate cascade fit required");
+  let mut bad=fits.clone();bad[0].view[0][0]=2.;
+  assert_eq!(build_cascade_maps(bad,16,0.).unwrap_err(),"orthonormal cascade light basis required");
+  let mut bad=fits.clone();bad[0].texel_world*=2.;
+  assert_eq!(build_cascade_maps(bad,16,0.).unwrap_err(),"cascade texel_world must match actual map resolution");
+  assert_eq!(build_cascade_maps(fits.clone(),32,0.).unwrap_err(),"cascade texel_world must match actual map resolution");
+  let mut set=build_cascade_maps(fits,16,0.).unwrap();
+  for d in [f64::NAN,f64::NEG_INFINITY]{set.maps[0].depth[0]=d;
+   assert_eq!(set.validate().unwrap_err(),"cascade depth must be finite or positive infinity");
+   assert_eq!(csm_visibility(&set,&cam(),[0.;3],[0.,1.,0.],1.,4.,0,0).unwrap_err(),"cascade depth must be finite or positive infinity");
+  }
+  set.maps[0].depth[0]=f64::INFINITY;set.validate().unwrap();
+  // Metadata-only budget check: reject before any large allocation or depth scan.
+  for m in &mut set.maps{m.width=4096;m.height=4096;}
+  assert_eq!(set.validate().unwrap_err(),"cascade depth payload exceeds 128 MiB limit");
+  assert_eq!(fit_cascade([0.,-1.,0.],&cam(),1.,0.1,10.,[[1.;3],[-1.;3]],16).unwrap_err(),"ordered finite-span scene bounds required");
+  assert_eq!(fit_cascade([0.,-1.,0.],&cam(),1.,0.1,10.,[[-f64::MAX;3],[f64::MAX;3]],16).unwrap_err(),"ordered finite-span scene bounds required");
  }
  #[test]fn csm_rejects_invalid_radius_even_for_backfaces(){
   let fits=cascaded_light_space([0.,-1.,0.],&cam(),1.,0.1,10.,1,0.5,aabb(),16).unwrap();
