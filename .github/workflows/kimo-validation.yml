@@ -1,0 +1,284 @@
+# Naman approved val-pbr,12000/2048MiB,7day artifacts on16Oct2026.
+# Transport remains blocked; this local file has NOT been pushed.
+# No synthetic squash, golden update, source change or retry in this workflow.
+name: Kimo clean-source validation
+on:
+  push:
+    branches: ['val-pbr']
+permissions:
+  contents: read
+concurrency:
+  group: kimo-validation-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      APPROVED_RSS_MIB: '12000'
+      APPROVED_FLOOR_MIB: '2048'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # observed v4 tag
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check limits and toolchain prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$APPROVED_RSS_MIB" =~ ^[1-9][0-9]*$ ]]
+          [[ "$APPROVED_FLOOR_MIB" =~ ^[1-9][0-9]*$ ]]
+          for cmd in git rustup cmake c++ python3; do command -v "$cmd"; done
+          rustup toolchain install 1.99.1 --profile minimal
+      - name: Verify source, check warning parity, execute named suites and library tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/kimo-validation"
+          mkdir -p "$ROOT/evidence" "$ROOT/kit"
+          # checkout action places source under the workspace; symlink does not change it.
+          ln -s "$GITHUB_WORKSPACE" "$ROOT/current"
+          git worktree add --detach "$ROOT/base" 947f97a2c00bd91d81f8eba9ef5089f42d2d3aa4
+          cat > "$ROOT/kit/launch-ci.sh" <<'KIMO_HELPER_EOF'
+          #!/usr/bin/env bash
+          # PREPARED ONLY. No provisioning, push, re-pin, branch creation or automated retries.
+          # Required: approved machine, source transfer, installed pinned toolchain and explicit approved limits.
+          set -euo pipefail
+          ROOT=$(realpath "${1:?usage: launch.sh SOURCE_ROOT APPROVED_RSS_MIB APPROVED_AVAILABLE_FLOOR_MIB}")
+          RSS=${2:?approved RSS ceiling required}; FLOOR=${3:?approved available floor required}
+          KIT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+          INITIAL_HEAD=$(git -C "$ROOT/current" rev-parse HEAD)
+          production_tree() {
+           local idx="$ROOT/evidence/source-verification.index"
+           GIT_INDEX_FILE="$idx" git -C "$ROOT/current" read-tree HEAD
+           GIT_INDEX_FILE="$idx" git -C "$ROOT/current" update-index --force-remove .github/workflows/kimo-validation.yml
+           GIT_INDEX_FILE="$idx" git -C "$ROOT/current" write-tree
+          }
+          mkdir -p "$ROOT/evidence"
+          export RUSTUP_TOOLCHAIN=1.99.1 CARGO_BUILD_JOBS=1
+          export CARGO_PROFILE_RELEASE_OPT_LEVEL=1 CARGO_PROFILE_RELEASE_LTO=false
+          export RUST_TEST_THREADS=1 CARGO_TERM_COLOR=never
+          unset CARGO_ENCODED_RUSTFLAGS CARGO_INCREMENTAL RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER
+          unset KIMO_UPDATE_GOLDEN KIMO_SDF_FRAMES KIMO_CSM_FRAMES KIMO_AB_KERNEL KIMO_AB_RADIUS KIMO_AB_FIXED_SEED
+          test "$(production_tree)" = 3a394c7fdebcc0e4235f023d6fa035f94be22fd1
+          test -z "$(git -C "$ROOT/current" status --porcelain)"
+          test "$(git -C "$ROOT/base" rev-parse HEAD)" = 947f97a2c00bd91d81f8eba9ef5089f42d2d3aa4
+          test -z "$(git -C "$ROOT/base" status --porcelain)"
+          echo "79af049e7fabcd50b93a5a9077cbc0e63117fb6f333d3d71980eb40adfcf280c  $ROOT/current/Cargo.lock" | sha256sum -c -
+          for cmd in git cargo rustc cmake c++ python3; do command -v "$cmd" >/dev/null || { echo "Missing $cmd"; exit 2; }; done
+          mkdir -p "$ROOT/evidence"
+          { date -Is; uname -a; rustc -Vv; cargo -V; cmake --version; free -m; swapon --show; df -h "$ROOT"; for f in /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory.swap.max /sys/fs/cgroup/memory.current; do if test -r "$f"; then echo "$f"; cat "$f"; fi; done; } > "$ROOT/evidence/host.txt"
+          cp "$KIT/manifest.json" "$ROOT/evidence/planned-manifest.json"
+          preserve() { git -C "$ROOT/current" format-patch --stdout 947f97a..HEAD > "$ROOT/evidence/before-$1.mbox"; }
+          run() { python3 "$KIT/watch-run.py" --rss-limit-mib "$RSS" --available-floor-mib "$FLOOR" --out "$ROOT/evidence/$1" -- "${@:2}"; }
+          # Same-scope warning pair. 35/35 is a prior measured reference, not an assumed pass here.
+          export RUSTFLAGS='-C debuginfo=0 -C codegen-units=16'
+          for which in base current; do
+           preserve "warning-$which"
+           export CARGO_TARGET_DIR="$ROOT/target-warning-$which"
+           cd "$ROOT/$which"
+           run "warning-$which" cargo check --release --locked -j1 -p kimo-core --message-format=json
+           done
+          python3 "$KIT/compare-warnings.py" "$ROOT/evidence/warning-base.stdout" "$ROOT/evidence/warning-current.stdout" "$ROOT/base" "$ROOT/current" "$ROOT/evidence/warning-comparison.json"
+          # Clean-source opt1 numeric suites. Same flags for every named suite and library tests.
+          export RUSTFLAGS='-C debuginfo=0 -C codegen-units=64'
+          export CARGO_TARGET_DIR="$ROOT/target-current-tests"
+          cd "$ROOT/current"
+          for target in camera_projection threed_foundation octree_mesh_bench_cp4; do
+           preserve "compile-$target"
+           run "compile-$target" cargo test --release --locked -j1 -p kimo-core --test "$target" --no-run --message-format=json
+           binary=$(python3 - "$ROOT/evidence/compile-$target.stdout" "$target" <<'PY'
+          import json,sys
+          found=[]
+          for line in open(sys.argv[1]):
+           try:x=json.loads(line)
+           except json.JSONDecodeError:continue
+           if x.get('reason')=='compiler-artifact' and x.get('target',{}).get('name')==sys.argv[2] and x.get('profile',{}).get('test') and x.get('executable'):found.append(x['executable'])
+          if len(set(found))!=1:raise SystemExit('Missing/ambiguous exact test executable')
+          print(found[0])
+          PY
+           )
+           preserve "run-$target"
+           run "run-$target" "$binary" --test-threads=1
+           done
+          # This is the previously NOT RUN gap. Do not omit/rename it or count --no-run as execution.
+          preserve lib-tests
+          run lib-tests cargo test --release --locked -j1 -p kimo-core --lib -- --test-threads=1
+          # Finish with identity check; do not mutate goldens or squash automatically.
+          test "$(production_tree)" = 3a394c7fdebcc0e4235f023d6fa035f94be22fd1
+          test "$(git rev-parse HEAD)" = "$INITIAL_HEAD"
+          test -z "$(git status --porcelain)"
+          printf '%s\n' 'Commands exited zero. Inspect test pass/fail/ignored counts and all receipts. This is NOT the full gate or release-profile proof.'
+          KIMO_HELPER_EOF
+          cat > "$ROOT/kit/watch-run.py" <<'KIMO_HELPER_EOF'
+          #!/usr/bin/env python3
+          """Launch one approved command; record sampled group RSS, available memory and exact exit.
+          No provisioning, package install, network upload, git write or retry.
+          """
+          import argparse,json,os,signal,subprocess,time
+          from pathlib import Path
+          p=argparse.ArgumentParser();p.add_argument('--out',required=True);p.add_argument('--rss-limit-mib',type=int,required=True);p.add_argument('--available-floor-mib',type=int,required=True);p.add_argument('command',nargs=argparse.REMAINDER);a=p.parse_args();cmd=a.command
+          if cmd and cmd[0]=='--':cmd=cmd[1:]
+          if not cmd or a.rss_limit_mib<=0 or a.available_floor_mib<=0:p.error('positive approved limits and command required')
+          out=Path(a.out);out.parent.mkdir(parents=True,exist_ok=True)
+          def available():return int(next(l.split()[1] for l in Path('/proc/meminfo').read_text().splitlines() if l.startswith('MemAvailable:')))
+          initial=available();state={'command':cmd,'status':'NOT_STARTED','rss_limit_mib':a.rss_limit_mib,'available_floor_mib':a.available_floor_mib,'peak_group_rss_kib':0,'minimum_available_kib':initial,'poll_interval_s':.2,'measurement':'sampled sum of process-group RSS; shared pages can be double-counted; MemAvailable is not MemFree'}
+          if initial<a.available_floor_mib*1024:
+           state['status']='PRECHECK_MEMORY_STOP';out.with_suffix('.state.json').write_text(json.dumps(state,indent=2));raise SystemExit(75)
+          start=time.monotonic();halt=None
+          with out.with_suffix('.stdout').open('wb') as stdout,out.with_suffix('.stderr').open('wb') as stderr:
+           child=subprocess.Popen(cmd,stdout=stdout,stderr=stderr,start_new_session=True)
+           while child.poll() is None:
+            mem=0
+            for d in Path('/proc').iterdir():
+             if not d.name.isdigit():continue
+             try:
+              if os.getpgid(int(d.name))!=child.pid:continue
+              mem+=next((int(l.split()[1]) for l in (d/'status').read_text().splitlines() if l.startswith('VmRSS:')),0)
+             except (OSError,ProcessLookupError):pass
+            av=available();state['peak_group_rss_kib']=max(state['peak_group_rss_kib'],mem);state['minimum_available_kib']=min(state['minimum_available_kib'],av)
+            if mem>a.rss_limit_mib*1024 or av<a.available_floor_mib*1024:
+             halt='MEMORY_SAFETY_STOP';state['stop_reason']='RSS_CAP' if mem>a.rss_limit_mib*1024 else 'AVAILABLE_FLOOR'
+             try:os.killpg(child.pid,signal.SIGKILL)
+             except ProcessLookupError:pass
+            state.update(status=halt or 'RUNNING',pid=child.pid,current_group_rss_kib=mem,current_available_kib=av,elapsed_s=time.monotonic()-start)
+            out.with_suffix('.state.json').write_text(json.dumps(state,indent=2));time.sleep(.2)
+           rc=child.wait()
+          state.update(status=halt or ('EXIT_ZERO' if rc==0 else 'EXIT_NONZERO'),exit=rc,elapsed_s=time.monotonic()-start)
+          out.with_suffix('.state.json').write_text(json.dumps(state,indent=2));raise SystemExit(75 if halt else (rc if rc>=0 else 128-rc))
+          KIMO_HELPER_EOF
+          cat > "$ROOT/kit/compare-warnings.py" <<'KIMO_HELPER_EOF'
+          #!/usr/bin/env python3
+          import collections,json,sys
+          from pathlib import Path
+          if len(sys.argv)!=6:raise SystemExit('usage: compare-warnings.py base.jsonl current.jsonl base_root current_root output.json')
+          base,current,br,cr,output=sys.argv[1:];all_d={};counters={}
+          for label,path,root in [('base',base,br),('current',current,cr)]:
+           ds=[];build_finished=False
+           for line in Path(path).read_text().splitlines():
+            try:x=json.loads(line)
+            except json.JSONDecodeError:continue
+            if x.get('reason')=='build-finished' and x.get('success'):build_finished=True
+            if x.get('reason')!='compiler-message' or x.get('target',{}).get('name')!='kimo_core' or x['message'].get('level')!='warning':continue
+            m=x['message'];sp=[s for s in m.get('spans',[]) if s.get('is_primary')];d={'code':(m.get('code') or {}).get('code'),'message':m['message'],'primary':[{'file':s['file_name'].removeprefix(root.rstrip('/')+'/'),'source':[z['text'].strip() for z in s.get('text',[])]} for s in sp]};ds.append(d)
+           if not build_finished:raise SystemExit(label+' missing successful build-finished receipt')
+           all_d[label]=ds;counters[label]=collections.Counter(json.dumps(d,sort_keys=True) for d in ds)
+          new=[json.loads(v) for v in (counters['current']-counters['base']).elements()];removed=[json.loads(v) for v in (counters['base']-counters['current']).elements()]
+          out={'scope':'default-feature kimo_core library warnings only','base_count':len(all_d['base']),'current_count':len(all_d['current']),'zero_new':not new,'new':new,'removed':removed,'diagnostics':all_d,'normalization':'code,message,repo-relative primaryfile,trimmed primary source text; ignore lineoffset; preserve multiplicity'}
+          Path(output).write_text(json.dumps(out,indent=2)+'\n');print(json.dumps({k:v for k,v in out.items() if k!='diagnostics'},indent=2));raise SystemExit(1 if new or removed or len(all_d['base'])!=35 or len(all_d['current'])!=35 else 0)
+          KIMO_HELPER_EOF
+          cat > "$ROOT/kit/manifest.json" <<'KIMO_HELPER_EOF'
+          {
+            "status": "PREPARED_NOT_EXECUTED_NO_PROVISIONING",
+            "prepared_at": "2026-10-16T19:16:00+05:30",
+            "repo": "https://github.com/naman-sharma12345/kimo",
+            "base_commit": "947f97a2c00bd91d81f8eba9ef5089f42d2d3aa4",
+            "reference_head": "136220ea50b493b98f1f0bcdafac5716c2aef0d5",
+            "required_tree": "3a394c7fdebcc0e4235f023d6fa035f94be22fd1",
+            "commit_count": 20,
+            "mbox_sha256": "62fe77723209c2552a8a0ffc2395a850e3af20dc68fd339859ec93e1a701f6b4",
+            "cargo_lock_sha256": "79af049e7fabcd50b93a5a9077cbc0e63117fb6f333d3d71980eb40adfcf280c",
+            "toolchain": "1.99.1 x86_64-unknown-linux-gnu (observed rustc58cf8f9c3 LLVM23.1.1)",
+            "build_prerequisites": [
+              "git",
+              "installed pinned Rust toolchain",
+              "CMake",
+              "C++17 compiler/build essentials",
+              "Python3",
+              "network to public Cargo sources",
+              "sufficient filesystem space"
+            ],
+            "features": "default only, includes surface-contour; no gpu3d/native-ocio",
+            "warning_checks": {
+              "command": "cargo check --release --locked -j1 -p kimo-core --message-format=json",
+              "flags": "opt1 LTO=false RUSTFLAGS=-C debuginfo=0 -C codegen-units=16",
+              "base_and_current": "separate worktrees and target directories",
+              "reference_counts": [
+                35,
+                35
+              ],
+              "acceptance": "successful checks, measured35/35, zero new and zero removed normalized diagnostics; changed toolchain counts stop for review"
+            },
+            "tests": {
+              "profile": "release overrides opt-level1 LTO=false, debug0 CGU64, -j1, one test thread",
+              "sequence": [
+                "camera_projection",
+                "threed_foundation",
+                "octree_mesh_bench_cp4",
+                "kimo-core --lib"
+              ],
+              "historical_hooked_counts": [
+                {
+                  "target": "camera_projection",
+                  "pass": 10,
+                  "fail": 0,
+                  "ignored": 1
+                },
+                {
+                  "target": "threed_foundation",
+                  "pass": 5,
+                  "fail": 0,
+                  "ignored": 1
+                },
+                {
+                  "target": "octree_mesh_bench_cp4",
+                  "pass": 6,
+                  "fail": 0,
+                  "ignored": 0
+                }
+              ],
+              "counts_are_expectations_not_passes": true,
+              "library_gap": "Current clean-source --lib NOT RUN; must execute separately",
+              "excluded": "full integration/doc/features/Python/GPU/release golden not covered"
+            },
+            "memory": {
+              "active_authorized_host_limits_mib": {
+                "group_rss_ceiling": 1400,
+                "available_floor": 200
+              },
+              "proposed_future_host_limits_not_approved": {
+                "4GB_physical": {
+                  "rss": 2800,
+                  "available_floor": 512
+                },
+                "8GB_physical": {
+                  "rss": 6000,
+                  "available_floor": 1024
+                },
+                "16GB_physical": {
+                  "rss": 12000,
+                  "available_floor": 2048
+                }
+              },
+              "launch_requires_explicit_approved_limits": true,
+              "watcher": "sample process-group summedRSS and MemAvailable every0.2s, durable max/min, stop no retry; shared pages may double count; cgroup limits recorded for host review, not used for floor measurement",
+              "swap_caveat": "MemAvailable does not include free swap; a swap-backed2GB host may still hit same floor; do not change without approval"
+            },
+            "restrictions": [
+              "no provisioning or payment",
+              "no new account/token",
+              "no push/remote branch",
+              "no golden re-pin",
+              "no automatic squash",
+              "no retries after memory stop",
+              "owner approves source transfer and machine limits before launch"
+            ],
+            "recipe": [
+              "install prerequisites/pinned toolchain only after approval",
+              "bash prepare-source.sh NEW_ROOT kimo-20commits.mbox",
+              "bash launch.sh ROOT APPROVED_RSS_MIB APPROVED_AVAILABLE_FLOOR_MIB"
+            ],
+            "syntax_checked_only": true
+          }
+          KIMO_HELPER_EOF
+          git log --oneline 947f97a..HEAD > "$ROOT/evidence/input-history.txt"
+          git rev-parse HEAD HEAD^{tree} > "$ROOT/evidence/input-identity.txt"
+          /usr/bin/time -v -o "$ROOT/evidence/whole-run.time.txt" bash "$ROOT/kit/launch-ci.sh" "$ROOT" "$APPROVED_RSS_MIB" "$APPROVED_FLOOR_MIB"
+      - name: Preserve full logs, source patch, timing and memory receipts even on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # observed v4 tag
+        with:
+          name: kimo-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/kimo-validation/evidence
+          if-no-files-found: warn
+          retention-days: 7
