@@ -219,6 +219,16 @@ pub struct PointCubeShadowMap{
  pub depth:Vec<f64>, // 6*size*size; f64::INFINITY = no occluder
 }
 
+impl PointCubeShadowMap{
+ /// Bound dimensions before multiplication, then validate the public face metadata.
+ pub fn validate(&self)->Result<(),String>{
+  if self.size==0||self.size>4096{return Err("cube shadow map 1..4096 per face axis".into());}
+  if self.depth.len()!=6*self.size*self.size{return Err("cube shadow depth buffer size mismatch".into());}
+  if self.position.iter().chain(self.views.iter().flatten().flatten()).any(|v|!v.is_finite())||self.views.iter().any(|v|v[3]!=[0.,0.,0.,1.])||!self.near.is_finite()||!self.far.is_finite()||self.near<=0.||self.far<=self.near{return Err("finite affine cube views and positive ordered near/far required".into());}
+  Ok(())
+ }
+}
+
 /// Borrowed shadow map of either kind. lit_raster::render_shadowed matches the kind
 /// against the light kind (mismatch is a typed error at validation).
 #[derive(Clone,Copy,Debug)]
@@ -314,7 +324,8 @@ fn cube_depth_gradient(map:&PointCubeShadowMap,face:usize,u:f64,v:f64)->f64{
 /// reference). The acne offset moves the receiver along the light ray, so face/u/v
 /// never shift (see the PL2 section header); `normal` is kept for the shared call
 /// contract and enters the bias only through n_dot_l.
-pub fn cube_visibility(map:&PointCubeShadowMap,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius:i32)->f64{
+pub fn cube_visibility(map:&PointCubeShadowMap,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius:i32)->Result<f64,String>{map.validate()?;Ok(cube_visibility_validated(map,world,normal,n_dot_l,radius))}
+fn cube_visibility_validated(map:&PointCubeShadowMap,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius:i32)->f64{
  let _=normal; // offset is ray-based; the normal enters the bias via n_dot_l (see doc)
  if map.size==0||map.depth.len()!=6*map.size*map.size{return 1.;}
  let(_,_,_,z0)=cube_uvz(map,world);
@@ -338,8 +349,9 @@ pub fn cube_visibility(map:&PointCubeShadowMap,world:[f64;3],normal:[f64;3],n_do
 
 /// cube_visibility with the rotated Gaussian disk (same D3D taps/IGN as the directional
 /// disk): dithered soft edges, deterministic per pixel.
-pub fn cube_visibility_disk(map:&PointCubeShadowMap,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius_texels:f64,px:usize,py:usize)->f64{
- if n_dot_l<=0.||radius_texels<=0.{return if n_dot_l<=0.{0.}else{cube_visibility(map,world,normal,n_dot_l,0)};}
+pub fn cube_visibility_disk(map:&PointCubeShadowMap,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius_texels:f64,px:usize,py:usize)->Result<f64,String>{map.validate()?;Ok(cube_visibility_disk_validated(map,world,normal,n_dot_l,radius_texels,px,py))}
+fn cube_visibility_disk_validated(map:&PointCubeShadowMap,world:[f64;3],normal:[f64;3],n_dot_l:f64,radius_texels:f64,px:usize,py:usize)->f64{
+ if n_dot_l<=0.||radius_texels<=0.{return if n_dot_l<=0.{0.}else{cube_visibility_validated(map,world,normal,n_dot_l,0)};}
  if map.size==0||map.depth.len()!=6*map.size*map.size{return 1.;}
  let(_,_,_,z0)=cube_uvz(map,world);
  if z0<=map.near{return 1.;}
@@ -518,10 +530,18 @@ pub fn raster_cube_depth_into(positions:&[[f64;3]],indices:&[[u32;3]],map:&mut P
   // Sweep both sides of each pairwise major-axis tie plus three-face corners.
   for axis in 0..3{for other in axis+1..3{for sign in [-1.,1.]{for e in [-1e-6,0.,1e-6]{
    let mut w=[0.;3];w[axis]=3.;w[other]=sign*(3.+e);
-   assert_eq!(cube_visibility(&map,w,[0.,1.,0.],1.,2),0.);
-   for px in [0,7,31]{assert_eq!(cube_visibility_disk(&map,w,[0.,1.,0.],1.,4.,px,11),0.);}
+   assert_eq!(cube_visibility(&map,w,[0.,1.,0.],1.,2).unwrap(),0.);
+   for px in [0,7,31]{assert_eq!(cube_visibility_disk(&map,w,[0.,1.,0.],1.,4.,px,11).unwrap(),0.);}
   }}}}
-  for w in [[3.,3.,3.],[-3.,3.,3.],[3.,-3.,-3.]]{assert_eq!(cube_visibility_disk(&map,w,[0.,1.,0.],1.,4.,7,11),0.);}
+  for w in [[3.,3.,3.],[-3.,3.,3.],[3.,-3.,-3.]]{assert_eq!(cube_visibility_disk(&map,w,[0.,1.,0.],1.,4.,7,11).unwrap(),0.);}
+ }
+ #[test]fn public_cube_dimensions_are_bounded_before_products(){
+  let mut m=cube_map([0.;3],1);m.size=usize::MAX;
+  assert_eq!(cube_visibility(&m,[2.,0.,0.],[-1.,0.,0.],1.,0).unwrap_err(),"cube shadow map 1..4096 per face axis");
+  assert_eq!(cube_visibility_disk(&m,[2.,0.,0.],[-1.,0.,0.],1.,4.,0,0).unwrap_err(),"cube shadow map 1..4096 per face axis");
+  m.size=1;m.depth.clear();assert_eq!(m.validate().unwrap_err(),"cube shadow depth buffer size mismatch");
+  m.depth=vec![f64::INFINITY;6];m.views[0][0][0]=f64::NAN;
+  assert_eq!(m.validate().unwrap_err(),"finite affine cube views and positive ordered near/far required");
  }
  #[test]fn cube_caster_indices_fail_without_mutating_depth(){
   let mut m=cube_map([0.;3],2);m.depth.fill(0.5);let before=m.depth.clone();
@@ -555,20 +575,20 @@ pub fn raster_cube_depth_into(positions:&[[f64;3]],indices:&[[u32;3]],map:&mut P
    raster_cube_depth(&pos,&idx,&mut map).unwrap();
    let n=[-f[0],-f[1],-f[2]]; // receiver normal faces the light
    let recv=[f[0]*3.,f[1]*3.,f[2]*3.];
-   assert_eq!(cube_visibility(&map,recv,n,1.0,0),0.0,"face {i}: behind the occluder is fully shadowed");
+   assert_eq!(cube_visibility(&map,recv,n,1.0,0).unwrap(),0.0,"face {i}: behind the occluder is fully shadowed");
    // receiver ON the occluder plane stays lit under its own depth (no self-shadow acne)
-   assert_eq!(cube_visibility(&map,[f[0],f[1],f[2]],n,1.0,0),1.0,"face {i}: acne guard on the occluder plane");}
+   assert_eq!(cube_visibility(&map,[f[0],f[1],f[2]],n,1.0,0).unwrap(),1.0,"face {i}: acne guard on the occluder plane");}
  }
  #[test]fn nearest_wins_across_draws_and_empty_map_is_lit(){
   let mut map=cube_map([0.,0.,0.],32);
-  assert_eq!(cube_visibility(&map,[2.,0.,0.],[-1.,0.,0.],1.0,0),1.0,"empty map is lit");
+  assert_eq!(cube_visibility(&map,[2.,0.,0.],[-1.,0.,0.],1.0,0).unwrap(),1.0,"empty map is lit");
   let(far_pos,idx)=quad_on_axis([1.,0.,0.],2.,0.5);
   raster_cube_depth(&far_pos,&idx,&mut map).unwrap();
   let(near_pos,idx2)=quad_on_axis([1.,0.,0.],1.,0.5);
   raster_cube_depth_into(&near_pos,&idx2,&mut map).unwrap();
   let center=map.depth[0*32*32+16*32+16];
   assert!((center-1.).abs()<1e-9,"nearer caster wins: center texel {center}");
-  assert_eq!(cube_visibility(&map,[3.,0.,0.],[-1.,0.,0.],1.0,0),0.0,"both quads occlude");}
+  assert_eq!(cube_visibility(&map,[3.,0.,0.],[-1.,0.,0.],1.0,0).unwrap(),0.0,"both quads occlude");}
  #[test]fn hard_binary_and_pcf_disk_penumbra_at_silhouette(){
   // small quad (half 0.5 at distance 1) covers x/z in [-0.5,0.5] on the +X face;
   // silhouette sits at x/z=0.5 for receivers on the ground line of the quad plane.
@@ -584,17 +604,17 @@ pub fn raster_cube_depth_into(positions:&[[f64;3]],indices:&[[u32;3]],map:&mut P
   // offset along world y: face view y axis for +X face is world y (u = r x f = (0,0,1) x? pinned by basis test above)
   let inside=[3.,1.47,0.]; // x/z_face = 1.47/3 = 0.49 < 0.5: inside the silhouette
   let n=[-1.,0.,0.];
-  let hard=cube_visibility(&map,inside,n,1.0,0);
+  let hard=cube_visibility(&map,inside,n,1.0,0).unwrap();
   assert_eq!(hard,0.0,"hard tap inside the silhouette: {hard}");
-  let soft=cube_visibility(&map,inside,n,1.0,1);
+  let soft=cube_visibility(&map,inside,n,1.0,1).unwrap();
   assert!(soft>0.0&&soft<1.0,"3x3 PCF straddles the silhouette: {soft}");
-  let disk=cube_visibility_disk(&map,inside,n,1.0,4.0,7,11);
+  let disk=cube_visibility_disk(&map,inside,n,1.0,4.0,7,11).unwrap();
   assert!(disk>0.0&&disk<1.0,"disk penumbra strictly between: {disk}");
-  let disk_hard=cube_visibility_disk(&map,inside,n,1.0,0.0,7,11);
+  let disk_hard=cube_visibility_disk(&map,inside,n,1.0,0.0,7,11).unwrap();
   assert_eq!(disk_hard,hard,"disk radius 0 is the hard tap");
   // fully inside and fully outside stay extreme
-  assert_eq!(cube_visibility(&map,[3.,0.,0.],n,1.0,0),0.0,"deep inside the shadow");
-  assert_eq!(cube_visibility(&map,[3.,-2.4,0.],n,1.0,0),1.0,"outside the silhouette is lit");}
+  assert_eq!(cube_visibility(&map,[3.,0.,0.],n,1.0,0).unwrap(),0.0,"deep inside the shadow");
+  assert_eq!(cube_visibility(&map,[3.,-2.4,0.],n,1.0,0).unwrap(),1.0,"outside the silhouette is lit");}
  #[test]fn raster_validation_is_typed(){
   let mut bad=cube_map([0.,0.,0.],0);
   assert_eq!(raster_cube_depth(&[[0.;3],[1.,0.,0.],[0.,1.,0.]],&[[0u32,1,2]],&mut bad).err().unwrap(),"cube shadow map 1..4096 per face axis");
