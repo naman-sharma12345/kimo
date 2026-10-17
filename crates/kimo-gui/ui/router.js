@@ -768,7 +768,7 @@ function audioOps(state, MODES, ev) {
     if (/loud|normaliz|lufs/.test(n)) {
       const tg = num(R.target_lufs ?? get('target_lufs')); if (tg != null && /normaliz/.test(n)) L.target = tg.toFixed(1);
       const sg = x => (x > 0.049 ? '+' : x < -0.049 ? '-' : '') + Math.abs(x).toFixed(1);
-      const add = [meas != null && ['Input', `${sg(meas)} LUFS`], gdb != null && ['Gain', `${sg(gdb)} dB`], num(R.true_peak_dbfs) != null && ['Peak', `${sg(R.true_peak_dbfs)} dBTP`], num(R.true_peak_dbfs) == null && num(R.sample_peak_dbfs) != null && ['Peak', `${sg(R.sample_peak_dbfs)} dBFS`]].filter(Boolean);
+      const add = [meas != null && ['Input', `${sg(meas)} LUFS`], gdb != null && ['Gain', `${sg(gdb)} dB`], num(R.true_peak_dbfs) != null && ['Peak', `${sg(R.true_peak_dbfs)} dBTP`], num(R.true_peak_dbfs) == null && num(R.sample_peak_dbfs) != null && ['Peak', `${sg(R.sample_peak_dbfs)} dBFS`], num(R.loudness_range?.lra_lu) != null && ['LRA', `${num(R.loudness_range.lra_lu).toFixed(1)} LU`]].filter(Boolean);   /* v6: measure_loudness lra=true */
       if (add.length) { const keep = (L.rows || []).filter(r => !add.some(a => a[0] === r[0])); L.rows = [...add, ...keep].slice(0, 3); for (const r of add) r._flash = t; L._flash = t; }
     }
     const gain = num(get('gain') ?? get('gain_db')) ?? 0;
