@@ -195,6 +195,22 @@ pub fn window_flash_counts_inside(spans: &[(f64, f64)], starts: &[f64], window: 
     let eps = 1e-9;
     starts.iter().map(|&s| spans.iter().filter(|(a, b)| *a >= s - eps && *b < s + window - eps).count()).collect()
 }
+/// v6 eyes (flash rule numbers, optional `flash_limit`): each flash's area is the larger changed-area share (%, the
+/// per-sample changed_area_fraction or red_changed_area_fraction x 100) at its two transition samples; flashes whose area is
+/// under `area_min_pct` are left out; a flash counts in every window its span touches (as lum_flashes); the worst window is
+/// the earliest one holding the most counted flashes (None when no flash is counted); `over` counts windows holding more
+/// than `limit` counted flashes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FlashRule { pub worst_start: Option<f64>, pub worst_count: usize, pub over: usize, pub area_max_pct: f64, pub counted: usize }
+pub fn flash_rule(times: &[f64], spans: &[(f64, f64)], area: &[f64], starts: &[f64], window: f64, limit: f64, area_min_pct: f64) -> FlashRule {
+    let idx = |t: f64| times.partition_point(|&x| x < t - 1e-9).min(times.len().saturating_sub(1));
+    let kept: Vec<((f64, f64), f64)> = spans.iter().map(|&(a, b)| ((a, b), area.get(idx(a)).copied().unwrap_or(0.).max(area.get(idx(b)).copied().unwrap_or(0.)) * 100.)).filter(|(_, ar)| *ar >= area_min_pct).collect();
+    let sp: Vec<(f64, f64)> = kept.iter().map(|k| k.0).collect();
+    let wc = window_flash_counts(&sp, starts, window);
+    let (mut ws, mut wn) = (None, 0usize);
+    for (s, &c) in starts.iter().zip(&wc) { if c > wn { wn = c; ws = Some(*s); } }
+    FlashRule { worst_start: ws, worst_count: wn, over: wc.iter().filter(|&&c| c as f64 > limit).count(), area_max_pct: kept.iter().map(|k| k.1).fold(0., f64::max), counted: kept.len() }
+}
 fn numeric(a: &Value, k: &str, d: f64) -> Result<f64, String> {
     let v = a
         .get(k)
@@ -236,6 +252,9 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
         Some(v) => v.as_u64().filter(|s| *s >= 1).ok_or("out_of_range: step_frames must be an integer >= 1")?,
     };
     let window = numeric(a, "window_s", 1.0)?;
+    // flash rule numbers (optional): absent flash_limit = the output without them
+    let limit = match a.get("flash_limit") { None | Some(Value::Null) => None, Some(v) => Some(v.as_f64().filter(|x| x.is_finite() && *x > 0. && *x <= 1000.).ok_or("out_of_range: flash_limit must be a number > 0 and <= 1000 (flashes per window; WCAG 2.x and Harding use 3 per 1 s)")?) };
+    let area_min = match a.get("area_min_pct") { None | Some(Value::Null) => 0., Some(v) => { if limit.is_none() { return Err("out_of_range: area_min_pct needs flash_limit".into()); } v.as_f64().filter(|x| x.is_finite() && (0.0..=100.0).contains(x)).ok_or("out_of_range: area_min_pct must be a number 0..100")? } };
     let d = Params::default();
     let p = Params {
         lum_delta: numeric(a, "lum_delta", d.lum_delta)?,
@@ -330,7 +349,7 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let dl: Vec<f64> = (0..n).map(|i| if i == 0 { 0. } else { r6(lum[i] - lum[i - 1]) }).collect();
     let max_area = stats.iter().map(|s| s.changed_area_fraction).fold(0., f64::max);
     let max_red_area = stats.iter().map(|s| s.red_changed_area_fraction).fold(0., f64::max);
-    Ok(json!({
+    let mut out = json!({
         "source": source,
         "range": {"start": start, "end": end},
         "timeline_fps": fps,
@@ -388,8 +407,22 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
             "max_changed_area_fraction": r6(max_area),
             "max_red_changed_area_fraction": r6(max_red_area)
         }
-    }))
+    });
+    if let Some(lim) = limit {
+        let la: Vec<f64> = stats.iter().map(|s| s.changed_area_fraction).collect();
+        let ra: Vec<f64> = stats.iter().map(|s| s.red_changed_area_fraction).collect();
+        let (gl, gr) = (flash_rule(&times, &fl, &la, &starts, window, lim, area_min), flash_rule(&times, &fr, &ra, &starts, window, lim, area_min));
+        let ws = |g: &FlashRule| g.worst_start.map(|s| json!(r6(s))).unwrap_or(Value::Null);
+        let we = |g: &FlashRule| g.worst_start.map(|s| json!(r6((s + window).min(end)))).unwrap_or(Value::Null);
+        for (k, v) in [
+            ("flash_limit", json!(lim)), ("area_min_pct", json!(area_min)),
+            ("worst_window_start", ws(&gl)), ("worst_window_end", we(&gl)), ("worst_window_flashes", json!(gl.worst_count)), ("windows_over_limit", json!(gl.over)), ("flash_area_pct_max", json!(r6(gl.area_max_pct))), ("flashes_counted", json!(gl.counted)),
+            ("worst_red_window_start", ws(&gr)), ("worst_red_window_end", we(&gr)), ("worst_red_window_flashes", json!(gr.worst_count)), ("red_windows_over_limit", json!(gr.over)), ("red_flash_area_pct_max", json!(r6(gr.area_max_pct))), ("red_flashes_counted", json!(gr.counted)),
+            ("flash_rule_method", json!("flashes as lum_flashes / red_flashes (a flash counts in every window its span touches); a flash's area = the larger changed_area_fraction (red: red_changed_area_fraction) x 100 at its two transition samples; flashes under area_min_pct are left out; worst window = the earliest window with the most counted flashes; windows_over_limit counts windows with more than flash_limit counted flashes")),
+        ] { out[k] = v; }
+    }
+    Ok(out)
 }
 pub fn commands() -> Vec<Command> {
-    vec![Command{name:"flash_series",mutates:false,description:"Measure flashing over a time range: per-frame linear luminance, red saturation, transitions and per-window transition counts. Read-only, raw numbers, no pass/fail or verdict. source timeline (default), clip:<id> or file:<path>; start/end default the whole source; samples every timeline frame, step_frames N for every Nth; optional region [x,y,w,h]. Pixels are decoded from the rendered 8-bit output with the sRGB EOTF; luminance = mean Rec.709 Y = .2126R+.7152G+.0722B in linear light; red_saturation = mean R/(R+G+B), pixels with R+G+B < red_floor (default .01) count 0; red_quantity = mean max(0,R-G-B)*320 over pixels with R/(R+G+B) >= red_ratio_min (default .8). A transition is a swing between confirmed extrema of at least lum_delta (default .1) with the darker end < dark_max (default .8), or at least red_delta (default 20) of red_quantity; stamped +1/-1 on the first frame that crosses lum_delta (or red_delta) inside the monotonic run reaching the swing's extreme, or, when that run alone is smaller, the first frame that far from the swing's start. Per-frame changed_area_fraction and red_changed_area_fraction count pixels that moved by those thresholds since the previous sample. Windows of window_s (default 1) every window_hop_s (default one sample) report transition and flash counts with start/end times; a flash is two opposing transitions paired in order and counts once in each window its span touches, so a flash straddling a window edge counts in both; lum_flashes_fully_inside / red_flashes_fully_inside count only flashes with both transitions inside the window. params_used.max_resolvable_hz = fps/step_frames/2. Black to saturated red is also a 0.2126 luminance swing, so at the default lum_delta a red flash counts as a luminance flash too. Reference values for reading the counts, not applied here: Harding, ITU-R BT.1702 and WCAG 2.x treat more than 3 flashes in any 1 s as hazardous, a flash being a pair of opposing luminance changes of 10% or more of max luminance with the darker state below 0.80, or a pair of opposing transitions involving saturated red (WCAG 2.0 notes: R/(R+G+B) >= 0.8 and a (R-G-B)*320 change above 20; WCAG 2.2 uses a 0.2 change in CIE 1976 u'v'), when the flashing area exceeds 25% of the screen (WCAG: .25 of any 10 degree visual field). Caps 20000 samples. Solid colours in a test project must be [r,g,b] arrays: a hex string currently renders black (v5 engine bug, fix planned).",schema:obj(vec![("source",s("timeline default, clip:<id>, file:<path>")),("start",n("range start seconds, default source start")),("end",n("range end seconds, default source end")),("step_frames",json!({"type":"integer","minimum":1,"description":"sample every Nth timeline frame, default 1 = every frame"})),("region",json!({"type":"array","items":{"type":"integer"},"minItems":4,"maxItems":4,"description":"[x,y,w,h] pixels; default whole frame"})),("window_s",n("window length seconds, default 1")),("window_hop_s",n("window start spacing seconds, default one sample")),("lum_delta",n("luminance swing threshold 0..1, default .1")),("dark_max",n("darker-state ceiling 0..1, default .8")),("red_delta",n("red_quantity swing threshold, default 20")),("red_ratio_min",n("R/(R+G+B) for saturated red 0..1, default .8")),("red_floor",n("R+G+B floor for red_saturation, default .01"))],&[]),run}]
+    vec![Command{name:"flash_series",mutates:false,description:"Measure flashing over a time range: per-frame linear luminance, red saturation, transitions and per-window transition counts. Read-only, raw numbers, no pass/fail or verdict. source timeline (default), clip:<id> or file:<path>; start/end default the whole source; samples every timeline frame, step_frames N for every Nth; optional region [x,y,w,h]. Pixels are decoded from the rendered 8-bit output with the sRGB EOTF; luminance = mean Rec.709 Y = .2126R+.7152G+.0722B in linear light; red_saturation = mean R/(R+G+B), pixels with R+G+B < red_floor (default .01) count 0; red_quantity = mean max(0,R-G-B)*320 over pixels with R/(R+G+B) >= red_ratio_min (default .8). A transition is a swing between confirmed extrema of at least lum_delta (default .1) with the darker end < dark_max (default .8), or at least red_delta (default 20) of red_quantity; stamped +1/-1 on the first frame that crosses lum_delta (or red_delta) inside the monotonic run reaching the swing's extreme, or, when that run alone is smaller, the first frame that far from the swing's start. Per-frame changed_area_fraction and red_changed_area_fraction count pixels that moved by those thresholds since the previous sample. Windows of window_s (default 1) every window_hop_s (default one sample) report transition and flash counts with start/end times; a flash is two opposing transitions paired in order and counts once in each window its span touches, so a flash straddling a window edge counts in both; lum_flashes_fully_inside / red_flashes_fully_inside count only flashes with both transitions inside the window. params_used.max_resolvable_hz = fps/step_frames/2. Black to saturated red is also a 0.2126 luminance swing, so at the default lum_delta a red flash counts as a luminance flash too. Reference values for reading the counts, not applied here: Harding, ITU-R BT.1702 and WCAG 2.x treat more than 3 flashes in any 1 s as hazardous, a flash being a pair of opposing luminance changes of 10% or more of max luminance with the darker state below 0.80, or a pair of opposing transitions involving saturated red (WCAG 2.0 notes: R/(R+G+B) >= 0.8 and a (R-G-B)*320 change above 20; WCAG 2.2 uses a 0.2 change in CIE 1976 u'v'), when the flashing area exceeds 25% of the screen (WCAG: .25 of any 10 degree visual field). Optional flash_limit (e.g. 3) adds the rule numbers as top-level scalars: worst_window_start / _end / _flashes (the earliest window with the most flashes), windows_over_limit (windows with more than flash_limit), flash_area_pct_max and flashes_counted, and the same six for red flashes (worst_red_window_start / _end / _flashes, red_windows_over_limit, red_flash_area_pct_max, red_flashes_counted); optional area_min_pct leaves out flashes whose changed area (the larger changed_area_fraction x 100 at their two transitions) is smaller. Caps 20000 samples. Solid colours in a test project must be [r,g,b] arrays: a hex string currently renders black (v5 engine bug, fix planned).",schema:obj(vec![("source",s("timeline default, clip:<id>, file:<path>")),("start",n("range start seconds, default source start")),("end",n("range end seconds, default source end")),("step_frames",json!({"type":"integer","minimum":1,"description":"sample every Nth timeline frame, default 1 = every frame"})),("region",json!({"type":"array","items":{"type":"integer"},"minItems":4,"maxItems":4,"description":"[x,y,w,h] pixels; default whole frame"})),("window_s",n("window length seconds, default 1")),("window_hop_s",n("window start spacing seconds, default one sample")),("lum_delta",n("luminance swing threshold 0..1, default .1")),("dark_max",n("darker-state ceiling 0..1, default .8")),("red_delta",n("red_quantity swing threshold, default 20")),("red_ratio_min",n("R/(R+G+B) for saturated red 0..1, default .8")),("red_floor",n("R+G+B floor for red_saturation, default .01")),("flash_limit",n("optional: flashes per window above which a window counts in windows_over_limit (3 for the 3-flashes-per-second rule); adds the flash rule numbers")),("area_min_pct",n("optional with flash_limit: leave out flashes whose changed area is under this % of the analysed frame (0..100, default 0)"))],&[]),run}]
 }

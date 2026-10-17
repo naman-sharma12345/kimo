@@ -7,7 +7,8 @@
 //     template_apply), the Media list + its footer (load_project dependencies, save_project);
 //     set_meta renames the clip / track on the timeline and writes Name / Role / Tags in the Inspector (m16);
 //   qa: diff_frames, compare_ranges, lint_frame, flash_series, audio_spectrum and the frame cache answer in the HUD status toast and keep the result on their
-//     (flash_series also lists its luminance transition stamps, first-crossing times, on the info panel's Stamps row)
+//     (flash_series also lists its luminance transition stamps, first-crossing times, on the info panel's Stamps row, and
+//      with flash_limit the busiest 1 s window: flashes @ start, windows over the limit, flashing area, luminance and red)
 //     own rail row (Naman 7:24), no mode hop, nothing on the canvas.
 // Never a raw id: clips read as their timeline names, checkpoints and templates by the names the call gave.
 import { _now as now, RAW_ID, findClip, findTrack, timelineView, numOf, fitRuler } from './router.js';
@@ -389,6 +390,13 @@ export function qaOps(state, MODES, ev) {
     const tot = Number.isFinite(P.lum_stamps_total) ? Math.max(P.lum_stamps_total, st.length) : st.length;
     ev._flashStamps = st.length ? st.slice(0, 8).join(' ') + (tot > 8 ? ` +${tot - 8} more` : '') : Array.isArray(P.lum_stamps) ? 'none' : 'not in feed';
     rail = { [span || pl(n(R.samples), 'frame')]: what }; toast = `${tn}${span ? ' ' + span : ''} · ${pl(n(R.samples), 'frame')}: ${what}`;
+    // v6 flash rule numbers (only when the call gave flash_limit): top-level scalars worst_window_* / windows_over_limit /
+    // flash_area_pct_max and the red_ twins; the busiest 1 s window with its start time, how many windows exceed the limit
+    const lim = numOf(R.flash_limit);
+    if (lim != null) { const one = (c, s0, o, a) => { const cn = numOf(c), sv = numOf(s0), ov = numOf(o), ar = numOf(a); if (cn == null) return null;
+        return `${cn}${sv != null ? ` @ ${Math.round(sv * 100) / 100}s` : ''}${ov != null ? `, ${ov} > ${Math.round(lim * 100) / 100}` : ''}${ar != null && cn > 0 ? `, area ${Math.round(ar)}%` : ''}`; };
+      const lw = one(R.worst_window_flashes, R.worst_window_start, R.windows_over_limit, R.flash_area_pct_max), rw = one(R.worst_red_window_flashes, R.worst_red_window_start, R.red_windows_over_limit, R.red_flash_area_pct_max);
+      ev._flashRule = lw != null || rw != null ? `${lw ?? '–'} · red ${rw ?? '–'}` : null; }
   } else if (tn === 'audio_spectrum') {
     // raw levels only, from the result's top-level scalars (peak_hz / peak_dbfs / total_dbfs / loudest_band): the bands and
     // spectrum arrays arrive cut to 8 entries plus a "…+N" marker, so no row reads them. null (silence) reads "silent", never 0.
@@ -418,7 +426,7 @@ export function qaOps(state, MODES, ev) {
   if (tn === 'diff_frames') { ev._readRows = [['Compared', `${side(state, MODES, R.a || A.a)} vs ${side(state, MODES, R.b || A.b)}`, 'wrap'], ['Changed', rail.changed]]; if (ev._dfQuality) ev._readRows.push(['Quality', ev._dfQuality, 'wrap']); }
   else if (tn === 'compare_ranges') ev._readRows = ev._crRows;
   else if (tn === 'lint_frame') ev._readRows = [['Frame', Object.keys(rail)[0]], ['Findings', Object.values(rail)[0]]];
-  else if (tn === 'flash_series') ev._readRows = [['Range', Object.keys(rail)[0]], ['Transitions', Object.values(rail)[0], 'wrap'], ['Stamps', ev._flashStamps, 'wrap']];
+  else if (tn === 'flash_series') { ev._readRows = [['Range', Object.keys(rail)[0]], ['Transitions', Object.values(rail)[0], 'wrap'], ['Stamps', ev._flashStamps, 'wrap']]; if (ev._flashRule) ev._readRows.push(['Worst 1 s flashes', ev._flashRule, 'wrap']); }
   else if (tn === 'audio_spectrum') ev._readRows = ev._specRows;
   else if (tn === 'cache_set_budget') ev._readRows = [['Frame cache', rail.budget], ['Used', bytes(R.bytes ?? 0)]];
   else ev._readRows = [['Freed', bytes(R.freed_bytes ?? 0)], ['Frames', String(n(R.cleared_entries))]];

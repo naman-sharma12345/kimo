@@ -117,10 +117,10 @@ How the numbers fit: `kimo_info` and the golden registry (`crates/kimo-core/test
 |---|---|---|---|
 | `grouped` (default) | 17 | 4,432 bytes | small context windows. Call a group with `action` and `args`; find tools with `search_tools`. |
 | `core` | 29 | 20,368 bytes | the most used tools with full schemas, plus `search_tools`, `kimo_describe`, `kimo_enable_group`. |
-| `flat` | 381 | 300,121 bytes | clients with large context or their own tool search. Every tool listed with its schema. |
+| `flat` | 381 | 301,023 bytes | clients with large context or their own tool search. Every tool listed with its schema. |
 | group names, e.g. `audio,color_grade` | varies | varies | those groups listed flat, the rest grouped. |
 
-Measured on a default-feature `kimo-mcp` built from commit `af615ca` (`initialize`, then `tools/list`; size is the compact JSON of the `result`); the `flat` row was re-measured the same way after `flash_series`, `audio_spectrum`, `compare_ranges` and `contrast_ratio` were added, `diff_frames` gained `quality`, `get_scopes` its numeric arguments (and a first sentence naming them) and `query_safe_margins` its `rects` (v6, unreleased; `grouped` and `core` did not change). `kimo_enable_group` is listed in `grouped` and `core` but not in `flat`. `search_tools(query, limit=8, group?)` returns ranked tools, effects and transitions with the required args and a `call_as` hint.
+Measured on a default-feature `kimo-mcp` built from commit `af615ca` (`initialize`, then `tools/list`; size is the compact JSON of the `result`); the `flat` row was re-measured the same way after `flash_series`, `audio_spectrum`, `compare_ranges` and `contrast_ratio` were added, `diff_frames` gained `quality`, `get_scopes` its numeric arguments (and a first sentence naming them) `query_safe_margins` its `rects` and `flash_series` its flash rule numbers (v6, unreleased; `grouped` and `core` did not change). `kimo_enable_group` is listed in `grouped` and `core` but not in `flat`. `search_tools(query, limit=8, group?)` returns ranked tools, effects and transitions with the required args and a `call_as` hint.
 
 Set it like this: `claude mcp add --transport stdio --env KIMO_TOOLS=core kimo -- /home/you/.local/bin/kimo-mcp`, or `[mcp_servers.kimo.env] KIMO_TOOLS = "core"` for Codex. For JSON configs add `"env": { "KIMO_TOOLS": "core" }` (OpenCode: `"environment": { ... }`).
 
