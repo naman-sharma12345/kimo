@@ -106,6 +106,44 @@ const K: [u8; 3] = [0, 0, 0]; const W: [u8; 3] = [255, 255, 255]; const R: [u8; 
     assert_eq!((touch[24], inside[24]), (4, 4), "window [1 s, 2 s): (24,27) .. (42,45) both ways");
     assert!(touch.iter().zip(&inside).all(|(t, i)| i <= t));
 }
+/// linear -> sRGB (IEC 61966-2-1), rounded to 8 bits like a rendered frame
+fn enc(v: f64) -> f64 { let s = if v <= 0.0031308 { 12.92 * v } else { 1.055 * v.powf(1. / 2.4) - 0.055 }; (s * 255.).round() / 255. }
+#[test] fn slow_fade_is_stamped_at_the_first_crossing() {
+    // 24 fps: 1 s black, a 3 s linear fade to white (frames 24..=96, Y = (i-24)/72 in linear light), 1 s white with a tiny late
+    // drift up (the extreme is only reached at frame 115), then 3 s fade back down. Stamps land on the first crossing of
+    // lum_delta: rise at the first frame with Y >= .1 (frame 32: 8/72 = .111), fall at the first frame .1 below the peak
+    let mut y: Vec<f64> = (0..24).map(|_| 0.).collect();
+    y.extend((24..=96).map(|i| (i - 24) as f64 / 72.)); y.extend((97..120).map(|i| if i < 115 { 0.995 } else { 1.0 }));
+    y.extend((1..=72).map(|k| 1.0 - k as f64 / 72.));
+    let lt = transitions(&y, 0.1, 0.8); let on: Vec<(usize, i8)> = lt.iter().enumerate().filter(|(_, x)| **x != 0).map(|(i, x)| (i, *x)).collect();
+    let first_rise = y.iter().position(|v| *v >= 0.1).unwrap(); let peak_i = 115usize;
+    let first_fall = (peak_i..y.len()).find(|&i| y[i] <= 1.0 - 0.1).unwrap();
+    assert_eq!(on.len(), 2, "{on:?}"); assert_eq!(on[0].1, 1); assert_eq!(on[1].1, -1);
+    assert!((on[0].0 as i64 - first_rise as i64).abs() <= 1, "rise stamped at {} (first crossing {first_rise})", on[0].0);
+    assert!((on[1].0 as i64 - first_fall as i64).abs() <= 1, "fall stamped at {} (first crossing {first_fall})", on[1].0);
+    assert!(on[0].0 < 96 && on[1].0 > peak_i, "not at the fade's end (96) or the late extreme");
+    // the same through frames of the engine's measure path, as images
+    let p = Params::default(); let frames: Vec<Image> = y.iter().map(|v| { let mut im = Image::new(4, 4); let e = enc(*v); for c in 0..3 { for i in 0..16 { im.rgb[c][i] = e; } } im }).collect();
+    let (_, lt2, ..) = series(&frames, 24., 1.0, &p); let on2: Vec<usize> = lt2.iter().enumerate().filter(|(_, x)| **x != 0).map(|(i, _)| i).collect();
+    assert_eq!(on2.len(), 2); assert!((on2[0] as i64 - first_rise as i64).abs() <= 1 && (on2[1] as i64 - first_fall as i64).abs() <= 1, "{on2:?}");
+}
+#[test] fn hard_cut_next_to_a_slow_ramp_in_one_window() {
+    // 24 fps, everything inside 1 s (frames 24..48): a 0.5 s ramp, a short hold, then a hard cut at frame 40
+    let on = |y: &[f64]| -> Vec<(usize, i8)> { transitions(y, 0.1, 0.8).iter().enumerate().filter(|(_, x)| **x != 0).map(|(i, x)| (i, *x)).collect() };
+    let ramp = |a: f64, b: f64| -> Vec<f64> { (1..=12).map(|k| a + (b - a) * k as f64 / 12.).collect() };
+    let build = |a: f64, b: f64, hold: &[f64], cut: f64| -> Vec<f64> { let mut y = vec![a; 24]; y.extend(ramp(a, b)); y.extend_from_slice(hold); y.extend(vec![cut; 72 - 24 - 12 - hold.len()]); y };
+    // 1. ramp DOWN .6 -> .45, then cut UP to .95: two transitions, the fall on the ramp's own first crossing, the rise on the cut
+    let y1 = build(0.6, 0.45, &[0.45; 4], 0.95); assert_eq!(on(&y1), vec![(32, -1), (40, 1)]);
+    // 2. ramp up .2 -> .28 (under lum_delta), hold, cut to .9: one rise, on the cut frame; the ramp does not take the stamp
+    let y2 = build(0.2, 0.28, &[0.28; 4], 0.9); assert_eq!(on(&y2), vec![(40, 1)]);
+    // 3. ramp up .2 -> .45 (over lum_delta) then a hold with one tiny dip, cut to .95: still one rise, on the cut frame,
+    //    because the monotonic run that reaches the extreme starts after the dip; rule (a) alone would stamp frame 28 in the ramp
+    let y3 = build(0.2, 0.45, &[0.45, 0.449, 0.45, 0.45], 0.95); assert_eq!(on(&y3), vec![(40, 1)]);
+    assert_eq!(y3.iter().position(|v| v - 0.2 >= 0.1), Some(28));
+    // 4. documented limit (no tolerance argument): a ramp running straight into the cut with no reversal at all is one monotonic
+    //    run, so the stamp stays on the ramp's first crossing
+    let y4 = build(0.2, 0.45, &[], 0.95); assert_eq!(on(&y4), vec![(28, 1)]);
+}
 #[test] fn static_frame_gives_zero_transitions() {
     let p = Params::default(); let frames: Vec<Image> = (0..90).map(|_| solid(8, 6, [128, 128, 128])).collect();
     let (st, lt, rt, wl, wr) = series(&frames, 30., 1.0, &p);
@@ -133,6 +171,8 @@ const K: [u8; 3] = [0, 0, 0]; const W: [u8; 3] = [255, 255, 255]; const R: [u8; 
     let (_, lt2, ..) = series(&frames, 60., 1.0, &Params { dark_max: 0.95, ..Params::default() });
     assert_eq!(lt2.iter().filter(|x| **x != 0).count(), 5);
     // a wiggle smaller than lum_delta never splits a swing: 0 -> .5 with a .05 dip in the middle is one rise
+    // strict-run guard: the run that reaches the peak starts at the .25 dip, and moves .25 >= delta, so the stamp is its first
+    // crossing (sample 3), not the swing's first crossing from 0 (sample 1)
     assert_eq!(transitions(&[0., 0.3, 0.25, 0.5, 0.5], 0.1, 0.8), vec![0, 0, 0, 1, 0]);
 }
 #[test] fn half_frame_flash_reports_half_the_area() {

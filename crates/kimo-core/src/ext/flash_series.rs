@@ -97,44 +97,57 @@ pub fn measure(im: &Image, prev: Option<&Planes>, p: &Params) -> (FrameStats, Pl
 /// Transitions in a series: a swing between successive confirmed extrema of amplitude >= delta (a reversal is confirmed once the
 /// value moves >= delta back from the running extreme, so wiggles smaller than delta never split a swing). A swing counts when
 /// min(start, end) < dark_max (pass f64::INFINITY for no darker-state condition). Returns per-sample +1 (rise) / -1 (fall) / 0,
-/// placed on the sample where the swing first reached its new extreme. The last, unreversed swing counts too.
+/// placed on the first crossing of delta inside the monotonic run that reaches the swing's extreme (strict-run guard), so a hard
+/// cut after a slow ramp is stamped at the cut and drift after a fade does not move the stamp; when that run alone is under delta,
+/// on the first sample >= delta from the swing's start. The last, unreversed swing counts too.
 pub fn transitions(v: &[f64], delta: f64, dark_max: f64) -> Vec<i8> {
     let mut out = vec![0i8; v.len()];
     if v.is_empty() || !(delta > 0.) {
         return out;
     }
-    let mark = |out: &mut Vec<i8>, a: f64, e: f64, idx: usize| {
+    // stamp: the first crossing of delta inside the monotonic run that ends at the extreme; when that run alone moved less
+    // than delta (the swing was built from smaller steps), the first crossing of delta from the swing's start (cross_i)
+    let mark = |out: &mut Vec<i8>, a: f64, a_i: usize, e: f64, e_i: usize, cross_i: usize| {
         if (e - a).abs() >= delta && a.min(e) < dark_max {
-            out[idx] = if e > a { 1 } else { -1 };
+            let up = e > a;
+            let mut s = e_i;
+            while s > a_i && if up { v[s - 1] <= v[s] } else { v[s - 1] >= v[s] } {
+                s -= 1;
+            }
+            let base = v[s];
+            let at = if (e - base).abs() >= delta { (s..=e_i).find(|&q| (v[q] - base).abs() >= delta).unwrap_or(cross_i) } else { cross_i };
+            out[at] = if up { 1 } else { -1 };
         }
     };
     let (mut lo, mut lo_i, mut hi, mut hi_i) = (v[0], 0usize, v[0], 0usize);
-    let (mut dir, mut anchor, mut ext, mut ext_i) = (0i8, v[0], v[0], 0usize);
+    let (mut dir, mut anchor, mut anchor_i, mut ext, mut ext_i, mut cross_i) = (0i8, v[0], 0usize, v[0], 0usize, 0usize);
     for (i, &x) in v.iter().enumerate().skip(1) {
         match dir {
             0 => {
                 if x < lo { lo = x; lo_i = i; }
                 if x > hi { hi = x; hi_i = i; }
                 if hi - lo >= delta {
-                    if hi_i > lo_i { dir = 1; anchor = lo; ext = hi; ext_i = hi_i; } else { dir = -1; anchor = hi; ext = lo; ext_i = lo_i; }
+                    // this sample is the first one >= delta from the starting extreme: the crossing
+                    if hi_i > lo_i { dir = 1; anchor = lo; anchor_i = lo_i; ext = hi; ext_i = hi_i; } else { dir = -1; anchor = hi; anchor_i = hi_i; ext = lo; ext_i = lo_i; }
+                    cross_i = i;
                 }
             }
             1 => {
                 if x > ext { ext = x; ext_i = i; } else if ext - x >= delta {
-                    mark(&mut out, anchor, ext, ext_i);
-                    anchor = ext; dir = -1; ext = x; ext_i = i;
+                    mark(&mut out, anchor, anchor_i, ext, ext_i, cross_i);
+                    anchor = ext; anchor_i = ext_i; dir = -1; ext = x; ext_i = i; cross_i = i;
                 }
             }
             _ => {
                 if x < ext { ext = x; ext_i = i; } else if x - ext >= delta {
-                    mark(&mut out, anchor, ext, ext_i);
-                    anchor = ext; dir = 1; ext = x; ext_i = i;
+                    mark(&mut out, anchor, anchor_i, ext, ext_i, cross_i);
+                    anchor = ext; anchor_i = ext_i; dir = 1; ext = x; ext_i = i; cross_i = i;
                 }
             }
         }
     }
     if dir != 0 {
-        mark(&mut out, anchor, ext, ext_i);
+        mark(&mut out, anchor, anchor_i, ext, ext_i, cross_i);
     }
     out
 }
@@ -332,7 +345,7 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
             "luminance": "mean over pixels of Y = 0.2126 R + 0.7152 G + 0.0722 B (linear, Rec.709/BT.709)",
             "red_saturation": "mean over pixels of R/(R+G+B) (linear); a pixel with R+G+B < red_floor counts as 0",
             "red_quantity": "mean over pixels of max(0, R-G-B)*320 where R/(R+G+B) >= red_ratio_min, else 0",
-            "transition": "swing between confirmed extrema of amplitude >= delta (reversal confirmed after >= delta back); luminance swings also need min(start,end) < dark_max; marked +1/-1 on the sample that first reached the new extreme",
+            "transition": "swing between confirmed extrema of amplitude >= delta (reversal confirmed after >= delta back); luminance swings also need min(start,end) < dark_max; marked +1/-1 on the first crossing of delta inside the monotonic run that reaches the extreme (if that run alone is under delta: the first sample delta from the swing start)",
             "changed_area_fraction": "share of pixels whose own Y moved >= lum_delta since the previous sample with the darker < dark_max",
             "red_changed_area_fraction": "share of pixels whose own red quantity moved >= red_delta since the previous sample",
             "windows": "transitions with sample time in [start, start+window_s); window starts every window_hop_s while start+window_s <= range end (a range shorter than window_s gives one window ending at the range end)",
@@ -378,5 +391,5 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
     }))
 }
 pub fn commands() -> Vec<Command> {
-    vec![Command{name:"flash_series",mutates:false,description:"Measure flashing over a time range: per-frame linear luminance, red saturation, transitions and per-window transition counts. Read-only, raw numbers, no pass/fail or verdict. source timeline (default), clip:<id> or file:<path>; start/end default the whole source; samples every timeline frame, step_frames N for every Nth; optional region [x,y,w,h]. Pixels are decoded from the rendered 8-bit output with the sRGB EOTF; luminance = mean Rec.709 Y = .2126R+.7152G+.0722B in linear light; red_saturation = mean R/(R+G+B), pixels with R+G+B < red_floor (default .01) count 0; red_quantity = mean max(0,R-G-B)*320 over pixels with R/(R+G+B) >= red_ratio_min (default .8). A transition is a swing between confirmed extrema of at least lum_delta (default .1) with the darker end < dark_max (default .8), or at least red_delta (default 20) of red_quantity; marked +1/-1 on the frame reaching the new extreme. Per-frame changed_area_fraction and red_changed_area_fraction count pixels that moved by those thresholds since the previous sample. Windows of window_s (default 1) every window_hop_s (default one sample) report transition and flash counts with start/end times; a flash is two opposing transitions paired in order and counts once in each window its span touches, so a flash straddling a window edge counts in both; lum_flashes_fully_inside / red_flashes_fully_inside count only flashes with both transitions inside the window. params_used.max_resolvable_hz = fps/step_frames/2. Black to saturated red is also a 0.2126 luminance swing, so at the default lum_delta a red flash counts as a luminance flash too. Reference values for reading the counts, not applied here: Harding, ITU-R BT.1702 and WCAG 2.x treat more than 3 flashes in any 1 s as hazardous, a flash being a pair of opposing luminance changes of 10% or more of max luminance with the darker state below 0.80, or a pair of opposing transitions involving saturated red (WCAG 2.0 notes: R/(R+G+B) >= 0.8 and a (R-G-B)*320 change above 20; WCAG 2.2 uses a 0.2 change in CIE 1976 u'v'), when the flashing area exceeds 25% of the screen (WCAG: .25 of any 10 degree visual field). Caps 20000 samples. Solid colours in a test project must be [r,g,b] arrays: a hex string currently renders black (v5 engine bug, fix planned).",schema:obj(vec![("source",s("timeline default, clip:<id>, file:<path>")),("start",n("range start seconds, default source start")),("end",n("range end seconds, default source end")),("step_frames",json!({"type":"integer","minimum":1,"description":"sample every Nth timeline frame, default 1 = every frame"})),("region",json!({"type":"array","items":{"type":"integer"},"minItems":4,"maxItems":4,"description":"[x,y,w,h] pixels; default whole frame"})),("window_s",n("window length seconds, default 1")),("window_hop_s",n("window start spacing seconds, default one sample")),("lum_delta",n("luminance swing threshold 0..1, default .1")),("dark_max",n("darker-state ceiling 0..1, default .8")),("red_delta",n("red_quantity swing threshold, default 20")),("red_ratio_min",n("R/(R+G+B) for saturated red 0..1, default .8")),("red_floor",n("R+G+B floor for red_saturation, default .01"))],&[]),run}]
+    vec![Command{name:"flash_series",mutates:false,description:"Measure flashing over a time range: per-frame linear luminance, red saturation, transitions and per-window transition counts. Read-only, raw numbers, no pass/fail or verdict. source timeline (default), clip:<id> or file:<path>; start/end default the whole source; samples every timeline frame, step_frames N for every Nth; optional region [x,y,w,h]. Pixels are decoded from the rendered 8-bit output with the sRGB EOTF; luminance = mean Rec.709 Y = .2126R+.7152G+.0722B in linear light; red_saturation = mean R/(R+G+B), pixels with R+G+B < red_floor (default .01) count 0; red_quantity = mean max(0,R-G-B)*320 over pixels with R/(R+G+B) >= red_ratio_min (default .8). A transition is a swing between confirmed extrema of at least lum_delta (default .1) with the darker end < dark_max (default .8), or at least red_delta (default 20) of red_quantity; stamped +1/-1 on the first frame that crosses lum_delta (or red_delta) inside the monotonic run reaching the swing's extreme, or, when that run alone is smaller, the first frame that far from the swing's start. Per-frame changed_area_fraction and red_changed_area_fraction count pixels that moved by those thresholds since the previous sample. Windows of window_s (default 1) every window_hop_s (default one sample) report transition and flash counts with start/end times; a flash is two opposing transitions paired in order and counts once in each window its span touches, so a flash straddling a window edge counts in both; lum_flashes_fully_inside / red_flashes_fully_inside count only flashes with both transitions inside the window. params_used.max_resolvable_hz = fps/step_frames/2. Black to saturated red is also a 0.2126 luminance swing, so at the default lum_delta a red flash counts as a luminance flash too. Reference values for reading the counts, not applied here: Harding, ITU-R BT.1702 and WCAG 2.x treat more than 3 flashes in any 1 s as hazardous, a flash being a pair of opposing luminance changes of 10% or more of max luminance with the darker state below 0.80, or a pair of opposing transitions involving saturated red (WCAG 2.0 notes: R/(R+G+B) >= 0.8 and a (R-G-B)*320 change above 20; WCAG 2.2 uses a 0.2 change in CIE 1976 u'v'), when the flashing area exceeds 25% of the screen (WCAG: .25 of any 10 degree visual field). Caps 20000 samples. Solid colours in a test project must be [r,g,b] arrays: a hex string currently renders black (v5 engine bug, fix planned).",schema:obj(vec![("source",s("timeline default, clip:<id>, file:<path>")),("start",n("range start seconds, default source start")),("end",n("range end seconds, default source end")),("step_frames",json!({"type":"integer","minimum":1,"description":"sample every Nth timeline frame, default 1 = every frame"})),("region",json!({"type":"array","items":{"type":"integer"},"minItems":4,"maxItems":4,"description":"[x,y,w,h] pixels; default whole frame"})),("window_s",n("window length seconds, default 1")),("window_hop_s",n("window start spacing seconds, default one sample")),("lum_delta",n("luminance swing threshold 0..1, default .1")),("dark_max",n("darker-state ceiling 0..1, default .8")),("red_delta",n("red_quantity swing threshold, default 20")),("red_ratio_min",n("R/(R+G+B) for saturated red 0..1, default .8")),("red_floor",n("R+G+B floor for red_saturation, default .01"))],&[]),run}]
 }
