@@ -684,6 +684,7 @@ pub fn call_end(result: &Value, ss: &Arc<Mutex<Session>>) {
     let mut p = json!({"dur_ms": dur_ms, "result": summarize(&res), "changed": changed, "mutated": mutated});
     if images > 0 { p["images"] = json!(images); }
     if let Some(n) = output_bytes(&a.tool, &res) { p["bytes"] = json!(n); if p["result"].is_object() { p["result"]["bytes"] = json!(n); } }
+    flash_stamps(&mut p, &a.tool, &res);
     let changed = p["changed"].clone();
     vocabulary(&mut p, &a.tool, &a.args, &a.target, &changed, &after, ss);
     let mut ev = event(&a, "complete", p); ev["duration_ms"] = json!(dur_ms);
@@ -707,6 +708,28 @@ pub fn call_end(result: &Value, ss: &Arc<Mutex<Session>>) {
 /// Spectator demo mode only (preview.rs): after the response to a tools/call went out, hold the next request until this
 /// call's own frame reached the spectator and the pace has passed. Headless (demo off) or nobody listening: returns at once.
 pub fn pace() { if enabled() { crate::preview::demo_wait(); } }
+
+/// Most stamps per series a flash_series complete event carries; past it `*_stamps_total` still counts them all.
+const STAMP_CAP: usize = 64;
+
+/// flash_series: its per-frame arrays are cut to `ARR_CAP` by `summarize`, so the GUI's Stamps row could never see a
+/// transition past frame 8. Read the FULL result (before any capping) and add a compact `lum_stamps` / `red_stamps`
+/// list, `[{t, dir}]` (dir 1 = up, -1 = down), plus `*_stamps_total`, beside `result` in the complete payload.
+/// Telemetry only: the tool result on stdout and `summarize` are not touched.
+fn flash_stamps(p: &mut Value, tool: &str, res: &Value) {
+    if tool != "flash_series" { return; }
+    let Some(f) = res.get("frames") else { return };
+    let Some(t) = f.get("time").and_then(|v| v.as_array()) else { return };
+    for (key, out) in [("lum_transition", "lum_stamps"), ("red_transition", "red_stamps")] {
+        let Some(tr) = f.get(key).and_then(|v| v.as_array()) else { continue };
+        let all: Vec<Value> = tr.iter().zip(t).filter_map(|(d, tt)| {
+            let (d, tt) = (d.as_f64()?, tt.as_f64()?);
+            (d != 0.0 && tt.is_finite()).then(|| json!({"t": tt, "dir": if d > 0.0 { 1 } else { -1 }}))
+        }).collect();
+        p[format!("{out}_total")] = json!(all.len());
+        p[out] = Value::Array(all.into_iter().take(STAMP_CAP).collect());
+    }
+}
 
 /// Size on disk of a finished export's output file, for the GUI's Renders history ("done · 18.4 MB"). Telemetry
 /// only: the tool result on stdout is not touched. None for a path pattern (PNG sequences) or a missing file.
@@ -832,6 +855,28 @@ mod tests {
         assert_eq!(d["duration"], json!([2.0, 3.0]));
         let fx = |v: f64| Snap { clip: Some(json!({"effects": [{"id": "fx5", "kind": "temperature", "params": {"amount": {"base": v}}}]})), ..Snap::default() };
         assert_eq!(diff(&fx(0.0), &fx(0.35))["clip"], json!({"effects[fx5].params.amount.base": [0.0, 0.35]}));
+    }
+    #[test]
+    fn flash_stamps_come_from_the_full_result() {
+        // 864 frames, 6 luminance transitions all past frame 8 (where summarize cuts the arrays) and one red one
+        let n = 864usize; let at = [114usize, 232, 354, 594, 713, 733];
+        let time: Vec<f64> = (0..n).map(|i| ((i as f64) / 24.0 * 1e6).round() / 1e6).collect();
+        let lum: Vec<i64> = (0..n).map(|i| match at.iter().position(|&k| k == i) { Some(j) => if j % 2 == 0 { 1 } else { -1 }, None => 0 }).collect();
+        let red: Vec<i64> = (0..n).map(|i| if i == 500 { -1 } else { 0 }).collect();
+        let res = json!({"samples": n, "frames": {"time": time, "lum_transition": lum, "red_transition": red}, "totals": {"lum_transitions": 6}});
+        let before = res.clone();
+        let mut p = json!({"result": summarize(&res)});
+        flash_stamps(&mut p, "flash_series", &res);
+        assert_eq!(res, before, "the full result is unchanged");
+        assert_eq!(p["result"]["frames"]["lum_transition"].as_array().unwrap().len(), ARR_CAP + 1, "summarize still caps");
+        let st = p["lum_stamps"].as_array().unwrap();
+        assert_eq!(p["lum_stamps_total"], json!(6));
+        assert_eq!(st.len(), 6);
+        for (s, &k) in st.iter().zip(&at) { assert_eq!(s["t"].as_f64().unwrap(), time[k]); }
+        assert_eq!(st.iter().map(|s| s["dir"].as_i64().unwrap()).collect::<Vec<_>>(), vec![1, -1, 1, -1, 1, -1]);
+        assert_eq!(p["red_stamps"], json!([{"t": time[500], "dir": -1}]));
+        // other tools get nothing added
+        let mut q = json!({"result": summarize(&res)}); flash_stamps(&mut q, "diff_frames", &res); assert!(q.get("lum_stamps").is_none());
     }
     #[test]
     fn base64_matches_rfc4648() {

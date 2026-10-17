@@ -353,10 +353,15 @@ export function qaOps(state, MODES, ev) {
     const win = numOf(P0.window_s) ?? 1, area = numOf(T.max_changed_area_fraction);
     const what = `max ${n(T.max_lum_transitions_in_window)} luminance / ${n(T.max_red_transitions_in_window)} red transitions per ${Math.round(win * 100) / 100}s` + (area != null ? `, area ${Math.round(area * 100)}%` : '');
     // stamps: each luminance transition sits on its first crossing of lum_delta inside the monotonic run that reaches the
-    // swing's extreme (strict-run guard), so these times are where the change starts; up to 8 listed, then "+N more"
-    const F = R.frames || {}, ft = Array.isArray(F.time) ? F.time : [], fl = Array.isArray(F.lum_transition) ? F.lum_transition : [];
-    const st = fl.map((x, i) => x ? `${x > 0 ? '↑' : '↓'}${Math.round(numOf(ft[i]) * 100) / 100}s` : null).filter(Boolean);
-    ev._flashStamps = st.length ? st.slice(0, 8).join(' ') + (st.length > 8 ? ` +${st.length - 8} more` : '') : 'none';
+    // swing's extreme (strict-run guard), so these times are where the change starts; up to 8 listed, then "+N more".
+    // Read from the payload's lum_stamps [{t, dir}] (kimo-mcp spectator.rs builds it from the FULL result): the result's
+    // frames arrays arrive cut to 8 entries plus a "…+N" marker, so they cannot carry a stamp. A "…+N" string or any
+    // non-finite time is skipped, never read as 0.
+    const LS = Array.isArray(P.lum_stamps) ? P.lum_stamps : [];
+    const st = LS.map(s => { const t = s && typeof s === 'object' && typeof s.t === 'number' && Number.isFinite(s.t) ? s.t : null, d = s ? s.dir : null;
+      return t != null && (d === 1 || d === -1) ? `${d > 0 ? '↑' : '↓'}${Math.round(t * 100) / 100}s` : null; }).filter(Boolean);
+    const tot = Number.isFinite(P.lum_stamps_total) ? Math.max(P.lum_stamps_total, st.length) : st.length;
+    ev._flashStamps = st.length ? st.slice(0, 8).join(' ') + (tot > 8 ? ` +${tot - 8} more` : '') : Array.isArray(P.lum_stamps) ? 'none' : 'not in feed';
     rail = { [span || pl(n(R.samples), 'frame')]: what }; toast = `${tn}${span ? ' ' + span : ''} · ${pl(n(R.samples), 'frame')}: ${what}`;
   } else if (tn === 'cache_set_budget') {
     const cap = numOf(R.cap_bytes) ?? (numOf(A.megabytes) != null ? numOf(A.megabytes) * 1048576 : null); if (cap == null) return false;
@@ -370,7 +375,7 @@ export function qaOps(state, MODES, ev) {
   // GUI-FIX-1: the same answer stays on the current screen's info panel (router.js readCard), not only in the toast
   if (tn === 'diff_frames') ev._readRows = [['Compared', `${side(state, MODES, R.a || A.a)} vs ${side(state, MODES, R.b || A.b)}`], ['Changed', rail.changed]];
   else if (tn === 'lint_frame') ev._readRows = [['Frame', Object.keys(rail)[0]], ['Findings', Object.values(rail)[0]]];
-  else if (tn === 'flash_series') ev._readRows = [['Range', Object.keys(rail)[0]], ['Transitions', Object.values(rail)[0]], ['Stamps', ev._flashStamps]];
+  else if (tn === 'flash_series') ev._readRows = [['Range', Object.keys(rail)[0]], ['Transitions', Object.values(rail)[0], 'wrap'], ['Stamps', ev._flashStamps, 'wrap']];
   else if (tn === 'cache_set_budget') ev._readRows = [['Frame cache', rail.budget], ['Used', bytes(R.bytes ?? 0)]];
   else ev._readRows = [['Freed', bytes(R.freed_bytes ?? 0)], ['Frames', String(n(R.cleared_entries))]];
   return true;

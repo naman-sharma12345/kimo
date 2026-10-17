@@ -258,7 +258,7 @@ function kv({ spec, data, w, h }) {
   // GUI-FIX-1: the last read's answer (get_* / list_* / inspect_* / QA), pinned to the panel's bottom edge, quiet styling:
   // a read is not a value of the project, so it never renders as an Inspector row
   const R = data.read;
-  if (R && R.rows && R.rows.length) html += `<div class="readcard${F(R)}${R.title ? ' ' + E(R.title) : ''}"><div class="rh"><span class="rt">${E(R.title || 'read')}</span>${E(R.tool)}</div>${R.rows.map(r => `<div class="rr"><span class="rk">${E(r[0])}</span><span class="rv">${E(r[1])}</span></div>`).join('')}</div>`;
+  if (R && R.rows && R.rows.length) html += `<div class="readcard${F(R)}${R.title ? ' ' + E(R.title) : ''}"><div class="rh"><span class="rt">${E(R.title || 'read')}</span>${E(R.tool)}</div>${R.rows.map(r => `<div class="rr${r[2] === 'wrap' ? ' wrap' : ''}"><span class="rk">${E(r[0])}</span><span class="rv">${E(r[1])}</span></div>`).join('')}</div>`;
   return html;
 }
 function block(b, w) {
