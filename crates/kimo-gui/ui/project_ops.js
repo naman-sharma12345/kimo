@@ -6,7 +6,7 @@
 //     (project_diff, template_define / template_delete), the Batch table (batch, recipe_apply,
 //     template_apply), the Media list + its footer (load_project dependencies, save_project);
 //     set_meta renames the clip / track on the timeline and writes Name / Role / Tags in the Inspector (m16);
-//   qa: diff_frames, lint_frame and the frame cache answer in the HUD status toast and keep the result on their
+//   qa: diff_frames, lint_frame, flash_series and the frame cache answer in the HUD status toast and keep the result on their
 //     own rail row (Naman 7:24), no mode hop, nothing on the canvas.
 // Never a raw id: clips read as their timeline names, checkpoints and templates by the names the call gave.
 import { _now as now, RAW_ID, findClip, findTrack, timelineView, numOf, fitRuler } from './router.js';
@@ -14,7 +14,7 @@ import { _now as now, RAW_ID, findClip, findTrack, timelineView, numOf, fitRuler
 export const COV_C = {
   pipeline: /^(set_color_pipeline|set_clip_input_color|set_hdr_mastering|set_ocio_view_delivery)$/,
   project: /^(set_meta|load_project|save_project|project_diff|checkpoint|checkpoint_delete|restore|undo|redo|batch|recipe_apply|template_apply|template_define|template_delete)$/,
-  qa: /^(diff_frames|lint_frame|cache_clear|cache_set_budget)$/,
+  qa: /^(diff_frames|lint_frame|flash_series|cache_clear|cache_set_budget)$/,
 };
 
 // Kimo colour IDs (kimo-core color: gamut 0..7, transfer 0..8)
@@ -345,6 +345,13 @@ export function qaOps(state, MODES, ev) {
     const parts = Object.entries(by).filter(([, k]) => numOf(k)).map(([c, k]) => `${LINT[c] || c.replace(/_/g, ' ')} ×${n(k)}`);
     const what = parts.length ? parts.join(', ') : 'clean';
     rail = { [t || 'frame']: what }; toast = `${tn}${t ? ' ' + t : ''} · ${what}`;
+  } else if (tn === 'flash_series') {
+    // raw counts only, no verdict: the busiest window's transitions and the largest changed area, as the engine measured them
+    const T = R.totals || {}, P0 = R.params_used || {}; if (R.samples == null) return false;
+    const rg = R.range || {}, span = rg.start != null && rg.end != null ? `${sec(rg.start).trim()}–${sec(rg.end).trim()}` : '';
+    const win = numOf(P0.window_s) ?? 1, area = numOf(T.max_changed_area_fraction);
+    const what = `max ${n(T.max_lum_transitions_in_window)} luminance / ${n(T.max_red_transitions_in_window)} red transitions per ${Math.round(win * 100) / 100}s` + (area != null ? `, area ${Math.round(area * 100)}%` : '');
+    rail = { [span || pl(n(R.samples), 'frame')]: what }; toast = `${tn}${span ? ' ' + span : ''} · ${pl(n(R.samples), 'frame')}: ${what}`;
   } else if (tn === 'cache_set_budget') {
     const cap = numOf(R.cap_bytes) ?? (numOf(A.megabytes) != null ? numOf(A.megabytes) * 1048576 : null); if (cap == null) return false;
     const prev = state._cacheCap; state._cacheCap = cap;
@@ -357,6 +364,7 @@ export function qaOps(state, MODES, ev) {
   // GUI-FIX-1: the same answer stays on the current screen's info panel (router.js readCard), not only in the toast
   if (tn === 'diff_frames') ev._readRows = [['Compared', `${side(state, MODES, R.a || A.a)} vs ${side(state, MODES, R.b || A.b)}`], ['Changed', rail.changed]];
   else if (tn === 'lint_frame') ev._readRows = [['Frame', Object.keys(rail)[0]], ['Findings', Object.values(rail)[0]]];
+  else if (tn === 'flash_series') ev._readRows = [['Range', Object.keys(rail)[0]], ['Transitions', Object.values(rail)[0]]];
   else if (tn === 'cache_set_budget') ev._readRows = [['Frame cache', rail.budget], ['Used', bytes(R.bytes ?? 0)]];
   else ev._readRows = [['Freed', bytes(R.freed_bytes ?? 0)], ['Frames', String(n(R.cleared_entries))]];
   return true;

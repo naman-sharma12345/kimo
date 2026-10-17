@@ -15,7 +15,7 @@
   <a href="https://github.com/naman-sharma12345/kimo/actions/workflows/release.yml"><img alt="release build" src="https://github.com/naman-sharma12345/kimo/actions/workflows/release.yml/badge.svg"></a>
   <a href="https://github.com/naman-sharma12345/kimo/releases"><img alt="release" src="https://img.shields.io/github/v/release/naman-sharma12345/kimo?include_prereleases&label=release&labelColor=0E0E12&color=FF5C28"></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/github/license/naman-sharma12345/kimo?labelColor=0E0E12&color=F4F0E8"></a>
-  <img alt="MCP tools" src="https://img.shields.io/badge/MCP%20tools-362%2F378%20live%20%2B%2016%20gated-F4F0E8?labelColor=0E0E12">
+  <img alt="MCP tools" src="https://img.shields.io/badge/MCP%20tools-363%2F379%20live%20%2B%2016%20gated-F4F0E8?labelColor=0E0E12">
 </p>
 
 <p align="center">
@@ -83,13 +83,13 @@ More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/EXTENDING.md](docs/EXT
 
 ## The MCP tool ecosystem
 
-**362/378 live in the default build + 16 feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah).**
+**363/379 live in the default build + 16 feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah).**
 
-A default `tools/list` shows 17 grouped entries; set `KIMO_TOOLS=flat` to list all 378 (see [Tool list profiles](#tool-list-profiles)).
+A default `tools/list` shows 17 grouped entries; set `KIMO_TOOLS=flat` to list all 379 (see [Tool list profiles](#tool-list-profiles)).
 
-How the numbers fit: `kimo_info` and the golden registry (`crates/kimo-core/tests/golden/golden_registry.txt`) count 376 tools in 14 groups. A flat `tools/list` (`KIMO_TOOLS=flat`) lists 378: those 376 plus the two meta tools `search_tools` and `kimo_describe`. Of the 378, 362 are live in the default build and 16 are feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah); the gated ones stay in the list and answer with a clear refusal until their feature is built in.
+How the numbers fit: `kimo_info` and the golden registry (`crates/kimo-core/tests/golden/golden_registry.txt`) count 377 tools in 14 groups. A flat `tools/list` (`KIMO_TOOLS=flat`) lists 379: those 377 plus the two meta tools `search_tools` and `kimo_describe`. Of the 379, 363 are live in the default build and 16 are feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah); the gated ones stay in the list and answer with a clear refusal until their feature is built in.
 
-376 registered tools sit in 14 groups (full list [below](#tool-listing-376-tools)):
+377 registered tools sit in 14 groups (full list [below](#tool-listing-377-tools)):
 
 | Area | Groups | Examples |
 |---|---|---|
@@ -99,7 +99,7 @@ How the numbers fit: `kimo_info` and the golden registry (`crates/kimo-core/test
 | Text | `text` | titles, captions, SRT import, text animators |
 | VFX | `vfx3d` | particles, emitters, shard bursts, 3D scene, physics, lights and materials |
 | Tracking | `tracking` | point, planar and mesh tracking, stabilize, camera solve |
-| Color | `color_grade`, `color_science`, `scopes` | grade graphs, curves, ASC CDL, LUTs, ACES and OCIO tools, scopes and exposure analysis |
+| Color | `color_grade`, `color_science`, `scopes` | grade graphs, curves, ASC CDL, LUTs, ACES and OCIO tools, scopes, exposure analysis and flash series |
 | Audio | `audio` | clips, effects, beats, loudness, ducking, speech intervals |
 | Output | `output` | frame and video export, chunked export jobs, GIF, EXR, manifests, frame lint, contact sheets |
 
@@ -117,10 +117,10 @@ How the numbers fit: `kimo_info` and the golden registry (`crates/kimo-core/test
 |---|---|---|---|
 | `grouped` (default) | 17 | 4,432 bytes | small context windows. Call a group with `action` and `args`; find tools with `search_tools`. |
 | `core` | 29 | 20,368 bytes | the most used tools with full schemas, plus `search_tools`, `kimo_describe`, `kimo_enable_group`. |
-| `flat` | 378 | 286,762 bytes | clients with large context or their own tool search. Every tool listed with its schema. |
+| `flat` | 379 | 289,845 bytes | clients with large context or their own tool search. Every tool listed with its schema. |
 | group names, e.g. `audio,color_grade` | varies | varies | those groups listed flat, the rest grouped. |
 
-Measured on a default-feature `kimo-mcp` built from commit `af615ca` (`initialize`, then `tools/list`; size is the compact JSON of the `result`). `kimo_enable_group` is listed in `grouped` and `core` but not in `flat`. `search_tools(query, limit=8, group?)` returns ranked tools, effects and transitions with the required args and a `call_as` hint.
+Measured on a default-feature `kimo-mcp` built from commit `af615ca` (`initialize`, then `tools/list`; size is the compact JSON of the `result`); the `flat` row was re-measured the same way after `flash_series` was added (v6, unreleased; `grouped` and `core` did not change). `kimo_enable_group` is listed in `grouped` and `core` but not in `flat`. `search_tools(query, limit=8, group?)` returns ranked tools, effects and transitions with the required args and a `call_as` hint.
 
 Set it like this: `claude mcp add --transport stdio --env KIMO_TOOLS=core kimo -- /home/you/.local/bin/kimo-mcp`, or `[mcp_servers.kimo.env] KIMO_TOOLS = "core"` for Codex. For JSON configs add `"env": { "KIMO_TOOLS": "core" }` (OpenCode: `"environment": { ... }`).
 
@@ -435,9 +435,9 @@ and carry no reason. Details: `crates/kimo-mcp/src/preview.rs` ("Headless skips"
 
 Call a group with `{"action": "<tool name>", "args": {...}}`, for example `{"name": "vfx3d", "action": "add_scene3d", "args": {...}}`. Calling a tool by its own name also works.
 
-## Tool listing (376 tools)
+## Tool listing (377 tools)
 
-This is the list the v3 build registers (read from `tools/list` of the grouped server plus `kimo_describe group=<name>`, 376 tools in 14 groups; the grouped `tools/list` itself shows 14 group tools plus `search_tools`, `kimo_describe`, `kimo_enable_group`). `kimo --version` and `kimo_info` report the workspace version, which is 5.0.0 from this release. Get any tool's arguments with `kimo tools describe <name>` or `kimo_describe`, and find tools by words with `search_tools`.
+This is the list the v3 build registers (read from `tools/list` of the grouped server plus `kimo_describe group=<name>`, 377 tools in 14 groups; the grouped `tools/list` itself shows 14 group tools plus `search_tools`, `kimo_describe`, `kimo_enable_group`). `kimo --version` and `kimo_info` report the workspace version, which is 5.0.0 from this release. Get any tool's arguments with `kimo tools describe <name>` or `kimo_describe`, and find tools by words with `search_tools`.
 
 | Group | Tools |
 |---|---|
@@ -452,13 +452,13 @@ This is the list the v3 build registers (read from `tools/list` of the grouped s
 | `tracking` (27) | `camera_project_points`, `camera_clip_triangle`, `track_long_gap`, `track_point`, `stabilize`, `track_planar`, `pin_layer`, `track_mesh`, `solve_camera`, `list_camera_solves`, `camera_solve_info`, `apply_camera_solve`, `grade_node_tracking`, `track_planar_anchored`, `track_features`, `track_set_info`, `fit_track_homography`, `fit_info`, `decompose_track_homography`, `track_jitter_metrics`, `corner_disagreement`, `track_feature_residuals`, `lk_residual_audit`, `ecc_refine_track`, `render_error_field`, `validate_planar_track`, `undistort_clip` |
 | `color_grade` (22) | `preview_subject_match`, `match_grade`, `set_color_curve`, `pick_white_balance`, `match_color`, `inspect_asc_cdl`, `apply_asc_cdl`, `generate_lut_node`, `evaluate_grade_graph_samples`, `inspect_grade_graph`, `set_grade_graph`, `add_node`, `connect_nodes`, `disconnect_nodes`, `remove_grade_node`, `set_grade_output`, `set_grade_node`, `set_node_param`, `set_node_mask`, `create_shared_grade_graph`, `bind_shared_grade_graphs`, `remove_shared_grade_graph` |
 | `color_science` (18) | `inspect_color_frame_metadata`, `inspect_color_delivery`, `inspect_color_pipeline`, `compare_aces2_reference`, `sample_linear_neutral`, `audit_color_output`, `inspect_float_media`, `set_hdr_mastering`, `set_color_pipeline`, `set_clip_input_color`, `validate_hdr_transfer_math`, `evaluate_hlg_reference_display`, `add_acescct_primaries`, `inspect_high_bit_delivery_contract`, `inspect_film_response`, `inspect_ocio_config`, `transform_ocio_samples`, `transform_ocio_view_samples` |
-| `scopes` (12) | `get_scopes`, `compare_linear_exposure`, `render_gamut_excursions`, `analyze_exposure_sequence`, `render_exposure_false_color`, `analyze_exposure`, `analyze_color`, `render_scope`, `render_display_scope`, `measure_loudness`, `inspect_grade_scopes`, `set_grade_scopes` |
+| `scopes` (13) | `get_scopes`, `compare_linear_exposure`, `render_gamut_excursions`, `analyze_exposure_sequence`, `render_exposure_false_color`, `analyze_exposure`, `analyze_color`, `render_scope`, `render_display_scope`, `measure_loudness`, `inspect_grade_scopes`, `set_grade_scopes`, `flash_series` |
 | `audio` (17) | `add_audio_clip`, `set_audio`, `set_audio_volume_key`, `detect_beats`, `set_audio_effect_key`, `audio_filter_response`, `audio_effect_describe`, `audio_probe`, `read_samples`, `import_samples`, `audio_transients`, `add_audio_effect`, `remove_audio_effect`, `set_audio_pan`, `normalize_loudness`, `auto_duck`, `audio_speech_intervals` |
 | `output` (40) | `export_audio`, `export_gif`, `render_frame`, `export`, `join_export`, `export_alpha`, `export_aces2_reference_video`, `render_aces2_reference`, `render_float_tiff`, `render_float_exr`, `render_high_bit_still`, `export_high_bit`, `export_grade_lut`, `export_camera_solve`, `export_asc_cdl`, `export_color_pipeline_lut`, `contact_sheet`, `describe_frame`, `detect_cuts`, `diff_frames`, `burn_in`, `export_job_start`, `job_status`, `cancel_job`, `resume_job`, `export_manifest`, `explain_invalidation`, `inspect_export_preset`, `export_preset`, `lint_frame`, `match_events`, `render_ocio_display_view`, `preview_range`, `query_safe_margins`, `session_stats`, `solve_constraints`, `export_with_subtitles`, `compute_text_bounds`, `set_ocio_view_delivery`, `export_ocio_view_video` |
 
 ## Verification status
 
-- Registry: 376 tools (`crates/kimo-core/tests/golden/golden_registry.txt`, 376 lines). A default-feature `kimo-mcp` at `af615ca` lists 378 entries in `flat` mode: those 376 plus `search_tools` and `kimo_describe`. Of the 378, 362/378 live in the default build + 16 feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah).
+- Registry: 377 tools (`crates/kimo-core/tests/golden/golden_registry.txt`, 377 lines). A default-feature `kimo-mcp` built with `flash_series` (v6, unreleased) lists 379 entries in `flat` mode: those 377 plus `search_tools` and `kimo_describe`. Of the 379, 363/379 live in the default build + 16 feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah).
 - Fuzz: 6497 calls, 0 failures, as recorded in the v3 notes at 327 tools. Not re-run for this README.
 - Linux spectator installers (`.deb`, `.AppImage`): built on CI runners (dry run at `ca0334f`, version `0.1.0`), downloaded and smoke-tested on Debian 12 x86_64 on 2026-10-17: sha256 matches, the `.deb` installs (`Depends: libwebkit2gtk-4.1-0, libgtk-3-0`) and uninstalls cleanly, and both the `.deb` and the AppImage (`--appimage-extract-and-run`) launch under Xvfb, listen on 127.0.0.1:7421 and draw the `frame_rendered` frames a real `kimo-mcp` (commit `af615ca`) sends after `project_set`, `add_track`, `add_text`. Unsigned draft; other distributions not tested.
 - Windows spectator installer (`Kimo-Spectator_0.1.0_x64_en-US.msi`): **unsigned draft, built on CI runners, not tested on a real PC.**

@@ -112,6 +112,7 @@
 "find",
 "fit_info",
 "fit_track_homography",
+"flash_series",
 "freeze_frame",
 "generate_lut_node",
 "generate_mesh_primitive",

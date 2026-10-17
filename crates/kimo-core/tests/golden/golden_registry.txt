@@ -111,6 +111,7 @@ ext_list 83a5db4765dba269
 find 78641da05597f921
 fit_info c3f52f5446f58baa
 fit_track_homography 5ea697fda92d2eaa
+flash_series c38dbf876499da9f
 freeze_frame c6a17e82ed026eb3
 generate_lut_node dc51792e6bab1b2e
 generate_mesh_primitive 16644c9c0289a6f2
