@@ -66,6 +66,7 @@
 "collect_project",
 "compare_aces2_reference",
 "compare_linear_exposure",
+"compare_ranges",
 "compile_scene3d_descriptor",
 "compute_text_bounds",
 "connect_nodes",

@@ -6,7 +6,7 @@
 //     (project_diff, template_define / template_delete), the Batch table (batch, recipe_apply,
 //     template_apply), the Media list + its footer (load_project dependencies, save_project);
 //     set_meta renames the clip / track on the timeline and writes Name / Role / Tags in the Inspector (m16);
-//   qa: diff_frames, lint_frame, flash_series, audio_spectrum and the frame cache answer in the HUD status toast and keep the result on their
+//   qa: diff_frames, compare_ranges, lint_frame, flash_series, audio_spectrum and the frame cache answer in the HUD status toast and keep the result on their
 //     (flash_series also lists its luminance transition stamps, first-crossing times, on the info panel's Stamps row)
 //     own rail row (Naman 7:24), no mode hop, nothing on the canvas.
 // Never a raw id: clips read as their timeline names, checkpoints and templates by the names the call gave.
@@ -15,7 +15,7 @@ import { _now as now, RAW_ID, findClip, findTrack, timelineView, numOf, fitRuler
 export const COV_C = {
   pipeline: /^(set_color_pipeline|set_clip_input_color|set_hdr_mastering|set_ocio_view_delivery)$/,
   project: /^(set_meta|load_project|save_project|project_diff|checkpoint|checkpoint_delete|restore|undo|redo|batch|recipe_apply|template_apply|template_define|template_delete)$/,
-  qa: /^(diff_frames|lint_frame|flash_series|audio_spectrum|cache_clear|cache_set_budget)$/,
+  qa: /^(diff_frames|compare_ranges|lint_frame|flash_series|audio_spectrum|cache_clear|cache_set_budget)$/,
 };
 
 // Kimo colour IDs (kimo-core color: gamut 0..7, transfer 0..8)
@@ -315,6 +315,14 @@ function metaOps(state, MODES, A, R) {
 // does not hop. The toast says what came back ("diff_frames · now vs graded: 77% changed, major") and the rail row keeps it
 // in place of the start-time args, so the result stays readable after the toast fades.
 const sec = v => { const x = numOf(v); return x == null ? '' : ` ${Math.round(x * 100) / 100}s`; };
+// diff_frames quality object -> one line of raw numbers (PSNR dB, SSIM, MS-SSIM); null PSNR reads "identical"
+function qualityLine(Q) {
+  const fx = (v, d) => (typeof v === 'number' && Number.isFinite(v) ? v.toFixed(d) : null), parts = [];
+  if ('psnr_db' in Q) parts.push(`PSNR ${fx(Q.psnr_db, 2) != null ? fx(Q.psnr_db, 2) + ' dB' : Q.identical === true ? 'identical' : 'none'}`);
+  if ('ssim' in Q) parts.push(`SSIM ${fx(Q.ssim, 4) ?? 'none'}`);
+  if ('ms_ssim' in Q) parts.push(`MS-SSIM ${fx(Q.ms_ssim, 4) ?? 'none'}`);
+  return parts.length ? parts.join(' · ') : null;
+}
 function side(state, MODES, s) {
   if (!s || typeof s !== 'object') return 'now';
   const src = String(s.source ?? 'composite'); let m, w;
@@ -340,6 +348,24 @@ export function qaOps(state, MODES, ev) {
     if (!what) return false;
     const psnr = numOf((R.metrics || {}).psnr_db);
     rail = { changed: D.bit_identical ? 'none' : what.replace(/ changed/, '') }; toast = `${tn} · ${a} vs ${b}: ${what}${psnr != null && !D.bit_identical ? ` (PSNR ${Math.round(psnr * 10) / 10} dB)` : ''}`;
+    // v6 quality object (only when the call passed quality): raw luma PSNR / SSIM / MS-SSIM scalars, null PSNR = identical, never a verdict
+    const Q = R.quality && typeof R.quality === 'object' ? R.quality : null;
+    ev._dfQuality = Q ? qualityLine(Q) : null;
+  } else if (tn === 'compare_ranges') {
+    // A/B over time: only the summary's top-level scalars are read (the t_s / psnr_db / ssim curves arrive cut to 8 entries plus a
+    // "…+N" marker in the feed). A null PSNR mean with every sample identical reads "identical"; nothing here is a verdict.
+    const S = R.summary && typeof R.summary === 'object' ? R.summary : {}, pts = numOf(R.points); if (pts == null) return false;
+    const sd = (s, st) => side(state, MODES, { source: s && s.source, time: numOf(st) ?? 0 });
+    const range = `${sd(R.a || A.a, (R.a || {}).start)} vs ${sd(R.b || A.b, (R.b || {}).start)} · ${sec(numOf(R.duration) ?? 0).trim()}, ${pl(n(pts), 'sample')}`;
+    const fx = (v, d) => (typeof v === 'number' && Number.isFinite(v) ? v.toFixed(d) : null);
+    const row = (k, unit, d) => { const m = S[k]; if (!m || typeof m !== 'object') return null; const mean = fx(m.mean, d), min = fx(m.min, d), p5 = fx(m.p5, d);
+      if (mean == null) return numOf(R.identical_count) === pts ? 'identical' : 'none';
+      const at = numOf(m.min_at_s); return `mean ${mean}${unit}, min ${min}${unit}${at != null ? ' at ' + sec(at).trim() : ''}, p5 ${p5}${unit}`; };
+    const ps = row('psnr_db', ' dB', 2), ss = row('ssim', '', 4), ms = row('ms_ssim', '', 4), idn = n(R.identical_count);
+    rail = { [`${pl(n(pts), 'sample')}`]: ps != null ? `PSNR ${ps}` : ss != null ? `SSIM ${ss}` : `MS-SSIM ${ms}` };
+    toast = `${tn} · ${range}: ${[ps != null && `PSNR ${ps}`, ss != null && `SSIM ${ss}`].filter(Boolean).join(' · ')}${idn ? ` (${idn} identical)` : ''}`;
+    // four rows (readCard keeps 4), each allowed to wrap
+    ev._crRows = [['Range', range, 'wrap'], ...[['PSNR', ps], ['SSIM', ss], ['MS-SSIM', ms]].filter(r => r[1] != null).map(r => [r[0], r[1] + (r[0] === 'PSNR' && idn && r[1] !== 'identical' ? ` (${idn} identical)` : ''), 'wrap'])].slice(0, 4);
   } else if (tn === 'lint_frame') {
     const t = A.time != null ? sec(A.time).trim() : Array.isArray(A.times) ? pl(A.times.length, 'time') : '';
     const S = R.summary || {}, by = S.counts_by_code && typeof S.counts_by_code === 'object' ? S.counts_by_code : {};
@@ -389,7 +415,8 @@ export function qaOps(state, MODES, ev) {
   } else return false;
   ev._railArgs = rail; ev._hudText = toast; ev._kvDone = true;
   // GUI-FIX-1: the same answer stays on the current screen's info panel (router.js readCard), not only in the toast
-  if (tn === 'diff_frames') ev._readRows = [['Compared', `${side(state, MODES, R.a || A.a)} vs ${side(state, MODES, R.b || A.b)}`], ['Changed', rail.changed]];
+  if (tn === 'diff_frames') { ev._readRows = [['Compared', `${side(state, MODES, R.a || A.a)} vs ${side(state, MODES, R.b || A.b)}`, 'wrap'], ['Changed', rail.changed]]; if (ev._dfQuality) ev._readRows.push(['Quality', ev._dfQuality, 'wrap']); }
+  else if (tn === 'compare_ranges') ev._readRows = ev._crRows;
   else if (tn === 'lint_frame') ev._readRows = [['Frame', Object.keys(rail)[0]], ['Findings', Object.values(rail)[0]]];
   else if (tn === 'flash_series') ev._readRows = [['Range', Object.keys(rail)[0]], ['Transitions', Object.values(rail)[0], 'wrap'], ['Stamps', ev._flashStamps, 'wrap']];
   else if (tn === 'audio_spectrum') ev._readRows = ev._specRows;

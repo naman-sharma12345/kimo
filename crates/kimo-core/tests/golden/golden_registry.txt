@@ -65,6 +65,7 @@ clear_path_keys f99ff5da3693043a
 collect_project 689e1f8dd545e887
 compare_aces2_reference 59ec416ff6c4de21
 compare_linear_exposure afcdd34f6dab8f45
+compare_ranges c56b1ff8d178638e
 compile_scene3d_descriptor 4bb1f8788eb01144
 compute_text_bounds a1e565a4cc3fe0e4
 connect_nodes b6edfff20b9c6d1f
@@ -80,7 +81,7 @@ derive_vertex_tangents 9f133ebacc301575
 describe_frame 29274974284be9a5
 detect_beats 0a305ba852c6ffd1
 detect_cuts 2d0b26c91f7deda5
-diff_frames d8d446033491720b
+diff_frames 77dbd8fc4f3cfa48
 disconnect_nodes ad3dce0b755a8341
 distribute_clips de3b81a25b80ced1
 duplicate_clip e56f4cc4ca9b6b57
