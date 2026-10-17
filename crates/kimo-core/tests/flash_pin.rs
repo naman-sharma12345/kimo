@@ -7,8 +7,12 @@
 //!   window = windows_over_limit > 0.
 //! - Area (area_basis field): the largest share of any 10 degree field whose pixels changed, the field being 341 x 256 px at
 //!   1024 x 768 scaled per axis to the analysed frame; a flash counts only when that share is MORE than 25 %.
-//! Fixtures: full-frame 4 Hz strobe fails, full-frame 2 Hz strobe passes, a 4 Hz strobe on under 10 % of the frame (a box
-//! under 25 % of the field) passes. Output with flash_limit and without area_basis is byte-identical to the previous commit.
+//!   Fields slide in steps of 1/8 field per axis (Naman 3:45 AM: the field can sit anywhere), so any patch up to 7/8 of a field
+//!   per axis lies wholly inside one field wherever it sits, grid corners and tile boundaries included.
+//! Fixtures: full-frame 4 Hz strobe fails, full-frame 2 Hz strobe passes, a 4 Hz strobe on 2.6 % of the frame (a box under
+//! 25 % of the field) passes, also centred on a corner of the old half-field grid, where a field-size strobe fails; a boundary
+//! pair just under / just over 25 % of a field passes / fails; a compact strobe on 9 % of the frame fails.
+//! Output with flash_limit and without area_basis is byte-identical to the previous commit.
 use kimo_core::commands::{dispatch, Session};
 use kimo_core::ext::flash_series::{field_px, field_rules, field_stats, field_tiles, flash_rule, flash_spans, measure, transitions, Params, Planes};
 use kimo_core::perception::analysis::Image;
@@ -66,7 +70,16 @@ fn img(w: usize, h: usize, on: bool, bx: [usize; 4]) -> Image {
 /// flash_series' own paths on synthetic frames: field basis = field_tiles -> field_stats -> field_rules (strict area);
 /// frame basis = measure -> transitions -> spans -> flash_rule. Returns (worst window flashes, windows over 3, area max %, field).
 fn rule(w: usize, h: usize, bx: [usize; 4], half_period: usize, n: usize, basis_field: bool, area_min: f64) -> (usize, usize, f64, [usize; 4]) {
-    let p = Params::default(); let tiles = field_tiles(w, h); let mut prev: Option<Planes> = None; let (mut lum, mut area, mut ser) = (vec![], vec![], vec![]);
+    rule_on(w, h, bx, half_period, n, basis_field, area_min, field_tiles(w, h))
+}
+/// The previous commit's field positions: a half-field grid (steps fw/2, fh/2, the last flush with the edge), to show what it missed.
+fn half_grid(w: usize, h: usize) -> Vec<[usize; 4]> {
+    let (fw, fh) = field_px(w, h);
+    let pos = |v: usize, f: usize| { let mut o: Vec<usize> = (0..=v - f).step_by((f / 2).max(1)).collect(); if *o.last().unwrap() != v - f { o.push(v - f); } o };
+    let mut out = vec![]; for y in pos(h, fh) { for x in pos(w, fw) { out.push([x, y, fw, fh]); } } out
+}
+fn rule_on(w: usize, h: usize, bx: [usize; 4], half_period: usize, n: usize, basis_field: bool, area_min: f64, tiles: Vec<[usize; 4]>) -> (usize, usize, f64, [usize; 4]) {
+    let p = Params::default(); let mut prev: Option<Planes> = None; let (mut lum, mut area, mut ser) = (vec![], vec![], vec![]);
     for i in 0..n { let im = img(w, h, (i / half_period) % 2 == 1, bx); let (st, pl) = measure(&im, prev.as_ref(), &p);
         ser.push(field_stats(prev.as_ref(), &pl, w, &tiles, &p)); lum.push(st.luminance); area.push(st.changed_area_fraction); prev = Some(pl); }
     let times: Vec<f64> = (0..n).map(|i| i as f64 / 24.).collect(); let dur = n as f64 / 24.;
@@ -75,21 +88,55 @@ fn rule(w: usize, h: usize, bx: [usize; 4], half_period: usize, n: usize, basis_
     else { let g = flash_rule(&times, &flash_spans(&times, &transitions(&lum, p.lum_delta, p.dark_max)), &area, &starts, 1.0, 3., area_min); (g.worst_count, g.over, g.area_max_pct, [0, 0, w, h]) }
 }
 #[test] fn four_hz_strobe_on_under_10_pct_of_the_frame_passes() {
-    // 256x192 frame, field 85x64 = 5440 px, fields every 42 x 32 px plus one flush with each edge. A 36x36 box (1296 px = 2.6 % of the frame, 23.8 % of
+    // 256x192 frame, field 85x64 = 5440 px, fields every 10 x 8 px plus one flush with each edge. A 36x36 box (1296 px = 2.6 % of the frame, 23.8 % of
     // the field that holds it) strobing at 4 Hz (24 fps, toggling every 3 frames): under 25 % of any field, so nothing counts.
-    assert_eq!(field_px(256, 192), (85, 64)); assert_eq!(field_tiles(256, 192).len(), 6 * 5);
+    assert_eq!(field_px(256, 192), (85, 64)); assert_eq!(field_tiles(256, 192).len(), 19 * 17);
     assert_eq!(rule(256, 192, [100, 70, 36, 36], 3, 72, true, 25.).0, 0);
     let r = rule(256, 192, [100, 70, 36, 36], 3, 72, true, 25.); assert_eq!((r.0, r.1, r.2), (0, 0, 0.));
     // with no area floor the same strobe counts in the field that holds it: it is the area rule that passes it
-    let (w0, o0, a0, f0) = rule(256, 192, [100, 70, 36, 36], 3, 72, true, 0.); assert!(w0 >= 4 && o0 > 0 && (a0 - 1296. / 5440. * 100.).abs() < 1e-9, "{w0} {o0} {a0}"); assert_eq!(f0, [84, 64, 85, 64]);
+    let (w0, o0, a0, f0) = rule(256, 192, [100, 70, 36, 36], 3, 72, true, 0.); assert!(w0 >= 4 && o0 > 0 && (a0 - 1296. / 5440. * 100.).abs() < 1e-9, "{w0} {o0} {a0}"); assert_eq!(f0, [60, 48, 85, 64]);
     // stated plainly: WCAG's field is local. A compact 77x58 box is 9.1 % of the frame but 82 % of the field it sits in: it
     // FAILS on the field basis; the whole-frame reading misses it (its frame-mean swing, 0.09, is under the 0.1 luminance step)
     let (wf, of, af, _) = rule(256, 192, [90, 66, 77, 58], 3, 72, true, 25.); assert!(wf >= 4 && of > 0 && (af - 4466. / 5440. * 100.).abs() < 1e-9, "{wf} {of} {af}");
     let (wr, or, _, _) = rule(256, 192, [90, 66, 77, 58], 3, 72, false, 0.); assert_eq!((wr, or), (0, 0));
 }
-#[test] fn fields_cover_the_frame_on_a_half_field_grid() {
+#[test] fn fields_slide_so_every_position_of_a_patch_up_to_7_8_field_is_inside_one() {
     let t = field_tiles(1920, 1080); assert!(t.iter().all(|q| q[2] == 639 && q[3] == 360 && q[0] + q[2] <= 1920 && q[1] + q[3] <= 1080));
     assert!(t.iter().any(|q| q[0] + q[2] == 1920) && t.iter().any(|q| q[1] + q[3] == 1080) && t.iter().any(|q| q[0] == 0 && q[1] == 0));
+    assert_eq!(t.len(), 18 * 17); // x every 79 px (639/8) + the edge one, y every 45 px (360/8)
+    // brute force at 256x192 (field 85x64): a 74x56 patch (7/8 of the field per axis) at EVERY position lies wholly inside some field
+    let t = field_tiles(256, 192);
+    for y in 0..=192 - 56 { for x in 0..=256 - 74 { assert!(t.iter().any(|q| q[0] <= x && x + 74 <= q[0] + q[2] && q[1] <= y && y + 56 <= q[1] + q[3]), "patch at {x},{y} split"); } }
+    // the old half-field grid split such patches (e.g. a 72 px wide one at x = 70)
+    let hg = half_grid(256, 192); assert!(!hg.iter().any(|q| q[0] <= 70 && 70 + 72 <= q[0] + q[2]));
+}
+#[test] fn strobe_centred_on_a_grid_corner_behaves_like_an_uncentred_one() {
+    // (126, 96) is a corner of the old half-field grid (x 0/42/84/126/168, y 0/32/64/96/128). A 36x36 box (2.6 % of the frame)
+    // centred on it is seen whole (23.8 % of a field, same as uncentred) and passes; with no area floor it counts, same numbers.
+    let r = rule(256, 192, [108, 78, 36, 36], 3, 72, true, 25.); assert_eq!((r.0, r.1, r.2), (0, 0, 0.));
+    let (w0, o0, a0, f0) = rule(256, 192, [108, 78, 36, 36], 3, 72, true, 0.); let (wu, ou, au, _) = rule(256, 192, [100, 70, 36, 36], 3, 72, true, 0.);
+    assert_eq!((w0, o0), (wu, ou)); assert!((a0 - 1296. / 5440. * 100.).abs() < 1e-9 && (a0 - au).abs() < 1e-12, "{a0} {au}");
+    assert!(f0[0] <= 108 && 144 <= f0[0] + 85 && f0[1] <= 78 && 114 <= f0[1] + 64, "{f0:?}");
+    // a field-size strobe (85x64) centred on the same corner fails
+    let (wf, of, af, _) = rule(256, 192, [84, 64, 85, 64], 3, 72, true, 25.); assert!(wf >= 4 && of > 0 && af > 25., "{wf} {of} {af}");
+}
+#[test] fn boundary_pair_just_under_and_just_over_25_pct_of_a_field() {
+    // 72x18 = 1296 px = 23.82 % of the 85x64 field: passes; 72x19 = 1368 px = 25.15 %: fails, wherever it sits
+    for x in [70usize, 73, 84, 126, 150] {
+        let r = rule(256, 192, [x, 100, 72, 18], 3, 72, true, 25.); assert_eq!((r.0, r.1, r.2), (0, 0, 0.), "under at x={x}");
+        let (wf, of, af, _) = rule(256, 192, [x, 100, 72, 19], 3, 72, true, 25.);
+        assert!(wf >= 4 && of > 0 && (af - 1368. / 5440. * 100.).abs() < 1e-9, "over at x={x}: {wf} {of} {af}");
+    }
+    // the previous half-field grid at x = 70 saw at most 58 of its 72 columns in one field (20.3 %) and passed it
+    let (wh, oh, _, _) = rule_on(256, 192, [70, 100, 72, 19], 3, 72, true, 25., half_grid(256, 192)); assert_eq!((wh, oh), (0, 0));
+    let (_, _, ah, _) = rule_on(256, 192, [70, 100, 72, 19], 3, 72, true, 0., half_grid(256, 192)); assert!((ah - 58. * 19. / 5440. * 100.).abs() < 1e-9, "{ah}");
+}
+#[test] fn compact_4_hz_strobe_on_9_pct_of_the_frame_fails() {
+    // 4:3 256x192: a 77x58 box (4466 px = 9.1 % of the frame, 82 % of its 85x64 field) fails on the field basis
+    let (wf, of, af, _) = rule(256, 192, [90, 66, 77, 58], 3, 72, true, 25.); assert!(wf >= 4 && of > 0 && (af - 4466. / 5440. * 100.).abs() < 1e-9, "{wf} {of} {af}");
+    // 16:9 256x144 (field 85x48): a 79x42 box (3318 px = 9.0 % of the frame, 81 % of the field), straddling the frame centre, fails
+    assert_eq!(field_px(256, 144), (85, 48));
+    let (wg, og, ag, _) = rule(256, 144, [90, 51, 79, 42], 3, 72, true, 25.); assert!(wg >= 4 && og > 0 && (ag - 3318. / 4080. * 100.).abs() < 1e-9, "{wg} {og} {ag}");
 }
 #[test] fn refused() {
     let mut s = strobe(8, 0.125, |k| if k % 2 == 0 { K } else { W });
