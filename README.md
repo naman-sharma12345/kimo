@@ -117,7 +117,7 @@ How the numbers fit: `kimo_info` and the golden registry (`crates/kimo-core/test
 |---|---|---|---|
 | `grouped` (default) | 17 | 4,432 bytes | small context windows. Call a group with `action` and `args`; find tools with `search_tools`. |
 | `core` | 29 | 20,368 bytes | the most used tools with full schemas, plus `search_tools`, `kimo_describe`, `kimo_enable_group`. |
-| `flat` | 381 | 297,320 bytes | clients with large context or their own tool search. Every tool listed with its schema. |
+| `flat` | 381 | 298,239 bytes | clients with large context or their own tool search. Every tool listed with its schema. |
 | group names, e.g. `audio,color_grade` | varies | varies | those groups listed flat, the rest grouped. |
 
 Measured on a default-feature `kimo-mcp` built from commit `af615ca` (`initialize`, then `tools/list`; size is the compact JSON of the `result`); the `flat` row was re-measured the same way after `flash_series`, `audio_spectrum` and `compare_ranges` were added and `diff_frames` gained `quality` (v6, unreleased; `grouped` and `core` did not change). `kimo_enable_group` is listed in `grouped` and `core` but not in `flat`. `search_tools(query, limit=8, group?)` returns ranked tools, effects and transitions with the required args and a `call_as` hint.

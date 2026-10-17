@@ -59,7 +59,17 @@ export function genericRows(R, n = 4) {
 
 // tools whose answer has a better first line than the generic walk
 const T = {
-  get_scopes: R => [['Luma mean', short(R.luma_mean)], ['Avg RGB', rgb(R.avg_rgb)], ['Clipped whites', pct(R.clipped_whites_pct)], ['Crushed blacks', pct(R.crushed_blacks_pct)]],
+  get_scopes: R => {
+    // v6 numeric arguments: percentiles add a luma spread and the chroma (vectorscope radius) mean; zones add the worst zone's clip / crush.
+    // Top-level scalars and the first / last entry of the top-level percentile arrays only; without them the v5 rows stand.
+    const P = Array.isArray(R.percentiles) ? R.percentiles : null, LP = Array.isArray(R.luma_percentiles) ? R.luma_percentiles : null;
+    // the spectator caps long arrays (8 entries plus a "…+N" marker): pair P[k] with LP[k] at the last index where both are numbers
+    let k = -1; if (P && LP) for (let i = 0; i < Math.min(P.length, LP.length); i++) { if (num(P[i]) != null && num(LP[i]) != null) k = i; else break; }
+    const spread = k >= 0 ? [k ? `Luma p${r2(P[0])}–p${r2(P[k])}` : `Luma p${r2(P[0])}`, k ? `${r2(LP[0])} – ${r2(LP[k])}` : r2(LP[0])] : null;
+    const zone = num(R.zone_clipped_whites_max_pct) != null && num(R.zone_crushed_blacks_max_pct) != null ? ['Zone max clip/crush', `${pct(R.zone_clipped_whites_max_pct)} / ${pct(R.zone_crushed_blacks_max_pct)}`, 'wrap'] : null;
+    if (!spread && !zone) return [['Luma mean', short(R.luma_mean)], ['Avg RGB', rgb(R.avg_rgb)], ['Clipped whites', pct(R.clipped_whites_pct)], ['Crushed blacks', pct(R.crushed_blacks_pct)]];
+    return [['Luma mean', short(R.luma_mean)], spread || ['Avg RGB', rgb(R.avg_rgb)], spread ? ['Chroma mean', num(R.chroma_mean) != null ? String(Math.round(R.chroma_mean * 1000) / 1000) : null] : ['Clipped whites', pct(R.clipped_whites_pct)], zone || ['Clipped whites', pct(R.clipped_whites_pct)]];
+  },
   analyze_color: R => [['Mean RGB', rgb(R.mean)], ['Luma mean', Array.isArray(R.mean) ? short(R.mean[3]) : null], ['Luma min / max', Array.isArray(R.min) && Array.isArray(R.max) ? `${r2(R.min[3] ?? R.min[0])} / ${r2(R.max[3] ?? R.max[0])}` : null], ['Bins', short(R.bins)]],
   describe_frame: R => { const C = R.canvas || {}, S = R.frame_stats || {}; return [['Canvas', C.width ? `${C.width}×${C.height}` : null], ['Clipped whites', pct(S.clipped_white_pct)], ['Clipped blacks', pct(S.clipped_black_pct)], ['Dominant', Array.isArray(S.dominant_colors) ? S.dominant_colors.slice(0, 3).map(d => d.hex).filter(Boolean).join(' ') : null]]; },
   cache_stats: R => [['Frames', short(R.entries)], ['Used', `${mb(R.bytes)} of ${mb(R.cap_bytes)}`], ['Hit rate', pct((num(R.hit_rate) ?? 0) * 100)], ['Evictions', short(R.evictions)]],
@@ -81,7 +91,7 @@ export function readRows(tool, R) {
   let rows = [];
   try { rows = (T[tool] ? T[tool](R || {}) : genericRows(R)).filter(r => r && r[1] != null && r[1] !== ''); } catch (e) { rows = []; }
   if (!rows.length) rows = genericRows(R);
-  return rows.slice(0, 4).map(([k, v]) => [String(k), String(v)]);
+  return rows.slice(0, 4).map(([k, v, w]) => (w === 'wrap' ? [String(k), String(v), 'wrap'] : [String(k), String(v)]));   // a row may ask to wrap (get_scopes zones)
 }
 
 // a mutating call no panel code drew: its own args first (names, never raw ids), then what the engine answered.
