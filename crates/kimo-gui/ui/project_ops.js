@@ -6,7 +6,7 @@
 //     (project_diff, template_define / template_delete), the Batch table (batch, recipe_apply,
 //     template_apply), the Media list + its footer (load_project dependencies, save_project);
 //     set_meta renames the clip / track on the timeline and writes Name / Role / Tags in the Inspector (m16);
-//   qa: diff_frames, lint_frame, flash_series and the frame cache answer in the HUD status toast and keep the result on their
+//   qa: diff_frames, lint_frame, flash_series, audio_spectrum and the frame cache answer in the HUD status toast and keep the result on their
 //     (flash_series also lists its luminance transition stamps, first-crossing times, on the info panel's Stamps row)
 //     own rail row (Naman 7:24), no mode hop, nothing on the canvas.
 // Never a raw id: clips read as their timeline names, checkpoints and templates by the names the call gave.
@@ -15,7 +15,7 @@ import { _now as now, RAW_ID, findClip, findTrack, timelineView, numOf, fitRuler
 export const COV_C = {
   pipeline: /^(set_color_pipeline|set_clip_input_color|set_hdr_mastering|set_ocio_view_delivery)$/,
   project: /^(set_meta|load_project|save_project|project_diff|checkpoint|checkpoint_delete|restore|undo|redo|batch|recipe_apply|template_apply|template_define|template_delete)$/,
-  qa: /^(diff_frames|lint_frame|flash_series|cache_clear|cache_set_budget)$/,
+  qa: /^(diff_frames|lint_frame|flash_series|audio_spectrum|cache_clear|cache_set_budget)$/,
 };
 
 // Kimo colour IDs (kimo-core color: gamut 0..7, transfer 0..8)
@@ -363,6 +363,22 @@ export function qaOps(state, MODES, ev) {
     const tot = Number.isFinite(P.lum_stamps_total) ? Math.max(P.lum_stamps_total, st.length) : st.length;
     ev._flashStamps = st.length ? st.slice(0, 8).join(' ') + (tot > 8 ? ` +${tot - 8} more` : '') : Array.isArray(P.lum_stamps) ? 'none' : 'not in feed';
     rail = { [span || pl(n(R.samples), 'frame')]: what }; toast = `${tn}${span ? ' ' + span : ''} · ${pl(n(R.samples), 'frame')}: ${what}`;
+  } else if (tn === 'audio_spectrum') {
+    // raw levels only, from the result's top-level scalars (peak_hz / peak_dbfs / total_dbfs / loudest_band): the bands and
+    // spectrum arrays arrive cut to 8 entries plus a "…+N" marker, so no row reads them. null (silence) reads "silent", never 0.
+    const fin = v => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+    const hz = v => (v >= 1000 ? `${Math.round(v / 10) / 100} kHz` : `${Math.round(v)} Hz`), dbs = v => `${v < 0 ? '−' : ''}${Math.abs(Math.round(v * 10) / 10).toFixed(1)} dBFS`;
+    const rg = R.range || {}, span = fin(rg.start) != null && fin(rg.end) != null ? `${sec(rg.start).trim()}–${sec(rg.end).trim()}` : '';
+    const ph = fin(R.peak_hz), pd = fin(R.peak_dbfs), td = fin(R.total_dbfs), LB = R.loudest_band && typeof R.loudest_band === 'object' ? R.loudest_band : {};
+    const lo = fin(LB.lo_hz), hi = fin(LB.hi_hz), ld = fin(LB.dbfs);
+    if (fin(R.fft_size) == null) return false;
+    const peak = ph != null && pd != null ? `${hz(ph)}, ${dbs(pd)}` : 'silent';
+    const span2 = (a, b) => (b < 1000 ? `${Math.round(a)}–${Math.round(b)} Hz` : a >= 1000 ? `${Math.round(a / 10) / 100}–${Math.round(b / 10) / 100} kHz` : `${hz(a)}–${hz(b)}`);
+    const band = lo != null && hi != null && ld != null ? `${span2(lo, hi)}, ${dbs(ld)}` : 'none';
+    const who = A.clip_id ? clipName(state, MODES, A.clip_id) || 'clip' : 'mix';
+    rail = { [span || who]: `peak ${peak}` }; toast = `${tn} ${who}${span ? ' ' + span : ''} · peak ${peak}, loudest band ${band}`;
+    // four rows (readCard keeps 4), each allowed to wrap so no value is cut by an ellipsis
+    ev._specRows = [['Range', `${who}${span ? ' ' + span : ''}`, 'wrap'], ['Peak', peak, 'wrap'], ['Loudest band', band, 'wrap'], ['Total', td != null ? dbs(td) : 'silent', 'wrap']];
   } else if (tn === 'cache_set_budget') {
     const cap = numOf(R.cap_bytes) ?? (numOf(A.megabytes) != null ? numOf(A.megabytes) * 1048576 : null); if (cap == null) return false;
     const prev = state._cacheCap; state._cacheCap = cap;
@@ -376,6 +392,7 @@ export function qaOps(state, MODES, ev) {
   if (tn === 'diff_frames') ev._readRows = [['Compared', `${side(state, MODES, R.a || A.a)} vs ${side(state, MODES, R.b || A.b)}`], ['Changed', rail.changed]];
   else if (tn === 'lint_frame') ev._readRows = [['Frame', Object.keys(rail)[0]], ['Findings', Object.values(rail)[0]]];
   else if (tn === 'flash_series') ev._readRows = [['Range', Object.keys(rail)[0]], ['Transitions', Object.values(rail)[0], 'wrap'], ['Stamps', ev._flashStamps, 'wrap']];
+  else if (tn === 'audio_spectrum') ev._readRows = ev._specRows;
   else if (tn === 'cache_set_budget') ev._readRows = [['Frame cache', rail.budget], ['Used', bytes(R.bytes ?? 0)]];
   else ev._readRows = [['Freed', bytes(R.freed_bytes ?? 0)], ['Frames', String(n(R.cleared_entries))]];
   return true;

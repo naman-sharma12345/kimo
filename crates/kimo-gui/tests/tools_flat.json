@@ -43,6 +43,7 @@
 "audio_effect_describe",
 "audio_filter_response",
 "audio_probe",
+"audio_spectrum",
 "audio_speech_intervals",
 "audio_transients",
 "audit_color_output",
