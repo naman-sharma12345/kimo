@@ -70,6 +70,10 @@ const T = {
     if (!spread && !zone) return [['Luma mean', short(R.luma_mean)], ['Avg RGB', rgb(R.avg_rgb)], ['Clipped whites', pct(R.clipped_whites_pct)], ['Crushed blacks', pct(R.crushed_blacks_pct)]];
     return [['Luma mean', short(R.luma_mean)], spread || ['Avg RGB', rgb(R.avg_rgb)], spread ? ['Chroma mean', num(R.chroma_mean) != null ? String(Math.round(R.chroma_mean * 1000) / 1000) : null] : ['Clipped whites', pct(R.clipped_whites_pct)], zone || ['Clipped whites', pct(R.clipped_whites_pct)]];
   },
+  // v6 contrast_ratio: top-level scalars only (ratio, luminance_a / _b, ratio_protan / _deutan / _tritan when cvd was asked)
+  contrast_ratio: R => { const cv = [['P', R.ratio_protan], ['D', R.ratio_deutan], ['T', R.ratio_tritan]].filter(c => num(c[1]) != null);
+    return [['Ratio', num(R.ratio) != null ? `${r2(R.ratio)}:1` : null], ['Luminance a / b', num(R.luminance_a) != null && num(R.luminance_b) != null ? `${String(Math.round(R.luminance_a * 1000) / 1000)} / ${String(Math.round(R.luminance_b * 1000) / 1000)}` : null, 'wrap'],
+      cv.length ? ['Under CVD', cv.map(c => `${c[0]} ${r2(c[1])}:1`).join(' · '), 'wrap'] : null, num(R.severity) != null && cv.length ? ['Severity', r2(R.severity)] : null].filter(Boolean); },
   analyze_color: R => [['Mean RGB', rgb(R.mean)], ['Luma mean', Array.isArray(R.mean) ? short(R.mean[3]) : null], ['Luma min / max', Array.isArray(R.min) && Array.isArray(R.max) ? `${r2(R.min[3] ?? R.min[0])} / ${r2(R.max[3] ?? R.max[0])}` : null], ['Bins', short(R.bins)]],
   describe_frame: R => { const C = R.canvas || {}, S = R.frame_stats || {}; return [['Canvas', C.width ? `${C.width}×${C.height}` : null], ['Clipped whites', pct(S.clipped_white_pct)], ['Clipped blacks', pct(S.clipped_black_pct)], ['Dominant', Array.isArray(S.dominant_colors) ? S.dominant_colors.slice(0, 3).map(d => d.hex).filter(Boolean).join(' ') : null]]; },
   cache_stats: R => [['Frames', short(R.entries)], ['Used', `${mb(R.bytes)} of ${mb(R.cap_bytes)}`], ['Hit rate', pct((num(R.hit_rate) ?? 0) * 100)], ['Evictions', short(R.evictions)]],

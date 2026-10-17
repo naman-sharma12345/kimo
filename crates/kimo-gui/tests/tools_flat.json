@@ -72,6 +72,7 @@
 "connect_nodes",
 "contact_sheet",
 "contour_sdf_graph",
+"contrast_ratio",
 "copy_curve",
 "corner_disagreement",
 "create_shared_grade_graph",
