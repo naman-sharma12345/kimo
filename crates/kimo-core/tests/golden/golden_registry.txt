@@ -199,7 +199,7 @@ preview_subject_match 8fbee66dc3095cb4
 project_diff 9156e2b0c03e1a9a
 project_set 00170b74c8eb4359
 query_flat_sah 9bbb96b9c403a58a
-query_safe_margins 5cfccf0378618180
+query_safe_margins 8d3746cd4ccb8e74
 rate_stretch 16dd93dcc17cb7ed
 raycast_mesh_raw d53c8c835ad68be0
 read_pixels 75dec9c4fee7b361
