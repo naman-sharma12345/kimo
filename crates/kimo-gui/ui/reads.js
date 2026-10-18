@@ -130,6 +130,16 @@ const T = {
       ['Longest run', rc === 0 ? null : (L ? `${lr} frames · ${L.start_frame}–${L.end_frame}${num(L.max_diff_255) != null ? ` · max diff ${L.max_diff_255}/255` : ''}` : null), 'stack'],
       ['Tolerance', tol != null && mr != null ? `${Math.round(tol * 255)}/255 · min run ${mr}` : null, 'wrap'],
       ['Frames read', nf != null && num(R.start) != null && num(R.end) != null ? `${nf} · ${r3(R.start)}–${r3(R.end)} s` : null, 'wrap']].filter(r => r && r[1] != null); },
+  // v6 black_frames: runs of near-black frames (whole frame at or under luma_max; start, end, length, brightest pixel), the line,
+  // the declared range tag with any stretch that sits flat at about 16/255 (likely limited-range black read as full range), frames read
+  black_frames: R => { const nf = num(R.frames), rc = num(R.run_count), bf = num(R.black_frames), lr = num(R.longest_run), P = R.params && typeof R.params === 'object' ? R.params : {}, lm = num(P.luma_max), mr = num(P.min_run);
+    const L = lr != null && Array.isArray(R.runs) ? R.runs.find(r => r && num(r.length) === lr && num(r.start_frame) != null && num(r.end_frame) != null) : null, r3 = x => String(Math.round(x * 1000) / 1000), r1 = x => String(Math.round(x * 10) / 10);
+    const S = Array.isArray(R.limited_range_suspect) ? R.limited_range_suspect.filter(s => s && num(s.length) != null) : null, sf = S ? S.reduce((a, s) => a + num(s.length), 0) : 0, tag = typeof R.range_tag === 'string' ? R.range_tag : null;
+    return [['Black', rc != null && bf != null ? (rc === 0 ? 'none' : `${rc} ${rc === 1 ? 'run' : 'runs'} · ${bf} black ${bf === 1 ? 'frame' : 'frames'}`) : null, 'wrap'],
+      ['Longest run', rc === 0 ? null : (L ? `${lr} frames · ${L.start_frame}–${L.end_frame}${num(L.max_luma_255) != null ? ` · brightest ${r1(L.max_luma_255)}/255` : ''}` : null), 'stack'],
+      ['Line', lm != null && mr != null ? `luma ≤ ${r1(lm * 255)}/255 · min run ${mr}` : null, 'wrap'],
+      ['Range', tag || sf ? `${tag || 'no media tag'}${sf ? ` · ${sf} ${sf === 1 ? 'frame' : 'frames'} flat at 16/255` : ''}` : null, 'wrap'],
+      ['Frames read', nf != null && num(R.start) != null && num(R.end) != null ? `${nf} · ${r3(R.start)}–${r3(R.end)} s` : null, 'wrap']].filter(r => r && r[1] != null); },
   // v6 render_flow stats: from flow_stats (canvas px per frame) 'Motion' is the mean vector (length and direction, 0° = right, 90° = down),
   // 'Speed' the p50 / p90 / max speeds, 'Moving' the share faster than moving_px; without stats the card is the v5 card (generic rows)
   render_flow: R => { const F = R.flow_stats && typeof R.flow_stats === 'object' ? R.flow_stats : null; if (!F) return genericRows(R);

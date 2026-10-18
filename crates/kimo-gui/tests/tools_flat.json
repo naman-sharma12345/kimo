@@ -53,6 +53,7 @@
 "batch",
 "bind_beats",
 "bind_shared_grade_graphs",
+"black_frames",
 "burn_in",
 "cache_clear",
 "cache_set_budget",
