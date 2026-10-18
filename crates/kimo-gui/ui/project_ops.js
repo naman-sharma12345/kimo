@@ -394,9 +394,11 @@ export function qaOps(state, MODES, ev) {
     rail = { [span || pl(n(R.samples), 'frame')]: what }; toast = `${tn}${span ? ' ' + span : ''} · ${pl(n(R.samples), 'frame')}: ${what}`;
     // v6 flash rule numbers (only when the call gave flash_limit): top-level scalars worst_window_* / windows_over_limit /
     // flash_area_pct_max and the red_ twins; the busiest 1 s window with its start time, how many windows exceed the limit
+    // card text kept to two lines at full card width: "5 @ 5.92s, 27>3, 98%" = 5 flashes in the worst 1 s window starting 5.92 s,
+    // 27 windows over the limit 3, largest flash area 98% (the row wrapped to 8 lines beside its label and pushed the card above a 640x360 window)
     const lim = numOf(R.flash_limit);
     if (lim != null) { const one = (c, s0, o, a) => { const cn = numOf(c), sv = numOf(s0), ov = numOf(o), ar = numOf(a); if (cn == null) return null;
-        return `${cn}${sv != null ? ` @ ${Math.round(sv * 100) / 100}s` : ''}${ov != null ? `, ${ov} > ${Math.round(lim * 100) / 100}` : ''}${ar != null && cn > 0 ? `, area ${Math.round(ar)}%` : ''}`; };
+        return `${cn}${sv != null ? ` @ ${Math.round(sv * 100) / 100}s` : ''}${ov != null ? `, ${ov}>${Math.round(lim * 100) / 100}` : ''}${ar != null && cn > 0 ? `, ${Math.round(ar)}%` : ''}`; };
       const lw = one(R.worst_window_flashes, R.worst_window_start, R.windows_over_limit, R.flash_area_pct_max), rw = one(R.worst_red_window_flashes, R.worst_red_window_start, R.red_windows_over_limit, R.red_flash_area_pct_max);
       ev._flashRule = lw != null || rw != null ? `${lw ?? '–'} · red ${rw ?? '–'}` : null; }
   } else if (tn === 'audio_spectrum') {
@@ -434,7 +436,7 @@ export function qaOps(state, MODES, ev) {
       if (cr != null && cl != null) ev._readRows.push(['Crushed / clipped', `max ${cr} / ${cl}`, 'stack']);
       const bf = [pl0 != null ? `plateau ${Math.round(pl0 * 10) / 10} px` : null, lv != null ? `${lv} levels` : null, id != null ? `${id} same as prev` : null].filter(Boolean).join(' · ');
       if (bf) ev._readRows.push(['Banding / frozen', bf, 'stack']); } }
-  else if (tn === 'flash_series') { ev._readRows = [['Range', Object.keys(rail)[0]], ['Transitions', ev._flashTr, 'stack'], ['Stamps', ev._flashStamps, 'wrap']]; if (ev._flashRule) ev._readRows.push(['Worst 1 s flashes', ev._flashRule, 'wrap']);
+  else if (tn === 'flash_series') { ev._readRows = [['Range', Object.keys(rail)[0]], ['Transitions', ev._flashTr, 'stack'], ['Stamps', ev._flashStamps, 'wrap']]; if (ev._flashRule) ev._readRows.push(['Worst 1 s flashes', ev._flashRule, 'stack']);
     // v6 flash pin: area_basis field names the worst 10 degree field on the same row (the card keeps 4 rows; top-level worst_field_rect only)
     const fr = R && R.area_basis === 'field' && Array.isArray(R.worst_field_rect) && R.worst_field_rect.length === 4 && R.worst_field_rect.every(v => typeof v === 'number' && Number.isFinite(v)) ? R.worst_field_rect : null;
     if (ev._flashRule && fr) ev._readRows[ev._readRows.length - 1][1] += ` · field ${fr[0]},${fr[1]} ${fr[2]}×${fr[3]}`; }

@@ -7,9 +7,9 @@ ev_engine_flash_rule.json is a real kimo-mcp spectator stream recorded on a 640x
 then a 3 s strobe clip made from the jaja 12 s frame (a 320x180 box toggling every 3 frames, white/black then red/black),
 flash_series over 4..9 s three times: no flash_limit, flash_limit 3, flash_limit 3 with area_min_pct 30.
   - no flash_limit: Range / Transitions / Stamps only
-  - flash_limit 3: "N @ Ts, W > 3, area A% · red N @ Ts, W > 3, area A%" from the recorded scalars
+  - flash_limit 3: "N @ Ts, W>3, A% · red N @ Ts, W>3, A%" from the recorded scalars
   - area_min_pct 30: the strobe box (25 % of the frame) is left out on both sides; one luminance flash stays, the cut from
-    the jaja shot into the strobe clip (98 % of the frame), so "1 @ 4s, 0 > 3, area 98% · red 0, 0 > 3"
+    the jaja shot into the strobe clip (98 % of the frame), so "1 @ 4s, 0>3, 98% · red 0, 0>3"
   - junk scalars ("NaN" count): that side reads "–", never 0
   - no value cell is clipped by the card, no "…+" marker
 Exit 0 only when every case holds.
@@ -28,8 +28,8 @@ def clean(rows): return bool(rows) and not any('…+' in v or v.startswith('CLIP
 def r2(x): return f"{round(x * 100) / 100:g}"
 def side(c, s, o, a, lim):
     if not isinstance(c, (int, float)) or isinstance(c, bool): return '–'
-    out = f"{c:g}" + (f" @ {r2(s)}s" if isinstance(s, (int, float)) else '') + (f", {o:g} > {r2(lim)}" if isinstance(o, (int, float)) else '')
-    return out + (f", area {round(a):g}%" if isinstance(a, (int, float)) and c > 0 else '')
+    out = f"{c:g}" + (f" @ {r2(s)}s" if isinstance(s, (int, float)) else '') + (f", {o:g}>{r2(lim)}" if isinstance(o, (int, float)) else '')
+    return out + (f", {round(a):g}%" if isinstance(a, (int, float)) and c > 0 else '')
 def want(R):
     lim = R['flash_limit']
     return side(R['worst_window_flashes'], R['worst_window_start'], R['windows_over_limit'], R['flash_area_pct_max'], lim) + ' · red ' + side(R['worst_red_window_flashes'], R['worst_red_window_start'], R['red_windows_over_limit'], R['red_flash_area_pct_max'], lim)
@@ -40,7 +40,7 @@ JR = junk()[1]['payload']['result']
 CASES = [
     ('no flash_limit', PLAIN, lambda r: clean(r) and [k for k, _ in r] == ['Range', 'Transitions', 'Stamps']),
     ('flash_limit 3', RULE, lambda r: clean(r) and [k for k, _ in r] == ['Range', 'Transitions', 'Stamps', 'Worst 1 s flashes'] and dict(r).get('Worst 1 s flashes', '') == want(RR) and RR['worst_window_flashes'] > 3),
-    ('area_min_pct 30', AREA, lambda r: clean(r) and dict(r).get('Worst 1 s flashes', '') == want(RA) and RA['flashes_counted'] == 1 and RA['red_flashes_counted'] == 0 and want(RA).endswith('· red 0, 0 > 3')),
+    ('area_min_pct 30', AREA, lambda r: clean(r) and dict(r).get('Worst 1 s flashes', '') == want(RA) and RA['flashes_counted'] == 1 and RA['red_flashes_counted'] == 0 and want(RA).endswith('· red 0, 0>3')),
     ('junk scalars', junk(), lambda r: clean(r) and dict(r).get('Worst 1 s flashes', '').endswith('· red –') and dict(r).get('Worst 1 s flashes', '') == want(JR)),
 ]
 async def main():
