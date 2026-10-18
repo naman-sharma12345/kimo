@@ -110,6 +110,13 @@ const T = {
   snap_time: R => [['Time', num(R.time) != null ? r2(R.time) + ' s' : null], ['Snapped', short(R.snapped)]],
   session_stats: R => [['Calls', short(R.calls_total)], ['Errors', short(R.errors_total)], ['Returned', mb(R.bytes_returned_total)]],
   inspect_color_pipeline: R => [['Input', [R.default_media_input_gamut, R.default_media_input_transfer].filter(Boolean).join(' ') || null], ['Working', short(R.working_space ?? R.working ?? R.working_gamut)], ['Output', [R.configured_output_gamut, R.configured_output_transfer].filter(Boolean).join(' ') || null], ...genericRows(R, 1)],
+  // v6 saliency_map (Peak, Half the mass in and In rect 1 stack: label line, value under it, so long values never clip): 'Peak' is where the map is highest (canvas px), 'Half the mass in' the share of the frame area that holds half the
+  // saliency, then the first rect's share of the mass ('In rect 1', with its area share) when rects were given; raw numbers, no verdict
+  saliency_map: R => { if (R.empty === true) return [['Saliency', 'flat frame, none']]; const P = R.peak && typeof R.peak === 'object' ? R.peak : null, x = P ? num(P.x) : null, y = P ? num(P.y) : null, hm = num(R.half_mass_area_frac);
+    const r0 = Array.isArray(R.rects) && R.rects[0] && typeof R.rects[0] === 'object' ? R.rects[0] : null, mf = r0 ? num(r0.mass_frac) : null, af = r0 ? num(r0.area_frac) : null;
+    return [['Peak', x != null && y != null ? `${Math.round(x)}, ${Math.round(y)} px` : null, 'stack'], ['Half the mass in', hm != null ? `${pct(hm * 100)} of the frame` : null, 'stack'],
+      ['In rect 1', mf != null ? `${pct(mf * 100)} of the mass${af != null ? ` · ${pct(af * 100)} of the area` : ''}` : null, 'stack'],
+      ['Motion', R.motion && typeof R.motion === 'object' && num(R.motion.weight) != null ? `weight ${r2(R.motion.weight)}` : null]]; },
   // v6 render_flow stats: from flow_stats (canvas px per frame) 'Motion' is the mean vector (length and direction, 0° = right, 90° = down),
   // 'Speed' the p50 / p90 / max speeds, 'Moving' the share faster than moving_px; without stats the card is the v5 card (generic rows)
   render_flow: R => { const F = R.flow_stats && typeof R.flow_stats === 'object' ? R.flow_stats : null; if (!F) return genericRows(R);

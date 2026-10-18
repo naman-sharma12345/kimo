@@ -260,6 +260,7 @@
 "ripple_trim",
 "roll_edit",
 "roto_propagate",
+"saliency_map",
 "sample_advection_field",
 "sample_diffuse_sh_raw",
 "sample_direct_lighting",
