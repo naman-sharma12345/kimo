@@ -425,7 +425,13 @@ export function qaOps(state, MODES, ev) {
   // GUI-FIX-1: the same answer stays on the current screen's info panel (router.js readCard), not only in the toast
   if (tn === 'diff_frames') { ev._readRows = [['Compared', `${side(state, MODES, R.a || A.a)} vs ${side(state, MODES, R.b || A.b)}`, 'wrap'], ['Changed', rail.changed]]; if (ev._dfQuality) ev._readRows.push(['Quality', ev._dfQuality, 'wrap']); }
   else if (tn === 'compare_ranges') ev._readRows = ev._crRows;
-  else if (tn === 'lint_frame') ev._readRows = [['Frame', Object.keys(rail)[0]], ['Findings', Object.values(rail)[0]]];
+  else if (tn === 'lint_frame') { ev._readRows = [['Frame', Object.keys(rail)[0]], ['Findings', Object.values(rail)[0]]];
+    // v6 quality numbers (lint_frame quality): the extremes from summary.quality, only when the call asked for them
+    const Q = R.summary && R.summary.quality && typeof R.summary.quality === 'object' ? R.summary.quality : null, pc = x => numOf(x) != null ? `${Math.round(x * 1000) / 10}%` : null;
+    if (Q) { const cr = pc(Q.max_crushed_frac), cl = pc(Q.max_clipped_frac), pl0 = numOf(Q.max_band_plateau_px), lv = numOf(Q.min_luma_levels), id = numOf(Q.identical_to_prev);
+      if (cr != null && cl != null) ev._readRows.push(['Crushed / clipped', `max ${cr} / ${cl}`, 'stack']);
+      const bf = [pl0 != null ? `plateau ${Math.round(pl0 * 10) / 10} px` : null, lv != null ? `${lv} levels` : null, id != null ? `${id} same as prev` : null].filter(Boolean).join(' · ');
+      if (bf) ev._readRows.push(['Banding / frozen', bf, 'stack']); } }
   else if (tn === 'flash_series') { ev._readRows = [['Range', Object.keys(rail)[0]], ['Transitions', Object.values(rail)[0], 'wrap'], ['Stamps', ev._flashStamps, 'wrap']]; if (ev._flashRule) ev._readRows.push(['Worst 1 s flashes', ev._flashRule, 'wrap']);
     // v6 flash pin: area_basis field names the worst 10 degree field on the same row (the card keeps 4 rows; top-level worst_field_rect only)
     const fr = R && R.area_basis === 'field' && Array.isArray(R.worst_field_rect) && R.worst_field_rect.length === 4 && R.worst_field_rect.every(v => typeof v === 'number' && Number.isFinite(v)) ? R.worst_field_rect : null;
