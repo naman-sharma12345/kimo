@@ -379,6 +379,8 @@ export function qaOps(state, MODES, ev) {
     const rg = R.range || {}, span = rg.start != null && rg.end != null ? `${sec(rg.start).trim()}–${sec(rg.end).trim()}` : '';
     const win = numOf(P0.window_s) ?? 1, area = numOf(T.max_changed_area_fraction);
     const what = `max ${n(T.max_lum_transitions_in_window)} luminance / ${n(T.max_red_transitions_in_window)} red transitions per ${Math.round(win * 100) / 100}s` + (area != null ? `, area ${Math.round(area * 100)}%` : '');
+    // the info panel's Transitions row: the same three numbers in fewer words, stacked under its label (it wrapped to 6 lines)
+    ev._flashTr = `max ${n(T.max_lum_transitions_in_window)} luminance · ${n(T.max_red_transitions_in_window)} red per ${Math.round(win * 100) / 100}s` + (area != null ? ` · area ${Math.round(area * 100)}%` : '');
     // stamps: each luminance transition sits on its first crossing of lum_delta inside the monotonic run that reaches the
     // swing's extreme (strict-run guard), so these times are where the change starts; up to 8 listed, then "+N more".
     // Read from the payload's lum_stamps [{t, dir}] (kimo-mcp spectator.rs builds it from the FULL result): the result's
@@ -432,7 +434,7 @@ export function qaOps(state, MODES, ev) {
       if (cr != null && cl != null) ev._readRows.push(['Crushed / clipped', `max ${cr} / ${cl}`, 'stack']);
       const bf = [pl0 != null ? `plateau ${Math.round(pl0 * 10) / 10} px` : null, lv != null ? `${lv} levels` : null, id != null ? `${id} same as prev` : null].filter(Boolean).join(' · ');
       if (bf) ev._readRows.push(['Banding / frozen', bf, 'stack']); } }
-  else if (tn === 'flash_series') { ev._readRows = [['Range', Object.keys(rail)[0]], ['Transitions', Object.values(rail)[0], 'wrap'], ['Stamps', ev._flashStamps, 'wrap']]; if (ev._flashRule) ev._readRows.push(['Worst 1 s flashes', ev._flashRule, 'wrap']);
+  else if (tn === 'flash_series') { ev._readRows = [['Range', Object.keys(rail)[0]], ['Transitions', ev._flashTr, 'stack'], ['Stamps', ev._flashStamps, 'wrap']]; if (ev._flashRule) ev._readRows.push(['Worst 1 s flashes', ev._flashRule, 'wrap']);
     // v6 flash pin: area_basis field names the worst 10 degree field on the same row (the card keeps 4 rows; top-level worst_field_rect only)
     const fr = R && R.area_basis === 'field' && Array.isArray(R.worst_field_rect) && R.worst_field_rect.length === 4 && R.worst_field_rect.every(v => typeof v === 'number' && Number.isFinite(v)) ? R.worst_field_rect : null;
     if (ev._flashRule && fr) ev._readRows[ev._readRows.length - 1][1] += ` · field ${fr[0]},${fr[1]} ${fr[2]}×${fr[3]}`; }
