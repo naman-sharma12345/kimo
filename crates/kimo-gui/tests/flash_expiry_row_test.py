@@ -11,6 +11,15 @@ the panel down clears it.
     one frame (a timeout to the expiry, then two animation frames) the DOM holds no .flash, the History panel matches a
     fresh full render of the same state (the no-flash render) byte for byte, one expiry repaint ran, as one render with
     0 app animation frames (metrics.raf unchanged from before the expiry to the read), no timer is left
+  - boundary-before (the History row of a checkpoint_delete stamp): read inside a timeout at stamp + FLASH_MS - 20 ms
+    (680 ms; the read time must fall before the expiry) the row still has .flash, so the flash is shown for its full time
+  - boundary-after, the BOUNDARY check (same page): read at stamp + FLASH_MS + one frame (a timeout to the expiry, then two
+    animation frames, then the read) there is no .flash anywhere and every History row's class is exactly "hrow" (no stale row)
+  - stale-735a, the MARGIN check (fresh page; 735 ms is the moment the parent build's screenshot showed a stale History row):
+    read inside a timeout at stamp + 735 ms (never before it), with no frame and no event in between
+  - stale-735b, the MARGIN-after-frame check (same page): read again after two animation frames have run (the frame has
+    rendered, so a late paint cannot hide)
+    In both reads no element has .flash and every History row's class is exactly "hrow"; both read times are printed
   - three overlapping stamps (checkpoints c1, c2, c3 about 250 ms apart): at each expiry + one frame exactly the rows
     whose stamp ran out have lost their flash, the others keep it, and the timer is re-armed at the next stamp + 700;
     after the last: no .flash, panel == full render, three expiry repaints with 0 app animation frames across all three
@@ -35,6 +44,7 @@ def cp(name, cid): return call('checkpoint', {'name': name}, {'name': name}, cid
 class Q(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *a): pass
 FLASH_MS = 700
+READ = "() => ({ t: performance.now(), n: document.querySelectorAll('.flash').length, rows: [...document.querySelectorAll('[data-panel=hist] .hrow')].map(e => e.className) })"
 HIST = "() => { const p = document.querySelector('[data-panel=hist]'); return p ? p.innerHTML : null; }"
 ROWS = "() => Object.fromEntries([...document.querySelectorAll('[data-panel=hist] .hrow')].map(r => [r.textContent.replace(/\\s+/g, '').slice(0, 2), r.classList.contains('flash')]))"   # {row id (c1 / c2 / c3): has .flash}
 NFLASH = "() => document.querySelectorAll('.flash').length"
@@ -42,6 +52,9 @@ STAMPS = """() => { const out = {}; const walk = (o, d) => { if (!o || typeof o 
   if (Array.isArray(o.items)) for (const it of o.items) if (it && it._flash != null && it.id != null) out[it.id] = it._flash; for (const k in o) if (k[0] !== '_') walk(o[k], d + 1); };
   walk(__kimo.state, 0); return out; }"""
 TIMER = "() => __kimo.flashTimer ? __kimo.flashTimer() : 'no flashTimer'"
+AT = """t => new Promise(r => setTimeout(() => { while (performance.now() < t) {}   // a timer can fire up to ~1 ms early (whole-ms rounding): spin to t
+  r({ t: performance.now(), n: document.querySelectorAll('.flash').length,
+      rows: [...document.querySelectorAll('[data-panel=hist] .hrow')].map(e => e.className) }); }, Math.max(0, t - performance.now())))"""   # one read at t (never before it), inside the timeout: no frame, no event between
 FRAMES2 = "() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"
 async def until(pg, t):   # a timeout to t, then one frame (two rAFs: the repaint's frame, then the next)
     await pg.evaluate("t => new Promise(r => setTimeout(r, Math.max(0, t - performance.now()) + 1))", t)
@@ -81,6 +94,32 @@ async def main():
         h2 = await full_render(pg)
         report(s1 is not None and on == {'c1': True} and near(tm, s1 + FLASH_MS) and n == 0 and off == {'c1': False} and h1 == h2 and 'flash' not in (h1 or 'flash') and fe1 - fe0 == 1 and tm2 is None and r1 == r0 and n1 - n0 == 1,
                f"one stamp: drawn {on}, timer at stamp+{(tm - s1) if isinstance(tm, (int, float)) else tm}; read at stamp+{t - s1:.0f} ms: .flash in DOM {n}, rows {off}, panel == full render {h1 == h2}, expiry repaints {fe1 - fe0} ({n1 - n0} render, {r1 - r0} rAF), timer after {tm2}", errs)
+        await pg.close()
+        # ---- boundary: the stamp's last moments vs its expiry (one stamp, History row) ----
+        pg, errs = await page()
+        await apply(pg, cp('c1', 'k1')); await pg.wait_for_timeout(1200)
+        await apply(pg, call('checkpoint_delete', {'name': 'c1'}, {'deleted': 'c1'}, 'k2'))
+        s1 = (await pg.evaluate(STAMPS)).get('c1'); on = await pg.evaluate(ROWS)
+        pre = await pg.evaluate(AT, s1 + FLASH_MS - 20) if s1 is not None else {'t': float('nan'), 'n': -1, 'rows': []}
+        report(s1 is not None and on == {'c1': True} and pre['t'] < s1 + FLASH_MS and pre['n'] >= 1 and len(pre['rows']) == 1 and 'flash' in pre['rows'][0].split(),
+               f"boundary-before (flash shown for its full time): read at stamp+{pre['t'] - (s1 or 0):.1f} ms (must be < {FLASH_MS}): History rows {pre['rows']}, .flash in DOM {pre['n']} (the flash is still shown)", errs)
+        t = await until(pg, (s1 or 0) + FLASH_MS)
+        post = await pg.evaluate(READ)   # after until(): the expiry timeout, two animation frames, then this read
+        report(s1 is not None and post['n'] == 0 and len(post['rows']) == 1 and all(c == 'hrow' for c in post['rows']),
+               f"boundary-after, BOUNDARY check: read at stamp+{post['t'] - (s1 or 0):.1f} ms (expiry {FLASH_MS} + one frame): History rows {post['rows']}, .flash in DOM {post['n']} (no stale row)", errs)
+        await pg.close()
+        # ---- 735 ms: the moment the parent build's screenshot showed a stale History row ----
+        pg, errs = await page()
+        await apply(pg, cp('c1', 'k1')); await pg.wait_for_timeout(1200)
+        await apply(pg, call('checkpoint_delete', {'name': 'c1'}, {'deleted': 'c1'}, 'k2'))
+        s1 = (await pg.evaluate(STAMPS)).get('c1'); on = await pg.evaluate(ROWS)
+        r735 = await pg.evaluate(AT, s1 + 735) if s1 is not None else {'t': float('nan'), 'n': -1, 'rows': []}
+        await pg.evaluate(FRAMES2); r735f = await pg.evaluate(READ)   # (b) the same state after two animation frames: the frame has rendered
+        clean = lambda r: r['n'] == 0 and len(r['rows']) == 1 and all(c == 'hrow' for c in r['rows'])
+        report(s1 is not None and on == {'c1': True} and r735['t'] >= s1 + 735 and clean(r735),
+               f"stale-735a, MARGIN check (exact read): drawn {on}; read at stamp+{r735['t'] - (s1 or 0):.1f} ms (must be >= 735): History rows {r735['rows']}, .flash in DOM {r735['n']}", errs)
+        report(s1 is not None and on == {'c1': True} and r735f['t'] > r735['t'] and clean(r735f),
+               f"stale-735b, MARGIN-after-frame check (735 + two animation frames): read at stamp+{r735f['t'] - (s1 or 0):.1f} ms: History rows {r735f['rows']}, .flash in DOM {r735f['n']}", errs)
         await pg.close()
         # ---- three overlapping stamps, then idle ----
         pg, errs = await page()
