@@ -74,6 +74,13 @@ const T = {
   contrast_ratio: R => { const cv = [['P', R.ratio_protan], ['D', R.ratio_deutan], ['T', R.ratio_tritan]].filter(c => num(c[1]) != null);
     return [['Ratio', num(R.ratio) != null ? `${r2(R.ratio)}:1` : null], ['Luminance a / b', num(R.luminance_a) != null && num(R.luminance_b) != null ? `${String(Math.round(R.luminance_a * 1000) / 1000)} / ${String(Math.round(R.luminance_b * 1000) / 1000)}` : null, 'wrap'],
       cv.length ? ['Under CVD', cv.map(c => `${c[0]} ${r2(c[1])}:1`).join(' · '), 'wrap'] : null, num(R.severity) != null && cv.length ? ['Severity', r2(R.severity)] : null].filter(Boolean); },
+  // v6 edit_check: did the edit stay inside its allowed rects; top-level counts and the largest region only (the card shows 4 rows)
+  edit_check: R => { const O = R.outside && typeof R.outside === 'object' ? R.outside : {}, I = R.inside && typeof R.inside === 'object' ? R.inside : {};
+    const g = Array.isArray(R.regions) && R.regions[0] && Array.isArray(R.regions[0].bbox) && R.regions[0].bbox.length === 4 && R.regions[0].bbox.every(v => num(v) != null) ? R.regions[0].bbox : null;
+    return [['Changed', R.bit_identical === true ? 'identical' : (num(R.changed_pixels) != null ? `${R.changed_pixels} px` + (num(R.changed_percent) != null ? ` · ${pct(R.changed_percent)}` : '') : null), 'wrap'],
+      ['Outside allowed', num(O.changed_pixels) != null ? `${O.changed_pixels} px` + (num(O.max_delta) != null ? ` · max Δ ${r2(O.max_delta)}` : '') + (num(R.allowed_count) === 0 ? ' · none allowed' : '') : null, 'wrap'],
+      num(R.allowed_count) > 0 ? ['Inside allowed', num(I.changed_pixels) != null ? `${I.changed_pixels} px` + (num(I.percent_of_allowed) != null ? ` · ${pct(I.percent_of_allowed)} of area` : '') : null, 'wrap'] : null,
+      ['Regions', num(R.region_count) != null ? (R.region_count === 0 ? 'none' : `${R.region_count}` + (g ? ` · largest ${g[2]}×${g[3]} at ${g[0]},${g[1]}` : '')) : null, 'wrap']].filter(r => r && r[1] != null); },
   // v6 text_contrast_series: the worst frame of text over moving video, from top-level scalars only (the card shows 4 rows);
   // below the bar the fix shown is the scrim (suggested_fix / scrim_alpha_min), never a recolour
   text_contrast_series: R => Array.isArray(R.captions) ? [['Worst ratio', num(R.worst_ratio) != null ? `${r2(R.worst_ratio)}:1` + (typeof R.worst_caption === 'string' ? ` · ${R.worst_caption.slice(0, 40)}` : '') : null, 'wrap'],
