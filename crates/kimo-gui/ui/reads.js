@@ -82,6 +82,12 @@ const T = {
       num(R.allowed_count) > 0 ? ['Changed inside band', num(I.changed_pixels) != null ? `${I.changed_pixels} px` : null, 'stack'] : null,
       ['Max Δ overall', num(R.max_delta) != null ? R.max_delta.toFixed(2) + (R.bit_identical === true ? ' · identical' : '') : null, 'wrap'],
       ['Regions', num(R.region_count) != null ? (R.region_count === 0 ? 'none' : `${R.region_count}` + (g ? ` · largest ${g[2]}×${g[3]} at ${g[0]},${g[1]}` : '')) : null, 'wrap']].filter(r => r && r[1] != null); },
+  // v6 av_offset: the lag between sound and picture (positive = the sound after the picture); 4 rows from the top-level numbers
+  av_offset: R => { const L = num(R.best_lag_ms), r3 = x => num(x) != null ? x.toFixed(3) : null, T = Array.isArray(R.top_picture_changes) && R.top_picture_changes[0] && num(R.top_picture_changes[0].t) != null && num(R.top_picture_changes[0].change) != null ? R.top_picture_changes[0] : null;
+    return [['Best lag', L != null ? `${L} ms` + (L > 0 ? ' · audio late' : L < 0 ? ' · audio early' : '') : (R.best_lag_ms === null && num(R.onset_max) === 0 ? 'none · no audio onsets' : (R.best_lag_ms === null ? 'none' : null)), 'stack'],
+      ['r there / at 0', r3(R.best_r) != null ? `${r3(R.best_r)} / ${r3(R.r_at_zero) ?? '—'}` : null, 'wrap'],
+      ['Runner-up', num(R.runner_up_lag_ms) != null && r3(R.runner_up_r) != null ? `${R.runner_up_lag_ms} ms · r ${r3(R.runner_up_r)}` + (r3(R.peak_margin) != null ? ` · margin ${r3(R.peak_margin)}` : '') : null, 'stack'],
+      ['Biggest picture change', T ? `${T.t.toFixed(3)} s · ${r3(T.change)}` : null, 'stack']].filter(r => r && r[1] != null); },
   // v6 text_contrast_series: the worst frame of text over moving video, from top-level scalars only (the card shows 4 rows);
   // below the bar the fix shown is the scrim (suggested_fix / scrim_alpha_min), never a recolour
   text_contrast_series: R => Array.isArray(R.captions) ? [['Worst ratio', num(R.worst_ratio) != null ? `${r2(R.worst_ratio)}:1` + (typeof R.worst_caption === 'string' ? ` · ${R.worst_caption.slice(0, 40)}` : '') : null, 'wrap'],

@@ -48,6 +48,7 @@
 "audio_transients",
 "audit_color_output",
 "auto_duck",
+"av_offset",
 "bake_property",
 "batch",
 "bind_beats",
