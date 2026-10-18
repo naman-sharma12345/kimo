@@ -74,12 +74,13 @@ const T = {
   contrast_ratio: R => { const cv = [['P', R.ratio_protan], ['D', R.ratio_deutan], ['T', R.ratio_tritan]].filter(c => num(c[1]) != null);
     return [['Ratio', num(R.ratio) != null ? `${r2(R.ratio)}:1` : null], ['Luminance a / b', num(R.luminance_a) != null && num(R.luminance_b) != null ? `${String(Math.round(R.luminance_a * 1000) / 1000)} / ${String(Math.round(R.luminance_b * 1000) / 1000)}` : null, 'wrap'],
       cv.length ? ['Under CVD', cv.map(c => `${c[0]} ${r2(c[1])}:1`).join(' · '), 'wrap'] : null, num(R.severity) != null && cv.length ? ['Severity', r2(R.severity)] : null].filter(Boolean); },
-  // v6 edit_check: did the edit stay inside its allowed rects; top-level counts and the largest region only (the card shows 4 rows)
+  // v6 edit_check: did the edit stay inside its allowed rects (the band). The card header carries the threshold (readHead);
+  // 4 rows from the top-level counts and the largest region only: outside (with the largest delta there), inside, overall max, regions
   edit_check: R => { const O = R.outside && typeof R.outside === 'object' ? R.outside : {}, I = R.inside && typeof R.inside === 'object' ? R.inside : {};
     const g = Array.isArray(R.regions) && R.regions[0] && Array.isArray(R.regions[0].bbox) && R.regions[0].bbox.length === 4 && R.regions[0].bbox.every(v => num(v) != null) ? R.regions[0].bbox : null;
-    return [['Changed', R.bit_identical === true ? 'identical' : (num(R.changed_pixels) != null ? `${R.changed_pixels} px` + (num(R.changed_percent) != null ? ` · ${pct(R.changed_percent)}` : '') : null), 'wrap'],
-      ['Outside allowed', num(O.changed_pixels) != null ? `${O.changed_pixels} px` + (num(O.max_delta) != null ? ` · max Δ ${r2(O.max_delta)}` : '') + (num(R.allowed_count) === 0 ? ' · none allowed' : '') : null, 'wrap'],
-      num(R.allowed_count) > 0 ? ['Inside allowed', num(I.changed_pixels) != null ? `${I.changed_pixels} px` + (num(I.percent_of_allowed) != null ? ` · ${pct(I.percent_of_allowed)} of area` : '') : null, 'wrap'] : null,
+    return [['Changed outside band', num(O.changed_pixels) != null ? `${O.changed_pixels} px` + (num(O.max_delta) != null ? ` (max Δ there ${O.max_delta.toFixed(2)})` : '') + (num(R.allowed_count) === 0 ? ' · no band given' : '') : null, 'stack'],
+      num(R.allowed_count) > 0 ? ['Changed inside band', num(I.changed_pixels) != null ? `${I.changed_pixels} px` : null, 'stack'] : null,
+      ['Max Δ overall', num(R.max_delta) != null ? R.max_delta.toFixed(2) + (R.bit_identical === true ? ' · identical' : '') : null, 'wrap'],
       ['Regions', num(R.region_count) != null ? (R.region_count === 0 ? 'none' : `${R.region_count}` + (g ? ` · largest ${g[2]}×${g[3]} at ${g[0]},${g[1]}` : '')) : null, 'wrap']].filter(r => r && r[1] != null); },
   // v6 text_contrast_series: the worst frame of text over moving video, from top-level scalars only (the card shows 4 rows);
   // below the bar the fix shown is the scrim (suggested_fix / scrim_alpha_min), never a recolour
@@ -113,11 +114,16 @@ const T = {
 };
 const mb = n => { n = num(n); if (n == null) return '0 B'; const u = ['B', 'KB', 'MB', 'GB']; let i = 0; while (n >= 1024 && i < 3) { n /= 1024; i++; } return (i ? Math.round(n * 10) / 10 : Math.round(n)) + ' ' + u[i]; };
 
+// the read card's header: the tool name, plus the one argument a reader needs to read the rows right (edit_check: its threshold)
+export function readHead(tool, R) {
+  if (tool === 'edit_check' && R && num(R.threshold) != null) return `threshold ${r2(R.threshold)} · ${tool}`;   // threshold first: a narrow header cuts the end
+  return tool;
+}
 export function readRows(tool, R) {
   let rows = [];
   try { rows = (T[tool] ? T[tool](R || {}) : genericRows(R)).filter(r => r && r[1] != null && r[1] !== ''); } catch (e) { rows = []; }
   if (!rows.length) rows = genericRows(R);
-  return rows.slice(0, 4).map(([k, v, w]) => (w === 'wrap' ? [String(k), String(v), 'wrap'] : [String(k), String(v)]));   // a row may ask to wrap (get_scopes zones)
+  return rows.slice(0, 4).map(([k, v, w]) => (w === 'wrap' || w === 'stack' ? [String(k), String(v), w] : [String(k), String(v)]));   // a row may ask to wrap (get_scopes zones)
 }
 
 // a mutating call no panel code drew: its own args first (names, never raw ids), then what the engine answered.

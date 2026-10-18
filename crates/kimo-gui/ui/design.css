@@ -329,6 +329,7 @@ body::before{content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;wi
 .readcard .rk{flex:none;color:var(--klabel,var(--text));font-family:var(--label-font)}
 .readcard .rv{min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:var(--mono);color:var(--cream);text-align:right}
 .readcard .rr.wrap{white-space:normal}.readcard .rr.wrap .rv{overflow:visible;text-overflow:clip}   /* a row that asks to wrap (flash_series Stamps) shows every value, not an ellipsis */
+.readcard .rr.stack{display:block;white-space:normal}.readcard .rr.stack .rv{display:block;overflow:visible;text-overflow:clip;text-align:right}   /* a long label (edit_check 'Changed outside band') takes its own line, the value goes under it */
 .readcard.flash{animation:kflashrow .7s ease-out 1;will-change:transform}
 .scopestats{position:absolute;right:14px;top:12px;max-width:70%;font-family:var(--mono);font-size:13px;color:var(--cream);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:rgba(18,18,17,.82);padding:2px 6px;border-radius:4px}
 .scopestats.flash{animation:kflashrow .7s ease-out 1;will-change:transform}

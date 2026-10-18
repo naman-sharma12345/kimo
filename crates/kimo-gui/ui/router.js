@@ -14,7 +14,7 @@ import { READONLY, inferMode } from './modes.js';
 import { COV_C, pipelineOps, projectOps, qaOps, space, C_MUT, cSnap, cRestore, cPush } from './project_ops.js';
 import { COV_A, covAOps, covASee, covAPre, covAHistory } from './cov_a.js';
 import { COVB, covbOps, covbLearn, covbHistory } from './cov_b.js';
-import { readRows, callRows, CHIP, colourRows, scopeLine } from './reads.js';
+import { readRows, readHead, callRows, CHIP, colourRows, scopeLine } from './reads.js';
 import { fix2Pre, fix2Post } from './fix2.js';   /* GUI-FIX-2 */
 
 export const FAMILIES = [
@@ -1100,7 +1100,7 @@ function inspectOps(state, MODES, ev, id) {
     const err = ev.phase === 'error', dur = P.dur_ms ?? ev.duration_ms, sm = err ? '' : summary(P.result);
     out.push({ type: 'tool_end', id, name: ev.tool_name, dur_ms: dur, status: err ? 'error' : 'ok', error: P.error, read: true });
     hud(state, ev, 'inspect', ev.tool_name + (err ? ' failed' : sm ? ' · ' + sm : ' ✓'));
-    if (!err) { readCard(state, MODES, ev.tool_name, readRows(String(ev.tool_name), P.result)); scopeStats(state, MODES, scopeLine(String(ev.tool_name), P.result)); }   // the answer stays on the screen's info panel
+    if (!err) { readCard(state, MODES, readHead(String(ev.tool_name), P.result), readRows(String(ev.tool_name), P.result)); scopeStats(state, MODES, scopeLine(String(ev.tool_name), P.result)); }   // the answer stays on the screen's info panel
   }
   return out;
 }
