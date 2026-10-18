@@ -50,22 +50,58 @@ fn scores(a: &Image, b: &Image) -> (f64, f64, Option<f64>) { let (pa, pb) = (lum
     assert_eq!(summary(&t[..1], &[None])["mean"], Value::Null);
 }
 
-fn session() -> Session {
+fn session() -> Session { session_with(json!("#336699")) }
+/// The scene every diff_frames pin renders: a solid of `color` at 0-1 s, then the default black-to-white gradient at 1-2 s.
+fn session_with(color: Value) -> Session {
     let mut s = Session::new(); dispatch(&mut s, "project_set", &json!({"width": 320, "height": 180, "fps": 24})).unwrap();
     let tr = dispatch(&mut s, "add_track", &json!({})).unwrap()["track_id"].as_str().unwrap().to_string();
-    dispatch(&mut s, "add_clip", &json!({"track_id": tr, "source_type": "solid", "color": "#336699", "start": 0, "duration": 1})).unwrap();
+    dispatch(&mut s, "add_clip", &json!({"track_id": tr, "source_type": "solid", "color": color, "start": 0, "duration": 1})).unwrap();
     dispatch(&mut s, "add_clip", &json!({"track_id": tr, "source_type": "gradient", "start": 1, "duration": 1})).unwrap(); s
 }
-/// diff_frames output from the v5.0.0 (5ad355c) kimo-mcp over MCP (tools/call text) for the session above.
+/// diff_frames output for session(). Taken from the v5.0.0 (5ad355c) kimo-mcp over MCP (tools/call text); entries 1 and 3
+/// re-pinned after the hex colour fix 8d0c0aa: the v5 binary read the string "#336699" as the default black, so its bytes
+/// for those two entries were a black solid's. They live on in V5_BLACK, asserted against a [0,0,0] solid below.
 const V5: [(&str, &str); 4] = [
-    (r#"{"a":{"time":0.5},"b":{"time":1.5}}"#, r#"{"a":{"h":180,"source":"composite","time":0.5,"w":320},"b":{"h":180,"source":"composite","time":1.5,"w":320},"compared":{"h":180,"method":"fixed-order f64, box downscale, Rec709 luma, SSIM luma 8x8 population variance C1=.01^2 C2=.03^2, 8x8x8 RGB histogram half-L1","region":[0,0,320,180],"scale":1.0,"space":"display-referred RGB u8/255","threshold":0.04,"w":320},"delta":{"bbox":[0,8,320,172],"bit_identical":false,"changed_percent":95.55555555555556,"changed_pixels":55040},"grid":{"cols":4,"mean_abs_delta":[0.1223529411764712,0.1223529411764712,0.1223529411764712,0.1223529411764712,0.3723747276688463,0.3723747276688463,0.3723747276688463,0.3723747276688463,0.6223965141612403,0.6223965141612403,0.6223965141612403,0.6223965141612403,0.8724183006536087,0.8724183006536087,0.8724183006536087,0.8724183006536087],"rows":4},"metrics":{"changed_ratio":0.9555555555555556,"luma_delta":0.49738562091490063,"mse":0.33073689606569745,"psnr_db":4.805173537288108},"verdict_hint":"major"}"#),
+    (r#"{"a":{"time":0.5},"b":{"time":1.5}}"#, r#"{"a":{"h":180,"source":"composite","time":0.5,"w":320},"b":{"h":180,"source":"composite","time":1.5,"w":320},"compared":{"h":180,"method":"fixed-order f64, box downscale, Rec709 luma, SSIM luma 8x8 population variance C1=.01^2 C2=.03^2, 8x8x8 RGB histogram half-L1","region":[0,0,320,180],"scale":1.0,"space":"display-referred RGB u8/255","threshold":0.04,"w":320},"delta":{"bbox":[0,0,320,180],"bit_identical":false,"changed_percent":100.0,"changed_pixels":57600},"grid":{"cols":4,"mean_abs_delta":[0.2806100217864951,0.2806100217864951,0.2806100217864951,0.2806100217864951,0.1551488743645611,0.1551488743645611,0.1551488743645611,0.1551488743645611,0.23639796659404308,0.23639796659404308,0.23639796659404308,0.23639796659404308,0.4724183006535846,0.4724183006535846,0.4724183006535846,0.4724183006535846],"rows":4},"metrics":{"changed_ratio":1.0,"luma_delta":0.2657380915032357,"mse":0.11949506600021531,"psnr_db":9.226500265411014},"verdict_hint":"major"}"#),
     (r#"{"a":{"time":0.5},"b":{"time":0.75}}"#, r#"{"a":{"h":180,"source":"composite","time":0.5,"w":320},"b":{"h":180,"source":"composite","time":0.75,"w":320},"compared":{"h":180,"method":"fixed-order f64, box downscale, Rec709 luma, SSIM luma 8x8 population variance C1=.01^2 C2=.03^2, 8x8x8 RGB histogram half-L1","region":[0,0,320,180],"scale":1.0,"space":"display-referred RGB u8/255","threshold":0.04,"w":320},"delta":{"bbox":null,"bit_identical":true,"changed_percent":0.0,"changed_pixels":0},"grid":{"cols":4,"mean_abs_delta":[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],"rows":4},"metrics":{"changed_ratio":0.0,"luma_delta":0.0,"mse":0.0,"psnr_db":99.0},"verdict_hint":"identical"}"#),
-    (r#"{"a":{"time":0.5},"b":{"time":1.5},"metrics":["mse","psnr","ssim","max_abs","changed_ratio","luma_delta","hist_distance"],"scale":1,"region":[10,20,200,100],"grid":{"cols":2,"rows":3},"threshold":0.1}"#, r#"{"a":{"h":180,"source":"composite","time":0.5,"w":320},"b":{"h":180,"source":"composite","time":1.5,"w":320},"compared":{"h":100,"method":"fixed-order f64, box downscale, Rec709 luma, SSIM luma 8x8 population variance C1=.01^2 C2=.03^2, 8x8x8 RGB histogram half-L1","region":[10,20,200,100],"scale":1.0,"space":"display-referred RGB u8/255","threshold":0.1,"w":200},"delta":{"bbox":[0,0,200,100],"bit_identical":false,"changed_percent":100.0,"changed_pixels":20000},"grid":{"cols":2,"mean_abs_delta":[0.20288350634370889,0.20288350634370889,0.3890671420083216,0.3890671420083216,0.5724301841948879,0.5724301841948879],"rows":3},"metrics":{"changed_ratio":1.0,"hist_distance":0.97,"luma_delta":0.38627450980404027,"max_abs":0.6627450980392157,"mse":0.17493917723953872,"psnr_db":7.571129203461918,"ssim":0.0011183577119760018},"verdict_hint":"major"}"#),
+    (r#"{"a":{"time":0.5},"b":{"time":1.5},"metrics":["mse","psnr","ssim","max_abs","changed_ratio","luma_delta","hist_distance"],"scale":1,"region":[10,20,200,100],"grid":{"cols":2,"rows":3},"threshold":0.1}"#, r#"{"a":{"h":180,"source":"composite","time":0.5,"w":320},"b":{"h":180,"source":"composite","time":1.5,"w":320},"compared":{"h":100,"method":"fixed-order f64, box downscale, Rec709 luma, SSIM luma 8x8 population variance C1=.01^2 C2=.03^2, 8x8x8 RGB histogram half-L1","region":[10,20,200,100],"scale":1.0,"space":"display-referred RGB u8/255","threshold":0.1,"w":200},"delta":{"bbox":[0,0,200,100],"bit_identical":false,"changed_percent":100.0,"changed_pixels":20000},"grid":{"cols":2,"mean_abs_delta":[0.2138023836985768,0.2138023836985768,0.14878193701723286,0.14878193701723286,0.19825708061002115,0.19825708061002115],"rows":3},"metrics":{"changed_ratio":1.0,"hist_distance":1.0,"luma_delta":0.13925342745095629,"max_abs":0.49019607843137253,"mse":0.05258623606305619,"psnr_db":12.79127913338378,"ssim":0.7692725608485661},"verdict_hint":"major"}"#),
     (r#"{"a":{"frame":30,"source":"clip:clip3"},"b":{"time":1.5},"scale":64}"#, r#"{"a":{"h":180,"source":"clip:clip3","time":1.25,"w":320},"b":{"h":180,"source":"composite","time":1.5,"w":320},"compared":{"h":36,"method":"fixed-order f64, box downscale, Rec709 luma, SSIM luma 8x8 population variance C1=.01^2 C2=.03^2, 8x8x8 RGB histogram half-L1","region":[0,0,320,180],"scale":0.2,"space":"display-referred RGB u8/255","threshold":0.04,"w":64},"delta":{"bbox":null,"bit_identical":true,"changed_percent":0.0,"changed_pixels":0},"grid":{"cols":4,"mean_abs_delta":[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],"rows":4},"metrics":{"changed_ratio":0.0,"luma_delta":0.0,"mse":0.0,"psnr_db":99.0},"verdict_hint":"identical"}"#),
+];
+/// The v5.0.0 bytes of entries 1 and 3, recorded when "#336699" rendered black (entries 2 and 4 are unchanged in V5).
+const V5_BLACK: [&str; 2] = [
+    r#"{"a":{"h":180,"source":"composite","time":0.5,"w":320},"b":{"h":180,"source":"composite","time":1.5,"w":320},"compared":{"h":180,"method":"fixed-order f64, box downscale, Rec709 luma, SSIM luma 8x8 population variance C1=.01^2 C2=.03^2, 8x8x8 RGB histogram half-L1","region":[0,0,320,180],"scale":1.0,"space":"display-referred RGB u8/255","threshold":0.04,"w":320},"delta":{"bbox":[0,8,320,172],"bit_identical":false,"changed_percent":95.55555555555556,"changed_pixels":55040},"grid":{"cols":4,"mean_abs_delta":[0.1223529411764712,0.1223529411764712,0.1223529411764712,0.1223529411764712,0.3723747276688463,0.3723747276688463,0.3723747276688463,0.3723747276688463,0.6223965141612403,0.6223965141612403,0.6223965141612403,0.6223965141612403,0.8724183006536087,0.8724183006536087,0.8724183006536087,0.8724183006536087],"rows":4},"metrics":{"changed_ratio":0.9555555555555556,"luma_delta":0.49738562091490063,"mse":0.33073689606569745,"psnr_db":4.805173537288108},"verdict_hint":"major"}"#,
+    r#"{"a":{"h":180,"source":"composite","time":0.5,"w":320},"b":{"h":180,"source":"composite","time":1.5,"w":320},"compared":{"h":100,"method":"fixed-order f64, box downscale, Rec709 luma, SSIM luma 8x8 population variance C1=.01^2 C2=.03^2, 8x8x8 RGB histogram half-L1","region":[10,20,200,100],"scale":1.0,"space":"display-referred RGB u8/255","threshold":0.1,"w":200},"delta":{"bbox":[0,0,200,100],"bit_identical":false,"changed_percent":100.0,"changed_pixels":20000},"grid":{"cols":2,"mean_abs_delta":[0.20288350634370889,0.20288350634370889,0.3890671420083216,0.3890671420083216,0.5724301841948879,0.5724301841948879],"rows":3},"metrics":{"changed_ratio":1.0,"hist_distance":0.97,"luma_delta":0.38627450980404027,"max_abs":0.6627450980392157,"mse":0.17493917723953872,"psnr_db":7.571129203461918,"ssim":0.0011183577119760018},"verdict_hint":"major"}"#,
 ];
 #[test] fn diff_frames_without_quality_is_byte_identical_to_v5() {
     let mut s = session();
     for (args, want) in V5 { let a: Value = serde_json::from_str(args).unwrap(); assert_eq!(serde_json::to_string(&dispatch(&mut s, "diff_frames", &a).unwrap()).unwrap(), want, "{args}"); }
+}
+#[test] fn a_black_solid_still_gives_the_v5_bytes() {
+    // [0,0,0] is what the v5 binary drew for "#336699": all four entries byte-identical to v5.0.0
+    let mut s = session_with(json!([0.0, 0.0, 0.0]));
+    for (i, (args, want)) in V5.iter().enumerate() {
+        let want = match i { 0 => V5_BLACK[0], 2 => V5_BLACK[1], _ => *want };
+        let a: Value = serde_json::from_str(args).unwrap(); assert_eq!(serde_json::to_string(&dispatch(&mut s, "diff_frames", &a).unwrap()).unwrap(), want, "{args}");
+    }
+}
+#[test] fn the_336699_array_gives_the_hex_bytes() {
+    // arrays are 0..1, so #336699 is [0.2, 0.4, 0.6]: the same bytes as the hex string on every entry
+    let (mut h, mut r) = (session(), session_with(json!([0.2, 0.4, 0.6])));
+    for (args, want) in V5 { let a: Value = serde_json::from_str(args).unwrap();
+        let (x, y) = (serde_json::to_string(&dispatch(&mut h, "diff_frames", &a).unwrap()).unwrap(), serde_json::to_string(&dispatch(&mut r, "diff_frames", &a).unwrap()).unwrap());
+        assert_eq!(x, y, "{args}"); assert_eq!(y, want, "{args}"); }
+}
+#[test] fn black_and_hex_differ_only_in_rows_0_to_7_with_frame_b_identical() {
+    // the solid fills the frame, so "inside the #336699 region" holds trivially; what pins the 2560 px is where they are
+    use kimo_core::perception::analysis::{render, Request};
+    let (mut h, mut k) = (session(), session_with(json!([0.0, 0.0, 0.0])));
+    let fr = |s: &mut Session, t: f64| render(s, &Request { time: t, source: "composite".into() }).unwrap();
+    let (ha, hb, ka, kb) = (fr(&mut h, 0.5), fr(&mut h, 1.5), fr(&mut k, 0.5), fr(&mut k, 1.5));
+    assert_eq!((hb.w, hb.h), (320, 180)); assert!((0..3).all(|c| hb.rgb[c] == kb.rgb[c]), "frame b differs between the two scenes");
+    let changed = |a: &Image, b: &Image, i: usize| (0..3).any(|c| (a.rgb[c][i] - b.rgb[c][i]).abs() > 0.04);
+    let mut rows = std::collections::BTreeSet::new(); let mut n = 0;
+    for i in 0..320 * 180 { if changed(&ha, &hb, i) != changed(&ka, &kb, i) { n += 1; rows.insert(i / 320); assert!(changed(&ha, &hb, i), "pixel {i} changed with black only"); } }
+    assert_eq!(n, 2560); assert_eq!(rows.into_iter().collect::<Vec<_>>(), (0..8).collect::<Vec<_>>());
 }
 #[test] fn diff_frames_quality_object() {
     let mut s = session();
