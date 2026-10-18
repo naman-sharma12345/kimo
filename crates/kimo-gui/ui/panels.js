@@ -412,8 +412,16 @@ export function panRows(tracks, o, h, pan) {
 // overview runs (a 1k-clip track is a few hundred seams in one gradient) by geometry.
 export let TL_PARTS = null;
 let RUNS = new Map(), RUNS_NEXT = new Map();   /* the runs the last timeline drew, and the ones this one draws: only the current set is kept */
+// Small windows only: set by app.js when it gives the Inspector rows taken from the timeline band (fitScale < 1). A
+// timeline with plain track rows (trackH up to 38) then draws them compact, so the shorter band still holds 2 whole
+// tracks; text sizes are unchanged. At fitScale 1 it is always off and the rows are the mode's own.
+export const TL_SMALL = { on: false };
+const TL_SMALL_ROWS = { trackY: 34, trackH: 30, trackGap: 6 };
 function timeline({ spec, data, w, h, pan }) {
-  const o = spec.opts || {};
+  const o0 = spec.opts || {};
+  const o = TL_SMALL.on && o0.trackY != null && (o0.trackH ?? 38) <= 38
+    ? { ...o0, trackY: Math.min(o0.trackY, TL_SMALL_ROWS.trackY), trackH: Math.min(o0.trackH ?? 38, TL_SMALL_ROWS.trackH), trackGap: Math.min(o0.trackGap ?? 0, TL_SMALL_ROWS.trackGap) }
+    : o0;
   const x0 = o.x0 ?? 48, x1 = w - (o.xr ?? 12);
   let r = data.ruler || { t0: 0, t1: 20, step: 5 };
   const r0 = r;
