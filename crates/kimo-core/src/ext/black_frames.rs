@@ -121,6 +121,6 @@ pub fn commands() -> Vec<Command> { vec![Command { name: "black_frames", mutates
         ("source", s("timeline (default) or clip:<id>")),
         ("start", n("range start, timeline seconds")),
         ("end", n("range end, timeline seconds")),
-        ("luma_max", json!({"type": "number", "minimum": 0, "maximum": 1, "description": "0..1 scale (not /255): a frame is near-black when its brightest pixel's Rec.709 luma is at most this (max over every pixel, not the mean), default 0.02 (= 5.1/255); 0 is strict mode (exactly black)"})),
+        ("luma_max", json!({"type": "number", "minimum": 0, "maximum": 1, "description": "0..1 scale (not /255): a frame is near-black when its brightest pixel's Rec.709 luma is at most this (max over every pixel, not the mean), default 0.02 (= 5.1/255); 0 is strict mode (exactly black). Units: luma_max is on a 0..1 scale (default 0.02 = 5.1/255; 0 is strict mode, exactly black); each run reports max_luma on the same 0..1 scale and max_luma_255 on the 0..255 code scale (4/255 reads as max_luma 0.015686 and max_luma_255 4), so luma_max is compared to max_luma, never to max_luma_255."})),
         ("min_run", json!({"type": "integer", "minimum": 1, "maximum": 6000, "description": "frames in a reported run at least, default 2"})),
     ], &[]), run }] }

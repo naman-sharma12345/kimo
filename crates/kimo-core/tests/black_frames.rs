@@ -214,6 +214,15 @@ fn black_not_still() -> Session {
     assert_eq!(runs(&f2), vec![(0, 23, 24)]); assert!((f2["runs"][0]["max_diff"].as_f64().unwrap() - C4).abs() < 1e-6, "k2 max_diff {}", f2["runs"][0]["max_diff"]);
     sheet(&mut s, "k2_black_not_still", &[0, 1, 2, 23]);
 }
+/// Naman m:b3c5c470: the units sentence sits in the luma_max field of the MCP input schema itself, verbatim, so a client that
+/// never reads the tool description still sees the 0..1 scale and that luma_max is compared to max_luma, never max_luma_255.
+#[test] fn luma_max_schema_field_text_carries_the_units_sentence_verbatim() {
+    const UNITS: &str = "Units: luma_max is on a 0..1 scale (default 0.02 = 5.1/255; 0 is strict mode, exactly black); each run reports max_luma on the same 0..1 scale and max_luma_255 on the 0..255 code scale (4/255 reads as max_luma 0.015686 and max_luma_255 4), so luma_max is compared to max_luma, never to max_luma_255.";
+    let cmd = kimo_core::commands::registry_ref().iter().find(|c| c.name == "black_frames").expect("black_frames registered");
+    let field = cmd.schema["properties"]["luma_max"]["description"].as_str().expect("luma_max has a schema description");
+    assert!(field.contains(UNITS), "luma_max schema field text lacks the units sentence: {field}");
+    assert!(cmd.description.contains(UNITS), "tool description lost the units sentence");
+}
 /// The run rule on its own: at or under the line joins, over it closes; min_run filters; a run reaching the last frame is kept.
 #[test] fn the_run_rule_on_its_own() {
     let mut r = Runs::new(L, 2); for v in [0.5, 0.0, 0.01, 0.02, 0.0201, 0.0, 0.5, 0.0, 0.0] { r.push(v); }

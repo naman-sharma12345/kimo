@@ -52,7 +52,7 @@ bake_property 389f09faed23fecf
 batch ef0c6c2068bb9798
 bind_beats 2d8bcd8a43d9aad9
 bind_shared_grade_graphs d163ca88fc64bb1d
-black_frames 9bc25b32357fbd4d
+black_frames d782d005bfdbf524
 burn_in 0df91ac9090a9beb
 cache_clear 6022ac3871ddd27b
 cache_set_budget 422160a7f6a95562
