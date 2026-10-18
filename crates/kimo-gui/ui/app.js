@@ -9,6 +9,8 @@ import { route, freezeNow, flashing } from './router.js';
 const DESIGN_W = 1376, DESIGN_H = 768;
 // smallest viewer kept when a window is too small for a screen's fixed tracks (then the app is scaled down to fit)
 const MIN_FLEX_W = 160, MIN_FLEX_H = 260;
+// small windows: the Inspector's least height beside the viewer, and the least the band under it keeps (design px)
+const MIN_INSP_H = 370, MIN_BAND_H = 120;
 let fitScale = 1;
 const RAWISH = /^(c|clip|t|track|fx|effect|node|n|layer|l|asset|media|an|marker|mask|m|cam|light|obj)[_-]?\d+$/i;   /* GUI-FIX-2: an engine id inside a reason */
 
@@ -201,7 +203,18 @@ function buildLayout() {
   if (fitScale < 1) Object.assign(root.style, { width: innerWidth / fitScale + 'px', height: innerHeight / fitScale + 'px', transform: `scale(${fitScale})`, transformOrigin: '0 0' });
   else for (const k of ['width', 'height', 'transform', 'transform-origin']) root.style.removeProperty(k);
   main.style.gridTemplateColumns = tracks(X, fl[0], fl[2]);
-  main.style.gridTemplateRows = tracks(Y, fl[1], fl[3]);
+  // Small windows only (fitScale < 1, i.e. under 1100 x 768): an Inspector that shares the viewer's rows gets at least
+  // MIN_INSP_H design px there (a 4-row READ card, the flash pin one included, clears the panel's top), taken from the
+  // tallest row of the band under it (the timeline), which keeps at least MIN_BAND_H. Grid lines keep their order, so
+  // every panel stays on its rows; at fitScale 1 the rows are exactly the ones above.
+  let ry = Y, rHi = fl[3];
+  if (fitScale < 1 && rects.insp && rects.insp[1] === fl[1] && rects.insp[3] === fl[3]) {
+    let fixed = 0, bi = -1, bw = 0;
+    for (let i = 0; i < Y.length - 1; i++) { const w = Y[i + 1] - Y[i]; if (!(Y[i] >= fl[1] && Y[i + 1] <= fl[3])) fixed += w; if (Y[i] >= fl[3] && w > bw) { bw = w; bi = i; } }
+    const flexH = innerHeight / fitScale - top - foot - fixed, take = bi < 0 ? 0 : Math.min(MIN_INSP_H - flexH, bw - MIN_BAND_H);
+    if (take > 0) { ry = Y.map(e => e >= fl[3] && e <= Y[bi] ? e + take : e); rHi = fl[3] + take; }
+  }
+  main.style.gridTemplateRows = tracks(ry, fl[1], rHi);
   springs.length = 0;
   // One workspace: a panel the new screen shares with the old one (the rail, the viewer, the timeline, the
   // inspector) is the SAME element, re-placed on the grid, never re-created; others are pooled off-document and
