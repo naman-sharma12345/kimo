@@ -110,7 +110,15 @@ const T = {
   snap_time: R => [['Time', num(R.time) != null ? r2(R.time) + ' s' : null], ['Snapped', short(R.snapped)]],
   session_stats: R => [['Calls', short(R.calls_total)], ['Errors', short(R.errors_total)], ['Returned', mb(R.bytes_returned_total)]],
   inspect_color_pipeline: R => [['Input', [R.default_media_input_gamut, R.default_media_input_transfer].filter(Boolean).join(' ') || null], ['Working', short(R.working_space ?? R.working ?? R.working_gamut)], ['Output', [R.configured_output_gamut, R.configured_output_transfer].filter(Boolean).join(' ') || null], ...genericRows(R, 1)],
-  validate_captions: R => [['Captions', R.clean === true ? 'clean' : R.clean === false ? 'issues' : null], ['Profile', short(R.profile)], ['Groups', Array.isArray(R.groups) ? String(R.groups.length) : null], ['Skipped checks', Array.isArray(R.skipped) ? String(R.skipped.length) : null]],
+  // v6: with legibility (validate_captions legibility: true) the rows after Captions are the smallest caps, 'Min caps' (px and % of the
+  // frame height), the lowest contrast and the highest reading speed, from the top-level legibility summary (short values: the
+  // Inspector column is narrow); without it the card is the v5 card, row for row
+  validate_captions: R => { const G = R.legibility && typeof R.legibility === 'object' ? R.legibility : null;
+    const base = [['Captions', R.clean === true ? 'clean' : R.clean === false ? 'issues' : null], ['Profile', short(R.profile)]];
+    if (!G) return [...base, ['Groups', Array.isArray(R.groups) ? String(R.groups.length) : null], ['Skipped checks', Array.isArray(R.skipped) ? String(R.skipped.length) : null]];
+    const mc = num(G.min_cap_frac), px = num(G.min_cap_px), mr = num(G.min_contrast), cps = num(G.max_cps);
+    return [base[0], ['Min caps', mc != null ? `${px != null ? Math.round(px * 10) / 10 + ' px · ' : ''}${pct(mc * 100)}` : null],
+      ['Lowest contrast', mr != null ? `${mr.toFixed(2)}:1` : null], ['Max reading', cps != null ? `${cps.toFixed(1)} cps` : null]]; },
 };
 const mb = n => { n = num(n); if (n == null) return '0 B'; const u = ['B', 'KB', 'MB', 'GB']; let i = 0; while (n >= 1024 && i < 3) { n /= 1024; i++; } return (i ? Math.round(n * 10) / 10 : Math.round(n)) + ' ' + u[i]; };
 
@@ -136,7 +144,7 @@ const CALL = {
   set_text_weight: (A, R, C) => [['Weight', A.weight != null ? short(A.weight) : 'default', true], ['Props', fxCount(C)]],
   set_audio_effect_key: A => [[`Key ${A.coefficient ?? ''}`.trim(), `${short(A.value) ?? ''}${A.time != null ? ` @ ${short(A.time)}s` : ''}`], ['Effect', A.effect_index != null ? `#${A.effect_index}` : null]],
   remove_track_matte: () => [['Track matte', 'removed']],
-  validate_captions: (A, R) => T.validate_captions(R || {}),
+  validate_captions: (A, R) => T.validate_captions(R || {}).map(r => [r[0], r[1]]),   // Inspector rows carry no layout flag (the third field means emphasis here)
 };
 const fxCount = C => { const c = C && C.clip; if (!c || typeof c !== 'object') return null; const n = Object.keys(c).filter(k => /^text_fx/.test(k)).length; return n ? `${n} changed` : null; };
 function argRows(A, n = 3) {
