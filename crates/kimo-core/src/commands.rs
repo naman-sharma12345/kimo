@@ -49,10 +49,25 @@ fn obj(props: Vec<(&str, Value)>, req: &[&str]) -> Value {
 fn str_arg<'a>(a: &'a Value, k: &str) -> Result<&'a str, String> { a.get(k).and_then(|v| v.as_str()).ok_or_else(|| crate::errors::arg_err(a, k, "string")) }
 fn num_arg(a: &Value, k: &str) -> Result<f64, String> { a.get(k).and_then(|v| v.as_f64()).ok_or_else(|| crate::errors::arg_err(a, k, "number")) }
 fn opt_num(a: &Value, k: &str, d: f64) -> f64 { a.get(k).and_then(|v| v.as_f64()).unwrap_or(d) }
-/// Alpha of a 4-value RGBA colour argument (1.0 when absent or RGB only).
-fn color_alpha(a: &Value, k: &str) -> f64 { a.get(k).and_then(|v| v.as_array()).filter(|x| x.len() == 4).and_then(|x| x[3].as_f64()).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)).unwrap_or(1.0) }
-fn color(a: &Value, k: &str, d: [f64; 3]) -> [f64; 3] {
-    a.get(k).and_then(|v| v.as_array()).filter(|x| x.len() == 3 || x.len() == 4).map(|x| [x[0].as_f64().unwrap_or(0.0), x[1].as_f64().unwrap_or(0.0), x[2].as_f64().unwrap_or(0.0)]).unwrap_or(d)
+/// An sRGB hex colour "#rgb", "#rrggbb" or "#rrggbbaa" (case-insensitive) as [r,g,b,a] 0..1 (each byte / 255; a = 1 when not given).
+fn parse_hex_rgba(s: &str) -> Option<[f64; 4]> {
+    let h = s.trim().strip_prefix('#')?; if !h.chars().all(|c| c.is_ascii_hexdigit()) { return None; }
+    let b: Vec<u8> = match h.len() { 3 => h.chars().map(|c| c.to_digit(16).unwrap() as u8 * 17).collect(), 6 | 8 => (0..h.len() / 2).map(|i| u8::from_str_radix(&h[i * 2..i * 2 + 2], 16).unwrap()).collect(), _ => return None };
+    Some([b[0] as f64 / 255.0, b[1] as f64 / 255.0, b[2] as f64 / 255.0, b.get(3).map_or(1.0, |x| *x as f64 / 255.0)])
+}
+/// Alpha of a colour argument: the 4th value of [r,g,b,a] or the "aa" of "#rrggbbaa" (1.0 when absent or RGB only).
+fn color_alpha(a: &Value, k: &str) -> f64 {
+    if let Some(s) = a.get(k).and_then(|v| v.as_str()) { return parse_hex_rgba(s).map_or(1.0, |c| c[3]); }
+    a.get(k).and_then(|v| v.as_array()).filter(|x| x.len() == 4).and_then(|x| x[3].as_f64()).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)).unwrap_or(1.0)
+}
+/// A colour argument: [r,g,b] / [r,g,b,a] 0..1 (read exactly as before), or an sRGB hex string "#rgb" / "#rrggbb" / "#rrggbbaa".
+/// Absent or null gives the default. Any other string is refused by name: it used to fall back to the default
+/// silently, so "#ffffff" on a solid clip drew black (v5.x bug, HEX_COLOR_BUG_v5x.md).
+fn color(a: &Value, k: &str, d: [f64; 3]) -> Result<[f64; 3], String> {
+    match a.get(k) {
+        Some(Value::String(s)) => parse_hex_rgba(s).map(|c| [c[0], c[1], c[2]]).ok_or_else(|| format!("argument '{k}' must be [r,g,b] 0..1 or a hex colour \"#rgb\", \"#rrggbb\" or \"#rrggbbaa\" (got \"{s}\")")),
+        v => Ok(v.and_then(|v| v.as_array()).filter(|x| x.len() == 3 || x.len() == 4).map(|x| [x[0].as_f64().unwrap_or(0.0), x[1].as_f64().unwrap_or(0.0), x[2].as_f64().unwrap_or(0.0)]).unwrap_or(d)),
+    }
 }
 
 fn mask_stack<'a>(p: &'a mut Project, a: &Value) -> Result<&'a mut Mask, String> {
@@ -261,4 +276,39 @@ pub fn dispatch_ex(ss: &mut Session, name: &str, args: &Value) -> Result<Value, 
                 let ours = ENUM_GUARDS.iter().any(|(t, p, _)| *t == name && *p == pn.as_str()) && e.message.starts_with(&format!("unknown {pn} '")); if ours || e.param.is_none() { e.param = Some(pn.clone()); } if ours || e.hint.is_none() { e.hint = Some(hint); } e.allowed = Some(vals.iter().take(40).cloned().collect()); e.allowed_total = Some(total); break; } } } }
         e
     })
+}
+
+#[cfg(test)]
+mod color_arg_tests {
+    use super::{color, color_alpha};
+    use serde_json::json;
+    #[test] fn hex_forms_read_as_srgb_bytes_over_255() {
+        assert_eq!(color(&json!({"c": "#ffffff"}), "c", [0.0; 3]).unwrap(), [1.0, 1.0, 1.0]);
+        assert_eq!(color(&json!({"c": "#FFF"}), "c", [0.0; 3]).unwrap(), [1.0, 1.0, 1.0]);
+        assert_eq!(color(&json!({"c": "#336699"}), "c", [0.0; 3]).unwrap(), [51.0 / 255.0, 102.0 / 255.0, 153.0 / 255.0]);
+        assert_eq!(color(&json!({"c": "#33669980"}), "c", [0.0; 3]).unwrap(), [51.0 / 255.0, 102.0 / 255.0, 153.0 / 255.0]);
+        assert_eq!(color_alpha(&json!({"c": "#33669980"}), "c"), 128.0 / 255.0);
+        assert_eq!(color_alpha(&json!({"c": "#336699"}), "c"), 1.0);
+    }
+    #[test] fn short_hex_expands_and_hex_alpha_is_the_4th_value_like_the_list_form() {
+        assert_eq!(color(&json!({"c": "#369"}), "c", [0.0; 3]).unwrap(), color(&json!({"c": "#336699"}), "c", [0.0; 3]).unwrap());
+        let list = json!({"c": [51.0 / 255.0, 102.0 / 255.0, 153.0 / 255.0, 128.0 / 255.0]});
+        assert_eq!(color(&json!({"c": "#33669980"}), "c", [0.0; 3]).unwrap(), color(&list, "c", [0.0; 3]).unwrap());
+        assert_eq!(color_alpha(&json!({"c": "#33669980"}), "c"), color_alpha(&list, "c"));
+        assert_eq!(color_alpha(&json!({"c": "#000000ff"}), "c"), 1.0); assert_eq!(color_alpha(&json!({"c": "#00000000"}), "c"), 0.0);
+    }
+    #[test] fn arrays_absent_and_null_read_exactly_as_before() {
+        assert_eq!(color(&json!({"c": [1, 0.5, 0]}), "c", [0.0; 3]).unwrap(), [1.0, 0.5, 0.0]);
+        assert_eq!(color(&json!({"c": [1, 0.5, 0, 0.25]}), "c", [0.0; 3]).unwrap(), [1.0, 0.5, 0.0]);
+        assert_eq!(color_alpha(&json!({"c": [1, 0.5, 0, 0.25]}), "c"), 0.25);
+        assert_eq!(color(&json!({}), "c", [0.2; 3]).unwrap(), [0.2; 3]);
+        assert_eq!(color(&json!({"c": null}), "c", [0.2; 3]).unwrap(), [0.2; 3]);
+        assert_eq!(color(&json!({"c": [1, 2]}), "c", [0.2; 3]).unwrap(), [0.2; 3]);
+    }
+    #[test] fn a_string_that_is_not_hex_is_refused_by_name() {
+        for s in ["white", "#ffff", "#gggggg", "ffffff", ""] {
+            let e = color(&json!({"color": s}), "color", [0.0; 3]).unwrap_err();
+            assert!(e.contains("'color'") && e.contains("#rrggbb"), "{s}: {e}");
+        }
+    }
 }
