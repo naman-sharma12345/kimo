@@ -217,13 +217,17 @@ async def main():
         await pg2.wait_for_timeout(80)
         h_mid = await pg2.evaluate("document.querySelector('[data-panel=renders] .tr:not(.h)').getBoundingClientRect().height")
         await pg2.evaluate('e => __kimo.apply(e)', {'tool_name': 'export', 'call_id': 'x1', 'phase': 'complete', 'target': {}, 'payload': {'dur_ms': 3400, 'result': {'path': '/tmp/k/out.mp4', 'duration': 6.0, 'bytes': 4200000}}, 'duration_ms': 3400})
-        await pg2.wait_for_timeout(80)
+        # wait for the history row to show the job done (cap 3 s) instead of a fixed 80 ms; on a timeout the checks below report what is on screen
+        try: await pg2.wait_for_function("() => { const r = document.querySelector('[data-panel=renders] .tr:not(.h)'); return !!r && r.textContent.includes('/tmp/k/out.mp4') && r.textContent.includes('✓ done'); }", timeout=3000)
+        except Exception: pass
         end_txt = await pg2.evaluate("document.querySelector('[data-panel=renders]').textContent + ' | ' + document.querySelector('[data-panel=exp]').textContent")
         row1 = await pg2.evaluate("(() => { const r = document.querySelector('[data-panel=renders] .tr:not(.h)'); const i = r.querySelector('img.rthumb'); return [r.getBoundingClientRect().height, i ? i.getAttribute('src').slice(0, 22) : null, r.textContent]; })()")
         # a second job whose engine result carries no size: no size text, no placeholder
         await pg2.evaluate('e => __kimo.apply(e)', {'tool_name': 'export', 'call_id': 'x2', 'phase': 'start', 'target': {}, 'payload': {'args': {'path': '/tmp/k/out2.mp4'}}})
         await pg2.evaluate('e => __kimo.apply(e)', {'tool_name': 'export', 'call_id': 'x2', 'phase': 'complete', 'target': {}, 'payload': {'dur_ms': 900, 'result': {'path': '/tmp/k/out2.mp4', 'duration': 2.5}}, 'duration_ms': 900})
-        await pg2.wait_for_timeout(80)
+        # wait for the history row to show the job done (cap 3 s) instead of a fixed 80 ms; on a timeout the checks below report what is on screen
+        try: await pg2.wait_for_function("() => { const r = document.querySelector('[data-panel=renders] .tr:not(.h)'); return !!r && r.textContent.includes('/tmp/k/out2.mp4') && r.textContent.includes('✓ done'); }", timeout=3000)
+        except Exception: pass
         row2 = await pg2.evaluate("document.querySelector('[data-panel=renders] .tr:not(.h)').textContent")
         await pg2.evaluate('e => __kimo.apply(e)', {'tool_name': 'export', 'call_id': 'x3', 'phase': 'start', 'target': {}, 'payload': {'args': {'path': '/home/naman/films/deliveries/kimo_live_square_master.mp4', 'width': 1080, 'height': 1080}}})
         await pg2.wait_for_timeout(80)
