@@ -350,6 +350,7 @@
 "template_delete",
 "template_describe",
 "template_list",
+"text_contrast_series",
 "track_beats",
 "track_feature_residuals",
 "track_features",

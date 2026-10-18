@@ -347,6 +347,7 @@ template_define c18959a3360d1cb0
 template_delete 6b938f0f0f89fa07
 template_describe 6840c663f33496bf
 template_list 0757d10d640959f3
+text_contrast_series d14fc189b362abb4
 track_beats 5e81daa55991da9c
 track_feature_residuals cf04ce2022372886
 track_features 5c13c25653d6f2ca
