@@ -118,6 +118,7 @@ fit_info adda72ad5a63e40e
 fit_track_homography c5762f693abc9959
 flash_series db43cfc85282cae9
 freeze_frame c6a17e82ed026eb3
+frozen_frames d296c70d5e736dff
 generate_lut_node dc51792e6bab1b2e
 generate_mesh_primitive 16644c9c0289a6f2
 get_curve 166dfa1a0157224c

@@ -123,6 +123,13 @@ const T = {
     return [['Peak', x != null && y != null ? `${Math.round(x)}, ${Math.round(y)} px` : null, 'stack'], ['Half the mass in', hm != null ? `${pct(hm * 100)} of the frame` : null, 'stack'],
       ['In rect 1', mf != null ? `${pct(mf * 100)} of the mass${af != null ? ` · ${pct(af * 100)} of the area` : ''}` : null, 'stack'],
       ['Motion', R.motion && typeof R.motion === 'object' && num(R.motion.weight) != null ? `weight ${r2(R.motion.weight)}` : null]]; },
+  // v6 frozen_frames: runs of frames that stand still (start, end, length, largest pixel difference), from the top-level numbers and the runs list
+  frozen_frames: R => { const nf = num(R.frames), rc = num(R.run_count), hf = num(R.held_frames), lr = num(R.longest_run), P = R.params && typeof R.params === 'object' ? R.params : {}, tol = num(P.tolerance), mr = num(P.min_run);
+    const L = lr != null && Array.isArray(R.runs) ? R.runs.find(r => r && num(r.length) === lr && num(r.start_frame) != null && num(r.end_frame) != null) : null, r3 = x => String(Math.round(x * 1000) / 1000);
+    return [['Held', rc != null && hf != null ? (rc === 0 ? 'none' : `${rc} ${rc === 1 ? 'run' : 'runs'} · ${hf} held ${hf === 1 ? 'frame' : 'frames'}`) : null, 'wrap'],
+      ['Longest run', rc === 0 ? null : (L ? `${lr} frames · ${L.start_frame}–${L.end_frame}${num(L.max_diff_255) != null ? ` · max diff ${L.max_diff_255}/255` : ''}` : null), 'stack'],
+      ['Tolerance', tol != null && mr != null ? `${Math.round(tol * 255)}/255 · min run ${mr}` : null, 'wrap'],
+      ['Frames read', nf != null && num(R.start) != null && num(R.end) != null ? `${nf} · ${r3(R.start)}–${r3(R.end)} s` : null, 'wrap']].filter(r => r && r[1] != null); },
   // v6 render_flow stats: from flow_stats (canvas px per frame) 'Motion' is the mean vector (length and direction, 0° = right, 90° = down),
   // 'Speed' the p50 / p90 / max speeds, 'Moving' the share faster than moving_px; without stats the card is the v5 card (generic rows)
   render_flow: R => { const F = R.flow_stats && typeof R.flow_stats === 'object' ? R.flow_stats : null; if (!F) return genericRows(R);
