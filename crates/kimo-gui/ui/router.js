@@ -853,6 +853,8 @@ function exportOps(state, MODES, ev) {
     if (vw.src) row._thumb = vw.src;
     if (dur != null) row[4] = mmss(dur); row._flash = now(); row._live = false;
   }
+  // v6 render_flow stats: the numbers go on the info panel of the screen the call lands on, as a read card; without flow_stats the call stays the v5 render row only
+  if (ok && tn === 'render_flow' && R0.flow_stats && typeof R0.flow_stats === 'object') readCard(state, MODES, readHead(tn, R0), readRows(tn, R0));
   if (vw.progress && !/^(collect_project|contact_sheet)$/.test(tn)) vw.progress = ok ? (vw.progress.left === 'starting' ? { ...vw.progress, pct: 100, left: 'done', right: dur != null ? `in ${mmss(dur)}` : '' } : { ...vw.progress, pct: 100, right: (dur != null ? `done in ${mmss(dur)}` : 'done') }) : { ...vw.progress, right: 'failed', halt: true };   /* a failed job's sweep stops */
   return true;
 }

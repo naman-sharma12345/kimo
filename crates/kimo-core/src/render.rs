@@ -843,7 +843,9 @@ pub fn render_mask_png(p: &Project, clip_id: &str, mask_id: Option<&str>, t: f64
 }
 
 /// Write a colour-wheel visualisation of the optical flow between a media clip's frame at `t` and the next one.
-pub fn render_flow_png(p: &Project, clip_id: &str, t: f64, path: &str, cache: &mut Cache) -> Result<f64, String> {
+pub fn render_flow_png(p: &Project, clip_id: &str, t: f64, path: &str, cache: &mut Cache) -> Result<f64, String> { render_flow_field(p, clip_id, t, path, cache).map(|r| r.0) }
+/// render_flow_png that also hands back the flow field it drew: (seconds, u, v, field width, field height); v6 render_flow stats.
+pub fn render_flow_field(p: &Project, clip_id: &str, t: f64, path: &str, cache: &mut Cache) -> Result<(f64, Vec<f32>, Vec<f32>, usize, usize), String> {
     let c = p.tracks.iter().flat_map(|tr| tr.clips.iter()).find(|c| c.id == clip_id).ok_or("no such clip")?; let (w, h) = (p.width as usize, p.height as usize);
     if !t.is_finite()||t<c.start||t>=c.start+c.duration{return Err("flow time must be within clip".into())}
     let lt0=t-c.start;let last=media_total(c,p.fps).saturating_sub(1);let fidx=|lt:f64|->usize{let d=c.display_time(lt.max(0.));media_index(c,d,p.fps).min(last)};
@@ -855,7 +857,7 @@ pub fn render_flow_png(p: &Project, clip_id: &str, t: f64, path: &str, cache: &m
     let(a,b)=flow_pair(fr,if swapped{i1}else{i0},if swapped{i0}else{i1},w,h)?;
     let t0=std::time::Instant::now();let(u,v,fw,fh)=crate::flow::flow(&a,&b,5);let secs=t0.elapsed().as_secs_f64();
     let mm = u.iter().zip(&v).map(|(a, b)| (a * a + b * b).sqrt()).fold(0.0f32, f32::max).max(1.0); let viz = crate::flow::flow_viz(&u, &v, fw, fh, mm * 0.8);
-    write_image(&viz,path)?;Ok(secs)
+    write_image(&viz,path)?;Ok((secs,u,v,fw,fh))
 }
 
 fn flow_pair(fr:&Frames,a:usize,b:usize,w:usize,h:usize)->Result<(Frame,Frame),String>{

@@ -110,6 +110,13 @@ const T = {
   snap_time: R => [['Time', num(R.time) != null ? r2(R.time) + ' s' : null], ['Snapped', short(R.snapped)]],
   session_stats: R => [['Calls', short(R.calls_total)], ['Errors', short(R.errors_total)], ['Returned', mb(R.bytes_returned_total)]],
   inspect_color_pipeline: R => [['Input', [R.default_media_input_gamut, R.default_media_input_transfer].filter(Boolean).join(' ') || null], ['Working', short(R.working_space ?? R.working ?? R.working_gamut)], ['Output', [R.configured_output_gamut, R.configured_output_transfer].filter(Boolean).join(' ') || null], ...genericRows(R, 1)],
+  // v6 render_flow stats: from flow_stats (canvas px per frame) 'Motion' is the mean vector (length and direction, 0° = right, 90° = down),
+  // 'Speed' the p50 / p90 / max speeds, 'Moving' the share faster than moving_px; without stats the card is the v5 card (generic rows)
+  render_flow: R => { const F = R.flow_stats && typeof R.flow_stats === 'object' ? R.flow_stats : null; if (!F) return genericRows(R);
+    const r1 = x => String(Math.round(x * 10) / 10), mu = num(F.mean_u), mv = num(F.mean_v), d = num(F.mean_dir_deg), p50 = num(F.speed_p50), p90 = num(F.speed_p90), mx = num(F.speed_max), mf = num(F.moving_frac);
+    return [['Motion', mu != null && mv != null ? `${r1(Math.hypot(mu, mv))} px/f${d != null ? ` · ${Math.round(d)}°` : ''}` : null],
+      ['Speed', p50 != null && p90 != null && mx != null ? `p50 ${r1(p50)} · p90 ${r1(p90)} · max ${r1(mx)} px/f` : null, 'stack'],
+      ['Moving', mf != null ? pct(mf * 100) : null]]; },
   // v6: with legibility (validate_captions legibility: true) the rows after Captions are the smallest caps, 'Min caps' (px and % of the
   // frame height), the lowest contrast and the highest reading speed, from the top-level legibility summary (short values: the
   // Inspector column is narrow); without it the card is the v5 card, row for row
