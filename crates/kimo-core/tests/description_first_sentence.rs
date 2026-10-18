@@ -1,11 +1,11 @@
 //! Every registered tool's first sentence (up to the first '.' followed by whitespace or the end) must be under 150
-//! characters, so a client that shows only the first sentence still reads what the tool does. The 77 tools below already
-//! had a longer first sentence in v5.0.0 (5ad355c); they are frozen here, sorted, and the list can only shrink: the test
-//! also fails when an allowlisted tool comes in under 150, so its name has to be removed. Rewriting them is a separate job.
+//! characters, so a client that shows only the first sentence still reads what the tool does. There is no allowlist: the
+//! 77 tools that had a longer first sentence in v5.0.0 (5ad355c) got a new plain first sentence in front of their old text
+//! (REWRITTEN below, kept as the record of that batch), so the rule now holds for every tool.
 use kimo_core::commands::registry_ref;
 const LIMIT: usize = 150;
-/// v5.0.0 (5ad355c) tools whose first sentence was already >= 150 characters. Sorted. Only remove names from this list.
-const V5_LONG: [&str; 77] = [
+/// The 77 v5.0.0 (5ad355c) tools whose first sentence was >= 150 characters, rewritten in one batch. Sorted.
+const REWRITTEN: [&str; 77] = [
     "add_camera_shake",
     "add_hud_frame",
     "add_scene3d",
@@ -89,22 +89,19 @@ fn first_sentence(d: &str) -> &str {
     for i in 0..b.len() { if b[i] == b'.' && (i + 1 == b.len() || b[i + 1].is_ascii_whitespace()) { return &d[..=i]; } }
     d
 }
-#[test] fn allowlist_is_sorted_unique_77_and_has_no_get_scopes() {
-    let mut s = V5_LONG.to_vec(); s.sort(); s.dedup(); assert_eq!(s, V5_LONG.to_vec(), "keep V5_LONG sorted and without duplicates");
-    assert_eq!(V5_LONG.len(), 77, "the frozen list held 77 names when it was made; it may only shrink, and then this number with it");
-    assert!(!V5_LONG.contains(&"get_scopes"), "get_scopes was fixed and must never be allowlisted again");
+#[test] fn the_77_rewritten_are_registered_and_short() {
+    let mut s = REWRITTEN.to_vec(); s.sort(); s.dedup(); assert_eq!(s, REWRITTEN.to_vec(), "keep REWRITTEN sorted and without duplicates"); assert_eq!(REWRITTEN.len(), 77);
+    for n in REWRITTEN { let c = registry_ref().iter().find(|c| c.name == n).unwrap_or_else(|| panic!("{n} is not registered"));
+        let f = first_sentence(&c.description); assert!(f.chars().count() < LIMIT && f.len() < c.description.len(), "{n}: the new first sentence must be short and followed by the old text: {f}"); }
 }
 #[test] fn every_first_sentence_is_under_150_characters() {
-    let (mut long, mut fixed, mut seen) = (vec![], vec![], std::collections::HashSet::new());
+    let mut long = vec![];
     for c in registry_ref() {
-        let f = first_sentence(&c.description); let n = f.chars().count(); seen.insert(c.name);
+        let f = first_sentence(&c.description); let n = f.chars().count();
         if n == 0 { long.push(format!("{}: empty first sentence", c.name)); continue; }
-        let allowed = V5_LONG.contains(&c.name);
-        if n >= LIMIT && !allowed { long.push(format!("{}: first sentence is {n} characters (limit {}): \"{f}\"", c.name, LIMIT - 1)); }
-        if n < LIMIT && allowed { fixed.push(format!("{}: now {n} characters; remove it from V5_LONG", c.name)); }
+        if n >= LIMIT { long.push(format!("{}: first sentence is {n} characters (limit {}): \"{f}\"", c.name, LIMIT - 1)); }
     }
-    let gone: Vec<&str> = V5_LONG.iter().copied().filter(|n| !seen.contains(n)).collect();
-    assert!(long.is_empty() && fixed.is_empty() && gone.is_empty(), "first-sentence rule:\n{}{}{}", long.join("\n"), fixed.join("\n"), if gone.is_empty() { String::new() } else { format!("\nnot registered any more, remove from V5_LONG: {gone:?}") });
+    assert!(long.is_empty(), "first-sentence rule:\n{}", long.join("\n"));
 }
 #[test] fn get_scopes_names_its_numbers() {
     let d = registry_ref().iter().find(|c| c.name == "get_scopes").unwrap(); let f = first_sentence(&d.description);
