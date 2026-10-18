@@ -4,7 +4,7 @@
 import { connect } from './bridge.js';
 import { MODES, inferMode } from './modes.js';
 import { KINDS, PRE, POST, tickRunning, pickedRows, TL_PARTS, TL_SMALL } from './panels.js';
-import { route, freezeNow, flashing } from './router.js';
+import { route, freezeNow, flashing, takeFlashEnd } from './router.js';
 
 const DESIGN_W = 1376, DESIGN_H = 768;
 // smallest viewer kept when a window is too small for a screen's fixed tracks (then the app is scaled down to fit)
@@ -350,7 +350,7 @@ function stepSprings(now) {
 const queue = [];
 let rafId = 0, dirty = true, hidden = document.visibilityState === 'hidden';
 export const QMAX = 2048;
-export const metrics = { raf: 0, renders: 0, scoped: 0, panelWrites: 0, textPatches: 0, trackWrites: 0, ticks: 0, events: 0, coalesced: 0, dropped: 0, qmax: 0, staleFrames: 0 };
+export const metrics = { raf: 0, renders: 0, scoped: 0, panelWrites: 0, textPatches: 0, trackWrites: 0, ticks: 0, events: 0, coalesced: 0, dropped: 0, qmax: 0, staleFrames: 0, flashEnds: 0 };
 function enqueue(ev) {
   metrics.events++;
   // Hidden: fold the event into state right away (the reducer never touches
@@ -404,15 +404,36 @@ function isClipEdit(ev) { const n = ev && (ev.tool_name ?? (ev.type === 'tool_st
 function renderScoped() { for (const [name, spec] of Object.entries(MODES[state.mode].panels)) if (spec.kind === 'timeline' || spec.kind === 'agent') renderPanel(name); }
 function requestFrame() { if (!rafId && !hidden) rafId = requestAnimationFrame(frame); }
 function frame() {
-  rafId = 0; metrics.raf++; freezeNow(performance.now());
+  rafId = 0; metrics.raf++; freezeNow(performance.now()); fullPaint = false;
   try { frameBody(); } finally { freezeNow(0); }
+  armFlashEnd(takeFlashEnd(), fullPaint);
 }
+// Flash expiry: ONE timeout at the earliest live stamp + FLASH_MS (no polling, no rAF, no interval). Its callback paints
+// directly (no animation frame): the clock now reads past that stamp, so the run-out .flash drops, and the timer re-arms
+// for the next earliest stamp still drawn. A frame already owed paints it instead (marked dirty, no second frame asked).
+// A full paint read every drawn stamp, so its earliest replaces the timer (none drawn, e.g. the panel went away: no
+// timer); a partial paint only brings it earlier. Hiding or leaving the page clears it, so an idle or closed window has no timer.
+let flashTo = 0, flashAt = Infinity, fullPaint = false;
+function armFlashEnd(e, whole) {
+  if (whole ? e === flashAt : !(e < flashAt)) return;
+  clearFlashEnd(); if (!(e < Infinity)) return;
+  flashAt = e;
+  flashTo = setTimeout(flashExpired, Math.max(0, Math.ceil(e - performance.now())));
+}
+function flashExpired() {
+  flashTo = 0; flashAt = Infinity; metrics.flashEnds++; dirty = true;
+  if (rafId || hidden) return;
+  freezeNow(performance.now());
+  try { dirty = false; deferred.on = false; panDirty.clear(); render(); metrics.renders++; } finally { freezeNow(0); }
+  armFlashEnd(takeFlashEnd(), true);
+}
+function clearFlashEnd() { if (flashTo) clearTimeout(flashTo); flashTo = 0; flashAt = Infinity; }
 function frameBody() {
   if (queue.length > 1) metrics.coalesced += queue.length - 1;
   const evs = queue.splice(0), editOnly = evs.length > 0 && !dirty && evs.every(isClipEdit);
   for (const ev of evs) for (const e of route(ev, state, MODES)) apply(e);
   if (editOnly && !layoutDirty && builtMode === state.mode) { dirty = false; renderScoped(); metrics.renders++; metrics.scoped++; deferred.on = true; requestFrame(); }
-  else if (dirty || deferred.on) { dirty = false; deferred.on = false; panDirty.clear(); render(); metrics.renders++; }
+  else if (dirty || deferred.on) { dirty = false; deferred.on = false; panDirty.clear(); render(); metrics.renders++; fullPaint = true; }
   else if (panDirty.size) { for (const n of panDirty) renderPanel(n); panDirty.clear(); metrics.renders++; }
   // meter ballistics: frames only while a hit/decay window is open, then nothing
   if (state.animUntil && performance.now() < state.animUntil) { dirty = true; requestFrame(); } else state.animUntil = 0;
@@ -421,10 +442,11 @@ function frameBody() {
 }
 function setHidden(h) {
   hidden = h;
-  if (h) { if (rafId) cancelAnimationFrame(rafId); rafId = 0; clearTimeout(tickId); tickId = 0; stepSprings(0); }
+  if (h) { if (rafId) cancelAnimationFrame(rafId); rafId = 0; clearTimeout(tickId); tickId = 0; clearFlashEnd(); stepSprings(0); }
   else { dirty = true; requestFrame(); }
 }
 document.addEventListener('visibilitychange', () => setHidden(document.visibilityState === 'hidden'));
+window.addEventListener('pagehide', clearFlashEnd);   /* closing the window: no flash timer outlives the page */
 
 // ---------- ticker ----------
 // The elapsed clock and a running call's duration are the only things that
@@ -653,7 +675,7 @@ function unflash(d) { if (d._ft) { clearTimeout(d._ft); d._ft = 0; } d.classList
 // click a rail row: its args / latency / result in the existing inspector; click it again or Esc to go back
 main.addEventListener('click', e => { const r = e.target.closest && e.target.closest('.call[data-call]'); if (!r) return; const id = r.dataset.call, c = state.calls.find(x => String(x.id) === id); state.pick = c && state.pick !== c.id ? c.id : null; schedule(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && state.pick != null) { state.pick = null; schedule(); } });
-window.__kimo = { state, apply: enqueue, metrics, setHidden };
+window.__kimo = { state, apply: enqueue, metrics, setHidden, flashTimer: () => (flashTo ? flashAt : null) };
 
 // Tauri: a minimized window keeps document.visibilityState on some
 // platforms, so the shell's own window events gate the loop too.

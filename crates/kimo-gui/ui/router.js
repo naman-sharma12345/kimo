@@ -47,7 +47,11 @@ let frameNow = 0;
 export const freezeNow = t => { frameNow = t; };
 const now = () => frameNow || performance.now();
 const FLASH_MS = 700;
-export const flashing = t => t != null && now() - t < FLASH_MS;
+/* the earliest moment a stamp that read as flashing runs out: app.js takes it after each frame and repaints once then,
+   so a run-out flash never stays in the DOM (nothing else repaints an idle screen) */
+let flashEnd = Infinity;
+export const flashing = t => { const on = t != null && now() - t < FLASH_MS; if (on && +t + FLASH_MS < flashEnd) flashEnd = +t + FLASH_MS; return on; };
+export const takeFlashEnd = () => { const e = flashEnd; flashEnd = Infinity; return e; };
 
 // A value as the inspector shows it. Numbers and percent strings both parse:
 // "104%" stays 104%, a scale of 1.12 reads 112%, other numbers lose float noise.
