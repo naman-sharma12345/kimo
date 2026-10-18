@@ -7,6 +7,9 @@ import { KINDS, PRE, POST, tickRunning, pickedRows, TL_PARTS } from './panels.js
 import { route, freezeNow, flashing } from './router.js';
 
 const DESIGN_W = 1376, DESIGN_H = 768;
+// smallest viewer kept when a window is too small for a screen's fixed tracks (then the app is scaled down to fit)
+const MIN_FLEX_W = 160, MIN_FLEX_H = 260;
+let fitScale = 1;
 const RAWISH = /^(c|clip|t|track|fx|effect|node|n|layer|l|asset|media|an|marker|mask|m|cam|light|obj)[_-]?\d+$/i;   /* GUI-FIX-2: an engine id inside a reason */
 
 export const state = {
@@ -190,6 +193,13 @@ function buildLayout() {
   // BEFORE the new grid tracks are set (read after, they were the old grid lines indexed into the new tracks)
   const hop = builtMode != null && builtMode !== state.mode && !hidden, old = {};
   if (hop) for (const [k, el] of Object.entries(nodes)) old[slotOf(k, el._kind)] = [el.offsetLeft, el.offsetTop, el.offsetWidth, el.offsetHeight];
+  // A window too small for this screen's fixed tracks plus a minimal viewer (e.g. 640 px wide): the app is laid out
+  // at the smallest size that fits and scaled down to the window, so no panel runs past the window edge. Where it
+  // already fits (every size from 1100 x 768 up) nothing is set and the layout is exactly the one above.
+  const needW = DESIGN_W - (fl[2] - fl[0]) + MIN_FLEX_W, needH = DESIGN_H - (fl[3] - fl[1]) + MIN_FLEX_H;
+  fitScale = Math.min(1, innerWidth / needW, innerHeight / needH);
+  if (fitScale < 1) Object.assign(root.style, { width: innerWidth / fitScale + 'px', height: innerHeight / fitScale + 'px', transform: `scale(${fitScale})`, transformOrigin: '0 0' });
+  else for (const k of ['width', 'height', 'transform', 'transform-origin']) root.style.removeProperty(k);
   main.style.gridTemplateColumns = tracks(X, fl[0], fl[2]);
   main.style.gridTemplateRows = tracks(Y, fl[1], fl[3]);
   springs.length = 0;
@@ -584,7 +594,7 @@ function onWheel(e) {
   if (e.ctrlKey || e.metaKey) {
     const zmax = Math.max(1, full / 4), z = Math.min(zmax, Math.max(1, P.z * Math.exp(-dy * .004)));
     if (z === P.z) return;
-    const fx = Math.min(1, Math.max(0, (e.clientX - el.getBoundingClientRect().left - x0) / wpx)), at = t0 + fx * span;
+    const fx = Math.min(1, Math.max(0, ((e.clientX - el.getBoundingClientRect().left) / fitScale - x0) / wpx)), at = t0 + fx * span;
     P.z = z; P.t = z > 1 ? at - fx * full / z : null;
   } else if (Math.abs(dx) >= Math.abs(dy)) {
     if (P.z <= 1 || !dx) return;
