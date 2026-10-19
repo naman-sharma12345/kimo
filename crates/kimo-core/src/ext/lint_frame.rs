@@ -57,7 +57,8 @@ fn text_span_times(ss: &Session, a: &Value, cap: usize) -> Result<Option<(Vec<f6
         }
         let count = ((s1 - s0) / STEP).ceil() as usize;
         if count > cap {
-            return Err(format!("too_many_frames: no time given, so text_contrast samples text {}'s visible span {s0}..{s1} s every {STEP} s: {count} frames; max_frames cap is {cap}; pass times or a range with a larger step", c.id));
+            // Over the cap: refused, like range. Neither thinned nor cut short, so a reported pass never hides unsampled time.
+            return Err(format!("too_many_frames: no time given, so text_contrast samples text {}'s visible span {s0}..{s1} s every {STEP} s: {count} frames (first {s0} s, last {} s); max_frames cap is {cap}; nothing was thinned or cut; pass times or a range with a larger step", c.id, s0 + (count - 1) as f64 * STEP));
         }
         ts.extend((0..count).map(|i| s0 + i as f64 * STEP).filter(|t| *t < s1));
         spans.push(json!({"clip_id":c.id,"start":s0,"end":s1}));
@@ -68,7 +69,7 @@ fn text_span_times(ss: &Session, a: &Value, cap: usize) -> Result<Option<(Vec<f6
     ts.sort_by(f64::total_cmp);
     ts.dedup();
     if ts.len() > cap {
-        return Err(format!("too_many_frames: no time given, so text_contrast samples each text's visible span over media every {STEP} s: {} frames; max_frames cap is {cap}; pass times or a range with a larger step", ts.len()));
+        return Err(format!("too_many_frames: no time given, so text_contrast samples each text's visible span over media every {STEP} s: {} frames (first {} s, last {} s); max_frames cap is {cap}; nothing was thinned or cut; pass times or a range with a larger step", ts.len(), ts[0], ts[ts.len() - 1]));
     }
     let info = json!({"source":"text_span_over_media","step":STEP,"spans":spans,"times":ts,"count":ts.len()});
     Ok(Some((ts, info)))

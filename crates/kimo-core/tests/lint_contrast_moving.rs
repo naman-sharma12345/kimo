@@ -200,3 +200,113 @@ fn text_contrast_with_no_times_samples_the_texts_span_over_media() {
     assert!(e.contains("choose exactly one of time, times, range"), "{e}");
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// Naman m:bc377ca8 (b) / m:c4e0b564 (c): an explicit times=[0] on the moving clip returns exactly that one frame, as
+/// on main: no auto-sampling, no "sampled" key, and the same ratio and the same boxed frame as main (frame 0 of the fade
+/// is black, so main's black stand-in and the real frame agree there). This passes on main too.
+/// With KIMO_V51_T0_OUT=dir the boxed frame is copied there for a sha256 on both builds.
+#[test]
+fn explicit_time_zero_on_a_moving_clip_returns_only_that_frame() {
+    let d = std::env::temp_dir().join(format!("kimo-v51-fadet0-{}", std::process::id()));
+    std::fs::create_dir_all(&d).unwrap();
+    let mp4 = d.join("fade_black_to_white.mp4");
+    let st = std::process::Command::new("ffmpeg").args(["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=white:s=640x360:d=4:r=25,fade=t=in:st=0:d=4", "-c:v", "libx264", "-pix_fmt", "yuv420p", mp4.to_str().unwrap()]).status().unwrap();
+    assert!(st.success(), "ffmpeg fade clip");
+    let mut s = scene(&mp4, 24.0);
+    for a in [json!({"times":[0],"checks":["text_contrast"],"annotate":false}), json!({"time":0,"checks":["text_contrast"],"annotate":false}),
+              json!({"times":[0],"checks":["text_contrast"],"params":{"contrast_normal":22,"contrast_large":22},"annotate":true})] {
+        let r = c(&mut s, "lint_frame", a.clone());
+        let f = r["frames"][0]["findings"].as_array().unwrap().iter().find(|f| f["code"] == "text_contrast").cloned();
+        eprintln!("T0 {a} -> frames_checked {} times {:?} sampled {} min_ratio {}", r["summary"]["frames_checked"],
+            r["frames"].as_array().unwrap().iter().map(|f| f["time"].as_f64().unwrap()).collect::<Vec<_>>(), r.get("sampled").is_some(),
+            f.as_ref().map_or("none (passed)".to_string(), |f| format!("{:.4}", f["measured"]["min_ratio"].as_f64().unwrap())));
+        assert_eq!(r["summary"]["frames_checked"], json!(1), "{a}: one frame only");
+        assert_eq!(r["frames"].as_array().unwrap().len(), 1, "{a}");
+        assert_eq!(r["frames"][0]["time"].as_f64(), Some(0.0), "{a}: the frame is t=0");
+        assert!(r.get("sampled").is_none(), "{a}: explicit times never auto-sample");
+        if let Some(f) = f {
+            // frame 0 of the fade is black: white text reads 21.0 on main and on the branch alike
+            assert!((f["measured"]["min_ratio"].as_f64().unwrap() - 21.0).abs() < 1e-6, "{a}: t=0 ratio equals main's 21.0");
+            if let (Ok(out), Some(p)) = (std::env::var("KIMO_V51_T0_OUT"), r["frames"][0]["annotation"]["path"].as_str()) {
+                std::fs::create_dir_all(&out).unwrap();
+                std::fs::copy(p, Path::new(&out).join("t0_boxed.png")).unwrap();
+                eprintln!("T0 boxed frame copied to {out}/t0_boxed.png");
+            }
+        } else {
+            assert!(a["params"].is_null(), "{a}: forced thresholds must report the ratio");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// Naman m:c4e0b564 (d): several spans. One text over two media clips samples its span once; texts whose spans overlap
+/// give one sorted, de-duplicated list of times.
+#[test]
+fn no_times_multi_span_times_are_sorted_and_deduped() {
+    let d = std::env::temp_dir().join(format!("kimo-v51-fademulti-{}", std::process::id()));
+    std::fs::create_dir_all(&d).unwrap();
+    let mp4 = d.join("fade_black_to_white.mp4");
+    let st = std::process::Command::new("ffmpeg").args(["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=white:s=640x360:d=4:r=25,fade=t=in:st=0:d=4", "-c:v", "libx264", "-pix_fmt", "yuv420p", mp4.to_str().unwrap()]).status().unwrap();
+    assert!(st.success(), "ffmpeg fade clip");
+    let mut s = Session::new();
+    c(&mut s, "project_set", json!({"width":640,"height":360,"fps":25}));
+    let a = c(&mut s, "import_media", json!({"path": &mp4}))["asset_id"].clone();
+    let t0 = c(&mut s, "add_track", json!({}))["track_id"].clone();
+    // two media clips back to back under the text
+    c(&mut s, "add_clip", json!({"track_id":t0,"source_type":"media","asset_id":a,"start":0,"duration":2}));
+    c(&mut s, "add_clip", json!({"track_id":t0,"source_type":"media","asset_id":a,"start":2,"duration":2}));
+    let t1 = c(&mut s, "add_track", json!({}))["track_id"].clone();
+    let text = |s: &mut Session, start: f64, dur: f64| { c(s, "add_text", json!({"track_id":t1,"text":"H","font":"DejaVuSans","size":24,"color":[1,1,1],"start":start,"duration":dur})); };
+    text(&mut s, 0.5, 3.0); // over both clips: 0.5 .. 3.0, once each
+    let r = c(&mut s, "lint_frame", json!({"checks":["text_contrast"],"annotate":false}));
+    eprintln!("one text over two clips -> {}", r["sampled"]);
+    assert_eq!(r["sampled"]["times"], json!([0.5, 1.0, 1.5, 2.0, 2.5, 3.0]));
+    let t2 = c(&mut s, "add_track", json!({}))["track_id"].clone();
+    let t3 = c(&mut s, "add_track", json!({}))["track_id"].clone();
+    c(&mut s, "add_text", json!({"track_id":t2,"text":"H","font":"DejaVuSans","size":24,"color":[1,1,1],"start":1.0,"duration":2.6})); // 1.0 .. 3.5 (3.6 excluded)
+    c(&mut s, "add_text", json!({"track_id":t3,"text":"H","font":"DejaVuSans","size":24,"color":[1,1,1],"start":0.75,"duration":1.0})); // 0.75, 1.25
+    let r = c(&mut s, "lint_frame", json!({"checks":["text_contrast"],"annotate":false}));
+    eprintln!("three overlapping texts -> {}", r["sampled"]);
+    let want = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 3.5];
+    assert_eq!(r["sampled"]["times"], json!(want), "sorted and de-duplicated");
+    assert_eq!(r["sampled"]["count"], json!(want.len()));
+    assert_eq!(r["summary"]["frames_checked"], json!(want.len()));
+    assert_eq!(r["sampled"]["spans"].as_array().unwrap().len(), 3);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// Naman m:13c61ffe: over the 120 cap the no-times grid is REFUSED (too_many_frames), the same as range: it is neither
+/// thinned nor cut short, so a pass never hides unsampled time. The grid is start-inclusive and end-exclusive (a text
+/// is not on screen at its end time): a 90 s span gives 180 points, 0 .. 89.5 s. Exactly 120 points (a 60 s span) runs.
+#[test]
+fn no_times_grid_over_the_cap_is_refused_not_thinned_or_cut() {
+    let d = std::env::temp_dir().join(format!("kimo-v51-fadecap-{}", std::process::id()));
+    std::fs::create_dir_all(&d).unwrap();
+    let mp4 = d.join("grey_91s.mp4");
+    let st = std::process::Command::new("ffmpeg").args(["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x404040:s=160x90:d=91:r=5", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", mp4.to_str().unwrap()]).status().unwrap();
+    assert!(st.success(), "ffmpeg 91 s clip");
+    let run = |text_dur: f64| -> Result<Value, String> {
+        let mut s = Session::new();
+        c(&mut s, "project_set", json!({"width":160,"height":90,"fps":25}));
+        let a = c(&mut s, "import_media", json!({"path": &mp4}))["asset_id"].clone();
+        let t0 = c(&mut s, "add_track", json!({}))["track_id"].clone();
+        c(&mut s, "add_clip", json!({"track_id":t0,"source_type":"media","asset_id":a,"start":0,"duration":91}));
+        let t1 = c(&mut s, "add_track", json!({}))["track_id"].clone();
+        c(&mut s, "add_text", json!({"track_id":t1,"text":"H","font":"DejaVuSans","size":24,"color":[1,1,1],"start":0,"duration":text_dur}));
+        dispatch(&mut s, "lint_frame", &json!({"checks":["text_contrast"],"annotate":false}))
+    };
+    let e = run(90.0).expect_err("a 90 s span (180 points) is over the 120 cap and must be refused");
+    eprintln!("90 s span -> {e}");
+    assert!(e.starts_with("too_many_frames:") && e.contains("180 frames (first 0 s, last 89.5 s); max_frames cap is 120; nothing was thinned or cut"), "{e}");
+    let e = run(60.5).expect_err("a 60.5 s span (121 points) is one over the cap");
+    eprintln!("60.5 s span -> {e}");
+    assert!(e.contains("121 frames (first 0 s, last 60 s); max_frames cap is 120"), "{e}");
+    let r = run(60.0).expect("a 60 s span is exactly 120 points and must run");
+    let times: Vec<f64> = r["sampled"]["times"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    eprintln!("60 s span -> count {}, first {}, last {}, frames_checked {}", r["sampled"]["count"], times[0], times[times.len() - 1], r["summary"]["frames_checked"]);
+    assert_eq!(r["sampled"]["count"], json!(120));
+    assert_eq!(r["summary"]["frames_checked"], json!(120));
+    assert_eq!((times[0], times[119]), (0.0, 59.5));
+    assert!(times.windows(2).all(|w| (w[1] - w[0] - 0.5).abs() < 1e-9), "an even 0.5 s grid, nothing thinned");
+    let _ = std::fs::remove_dir_all(&d);
+}
