@@ -1,0 +1,16 @@
+id	prediction (as written in PREREG.md, commit 71d8ca85)	measured	HIT/MISS
+S1	monotone: lap_var(f+1) <= lap_var(f) for every f in 0..70; the same for tenengrad.	lap_var non-increasing true tenengrad non-increasing true	HIT
+S2	plateaus: frames with the same effective r give bit-identical lap_var and tenengrad; exactly 6 distinct lap_var values.	same r -> identical values true; distinct lap_var values 6	HIT
+S3	strict fall: at each change of r, both lap_var and tenengrad strictly fall (5 strict falls each).	strict fall at every r change: lap_var true tenengrad true	HIT
+S4	exact plateau frames (depends on the linear-ease reading above): the 6 plateaus are exactly 0-16, 17-31, 32-40, 41-50, 51-59, 60-71.	plateaus lap_var [(0, 16), (17, 31), (32, 40), (41, 50), (51, 59), (60, 71)] tenengrad [(0, 16), (17, 31), (32, 40), (41, 50), (51, 59), (60, 71)]	HIT
+S5	sharpest = frame 0; softest = frame 60 (earliest frame of the last plateau, ties go to the earliest).	sharpest frame 0 softest frame 60	HIT
+S6	step: step 2 returns frames 0, 2, 4, ..., 70 (36 samples) with values equal to the step-1 values at those frames.	step 2: 36 samples, first frame 0, last frame 70, values equal to the step-1 values at those frames: true	HIT
+S7	soft_max = the softest frame's lap_var (read from the same output): exactly one run, frames 60-71 (12 frames).	soft_max 0.841916: runs [(60, 71, 12)]	HIT
+S8	the frame count is 72 and the measured size is 160x90.	frames 72 measured [160,90]	HIT
+F1	flat: a solid #808080 clip: lap_var = 0 and tenengrad = 0 exactly, whole frame and any rect.	flat #808080: frame 0 {"frame":0,"lap_var":0.0,"rects":[{"lap_var":0.0,"tenengrad":0.0}],"t":0.0,"tenengrad":0.0}	HIT
+F2	rects: ffmpeg 160x90, 1 s: left half (x < 80) the same 8 px checker, right half (x >= 80) flat grey 128. Rect A [8, 8, 64, 74] (inside the checker half) and rect B [88, 8, 64, 74] (inside the flat half): A lap_var > 0 and A tenengrad > 0; B lap_var = 0 and B tenengrad = 0 exactly; A > B on both.	A lap_var 41299.662162 tenengrad 432.242329; B lap_var 0 tenengrad 0; same on all 24 frames true	HIT
+F3	a rect fully outside the frame ([200, 200, 10, 10]) reads null for both scores, not 0.	outside rect {"lap_var":null,"tenengrad":null}	HIT
+R1	frames 480-491: lap_var = 0 and tenengrad = 0 exactly; softest = frame 480.	480-491 zeros true; softest 480	HIT
+R2	frames 240-263: bit-identical lap_var and tenengrad (one value each, repeated 24 times).	240-263 lap_var 102.764846 tenengrad 10.995101	HIT
+R3	frames 239 and 264 differ from the frame-240 value on lap_var (the source differs there by max 228/255 and 231/255).	239 5.188023 240 102.764846 264 104.933699	HIT
+R4	every frame outside 480-491 has lap_var > 0.	frames outside 480-491 at 0: []	HIT

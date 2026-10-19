@@ -119,6 +119,7 @@
 "fit_info",
 "fit_track_homography",
 "flash_series",
+"focus_series",
 "freeze_frame",
 "frozen_frames",
 "generate_lut_node",

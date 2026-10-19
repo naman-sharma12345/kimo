@@ -140,6 +140,20 @@ const T = {
       ['Line', lm != null && mr != null ? `luma ≤ ${r1(lm * 255)}/255 · min run ${mr}` : null, 'wrap'],
       ['Range', tag || sf ? `${tag || 'no media tag'}${sf ? ` · ${sf} ${sf === 1 ? 'frame' : 'frames'} flat at 16/255` : ''}` : null, 'wrap'],
       ['Frames read', nf != null && num(R.start) != null && num(R.end) != null ? `${nf} · ${r3(R.start)}–${r3(R.end)} s` : null, 'wrap']].filter(r => r && r[1] != null); },
+  // v6 focus_series: sharpness per sampled frame (lap = variance of the luma Laplacian, ten = mean Sobel gradient, both raw, 0..255 code
+  // units). The card has 4 rows (readRows keeps 4): Sharpest and Softest (stack), then ONE of Per rect (rects given) / Soft (soft_max given) /
+  // Lap var (min–max · median), then Frames read. No verdict.
+  focus_series: R => { const nf = num(R.frames), P = R.params && typeof R.params === 'object' ? R.params : {}, st = num(P.step), sm = num(P.soft_max), r3 = x => String(Math.round(x * 1000) / 1000);
+    const fv = x => Math.abs(x) >= 1000 ? String(Math.round(x)) : Math.abs(x) >= 10 ? String(Math.round(x * 10) / 10) : String(Math.round(x * 1000) / 1000);
+    const at = S => S && typeof S === 'object' && num(S.frame) != null && num(S.t) != null && num(S.lap_var) != null && num(S.tenengrad) != null ? `frame ${S.frame} · ${r3(S.t)} s · lap ${fv(S.lap_var)} · ten ${fv(S.tenengrad)}` : null;
+    const L = R.lap_var && typeof R.lap_var === 'object' ? R.lap_var : null, spread = L && num(L.min) != null && num(L.median) != null && num(L.max) != null ? `${fv(L.min)}–${fv(L.max)} · median ${fv(L.median)}` : null;
+    const RC = Array.isArray(R.rects) ? R.rects : null, V = RC ? RC.map(x => x && x.lap_var && typeof x.lap_var === 'object' ? x.lap_var : null).filter(s => s && num(s.max) != null && num(s.min) != null) : [];
+    const rr = RC && RC.length ? `${RC.length} ${RC.length === 1 ? 'rect' : 'rects'} · ${V.length ? `lap best ${fv(Math.max(...V.map(s => s.max)))} · worst ${fv(Math.min(...V.map(s => s.min)))}` : 'none inside the frame'}` : null;
+    const SR = Array.isArray(R.soft_runs) ? R.soft_runs.filter(x => x && num(x.samples) != null) : null, sn = SR ? SR.reduce((a, x) => a + num(x.samples), 0) : 0;
+    const soft = sm == null || !SR ? null : (SR.length === 0 ? `none at lap ≤ ${fv(sm)}` : `${SR.length} ${SR.length === 1 ? 'run' : 'runs'} · ${sn} ${sn === 1 ? 'frame' : 'frames'} at lap ≤ ${fv(sm)}`);
+    const third = rr != null ? ['Per rect', rr, 'wrap'] : soft != null ? ['Soft', soft, 'wrap'] : ['Lap var', spread, 'wrap'];
+    return [['Sharpest', at(R.sharpest), 'stack'], ['Softest', at(R.softest), 'stack'], third,
+      ['Frames read', nf != null && num(R.start) != null && num(R.end) != null ? `${nf} · ${r3(R.start)}–${r3(R.end)} s${st != null && st > 1 ? ` · every ${st}` : ''}` : null, 'wrap']].filter(r => r && r[1] != null); },
   // v6 render_flow stats: from flow_stats (canvas px per frame) 'Motion' is the mean vector (length and direction, 0° = right, 90° = down),
   // 'Speed' the p50 / p90 / max speeds, 'Moving' the share faster than moving_px; without stats the card is the v5 card (generic rows)
   render_flow: R => { const F = R.flow_stats && typeof R.flow_stats === 'object' ? R.flow_stats : null; if (!F) return genericRows(R);
