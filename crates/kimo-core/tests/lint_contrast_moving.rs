@@ -92,3 +92,36 @@ fn text_contrast_over_a_fading_video_passes_dark_frames_and_flags_light_ones() {
     }
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// Naman m:83105feb: prove the lint reads the RIGHT frame, not a prepared first frame. Each sampled time t must read
+/// video frame floor(t * 25): its ratio is checked against that frame decoded independently by ffmpeg (the brightest
+/// pixel under white text), and must sit closer to it than to the frames either side.
+#[test]
+fn text_contrast_reads_the_exact_sampled_frame_of_a_moving_video() {
+    let d = std::env::temp_dir().join(format!("kimo-v51-fadeidx-{}", std::process::id()));
+    std::fs::create_dir_all(&d).unwrap();
+    let mp4 = d.join("fade_black_to_white.mp4");
+    let st = std::process::Command::new("ffmpeg").args(["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=white:s=640x360:d=4:r=25,fade=t=in:st=0:d=4", "-c:v", "libx264", "-pix_fmt", "yuv420p", mp4.to_str().unwrap()]).status().unwrap();
+    assert!(st.success(), "ffmpeg fade clip");
+    // independent decode: every frame as RGBA, ratio of white against its brightest pixel
+    let out = std::process::Command::new("ffmpeg").args(["-v", "error", "-i", mp4.to_str().unwrap(), "-f", "rawvideo", "-pix_fmt", "rgba", "-"]).output().unwrap();
+    let px = 640 * 360 * 4;
+    assert!(out.status.success() && out.stdout.len() % px == 0 && out.stdout.len() / px >= 99, "decoded {} bytes", out.stdout.len());
+    let lin = |v: u8| { let c = v as f64 / 255.0; if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) } };
+    let truth: Vec<f64> = out.stdout.chunks_exact(px).map(|f| {
+        let l = f.chunks_exact(4).map(|p| 0.2126 * lin(p[0]) + 0.7152 * lin(p[1]) + 0.0722 * lin(p[2])).fold(0.0, f64::max);
+        1.05 / (l + 0.05)
+    }).collect();
+    let mut s = scene(&mp4, 24.0);
+    let rows = per_frame(&mut s);
+    let mut seen = vec![];
+    for (t, r, _, _) in &rows {
+        let n = (t * 25.0).floor() as usize;
+        eprintln!("t={t:.2}s -> frame {n}: lint {r:.3}, ffmpeg frame {} {:.3} | {n} {:.3} | {} {:.3}", n - 1, truth[n - 1], truth[n], n + 1, truth[n + 1]);
+        assert!((r - truth[n]).abs() < 0.01, "t={t}: lint {r:.4} must equal frame {n}'s ratio {:.4}", truth[n]);
+        assert!((r - truth[n]).abs() < (r - truth[n - 1]).abs() && (r - truth[n]).abs() < (r - truth[n + 1]).abs(), "t={t}: closest to frame {n}, not its neighbours");
+        seen.push(n);
+    }
+    assert_eq!(seen, vec![6, 18, 31, 43, 56, 68, 81, 93], "8 sampled frames, by index");
+    let _ = std::fs::remove_dir_all(&d);
+}
