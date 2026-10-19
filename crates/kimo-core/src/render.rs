@@ -21,6 +21,29 @@ pub struct Cache { frames: HashMap<String, (String, std::sync::Arc<Frames>)>, pu
 pub struct StaticCrop { x0: usize, y0: usize, x1: usize, y1: usize, d: Vec<f32> }
 impl Cache { pub fn new() -> Self { Cache { frames: HashMap::new(), size: (0, 0, 0.0), export_mode: false, statics: std::sync::RwLock::new(HashMap::new()) } } pub fn new_export() -> Self { let mut c = Cache::new(); c.export_mode = true; c } pub fn frames_of(&self, id: &str) -> Option<&Frames> { self.frames.get(id).map(|x| x.1.as_ref()) } }
 
+/// Still-image extensions the decoder holds as one looped frame (ffmpeg `-loop 1`). One list, read by
+/// `decode` and by `import_media`'s check, so the two cannot drift apart.
+pub const STILL_EXT: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp", "exr", "tif", "tiff", "pfm"];
+
+/// True when `path` ends with one of `STILL_EXT` (case-insensitive; the same test `decode` has always used).
+pub fn is_still_path(path: &str) -> bool { let l = path.to_lowercase(); STILL_EXT.iter().any(|e| l.ends_with(e)) }
+
+/// Refuse a single still image whose extension the decoder does not hold (e.g. .ppm, .tga, .heic). Before this
+/// check such a file probed fine, imported, and then rendered flat with no error (v5.1 debt, 2026-10-18).
+/// A still is what ffprobe reads with an image demuxer ("image2" or "*_pipe"). Video, audio, animated GIF,
+/// .kimopx, and numbered sequences (a path with '%') are not refused here.
+pub fn check_importable(path: &str) -> Result<(), String> {
+    if is_still_path(path) || path.ends_with(".kimopx") || path.contains('%') { return Ok(()); }
+    let Ok(out) = Command::new("ffprobe").args(["-v", "error", "-show_entries", "format=format_name", "-of", "default=nw=1:nk=1", path]).output() else { return Ok(()) };
+    if !out.status.success() { return Ok(()); }
+    let format = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if format == "image2" || format.ends_with("_pipe") {
+        let ext = std::path::Path::new(path).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_else(|| "(no extension)".into());
+        return Err(format!("unsupported image format: {ext} ({path}, read as {format}). kimo draws stills only from {}; convert it (e.g. to png) and import again.", STILL_EXT.join(", ")));
+    }
+    Ok(())
+}
+
 pub fn probe(path: &str) -> Result<(u32, u32, f64, f64), String> {
     if path.ends_with(".kimopx") { let f=crate::pixels::read(path)?; return Ok((f.w as u32,f.h as u32,0.,25.)); }
     if [".tif",".tiff"].iter().any(|e|path.to_lowercase().ends_with(e)){let(w,h)=crate::color::interchange::tiff_size(path)?;return Ok((w,h,0.,25.))}
@@ -132,7 +155,7 @@ fn decode(p: &Project, c: &Clip, path: &str, a: usize, n: usize) -> Result<Frame
       crate::color::pipeline::input(p,c,&mut src)?;
       let d=crate::color::interchange::fit(&src,w as usize,h as usize,fit)?;
       return Ok(Frames{still:true,working_linear:true,quantized:Default::default(),linear_buf:Some(d),buf:vec![],fs:w as usize*h as usize*4,first:0})
-    } let is_img0 = { let l = path.to_lowercase(); ["png","jpg","jpeg","webp","bmp","exr","tif","tiff","pfm"].iter().any(|e| l.ends_with(e)) }; let (a, n) = if is_img0 { (0, 1) } else { (a, n) };
+    } let is_img0 = is_still_path(path); let (a, n) = if is_img0 { (0, 1) } else { (a, n) };
     let (in_pt, speed, span) = if c.speed_curve.is_some() { (c.in_point, 1.0, (a+n) as f64 / p.fps) } else { (c.in_point, c.speed, (a+n) as f64 / p.fps * c.speed) };
     let fit = c.props.get("fit").map(|q| q.at(0.0)).unwrap_or(0.0);
     let fitf = if fit >= 1.5 { format!("scale={w}:{h}") } else if fit >= 0.5 { format!("scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}") } else { format!("scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0") };
@@ -141,7 +164,7 @@ fn decode(p: &Project, c: &Clip, path: &str, a: usize, n: usize) -> Result<Frame
     let native_fit=float_source||(p.color_pipeline.enabled&&p.color_pipeline.linear_resample);
     let pix=if float_source{"gbrapf32le"}else if p.color_pipeline.enabled{"rgba64le"}else{"rgba"};
     let vf = format!("setpts=PTS/{},fps={},trim=start_frame={a}:end_frame={},setpts=PTS-STARTPTS,{},format={pix}",speed.max(0.01),p.fps,a+n,fitf);
-    let is_img = ["png","jpg","jpeg","webp","bmp","exr","tif","tiff","pfm"].iter().any(|e| path.to_lowercase().ends_with(e));
+    let is_img = is_still_path(path);
     let loop_args: Vec<&str> = if is_img { vec!["-loop", "1"] } else { vec![] };
     let fs = (w * h * 4) as usize;
 
