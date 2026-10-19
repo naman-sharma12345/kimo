@@ -30,18 +30,30 @@ pub fn is_still_path(path: &str) -> bool { let l = path.to_lowercase(); STILL_EX
 
 /// Refuse a single still image whose extension the decoder does not hold (e.g. .ppm, .tga, .heic). Before this
 /// check such a file probed fine, imported, and then rendered flat with no error (v5.1 debt, 2026-10-18).
-/// A still is what ffprobe reads with an image demuxer ("image2" or "*_pipe"). Video, audio, animated GIF,
-/// .kimopx, and numbered sequences (a path with '%') are not refused here.
+/// A still is what ffprobe reads with an image demuxer ("image2" or "*_pipe"); a numbered sequence (a %d path)
+/// is read the same way and judged by its extension. Video, audio, animated GIF and .kimopx are not refused here.
 pub fn check_importable(path: &str) -> Result<(), String> {
-    if is_still_path(path) || path.ends_with(".kimopx") || path.contains('%') { return Ok(()); }
+    if is_still_path(path) || path.ends_with(".kimopx") { return Ok(()); }
     let Ok(out) = Command::new("ffprobe").args(["-v", "error", "-show_entries", "format=format_name", "-of", "default=nw=1:nk=1", path]).output() else { return Ok(()) };
     if !out.status.success() { return Ok(()); }
     let format = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if format == "image2" || format.ends_with("_pipe") {
-        let ext = std::path::Path::new(path).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_else(|| "(no extension)".into());
-        return Err(format!("unsupported image format: {ext} ({path}, read as {format}). kimo draws stills only from {}; convert it (e.g. to png) and import again.", STILL_EXT.join(", ")));
+        let ext = std::path::Path::new(path).extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_else(|| "(no extension)".into());
+        return Err(format!("unsupported image extension {ext}: {path} is a still image kimo cannot draw (read as {format}). kimo draws stills only from {}; convert it (e.g. to .png) and import again.", STILL_EXT.iter().map(|e| format!(".{e}")).collect::<Vec<_>>().join(", ")));
     }
     Ok(())
+}
+
+/// `check_importable`, remembered per path for the life of the process, for the decoder: a project that reached the
+/// renderer without import_media (an older project file, a hand-edited path) gets the same error instead of a flat frame.
+fn check_decodable(path: &str) -> Result<(), String> {
+    if is_still_path(path) || path.ends_with(".kimopx") { return Ok(()); }
+    static SEEN: std::sync::OnceLock<std::sync::Mutex<HashMap<String, Result<(), String>>>> = std::sync::OnceLock::new();
+    let m = SEEN.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    if let Some(r) = m.lock().unwrap().get(path) { return r.clone(); }
+    let r = check_importable(path);
+    m.lock().unwrap().insert(path.to_string(), r.clone());
+    r
 }
 
 pub fn probe(path: &str) -> Result<(u32, u32, f64, f64), String> {
@@ -144,6 +156,7 @@ const WINDOW: usize = 24;
 /// Decode `n` frames starting at global clip frame `a` (windowed: memory stays bounded for any clip length).
 fn decode(p: &Project, c: &Clip, path: &str, a: usize, n: usize) -> Result<Frames, String> {
     let (w, h) = (p.width, p.height);
+    check_decodable(path)?;
     if path.ends_with(".kimopx") {
       let src=crate::pixels::read(path)?;
       let d=if src.w==w as usize && src.h==h as usize {src.d} else {crate::color::interchange::fit(&src,w as usize,h as usize,c.props.get("fit").map(|q|q.at(0.)).unwrap_or(0.))?};
