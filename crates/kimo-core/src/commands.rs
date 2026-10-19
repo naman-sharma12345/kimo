@@ -69,7 +69,17 @@ pub(crate) fn hex_rgba(s: &str) -> Option<[f64; 4]> {
 fn color(a: &Value, k: &str, d: [f64; 3]) -> Result<[f64; 3], String> {
     match a.get(k) {
         None | Some(Value::Null) => Ok(d),
-        Some(Value::Array(x)) => Ok(if x.len() == 3 || x.len() == 4 { [x[0].as_f64().unwrap_or(0.0), x[1].as_f64().unwrap_or(0.0), x[2].as_f64().unwrap_or(0.0)] } else { d }),
+        Some(Value::Array(x)) => {
+            // A wrong-length array ([1,1], five values) used to fall back to the default silently, and a non-number
+            // element read as 0. Both are now errors naming the argument (Naman m:48b79971).
+            if x.len() != 3 && x.len() != 4 { return Err(format!("{k}: expected 3 or 4 numbers, got {}", x.len())); }
+            let mut c = [0.0; 3];
+            for (i, v) in x.iter().enumerate() {
+                let n = v.as_f64().ok_or_else(|| format!("{k}: expected 3 or 4 numbers, element {i} is {v}"))?;
+                if i < 3 { c[i] = n; }
+            }
+            Ok(c)
+        }
         Some(Value::String(s)) => hex_rgba(s).map(|c| [c[0], c[1], c[2]]).ok_or_else(|| format!("{k}: \"{s}\" is not a colour; use [r,g,b] with values 0..1, or hex \"#rrggbb\"")),
         Some(v) => Err(format!("{k}: {v} is not a colour; use [r,g,b] with values 0..1, or hex \"#rrggbb\"")),
     }
