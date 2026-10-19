@@ -67,6 +67,17 @@ fn text_contrast_over_a_fading_video_passes_dark_frames_and_flags_light_ones() {
         for (t, r, thr, flagged) in &rows {
             eprintln!("size {size}: t={t:.2}s min_ratio {r:.3} -> {} (threshold {want_thr}{})", if *flagged { "FAIL" } else { "pass" }, if thr.is_nan() { String::new() } else { format!(", reported {thr}") });
         }
+        // Naman m:4b69a6b4 / m:48b79971: the 2.25 s split, asserted by name, both sides. At t=2.25 the ratio is ~3.23:
+        // size 24 is large text (threshold 3.0) and PASSES because 3.23 >= 3.0; size 8 is normal text (threshold 4.5)
+        // and FAILS because 3.23 < 4.5.
+        let split = *rows.iter().find(|x| (x.0 - 2.25).abs() < 1e-9).expect("t=2.25 is sampled");
+        if size == 24.0 {
+            assert!(split.1 >= 3.0 && !split.3, "t=2.25 size 24 (large, 3.0): ratio {:.3} must be >= 3.0 and PASS (flagged: {})", split.1, split.3);
+        } else {
+            assert!(split.1 < 4.5 && split.3, "t=2.25 size 8 (normal, 4.5): ratio {:.3} must be < 4.5 and FAIL (flagged: {})", split.1, split.3);
+            assert_eq!(split.2, 4.5, "t=2.25 size 8: the threshold used must be 4.5");
+        }
+        assert!((split.1 - 3.23).abs() < 0.05, "t=2.25 size {size}: ratio {:.3} must be ~3.23, between 3.0 and 4.5", split.1);
         for (t, r, thr, flagged) in &rows {
             assert!((r - 21.0).abs() > 1e-6, "size {size} t={t}: text_contrast printed 21.0 over a moving media background");
             assert_eq!(*flagged, *r < want_thr, "size {size} t={t}: ratio {r:.3} vs threshold {want_thr} must decide pass/fail");
