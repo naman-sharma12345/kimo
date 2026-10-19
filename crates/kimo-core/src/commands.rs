@@ -52,8 +52,9 @@ fn opt_num(a: &Value, k: &str, d: f64) -> f64 { a.get(k).and_then(|v| v.as_f64()
 /// Alpha of a 4-value RGBA colour argument (1.0 when absent or RGB only).
 fn color_alpha(a: &Value, k: &str) -> f64 { if let Some(h) = a.get(k).and_then(|v| v.as_str()).and_then(hex_rgba) { return h[3]; } a.get(k).and_then(|v| v.as_array()).filter(|x| x.len() == 4).and_then(|x| x[3].as_f64()).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)).unwrap_or(1.0) }
 /// sRGB hex "#rgb", "#rgba", "#rrggbb" or "#rrggbbaa" (case-insensitive) as 0..1 values (x/255); None for anything else.
+/// Leading/trailing whitespace is ignored (" #ffffff" is plainly a colour); spaces inside the value are not.
 pub(crate) fn hex_rgba(s: &str) -> Option<[f64; 4]> {
-    let h = s.strip_prefix('#')?;
+    let h = s.trim().strip_prefix('#')?;
     if !h.bytes().all(|b| b.is_ascii_hexdigit()) { return None; }
     let n: Vec<u8> = match h.len() {
         3 | 4 => h.chars().map(|c| { let v = c.to_digit(16).unwrap() as u8; v * 17 }).collect(),
