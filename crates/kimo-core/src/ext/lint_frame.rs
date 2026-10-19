@@ -647,7 +647,11 @@ fn text_findings(
                 continue;
             };
             let p = super::view::view_of(&ss.project, None, Some(&[c.id.clone()]));
-            let bg = crate::render::render_frame(&p, t, &crate::render::Cache::new())?;
+            // Decode the media under the text first (prepare_at). With a fresh, unprepared cache every media clip
+            // drew black, so white text over video read 21.0 (v5.1 debt, b72a06c read-only check, 2026-10-18).
+            let mut bg_cache = crate::render::Cache::new();
+            crate::render::prepare_at(&p, &mut bg_cache, Some(t))?;
+            let bg = crate::render::render_frame(&p, t, &bg_cache)?;
             let img = Image::from_frame(&bg);
             let (x0, y0, x1, y1) = (
                 r[0].floor().max(0.) as usize,
