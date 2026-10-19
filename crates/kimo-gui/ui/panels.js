@@ -991,8 +991,13 @@ function loudness({ spec, data, w, h }) {
   const mx = o.mx ?? 178, mw = o.mw ?? 14, mg = o.mg ?? 9, my0 = o.my0 ?? 40, my1 = o.my1 ?? 234, H = my1 - my0, rx = mx - 12;
   let html = head(spec, data);
   html += `<div class="cream${F(data)}" style="position:absolute;left:15px;top:${o.bigY ?? 64}px;line-height:1;white-space:nowrap"><span style="font-family:var(--mono);font-size:${o.bigFs ?? 33}px;letter-spacing:-.03em">${E(data.lufs)}</span><span style="font-family:var(--sans);font-size:${o.unitFs ?? 17}px;margin-left:7px">LUFS</span></div>`;
-  const ty = o.targetY ?? 115, tgt = data.target != null ? +data.target : null;
-  html += `<div style="position:absolute;left:15px;top:${ty - 10}px;height:20px;line-height:20px;font-size:${o.rowFs ?? 15}px;color:var(--text);white-space:nowrap">target&nbsp;&nbsp;<span style="font-family:var(--mono)">${E(data.target)}</span></div>`;
+  // the line under the big number: "target <n>" only when a target exists (normalize_loudness's target_lufs, router.js);
+  // otherwise the big number is a measurement (measure_loudness's integrated loudness) and the line names it "Integrated",
+  // never a bare "target" over a measured value. 16 px = 9.55 px effective at 640 x 360 (x 0.597015).
+  const ty = o.targetY ?? 115, tgt = data.target != null && data.target !== '' ? +data.target : null;
+  html += tgt != null
+    ? `<div style="position:absolute;left:15px;top:${ty - 10}px;height:20px;line-height:20px;font-size:${o.rowFs ?? 15}px;color:var(--text);white-space:nowrap">target&nbsp;&nbsp;<span style="font-family:var(--mono)">${E(data.target)}</span></div>`
+    : `<div class="lufs-int" style="position:absolute;left:15px;top:${ty - 10}px;height:20px;line-height:20px;font-size:${o.intFs ?? 16}px;color:var(--text);white-space:nowrap">Integrated</div>`;
   html += `<div style="position:absolute;left:${o.tlx ?? 96}px;width:${rx - (o.tlx ?? 96)}px;top:${ty}px;height:1px;background:#8d887e"></div>`;
   html += `<div style="position:absolute;left:15px;width:${rx - 15}px;top:${o.divY ?? 178}px;height:1px;background:var(--line2)"></div>`;
   (data.rows || []).forEach((r, i) => html += `<div style="position:absolute;left:15px;width:${rx - 18}px;top:${(o.rowY ?? 191) + i * (o.rowStep ?? 27)}px;height:20px;display:flex;justify-content:space-between;align-items:center;white-space:nowrap;letter-spacing:-.02em;font-size:${o.rowFs ?? 15}px"><span style="color:var(--text)">${E(r[0])}</span><span class="mono cream${F(r)}">${E(r[1])}</span></div>`);
