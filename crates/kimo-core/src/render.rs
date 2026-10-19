@@ -33,6 +33,11 @@ pub fn is_still_path(path: &str) -> bool { let l = path.to_lowercase(); STILL_EX
 /// A still is what ffprobe reads with an image demuxer ("image2" or "*_pipe"); a numbered sequence (a %d path)
 /// is read the same way and judged by its extension. Video, audio, animated GIF and .kimopx are not refused here.
 pub fn check_importable(path: &str) -> Result<(), String> {
+    // A numbered still sequence ("f_%04d.png") probed and imported, then failed only at render ("media stat: No such
+    // file"), because an asset is one file. Refuse it here, at import / project load, with the way out (Naman m:48b79971).
+    if is_still_path(path) && crate::deps::seq_frame(path, 0).is_some() {
+        return Err(format!("image sequences are not supported: {path} is a numbered frame pattern, and a kimo asset is one file. Join the frames into a video first (e.g. ffmpeg -framerate 25 -i '{path}' -c:v libx264 -pix_fmt yuv420p frames.mp4) and import that, or import a single frame."));
+    }
     if is_still_path(path) || path.ends_with(".kimopx") { return Ok(()); }
     let Ok(out) = Command::new("ffprobe").args(["-v", "error", "-show_entries", "format=format_name", "-of", "default=nw=1:nk=1", path]).output() else { return Ok(()) };
     if !out.status.success() { return Ok(()); }
