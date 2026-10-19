@@ -50,9 +50,28 @@ fn str_arg<'a>(a: &'a Value, k: &str) -> Result<&'a str, String> { a.get(k).and_
 fn num_arg(a: &Value, k: &str) -> Result<f64, String> { a.get(k).and_then(|v| v.as_f64()).ok_or_else(|| crate::errors::arg_err(a, k, "number")) }
 fn opt_num(a: &Value, k: &str, d: f64) -> f64 { a.get(k).and_then(|v| v.as_f64()).unwrap_or(d) }
 /// Alpha of a 4-value RGBA colour argument (1.0 when absent or RGB only).
-fn color_alpha(a: &Value, k: &str) -> f64 { a.get(k).and_then(|v| v.as_array()).filter(|x| x.len() == 4).and_then(|x| x[3].as_f64()).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)).unwrap_or(1.0) }
-fn color(a: &Value, k: &str, d: [f64; 3]) -> [f64; 3] {
-    a.get(k).and_then(|v| v.as_array()).filter(|x| x.len() == 3 || x.len() == 4).map(|x| [x[0].as_f64().unwrap_or(0.0), x[1].as_f64().unwrap_or(0.0), x[2].as_f64().unwrap_or(0.0)]).unwrap_or(d)
+fn color_alpha(a: &Value, k: &str) -> f64 { if let Some(h) = a.get(k).and_then(|v| v.as_str()).and_then(hex_rgba) { return h[3]; } a.get(k).and_then(|v| v.as_array()).filter(|x| x.len() == 4).and_then(|x| x[3].as_f64()).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0)).unwrap_or(1.0) }
+/// sRGB hex "#rgb", "#rgba", "#rrggbb" or "#rrggbbaa" (case-insensitive) as 0..1 values (x/255); None for anything else.
+pub(crate) fn hex_rgba(s: &str) -> Option<[f64; 4]> {
+    let h = s.strip_prefix('#')?;
+    if !h.bytes().all(|b| b.is_ascii_hexdigit()) { return None; }
+    let n: Vec<u8> = match h.len() {
+        3 | 4 => h.chars().map(|c| { let v = c.to_digit(16).unwrap() as u8; v * 17 }).collect(),
+        6 | 8 => (0..h.len()).step_by(2).map(|i| u8::from_str_radix(&h[i..i + 2], 16).unwrap()).collect(),
+        _ => return None,
+    };
+    Some([n[0] as f64 / 255.0, n[1] as f64 / 255.0, n[2] as f64 / 255.0, n.get(3).map_or(1.0, |a| *a as f64 / 255.0)])
+}
+/// A colour argument: absent or null -> the default `d`; an [r,g,b] / [r,g,b,a] array (0..1) as before; a hex string
+/// "#rrggbb" (also "#rgb", "#rgba", "#rrggbbaa"). Anything else is an error naming the argument. Before this, a hex
+/// string (or any non-array) silently fell back to the default, so "#ffffff" on a solid rendered black.
+fn color(a: &Value, k: &str, d: [f64; 3]) -> Result<[f64; 3], String> {
+    match a.get(k) {
+        None | Some(Value::Null) => Ok(d),
+        Some(Value::Array(x)) => Ok(if x.len() == 3 || x.len() == 4 { [x[0].as_f64().unwrap_or(0.0), x[1].as_f64().unwrap_or(0.0), x[2].as_f64().unwrap_or(0.0)] } else { d }),
+        Some(Value::String(s)) => hex_rgba(s).map(|c| [c[0], c[1], c[2]]).ok_or_else(|| format!("{k}: \"{s}\" is not a colour; use [r,g,b] with values 0..1, or hex \"#rrggbb\"")),
+        Some(v) => Err(format!("{k}: {v} is not a colour; use [r,g,b] with values 0..1, or hex \"#rrggbb\"")),
+    }
 }
 
 fn mask_stack<'a>(p: &'a mut Project, a: &Value) -> Result<&'a mut Mask, String> {
