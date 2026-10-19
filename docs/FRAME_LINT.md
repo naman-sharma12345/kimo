@@ -4,7 +4,7 @@
 
 Implemented checks: `out_of_bounds`, `invisible_layer`, `low_res_upscale`, `static_frame`, `text_contrast`, `min_text_size`, `safe_zone`, `text_overflow`. Text/caption overlap and style consistency remain unimplemented. Asking for an unsupported check returns `invalid_check`; absence of those findings does not mean the text was checked.
 
-Choose one selector: `time`, `times`, or `range: {start,end,step}`. The default range step is 0.5 seconds. The default and hard cap is 120 sampled frames. `params.max_frames` may lower it. Too many samples return `too_many_frames` before rendering.
+Choose one selector: `time`, `times`, or `range: {start,end,step}`. The default range step is 0.5 seconds. The default and hard cap is 120 sampled frames. `params.max_frames` may lower it. Too many samples return `too_many_frames` before rendering. With no selector at all, `text_contrast` over a media clip samples each text layer's own visible span (its start to end) every 0.5 seconds within the same cap, and the result carries `sampled` (times, count, spans); a scene with no text over media still asks for one selector.
 
 Thresholds are defaults, not rules. `params` supports max_static_s (3), mse_threshold (0), changed_ratio_threshold (0), pixel_threshold (0.04), opacity_epsilon (0.001), upscale_ratio (1.5) max_frames (120), contrast_normal (4.5), contrast_large (3.0), large_cap_px (24) and min_cap_px (20 at 1080p). All effective values are echoed in params_used. Unknown parameters fail rather than being ignored. `delivery_height` scales reported text ink pixels from project to delivery height. Thresholds are 1080p-equivalent, so changing delivery height alone does not change the finding decision. It does not change layer geometry.
 

@@ -15,14 +15,17 @@ use std::path::Path;
 fn c(s: &mut Session, n: &str, a: Value) -> Value { dispatch(s, n, &a).unwrap_or_else(|e| panic!("{n}: {e}")) }
 
 /// White DejaVuSans text of `size` px over the fading clip, both 0-4 s, 640x360 at 25 fps.
-fn scene(bg: &Path, size: f64) -> Session {
+fn scene(bg: &Path, size: f64) -> Session { scene_at(bg, size, 0.0, 4.0) }
+
+/// The same, with the text on screen only from `start` for `dur` seconds (the clip stays 0-4 s).
+fn scene_at(bg: &Path, size: f64, start: f64, dur: f64) -> Session {
     let mut s = Session::new();
     c(&mut s, "project_set", json!({"width":640,"height":360,"fps":25}));
     let a = c(&mut s, "import_media", json!({"path": bg}))["asset_id"].clone();
     let t0 = c(&mut s, "add_track", json!({}))["track_id"].clone();
     c(&mut s, "add_clip", json!({"track_id":t0,"source_type":"media","asset_id":a,"start":0,"duration":4}));
     let t1 = c(&mut s, "add_track", json!({}))["track_id"].clone();
-    let id = c(&mut s, "add_text", json!({"track_id":t1,"text":"H title","font":"DejaVuSans","size":size,"color":[1,1,1],"start":0,"duration":4}))["clip_id"].clone();
+    let id = c(&mut s, "add_text", json!({"track_id":t1,"text":"H title","font":"DejaVuSans","size":size,"color":[1,1,1],"start":start,"duration":dur}))["clip_id"].clone();
     c(&mut s, "set_meta", json!({"id":id,"name":"title","role":"title"}));
     s
 }
@@ -134,5 +137,66 @@ fn text_contrast_reads_the_exact_sampled_frame_of_a_moving_video() {
         seen.push(n);
     }
     assert_eq!(seen, vec![6, 18, 31, 43, 56, 68, 81, 93], "8 sampled frames, by index");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// Naman m:4b69a6b4: with NO time/times/range and media under the text, text_contrast samples the text's own visible
+/// span (its start to end) every 0.5 s, within the 120-frame cap. Explicit times behave as before, and a solid scene
+/// with no times keeps main's refusal. On main 05cfbaab a call with no times is refused over media too.
+#[test]
+fn text_contrast_with_no_times_samples_the_texts_span_over_media() {
+    // solid background, no times: unchanged (refused, exactly as on main)
+    let mut s = Session::new();
+    c(&mut s, "project_set", json!({"width":640,"height":360,"fps":25}));
+    let t0 = c(&mut s, "add_track", json!({}))["track_id"].clone();
+    c(&mut s, "add_clip", json!({"track_id":t0,"source_type":"solid","color":[0,0,0],"start":0,"duration":4}));
+    let t1 = c(&mut s, "add_track", json!({}))["track_id"].clone();
+    c(&mut s, "add_text", json!({"track_id":t1,"text":"H title","font":"DejaVuSans","size":24,"color":[1,1,1],"start":0.5,"duration":3}));
+    let e = dispatch(&mut s, "lint_frame", &json!({"checks":["text_contrast"],"annotate":false})).unwrap_err();
+    assert!(e.contains("choose exactly one of time, times, range"), "solid + no times must keep main's refusal: {e}");
+
+    let d = std::env::temp_dir().join(format!("kimo-v51-fadeauto-{}", std::process::id()));
+    std::fs::create_dir_all(&d).unwrap();
+    let mp4 = d.join("fade_black_to_white.mp4");
+    let st = std::process::Command::new("ffmpeg").args(["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=white:s=640x360:d=4:r=25,fade=t=in:st=0:d=4", "-c:v", "libx264", "-pix_fmt", "yuv420p", mp4.to_str().unwrap()]).status().unwrap();
+    assert!(st.success(), "ffmpeg fade clip");
+    // the text is on screen 0.5-3.5 s over the 0-4 s fading clip: its span, not the clip's, sets the frames
+    let mut s = scene_at(&mp4, 24.0, 0.5, 3.0);
+    let want = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0];
+    let d0 = dispatch(&mut s, "lint_frame", &json!({"checks":["text_contrast"],"annotate":false}))
+        .unwrap_or_else(|e| panic!("lint_frame with no times over a media background must sample the text's span, not refuse: {e}"));
+    let f0 = c(&mut s, "lint_frame", json!({"checks":["text_contrast"],"params":{"contrast_normal":22,"contrast_large":22},"annotate":false}));
+    eprintln!("no times -> sampled: {}", d0["sampled"]);
+    assert_eq!(d0["summary"]["frames_checked"], json!(want.len()), "6 frames: 0.5..3.0 s every 0.5 s");
+    assert_eq!(d0["sampled"]["times"], json!(want), "sampled times");
+    assert_eq!(d0["sampled"]["count"], json!(want.len()));
+    assert_eq!(d0["sampled"]["step"], json!(0.5));
+    let got: Vec<f64> = d0["frames"].as_array().unwrap().iter().map(|f| f["time"].as_f64().unwrap()).collect();
+    assert_eq!(got, want.to_vec(), "frames are the text's span, not t=0 and not the clip's 0-4 s");
+    let tc = |r: &Value, i: usize| r["frames"][i]["findings"].as_array().unwrap().iter().find(|f| f["code"] == "text_contrast").cloned();
+    let mut ratios = vec![];
+    for (i, t) in want.iter().enumerate() {
+        let r = tc(&f0, i).unwrap_or_else(|| panic!("t={t}: forced finding missing"))["measured"]["min_ratio"].as_f64().unwrap();
+        let flagged = tc(&d0, i).is_some();
+        eprintln!("no times: t={t:.2}s min_ratio {r:.3} -> {}", if flagged { "FAIL" } else { "pass" });
+        assert!((r - 21.0).abs() > 1e-6, "t={t}: 21.0 printed over media");
+        assert_eq!(flagged, r < 3.0, "t={t}: large text, ratio {r:.3} vs 3.0 decides");
+        ratios.push(r);
+    }
+    for w in ratios.windows(2) { assert!(w[1] < w[0], "ratio must fall as the clip brightens: {ratios:?}"); }
+    assert!(tc(&d0, 0).is_none() && ratios[0] > 12.0, "the early dark frame t=0.5 must pass: {:.3}", ratios[0]);
+    let late = (0..want.len()).filter(|i| tc(&d0, *i).is_some()).count();
+    assert!(late >= 2 && tc(&d0, want.len() - 1).is_some(), "the late light frames must be flagged ({late} flagged)");
+
+    // explicit times: exactly as before (no sampled key, only the given frame)
+    let e1 = c(&mut s, "lint_frame", json!({"times":[0.25],"checks":["text_contrast"],"annotate":false}));
+    assert!(e1.get("sampled").is_none(), "explicit times add no sampled key");
+    assert_eq!(e1["summary"]["frames_checked"], json!(1));
+    // the cap still holds: 6 frames over a max_frames of 5 is refused, not cut short
+    let e = dispatch(&mut s, "lint_frame", &json!({"checks":["text_contrast"],"params":{"max_frames":5},"annotate":false})).unwrap_err();
+    assert!(e.starts_with("too_many_frames:") && e.contains("6 frames") && e.contains("cap is 5"), "{e}");
+    // a check list without text_contrast keeps main's refusal
+    let e = dispatch(&mut s, "lint_frame", &json!({"checks":["out_of_bounds"],"annotate":false})).unwrap_err();
+    assert!(e.contains("choose exactly one of time, times, range"), "{e}");
     let _ = std::fs::remove_dir_all(&d);
 }

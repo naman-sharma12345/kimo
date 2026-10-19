@@ -25,11 +25,64 @@ fn number(a: &Value, k: &str, d: f64, lo: f64, hi: f64) -> Result<f64, String> {
     }
     Ok(v)
 }
-fn times(ss: &Session, a: &Value, cap: usize) -> Result<Vec<f64>, String> {
+/// No time/times/range given: when text_contrast is asked for (explicitly or by default) and a text layer is on screen
+/// together with a media clip, sample that text's own visible span (its start to end) every 0.5 s, within max_frames.
+/// A moving background is then read across the whole title, not refused or read at one instant (Naman m:4b69a6b4).
+/// Every other scene (solid, gradient, no text) keeps main's refusal, so its output does not change.
+fn text_span_times(ss: &Session, a: &Value, cap: usize) -> Result<Option<(Vec<f64>, Value)>, String> {
+    let wants = match a.get("checks") {
+        None => CHECKS.contains(&"text_contrast"),
+        Some(v) => v.as_array().is_some_and(|arr| arr.iter().any(|x| x == "text_contrast")),
+    };
+    if !wants {
+        return Ok(None);
+    }
+    const STEP: f64 = 0.5;
+    let end = ss.project.duration();
+    let clips: Vec<&Clip> = ss.project.tracks.iter().filter(|t| !t.muted).flat_map(|t| t.clips.iter().map(|c| &**c)).collect();
+    let (mut ts, mut spans) = (vec![], vec![]);
+    for c in &clips {
+        if !matches!(c.source, Source::Text { .. }) {
+            continue;
+        }
+        let (s0, s1) = (c.start.max(0.), (c.start + c.duration).min(end));
+        if s1 <= s0 {
+            continue;
+        }
+        let over_media = clips.iter().any(|m| {
+            m.id != c.id && matches!(m.source, Source::Media { .. }) && m.start < s1 && m.start + m.duration > s0
+        });
+        if !over_media {
+            continue;
+        }
+        let count = ((s1 - s0) / STEP).ceil() as usize;
+        if count > cap {
+            return Err(format!("too_many_frames: no time given, so text_contrast samples text {}'s visible span {s0}..{s1} s every {STEP} s: {count} frames; max_frames cap is {cap}; pass times or a range with a larger step", c.id));
+        }
+        ts.extend((0..count).map(|i| s0 + i as f64 * STEP).filter(|t| *t < s1));
+        spans.push(json!({"clip_id":c.id,"start":s0,"end":s1}));
+    }
+    if spans.is_empty() {
+        return Ok(None);
+    }
+    ts.sort_by(f64::total_cmp);
+    ts.dedup();
+    if ts.len() > cap {
+        return Err(format!("too_many_frames: no time given, so text_contrast samples each text's visible span over media every {STEP} s: {} frames; max_frames cap is {cap}; pass times or a range with a larger step", ts.len()));
+    }
+    let info = json!({"source":"text_span_over_media","step":STEP,"spans":spans,"times":ts,"count":ts.len()});
+    Ok(Some((ts, info)))
+}
+fn times(ss: &Session, a: &Value, cap: usize) -> Result<(Vec<f64>, Option<Value>), String> {
     let n = ["time", "times", "range"]
         .iter()
         .filter(|k| a.get(**k).is_some())
         .count();
+    if n == 0 {
+        if let Some((ts, info)) = text_span_times(ss, a, cap)? {
+            return Ok((ts, Some(info)));
+        }
+    }
     if n != 1 {
         return Err("out_of_range: choose exactly one of time, times, range".into());
     }
@@ -76,7 +129,7 @@ fn times(ss: &Session, a: &Value, cap: usize) -> Result<Vec<f64>, String> {
     }
     ts.sort_by(f64::total_cmp);
     ts.dedup();
-    Ok(ts)
+    Ok((ts, None))
 }
 fn layer(c: &Clip) -> Value {
     json!({"id":c.id,"name":c.name,"role":c.role})
@@ -199,7 +252,7 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
     if cap.fract() != 0. {
         return Err("out_of_range: max_frames must be an integer".into());
     }
-    let ts = times(ss, a, cap as usize)?;
+    let (ts, sampled) = times(ss, a, cap as usize)?;
     let checks = match a.get("checks") {
         None => CHECKS
             .iter()
@@ -428,9 +481,11 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
             *counts.entry("static_frame".into()).or_default() += 1;
         }
     }
-    Ok(
-        json!({"frames":frames,"intervals":intervals,"summary":{"counts_by_code":counts,"ignored_by_tag":suppressed.len(),"suppressed":suppressed,"frames_checked":ts.len(),"omitted_findings":omitted},"params_used":used,"notes":["Advisory only, not a design certification. No edit, undo entry or export block.","Geometry is matrix-transformed source layer bounds, not effect-expanded ink. Fully masked visibility is not measured. Text uses static C2 ink, excluding shadow/glow/bg and animator deformation; contrast is a WCAG heuristic on background under that bbox, not certification. Overflow is canvas only, not own-box wrapping.","Static results cover sampled times only; audio presence does not establish speech or intentional holding."]}),
-    )
+    let mut out = json!({"frames":frames,"intervals":intervals,"summary":{"counts_by_code":counts,"ignored_by_tag":suppressed.len(),"suppressed":suppressed,"frames_checked":ts.len(),"omitted_findings":omitted},"params_used":used,"notes":["Advisory only, not a design certification. No edit, undo entry or export block.","Geometry is matrix-transformed source layer bounds, not effect-expanded ink. Fully masked visibility is not measured. Text uses static C2 ink, excluding shadow/glow/bg and animator deformation; contrast is a WCAG heuristic on background under that bbox, not certification. Overflow is canvas only, not own-box wrapping.","Static results cover sampled times only; audio presence does not establish speech or intentional holding."]});
+    if let Some(x) = sampled {
+        out["sampled"] = x;
+    }
+    Ok(out)
 }
 fn severity_score(f: &Value) -> f64 {
     let m = &f["measured"];
