@@ -232,8 +232,14 @@ pub fn pin_render(c: &Clip, f: &Frame, lt: f64, fps: f64) -> Option<Frame> {
     let light = c.props.get("pin_light").map(|p| p.at(lt)).unwrap_or(0.0) as f32; let n = if c.motion_blur > 0.0 { ((c.motion_blur / 22.5).ceil() as usize).clamp(2, 16) } else { 1 }; let sh = c.motion_blur / 360.0 / fps;
     let gain_at = |t: f64| -> f32 { 1.0 + (c.props.get("pin_gain").map(|p| p.at(t)).unwrap_or(1.0) as f32 - 1.0) * light };
     let one = |t: f64| -> Option<Frame> { if is_mesh { let (nx, ny, v) = mesh_verts(c, t)?; Some(pin_mesh(f, &v, nx, ny, gain_at(t))) } else { Some(pin_frame(f, &pin_quad(c, t)?, gain_at(t))) } };
-    if n == 1 { return one(lt); }
-    let mut acc = Frame::new(f.w, f.h); for k in 0..n { let t2 = lt + ((k as f64 + 0.5) / n as f64 - 0.5) * sh; let Some(g) = one(t2) else { continue };
+    // opt-in exact shutter (set_motion_blur samples / shutter_phase): sample count from corner / mesh-vertex travel (px, x2 like the mask auto); None keeps the legacy times
+    let ts: Vec<f64> = match crate::shutter::layer_shutter(c, fps, lt) { Some(s) => { let m = if s.samples > 0 { s.samples.clamp(2, 256) } else {
+            let pts = |t: f64| -> Vec<[f64; 2]> { if is_mesh { mesh_verts(c, t).map(|v| v.2).unwrap_or_default() } else { pin_quad(c, t).map(|q| q.to_vec()).unwrap_or_default() } };
+            let w3 = [lt + s.open, lt + s.open + s.len * 0.5, lt + s.open + s.len].map(pts); let seg = |a: &Vec<[f64; 2]>, b: &Vec<[f64; 2]>| a.iter().zip(b).map(|(p, q)| (q[0] - p[0]).hypot(q[1] - p[1])).fold(0.0, f64::max);
+            crate::shutter::auto_samples(2.0 * seg(&w3[0], &w3[1]).max(seg(&w3[1], &w3[2]))) };
+            if m <= 1 { return one(lt + s.open + s.len * 0.5); } crate::shutter::midpoints(s.open, s.len, m).into_iter().map(|o| lt + o).collect() }
+        None => { if n == 1 { return one(lt); } (0..n).map(|k| lt + ((k as f64 + 0.5) / n as f64 - 0.5) * sh).collect() } }; let n = ts.len();
+    let mut acc = Frame::new(f.w, f.h); for &t2 in &ts { let Some(g) = one(t2) else { continue };
         for i in 0..f.w * f.h { let a = g.d[i * 4 + 3]; if a > 0.0 { for j in 0..3 { acc.d[i * 4 + j] += g.d[i * 4 + j] * a; } acc.d[i * 4 + 3] += a; } } }
     for i in 0..f.w * f.h { let a = acc.d[i * 4 + 3]; if a > 1e-6 { for j in 0..3 { acc.d[i * 4 + j] /= a; } acc.d[i * 4 + 3] = a / n as f32; } } Some(acc)
 }

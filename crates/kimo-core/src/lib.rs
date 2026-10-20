@@ -25,6 +25,7 @@ pub mod flow;
 pub mod planar;
 pub mod motion;
 pub mod masks;
+pub mod shutter;
 pub mod confetti;
 pub mod shards;
 pub mod shard_look;
