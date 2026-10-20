@@ -286,7 +286,13 @@ fn source_frame_h(p: &Project, c: &Clip, lt_in: f64, cache: &Cache) -> (Frame, O
         Source::Solid { color } => { let fa = prop_or(c, "fill_alpha", lt, 1.0).clamp(0.0, 1.0) as f32; for i in 0..w*h { f.d[i*4]=color[0] as f32; f.d[i*4+1]=color[1] as f32; f.d[i*4+2]=color[2] as f32; f.d[i*4+3]=fa; } }, // fill_alpha: the colour's alpha (add_clip) or set_property; layer opacity composes with it
         Source::Gradient { c1, c2 } => { // end alphas from the colours (add_clip color/color2 alpha), interpolated premultiplied; x fill_alpha; layer opacity composes in blend
             let (a1, a2, fa) = (prop_or(c, "color_alpha", lt, 1.0).clamp(0.0, 1.0), prop_or(c, "color2_alpha", lt, 1.0).clamp(0.0, 1.0), prop_or(c, "fill_alpha", lt, 1.0).clamp(0.0, 1.0));
-            for y in 0..h { let k = y as f64 / h as f64; for x in 0..w { let i=(y*w+x)*4;
+            // k = position from color (0) to color2 (1): vertical by default (unchanged), at gradient_angle (0 top->bottom, 90 left->right; the
+            // corners reach 0 and 1), or radial (gradient_radial: centre 0, corners 1). Pixel centres for the new shapes.
+            let radial = prop_or(c, "gradient_radial", lt, 0.0) >= 0.5; let ang = if c.props.contains_key("gradient_angle") { Some(prop_or(c, "gradient_angle", lt, 0.0).to_radians()) } else { None };
+            let (wf, hf) = (w as f64, h as f64); let (sx, cy) = ang.map_or((0.0, 1.0), |r| (r.sin(), r.cos())); let span = (wf * sx).abs() + (hf * cy).abs(); let rmax = (wf * wf + hf * hf).sqrt() / 2.0;
+            let pos = |x: usize, y: usize| -> f64 { if radial { let (dx, dy) = (x as f64 + 0.5 - wf / 2.0, y as f64 + 0.5 - hf / 2.0); ((dx * dx + dy * dy).sqrt() / rmax).clamp(0.0, 1.0) }
+                else if ang.is_some() { (((x as f64 + 0.5 - wf / 2.0) * sx + (y as f64 + 0.5 - hf / 2.0) * cy) / span + 0.5).clamp(0.0, 1.0) } else { y as f64 / hf } };
+            for y in 0..h { for x in 0..w { let k = pos(x, y); let i=(y*w+x)*4;
                 if a1 == 1.0 && a2 == 1.0 { for j in 0..3 { f.d[i+j] = (c1[j]*(1.0-k)+c2[j]*k) as f32; } f.d[i+3]=fa as f32; continue; }
                 let al = if a1 == a2 { a1 } else { a1*(1.0-k)+a2*k };
                 for j in 0..3 { f.d[i+j] = if al > 0.0 { ((c1[j]*a1*(1.0-k)+c2[j]*a2*k)/al) as f32 } else { (c1[j]*(1.0-k)+c2[j]*k) as f32 }; } f.d[i+3]=(al*fa) as f32; } } },

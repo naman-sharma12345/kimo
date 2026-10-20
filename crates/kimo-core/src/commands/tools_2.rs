@@ -79,7 +79,7 @@ pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
         run: |ss, a| { let k = str_arg(a, "property")?.to_string(); let t = num_arg(a, "time")?; let v = num_arg(a, "value")?;
             let e: Ease = serde_json::from_value(a.get("ease").cloned().unwrap_or(json!("linear"))).map_err(|e| e.to_string())?;
             let eid = a.get("effect_id").and_then(|v| v.as_str()).map(String::from);
-            if eid.is_none() && !matches!(k.as_str(), "opacity" | "x" | "y" | "scale" | "rotation" | "rot_x" | "rot_y" | "pos_z" | "backface" | "fill_alpha" | "stroke_alpha" | "flow_blur" | "flow_quality" | "pin_gain" | "reveal" | "path") { return Err(format!("unknown clip property '{k}': nothing reads it. Valid: opacity, x, y, scale, rotation, rot_x, rot_y, pos_z, backface, fill_alpha, stroke_alpha. To keyframe an effect param pass effect_id.")); }
+            if eid.is_none() && !matches!(k.as_str(), "opacity" | "x" | "y" | "scale" | "rotation" | "rot_x" | "rot_y" | "pos_z" | "backface" | "fill_alpha" | "stroke_alpha" | "gradient_angle" | "flow_blur" | "flow_quality" | "pin_gain" | "reveal" | "path") { return Err(format!("unknown clip property '{k}': nothing reads it. Valid: opacity, x, y, scale, rotation, rot_x, rot_y, pos_z, backface, fill_alpha, stroke_alpha. To keyframe an effect param pass effect_id.")); }
             let c = clip(&mut ss.project, a)?;
             let pr = match eid { Some(id) => c.effects.iter_mut().find(|x| x.id == id).ok_or("no such effect")?.params.entry(k).or_insert(Prop::new(v)), None => c.props.entry(k).or_insert(Prop::new(v)) };
             pr.set_key(t, v, e); Ok(json!({"keys":pr.keys.len()})) } },

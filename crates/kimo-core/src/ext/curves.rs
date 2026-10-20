@@ -2,7 +2,7 @@
 use super::kit::*;
 use crate::keyframe::{Ease, Handle, Key, Prop};
 
-const CLIP_PROPS: &[&str] = &["opacity", "x", "y", "scale", "rotation", "rot_x", "rot_y", "pos_z", "backface", "fill_alpha", "stroke_alpha", "flow_blur", "flow_quality", "pin_gain", "reveal", "path"];
+const CLIP_PROPS: &[&str] = &["opacity", "x", "y", "scale", "rotation", "rot_x", "rot_y", "pos_z", "backface", "fill_alpha", "stroke_alpha", "gradient_angle", "flow_blur", "flow_quality", "pin_gain", "reveal", "path"];
 fn finite(a: &Value, k: &str, what: &str, i: usize) -> Result<f64, String> { let x = a.get(k).and_then(|v| v.as_f64()).ok_or_else(|| format!("keys[{i}].{what} must be a number"))?; if !x.is_finite() { return Err(format!("keys[{i}].{what} must be finite")); } Ok(x) }
 fn parse_keys(a: &Value) -> Result<Vec<Key>, String> {
     let ks = a.get("keys").and_then(|v| v.as_array()).ok_or_else(|| crate::errors::arg_err(a, "keys", "array"))?; if ks.is_empty() { return Err("keys must have at least one key".into()); }

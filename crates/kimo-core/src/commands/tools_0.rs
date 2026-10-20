@@ -20,9 +20,9 @@ pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
     Command { name: "add_track", description: "Add a track on top of the stack. Higher tracks composite over lower ones.", mutates: true,
         schema: obj(vec![], &[]),
         run: |ss, _| { let id = ss.project.gen_id("track"); ss.project.tracks.push(Track { id: id.clone(), clips: vec![], locked: false, muted: false, name: String::new() }); Ok(json!({"track_id":id})) } },
-    Command { name: "add_clip", description: "Add a clip to a track. source_type: media (needs asset_id), solid (color [r,g,b] 0..1), gradient (color, color2).", mutates: true,
+    Command { name: "add_clip", description: "Add a clip to a track. source_type: media (needs asset_id), solid (color [r,g,b] 0..1), gradient (color, color2; linear at angle, or radial).", mutates: true,
         schema: obj(vec![("track_id", s("target track")), ("source_type", json!({"type":"string","enum":["media","solid","gradient"]})), ("asset_id", s("for media")),
-            ("color", col_schema("", false)), ("color2", col_schema("gradient end colour", false)),
+            ("color", col_schema("", false)), ("color2", col_schema("gradient end colour", false)), ("gradient", json!({"type":"string","enum":["linear","radial"],"description":"gradient shape: linear (default) or radial (color at the centre, color2 at the corners)"})), ("angle", n("linear gradient direction in degrees, color -> color2: 0 top->bottom (default), 90 left->right, 180 bottom->top; keyframe as gradient_angle")),
             ("start", n("timeline start seconds")), ("duration", n("seconds")), ("in_point", n("source offset seconds")), ("speed", n("playback speed, default 1")), ("fit", json!({"type":"string","enum":["contain","cover","stretch"],"description":"media framing: contain (letterbox, default), cover (fill + center crop), stretch"}))], &["track_id","source_type","start","duration"]),
         run: |ss, a| { let tid = str_arg(a, "track_id")?.to_string();
             let src = match str_arg(a, "source_type")? {
@@ -35,6 +35,9 @@ pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
             // A solid's colour alpha ("#rrggbbaa" / [r,g,b,a]) was dropped and the solid drew opaque; it is the clip's fill_alpha, as on add_shape (separate from layer opacity, composed with it).
             if matches!(c.source, Source::Solid { .. }) { let al = color_alpha(a, "color"); if al < 1.0 { c.props.insert("fill_alpha".into(), Prop::new(al)); } }
             // A gradient's end alphas were dropped too (a "#00000000" -> "#000000cc" scrim drew opaque black): kept as color_alpha / color2_alpha, only when < 1.
+            if matches!(c.source, Source::Gradient { .. }) { if let Some(v) = a.get("angle").filter(|v| !v.is_null()) { let d = v.as_f64().filter(|d| d.is_finite()).ok_or("angle must be a finite number of degrees")?; c.props.insert("gradient_angle".into(), Prop::new(d)); }
+                match a.get("gradient").and_then(|v| v.as_str()) { None | Some("linear") => {} Some("radial") => { c.props.insert("gradient_radial".into(), Prop::new(1.0)); } Some(o) => return Err(format!("bad gradient '{o}': use linear or radial")) } }
+            else if a.get("angle").is_some_and(|v| !v.is_null()) || a.get("gradient").is_some_and(|v| !v.is_null()) { return Err("angle and gradient apply to source_type gradient only".into()); }
             if matches!(c.source, Source::Gradient { .. }) { for k in ["color", "color2"] { let al = color_alpha(a, k); if al < 1.0 { c.props.insert(format!("{k}_alpha"), Prop::new(al)); } } }
             match a.get("fit").and_then(|v| v.as_str()) { Some("cover") => { c.props.insert("fit".into(), Prop::new(1.0)); } Some("stretch") => { c.props.insert("fit".into(), Prop::new(2.0)); } Some("contain") | None => {} Some(o) => return Err(format!("bad fit {o}; use contain, cover or stretch")) }
             let tr = ss.project.tracks.iter_mut().find(|t| t.id == tid).ok_or(format!("no track '{tid}'"))?; tr.clips.push(std::sync::Arc::new(c));

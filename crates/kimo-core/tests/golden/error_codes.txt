@@ -63,7 +63,7 @@
 62 audio_speech_intervals	not_found	param=	hint=valid clip ids (up to 10): clip3
 63 set_keyframes	other	param=	hint=
 64 set_keyframes	other	param=	hint=
-65 set_keyframes	invalid_value	param=property	hint=valid values: opacity, x, y, scale, rotation, rot_x, rot_y, pos_z, backface, fill_alpha, stroke_alpha, flow_blur, flow_quality, pin_gain, reveal, path. To keyframe an effect param pass effect_id
+65 set_keyframes	invalid_value	param=property	hint=valid values: opacity, x, y, scale, rotation, rot_x, rot_y, pos_z, backface, fill_alpha, stroke_alpha, gradient_angle, flow_blur, flow_quality, pin_gain, reveal, path. To keyframe an effect param pass effect_id
 66 sample_property	other	param=	hint=
 67 sample_property	other	param=	hint=
 68 sample_property	other	param=space	hint=valid values for 'space' (2): timeline, clip

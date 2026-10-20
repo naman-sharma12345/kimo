@@ -63,7 +63,7 @@
 62 audio_speech_intervals {"target":{"clip_id":"missing"}}	no such clip 'missing'
 63 set_keyframes {"clip_id":"clip3","keys":[{"t":0.0}],"property":"opacity"}	keys[0].v must be a number
 64 set_keyframes {"clip_id":"clip3","keys":[],"property":"opacity"}	keys must have at least one key
-65 set_keyframes {"clip_id":"clip3","keys":[{"t":0.0,"v":1.0}],"property":"nope"}	unknown clip property 'nope': nothing reads it. Valid: opacity, x, y, scale, rotation, rot_x, rot_y, pos_z, backface, fill_alpha, stroke_alpha, flow_blur, flow_quality, pin_gain, reveal, path. To keyframe an effect param pass effect_id.
+65 set_keyframes {"clip_id":"clip3","keys":[{"t":0.0,"v":1.0}],"property":"nope"}	unknown clip property 'nope': nothing reads it. Valid: opacity, x, y, scale, rotation, rot_x, rot_y, pos_z, backface, fill_alpha, stroke_alpha, gradient_angle, flow_blur, flow_quality, pin_gain, reveal, path. To keyframe an effect param pass effect_id.
 66 sample_property {"clip_id":"clip3","property":"nope","times":[0.0]}	clip has no property 'nope'. Properties on this clip: opacity, reveal, rotation, scale, x, y
 67 sample_property {"clip_id":"clip3","property":"x","times":[]}	times needs 1 to 100000 numbers
 68 sample_property {"clip_id":"clip3","property":"x","space":"zzz","times":[0.0]}	space is not allowed. Valid: timeline, clip
