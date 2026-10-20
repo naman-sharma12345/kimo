@@ -272,7 +272,7 @@ set_audio a4b4452073f105be
 set_audio_effect_key 02e5c3c88e7432d6
 set_audio_pan f9b02d2054de6500
 set_audio_volume_key c8b08d503a6938da
-set_blend 6b6388f1e1e4e0ad
+set_blend cdad51ace4f9fd7f
 set_camera d916f0fec16525a1
 set_camera_keyframe 693cc701c8fca722
 set_caption_style 7f737a7675810610

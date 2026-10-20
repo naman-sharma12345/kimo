@@ -541,7 +541,7 @@ function editOps2(state, MODES, tl, ev, A) {
     if (!keys.length) { c.fx = (c.fx || []).filter(x => x !== 'ramp'); c.keys = (c.keys || []).filter(k => !k._ramp); c._flash = now(); return true; }
     badge(c, 'ramp', /^[\d.]+×$/); c.keys = [...(c.keys || []).filter(k => !k._ramp), ...keys.map(x => ({ t: c.s + x, _ramp: true }))]; return true;
   }
-  if (n === 'set_blend') { if (!A.mode) return false; badge(c, String(A.mode), /^(normal|add|multiply|screen|overlay)$/); return true; }
+  if (n === 'set_blend') { if (!A.mode) return false; badge(c, String(A.mode), /^(normal|add|multiply|screen|overlay|darken|lighten|difference|exclusion|soft_light|hard_light|color_dodge|color_burn|linear_burn|linear_dodge|vivid_light|linear_light|pin_light|hue|saturation|color|luminosity)$/); return true; }
   if (n === 'set_echo') { badge(c, N(A.count) != null ? `echo ×${Math.round(N(A.count))}` : 'echo', /^echo/); return true; }
   if (n === 'set_flow_blur') { badge(c, 'flow blur', /^flow blur/); return true; }
   if (n === 'remove_audio_effect') { const fx = A.effect_id ?? A.effect ?? A.name; if (fx == null || !(c.fx || []).length) return false; c.fx = c.fx.filter(x => x !== fx); c._flash = now(); return true; }

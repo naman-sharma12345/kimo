@@ -469,10 +469,14 @@ fn transform_bb(src: &Frame, bb: Option<(usize, usize, usize, usize)>, scale: f6
     prof("tb_loop", tpl); let _ = ow; o
 }
 
+/// Blend modes the compositor knows, in set_blend's schema order. The first five keep their original arithmetic; the rest
+/// follow W3C Compositing and Blending Level 1: B(cb, cs) on unpremultiplied colour clamped to 0..1, cs' = (1 - ab) cs + ab B,
+/// then source-over with the layer's alpha (the canvas holds premultiplied colour, sources are straight).
+pub const BLEND_MODES: &[&str] = &["normal", "add", "multiply", "screen", "overlay", "darken", "lighten", "difference", "exclusion", "soft_light", "hard_light", "color_dodge", "color_burn", "linear_burn", "linear_dodge", "vivid_light", "linear_light", "pin_light", "hue", "saturation", "color", "luminosity"];
 fn blend(dst: &mut Frame, src: &Frame, opacity: f32, mode: &str, mask: Option<&dyn Fn(usize, usize) -> f32>) { blend_region(dst, src, opacity, mode, mask, None) }
 /// `region` (x0,y0,x1,y1 inclusive) must contain every pixel of `src` with alpha > 0; pixels outside are skipped without scanning (bit-identical to a full scan).
 fn blend_region(dst: &mut Frame, src: &Frame, opacity: f32, mode: &str, mask: Option<&dyn Fn(usize, usize) -> f32>, region: Option<(usize, usize, usize, usize)>) {
-    let w = dst.w; let m_id = match mode { "add" => 1, "multiply" => 2, "screen" => 3, "overlay" => 4, _ => 0 };
+    let w = dst.w; let m_id = match mode { "add" => 1, "multiply" => 2, "screen" => 3, "overlay" => 4, m => BLEND_MODES.iter().position(|x| *x == m).filter(|&k| k >= 5).unwrap_or(0) };
     let (ry0, ry1, rx0, rx1) = match region { Some((a, b, c, d)) => (b.min(dst.h), (d + 1).min(dst.h), a.min(w), (c + 1).min(w)), None => (0, dst.h, 0, w) };
     for y in ry0..ry1 {
         let srow = &src.d[y * w * 4..(y + 1) * w * 4];
@@ -480,6 +484,7 @@ fn blend_region(dst: &mut Frame, src: &Frame, opacity: f32, mode: &str, mask: Op
         let (mut x0, mut x1) = (rx0, rx1); while x0 < rx1 && srow[x0 * 4 + 3] <= 0.0 { x0 += 1; } if x0 == rx1 { continue; } while x1 > x0 && srow[(x1 - 1) * 4 + 3] <= 0.0 { x1 -= 1; }
         for x in x0..x1 { let i = (y * w + x) * 4;
             let a = srow[x * 4 + 3] * opacity * if let Some(m) = mask { m(x, y) } else { 1.0 }; if a <= 0.0 { continue; }
+            if m_id >= 5 { w3c_px(&mut dst.d[i..i + 4], [srow[x * 4], srow[x * 4 + 1], srow[x * 4 + 2]], a, m_id); continue; }
             for j in 0..3 {
                 let (b, s) = (dst.d[i + j], srow[x * 4 + j]);
                 let r = match m_id { 1 => b + s, 2 => b * s, 3 => 1.0 - (1.0 - b) * (1.0 - s), 4 => if b < 0.5 { 2.0 * b * s } else { 1.0 - 2.0 * (1.0 - b) * (1.0 - s) }, _ => s };
@@ -487,6 +492,58 @@ fn blend_region(dst: &mut Frame, src: &Frame, opacity: f32, mode: &str, mask: Op
             }
             dst.d[i + 3] = dst.d[i + 3] + a * (1.0 - dst.d[i + 3]);
         }
+    }
+}
+
+/// One W3C blend-mode pixel: `d` is the premultiplied canvas pixel, `cs` the straight source colour, `a` the layer's effective alpha.
+fn w3c_px(d: &mut [f32], cs: [f32; 3], a: f32, m: usize) {
+    let ab = d[3]; let cbp = [d[0], d[1], d[2]];
+    let cb = if ab > 0.0 { cbp.map(|v| (v / ab).clamp(0.0, 1.0)) } else { [0.0; 3] };
+    let bm = w3c_blend(m, cb, cs.map(|v| v.clamp(0.0, 1.0)));
+    for j in 0..3 { d[j] = a * ((1.0 - ab) * cs[j] + ab * bm[j]) + (1.0 - a) * cbp[j]; }
+    d[3] = ab + a * (1.0 - ab);
+}
+
+fn w3c_dodge(b: f32, s: f32) -> f32 { if b <= 0.0 { 0.0 } else if s >= 1.0 { 1.0 } else { (b / (1.0 - s)).min(1.0) } }
+fn w3c_burn(b: f32, s: f32) -> f32 { if b >= 1.0 { 1.0 } else if s <= 0.0 { 0.0 } else { 1.0 - ((1.0 - b) / s).min(1.0) } }
+fn w3c_lum(c: [f32; 3]) -> f32 { 0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2] }
+fn w3c_sat(c: [f32; 3]) -> f32 { c[0].max(c[1]).max(c[2]) - c[0].min(c[1]).min(c[2]) }
+fn w3c_clip(mut c: [f32; 3]) -> [f32; 3] {
+    let l = w3c_lum(c); let n = c[0].min(c[1]).min(c[2]); let x = c[0].max(c[1]).max(c[2]);
+    if n < 0.0 { c = c.map(|v| l + (v - l) * l / (l - n)); }
+    if x > 1.0 { c = c.map(|v| l + (v - l) * (1.0 - l) / (x - l)); }
+    c
+}
+fn w3c_set_lum(c: [f32; 3], l: f32) -> [f32; 3] { let d = l - w3c_lum(c); w3c_clip(c.map(|v| v + d)) }
+fn w3c_set_sat(c: [f32; 3], s: f32) -> [f32; 3] {
+    // sort_by is stable: tied channels keep index order
+    let mut k = [0usize, 1, 2]; k.sort_by(|&p, &q| c[p].total_cmp(&c[q]));
+    let (lo, mid, hi) = (k[0], k[1], k[2]); let mut o = [0.0f32; 3];
+    if c[hi] > c[lo] { o[mid] = (c[mid] - c[lo]) * s / (c[hi] - c[lo]); o[hi] = s; }
+    o
+}
+/// W3C B(cb, cs) for the BLEND_MODES index `m` (5..=21); `b` and `s` are unpremultiplied and in 0..1.
+fn w3c_blend(m: usize, b: [f32; 3], s: [f32; 3]) -> [f32; 3] {
+    let sep = |f: fn(f32, f32) -> f32| [f(b[0], s[0]), f(b[1], s[1]), f(b[2], s[2])];
+    match m {
+        5 => sep(|b, s| b.min(s)),
+        6 => sep(|b, s| b.max(s)),
+        7 => sep(|b, s| (b - s).abs()),
+        8 => sep(|b, s| b + s - 2.0 * b * s),
+        9 => sep(|b, s| if s <= 0.5 { b - (1.0 - 2.0 * s) * b * (1.0 - b) } else { let d = if b <= 0.25 { ((16.0 * b - 12.0) * b + 4.0) * b } else { b.sqrt() }; b + (2.0 * s - 1.0) * (d - b) }),
+        10 => sep(|b, s| if s <= 0.5 { b * 2.0 * s } else { let t = 2.0 * s - 1.0; b + t - b * t }),
+        11 => sep(w3c_dodge),
+        12 => sep(w3c_burn),
+        13 => sep(|b, s| (b + s - 1.0).clamp(0.0, 1.0)),
+        14 => sep(|b, s| (b + s).clamp(0.0, 1.0)),
+        15 => sep(|b, s| if s <= 0.5 { w3c_burn(b, 2.0 * s) } else { w3c_dodge(b, 2.0 * (s - 0.5)) }),
+        16 => sep(|b, s| (b + 2.0 * s - 1.0).clamp(0.0, 1.0)),
+        17 => sep(|b, s| if s <= 0.5 { b.min(2.0 * s) } else { b.max(2.0 * s - 1.0) }),
+        18 => w3c_set_lum(w3c_set_sat(s, w3c_sat(b)), w3c_lum(b)),
+        19 => w3c_set_lum(w3c_set_sat(b, w3c_sat(s)), w3c_lum(b)),
+        20 => w3c_set_lum(s, w3c_lum(b)),
+        21 => w3c_set_lum(b, w3c_lum(s)),
+        _ => s,
     }
 }
 
