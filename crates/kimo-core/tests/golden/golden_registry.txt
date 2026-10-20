@@ -29,7 +29,7 @@ add_shape_modifier 25cf6df0b8d052db
 add_shard_burst 41b2c108dde0a230
 add_speed_lines 0db4bddd46e7a057
 add_text e504fc3dce60034a
-add_text_animator f9b22a0205bc2780
+add_text_animator a76965da7be4b400
 add_title 1461c7f60bd47216
 add_track cf1da67768a18dbb
 add_transition 5c58371f3cdcdcc0
@@ -267,7 +267,7 @@ sample_sdf_raw b0e579f1cde1279c
 sample_texture_material 4a03308329ef702a
 save_project d51a7abb5be457b3
 session_stats 08b78ec5daffb184
-set_animator_keyframe f4f6a32196a50b2b
+set_animator_keyframe 966192e400dafaf5
 set_audio a4b4452073f105be
 set_audio_effect_key 02e5c3c88e7432d6
 set_audio_pan f9b02d2054de6500

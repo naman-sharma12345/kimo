@@ -62,12 +62,14 @@ fn shape_amount(shape: &str, x: f32, smooth: f32) -> f32 {
         "smooth" => if (0.0..=1.0).contains(&x) { let t = 1.0 - (2.0 * x - 1.0).abs(); t * t * (3.0 - 2.0 * t) } else { 0.0 }, _ => soft(x) }
 }
 #[derive(Clone, Copy)]
-struct U { x: f32, y: f32, sc: f32, rot: f32, op: f32, track: f32, blur: f32 }
+/// fs / ft: Fill Color animators composed as an affine pair, unit colour = base * fs + ft (identity 1 / 0 when no animator fills).
+struct U { x: f32, y: f32, sc: f32, rot: f32, op: f32, track: f32, blur: f32, fs: f32, ft: [f32; 3] }
 fn animate(an: &[TextAnimator], t: f64, g: &G, nchar: usize, nword: usize, nline: usize, ci: usize) -> U {
-    let mut u = U { x: 0.0, y: 0.0, sc: 1.0, rot: 0.0, op: 1.0, track: 0.0, blur: 0.0 };
+    let mut u = U { x: 0.0, y: 0.0, sc: 1.0, rot: 0.0, op: 1.0, track: 0.0, blur: 0.0, fs: 1.0, ft: [0.0; 3] };
     for a in an { let (n, i) = match a.unit.as_str() { "word" => (nword, g.word), "line" => (nline, g.line), _ => (nchar, ci) }; let i = if a.random { let hh = |k: usize| { let mut x = (k as u64).wrapping_add(a.seed.wrapping_mul(0x9E3779B97F4A7C15)).wrapping_mul(0xBF58476D1CE4E5B9); x ^= x >> 29; x = x.wrapping_mul(0x94D049BB133111EB); x ^ (x >> 32) }; let hi = hh(i); (0..n).filter(|&k| { let h = hh(k); h < hi || (h == hi && k < i) }).count() } else { i }; let pos = (i as f32 + 0.5) / n.max(1) as f32;
-        let (s0, e0, off, sm) = (a.start.at(t) as f32, a.end.at(t) as f32, a.offset.at(t) as f32, a.smoothness.at(t) as f32); let (s, e) = (s0 + off, e0 + off); let x = (pos - s) / (e - s).max(1e-4); let k = shape_amount(&a.shape, x, sm);
-        if k <= 0.0 { continue; } u.x += a.x.at(t) as f32 * k; u.y += a.y.at(t) as f32 * k; u.sc *= 1.0 + (a.scale.at(t) as f32 - 1.0) * k; u.rot += a.rotation.at(t) as f32 * k; u.op *= 1.0 + (a.opacity.at(t) as f32 - 1.0) * k; u.track += a.tracking.at(t) as f32 * k; u.blur += a.blur.at(t) as f32 * k; }
+        let (s0, e0, off, sm) = (a.start.at(t) as f32, a.end.at(t) as f32, a.offset.at(t) as f32, a.smoothness.at(t) as f32); let (s, e) = (s0 + off, e0 + off); let x = (pos - s) / (e - s).max(1e-4); let mut k = shape_amount(&a.shape, x, sm); if let Some(e) = a.ease { k = e.apply(k as f64) as f32; }
+        if k <= 0.0 { continue; }
+        if let Some(fc) = a.fill { let m = (k * a.fill_amount.as_ref().map_or(1.0, |p| p.at(t)) as f32).clamp(0.0, 1.0); u.fs *= 1.0 - m; for j in 0..3 { u.ft[j] = u.ft[j] * (1.0 - m) + fc[j] as f32 * m; } } u.x += a.x.at(t) as f32 * k; u.y += a.y.at(t) as f32 * k; u.sc *= 1.0 + (a.scale.at(t) as f32 - 1.0) * k; u.rot += a.rotation.at(t) as f32 * k; u.op *= 1.0 + (a.opacity.at(t) as f32 - 1.0) * k; u.track += a.tracking.at(t) as f32 * k; u.blur += a.blur.at(t) as f32 * k; }
     u
 }
 
@@ -95,11 +97,13 @@ pub fn measure_text(text: &str, font_name: &str, size: f64, spacing: f64, weight
     let (font_file, substituted) = resolve_font_info(font_name);
     Ok(TextMetrics { width: bw as f64, height: bh as f64, lines, origin: (bx as f64, by as f64), ink: ink.map(|i| [i[0] as f64, i[1] as f64, i[2] as f64, i[3] as f64]), font_file, substituted })
 }
-fn coverage(cw: usize, ch: usize, text: &str, f: &FontVec, size: f32, spacing: f32, align: &str, reveal: f64, fx: Option<&TextFx>, t: f64) -> (Vec<f32>, [f32; 4]) {
+fn coverage(cw: usize, ch: usize, text: &str, f: &FontVec, size: f32, spacing: f32, align: &str, reveal: f64, fx: Option<&TextFx>, t: f64) -> (Vec<f32>, [f32; 4], Option<Vec<[f32; 4]>>) {
     let (glyphs, bw, bh, nl, nwords, _) = layout(text, f, size, spacing, align, cw as f32, fx); let sf = f.as_scaled(PxScale::from(size));
     let nchar = glyphs.len(); let shown = (reveal.clamp(0.0, 1.0) * nchar as f64).ceil() as usize;
     let (bx, by) = block_origin(cw as f32, ch as f32, bw, bh); let mut cov = vec![0f32; cw * ch];
     let empty: Vec<TextAnimator> = vec![]; let an = fx.map(|x| &x.animators).unwrap_or(&empty);
+    // per-pixel fill pair (ft.r, ft.g, ft.b, fs); allocated only when some animator has a Fill Color, identity elsewhere
+    let mut tint: Option<Vec<[f32; 4]>> = if an.iter().any(|a| a.fill.is_some()) { Some(vec![[0.0, 0.0, 0.0, 1.0]; cw * ch]) } else { None };
     let plen = fx.and_then(|x| x.path.as_ref()).map(|pp| { let mut l = 0f64; let mut pv = crate::motion::sample(pp, 0.0, cw, ch); for k in 1..=200 { let c = crate::motion::sample(pp, k as f64 / 200.0, cw, ch); l += (c.0 - pv.0).hypot(c.1 - pv.1); pv = c; } l as f32 }).unwrap_or(1.0);
     let mut track_acc = vec![0f32; nl + 1]; let mut last_line = usize::MAX;
     let mut line_tr = vec![0f32; nl + 1]; for (ci, g) in glyphs.iter().enumerate().take(shown) { line_tr[g.line] += animate(an, t, g, nchar, nwords, nl, ci).track; }
@@ -111,15 +115,18 @@ fn coverage(cw: usize, ch: usize, text: &str, f: &FontVec, size: f32, spacing: f
         let p1 = pd(t); u.x += p1.0; u.y += p1.1; u.rot += p1.2;
         let gid = f.glyph_id(g.c); let shift = match align { "left" => 0.0, "right" => -line_tr[g.line], _ => -line_tr[g.line] * 0.5 }; let (ox, oy) = (bx + g.x + tr + shift, by + g.y);
         let u1 = u; let mut u0 = animate(an, t - 0.5 / 30.0, g, nchar, nwords, nl, ci); { let p0 = pd(t - 0.5 / 30.0); u0.x += p0.0; u0.y += p0.1; u0.rot += p0.2; } let dist = ((u1.x - u0.x).powi(2) + (u1.y - u0.y).powi(2)).sqrt() + (u1.sc - u0.sc).abs() * size * 0.5 + (u1.rot - u0.rot).abs() * 0.3; let ns = if dist > 0.8 { ((dist / 1.5).ceil() as usize).clamp(2, 10) } else { 1 }; let wgt = 1.0 / ns as f32;
-        for si in 0..ns { let ff = if ns > 1 { (si as f32 + 0.5) / ns as f32 } else { 1.0 }; let u = U { x: u0.x + (u1.x - u0.x) * ff, y: u0.y + (u1.y - u0.y) * ff, sc: u0.sc + (u1.sc - u0.sc) * ff, rot: u0.rot + (u1.rot - u0.rot) * ff, op: u1.op, track: u1.track, blur: u1.blur };
+        for si in 0..ns { let ff = if ns > 1 { (si as f32 + 0.5) / ns as f32 } else { 1.0 }; let u = U { x: u0.x + (u1.x - u0.x) * ff, y: u0.y + (u1.y - u0.y) * ff, sc: u0.sc + (u1.sc - u0.sc) * ff, rot: u0.rot + (u1.rot - u0.rot) * ff, op: u1.op, track: u1.track, blur: u1.blur, fs: u1.fs, ft: u1.ft };
         let (gcx, gcy) = (ox + g.adv * 0.5, oy - sf.ascent() * 0.35);
         let band = if fx.map(|x| x.line_mask).unwrap_or(false) { let lh = sf.height() * fx.map(|x| x.line_spacing as f32).unwrap_or(1.15); Some((by + g.line as f32 * lh - lh * 0.02, by + (g.line as f32 + 1.0) * lh + lh * 0.02)) } else { None };
-        let put = |cov: &mut Vec<f32>, xx: i32, yy: i32, v: f32| { let wgt = wgt; if xx < 0 || yy < 0 || xx >= cw as i32 || yy >= ch as i32 { return; } if let Some((y0, y1)) = band { let yy = yy as f32 + 0.5; if yy < y0 || yy > y1 { return; } } let i = yy as usize * cw + xx as usize; let a = (v * u.op).min(1.0); if ns > 1 { cov[i] = (cov[i] + a * wgt).min(1.0); } else if a > cov[i] { cov[i] = a; } };
+        // tint (only when an animator fills): the pixel takes this unit's fill pair where its coverage wins (max path) or last (accumulate path)
+        let put = |cov: &mut Vec<f32>, tint: &mut Option<Vec<[f32; 4]>>, xx: i32, yy: i32, v: f32| { let wgt = wgt; if xx < 0 || yy < 0 || xx >= cw as i32 || yy >= ch as i32 { return; } if let Some((y0, y1)) = band { let yy = yy as f32 + 0.5; if yy < y0 || yy > y1 { return; } } let i = yy as usize * cw + xx as usize; let a = (v * u.op).min(1.0);
+            if let Some(tb) = tint.as_mut() { if ns > 1 || a >= cov[i] { tb[i] = [u.ft[0], u.ft[1], u.ft[2], u.fs]; } }
+            if ns > 1 { cov[i] = (cov[i] + a * wgt).min(1.0); } else if a > cov[i] { cov[i] = a; } };
         if u.rot.abs() < 0.01 {
             let s = size * u.sc.max(0.01); let (px, py) = (gcx + u.x - (gcx - ox) * u.sc + 0.0, gcy + u.y + (oy - gcy) * u.sc);
             let sk = fx.map(|x| x.italic_skew as f32).unwrap_or(0.0);
             let glyph = gid.with_scale_and_position(PxScale::from(s), ab_glyph::point(px, py));
-            if let Some(o) = f.outline_glyph(glyph) { let b = o.px_bounds(); o.draw(|x, y, v| { let xx = b.min.x as i32 + x as i32; let yy = b.min.y as i32 + y as i32; let sh = (sk * (py - yy as f32)) as i32; put(&mut cov, xx + sh, yy, v); }); }
+            if let Some(o) = f.outline_glyph(glyph) { let b = o.px_bounds(); o.draw(|x, y, v| { let xx = b.min.x as i32 + x as i32; let yy = b.min.y as i32 + y as i32; let sh = (sk * (py - yy as f32)) as i32; put(&mut cov, &mut tint, xx + sh, yy, v); }); }
         } else {
             let glyph = gid.with_scale_and_position(PxScale::from(size), ab_glyph::point(0.0, 0.0));
             let Some(o) = f.outline_glyph(glyph) else { continue }; let b = o.px_bounds(); let (gw, gh) = ((b.max.x - b.min.x).ceil() as usize + 2, (b.max.y - b.min.y).ceil() as usize + 2); let mut loc = vec![0f32; gw * gh];
@@ -131,19 +138,19 @@ fn coverage(cw: usize, ch: usize, text: &str, f: &FontVec, size: f32, spacing: f
                 let (dx, dy) = (xx as f32 + 0.5 - gcx - u.x, yy as f32 + 0.5 - gcy - u.y); let (rx, ry) = ((c_ * dx + s_ * dy) * inv, (-s_ * dx + c_ * dy) * inv);
                 let (sx, sy) = (rx + gcx - ox - lx0 - 0.5, ry + gcy - oy - ly0 - 0.5); if sx < 0.0 || sy < 0.0 || sx > (gw - 1) as f32 || sy > (gh - 1) as f32 { continue; }
                 let (x0, y0) = (sx.floor() as usize, sy.floor() as usize); let (x1, y1) = ((x0 + 1).min(gw - 1), (y0 + 1).min(gh - 1)); let (fx_, fy_) = (sx - x0 as f32, sy - y0 as f32);
-                let v = (loc[y0 * gw + x0] * (1.0 - fx_) + loc[y0 * gw + x1] * fx_) * (1.0 - fy_) + (loc[y1 * gw + x0] * (1.0 - fx_) + loc[y1 * gw + x1] * fx_) * fy_; put(&mut cov, xx, yy, v); } }
+                let v = (loc[y0 * gw + x0] * (1.0 - fx_) + loc[y0 * gw + x1] * fx_) * (1.0 - fy_) + (loc[y1 * gw + x0] * (1.0 - fx_) + loc[y1 * gw + x1] * fx_) * fy_; put(&mut cov, &mut tint, xx, yy, v); } }
         }
         }
         if u.blur > 0.5 { /* per-unit blur approximated below by whole-mask softening when any unit blurs */ }
     }
     let blur_any = glyphs.iter().enumerate().take(shown).map(|(ci, g)| animate(an, t, g, nchar, nwords, nl, ci).blur).fold(0.0, f32::max);
     if blur_any > 0.5 { let mut m = Frame { w: cw, h: ch, d: vec![1.0; cw * ch * 4] }; for i in 0..cw * ch { m.d[i * 4] = cov[i]; } box_blur3(&mut m, (blur_any * 2.0) as usize); for i in 0..cw * ch { cov[i] = cov[i] * (1.0 - (blur_any / (blur_any + 4.0))) + m.d[i * 4] * (blur_any / (blur_any + 4.0)); } }
-    (cov, [bx, by, bw, bh])
+    (cov, [bx, by, bw, bh], tint)
 }
 
 pub fn render_text(fr: &mut Frame, text: &str, fontpath: &str, size: f64, col: [f64; 3], spacing: f64, stroke_w: f64, stroke_col: [f64; 3], shadow: f64, align: &str, reveal: f64, fx: Option<&TextFx>, t: f64) -> Result<(), String> {
     let f = font(fontpath, fx.map(|x| x.weight).unwrap_or(0.0))?; let upper; let text = if fx.map(|x| x.uppercase).unwrap_or(false) { upper = text.to_uppercase(); upper.as_str() } else { text }; let (w, h) = (fr.w, fr.h);
-    let (main, bounds) = coverage(w, h, text, &f, size as f32, spacing as f32, align, reveal, fx, t);
+    let (main, bounds, tint) = coverage(w, h, text, &f, size as f32, spacing as f32, align, reveal, fx, t);
     let over = |fr: &mut Frame, cov: &[f32], c: &dyn Fn(usize) -> [f32; 3], k: f32| { for i in 0..w * h { let a = cov[i] * k; if a <= 0.0 { continue; } let cc = c(i); let o = &mut fr.d[i * 4..i * 4 + 4]; let na = a + o[3] * (1.0 - a); for j in 0..3 { o[j] = (cc[j] * a + o[j] * o[3] * (1.0 - a)) / na.max(1e-6); } o[3] = na; } };
     // background box
     if let Some(fx) = fx { if let Some(bg) = fx.bg { let (x0, y0, x1, y1) = (bounds[0] - fx.bg_pad as f32, bounds[1] - fx.bg_pad as f32, bounds[0] + bounds[2] + fx.bg_pad as f32, bounds[1] + bounds[3] + fx.bg_pad as f32); let r = (fx.bg_radius as f32).min((x1 - x0) / 2.0).min((y1 - y0) / 2.0); let (cx, cy, hw, hh) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0, (x1 - x0) / 2.0, (y1 - y0) / 2.0);
@@ -160,6 +167,12 @@ pub fn render_text(fr: &mut Frame, text: &str, fontpath: &str, size: f64, col: [
         for dy in -r..=r { for dx in -r..=r { if ((dx * dx + dy * dy) as f64).sqrt() > stroke_w { continue; } for y in 0..h as i32 { let sy = y - dy; if sy < 0 || sy >= h as i32 { continue; } for x in 0..w as i32 { let sx = x - dx; if sx < 0 || sx >= w as i32 { continue; } let v = main[sy as usize * w + sx as usize]; let i = y as usize * w + x as usize; if v > st[i] { st[i] = v; } } } } }
         over(fr, &st, &|_| [stroke_col[0] as f32, stroke_col[1] as f32, stroke_col[2] as f32], 1.0); }
     let grad = fx.and_then(|x| x.gradient); let (by0, bh) = (bounds[1], bounds[3].max(1.0));
+    // Fill Color animators: base (solid or gradient, as below) * fs + ft per pixel; without a filling animator the match below runs as before
+    if let Some(tb) = tint.as_ref() {
+        let base = |i: usize| -> [f32; 3] { match grad { Some((a, b)) => { let y = (i / w) as f32; let t_ = ((y - by0) / bh).clamp(0.0, 1.0); [(a[0] + (b[0] - a[0]) * t_ as f64) as f32, (a[1] + (b[1] - a[1]) * t_ as f64) as f32, (a[2] + (b[2] - a[2]) * t_ as f64) as f32] } None => [col[0] as f32, col[1] as f32, col[2] as f32] } };
+        over(fr, &main, &|i| { let (c, q) = (base(i), tb[i]); [c[0] * q[3] + q[0], c[1] * q[3] + q[1], c[2] * q[3] + q[2]] }, 1.0);
+        return Ok(());
+    }
     match grad { Some((a, b)) => over(fr, &main, &|i| { let y = (i / w) as f32; let t_ = ((y - by0) / bh).clamp(0.0, 1.0); [(a[0] + (b[0] - a[0]) * t_ as f64) as f32, (a[1] + (b[1] - a[1]) * t_ as f64) as f32, (a[2] + (b[2] - a[2]) * t_ as f64) as f32] }, 1.0),
         None => over(fr, &main, &|_| [col[0] as f32, col[1] as f32, col[2] as f32], 1.0) }
     Ok(())

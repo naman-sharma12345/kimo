@@ -325,6 +325,11 @@ pub struct TextAnimator {
     pub x: Prop, pub y: Prop, pub scale: Prop, pub rotation: Prop, pub opacity: Prop, pub tracking: Prop, pub blur: Prop,
     /// Selector order: false = reading order, true = pseudo-random (AE 'Randomize Order'), stable per `seed`.
     #[serde(default)] pub random: bool, #[serde(default)] pub seed: u64,
+    /// AE Fill Color: selected units are tinted toward this colour by selector amount x `fill_amount` (None = 1.0). None = no tint.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub fill: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub fill_amount: Option<Prop>,
+    /// Reshapes the selector amount k -> ease(k) with the shared easing primitive. None = k untouched.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub ease: Option<crate::keyframe::Ease>,
 }
 
 /// Echo ghosts: `count` earlier (or later when spacing<0) copies of the layer at `spacing` seconds apart.

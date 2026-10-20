@@ -88,7 +88,7 @@ export function readRows(tool, R) {
 // A third element marks the row that also goes on the clip as a chip (text animators, path, style, weight).
 const CHIP = { add_text_animator: A => A.preset ?? A.kind ?? 'animator', set_text_path: () => 'on path', set_text_style: () => 'styled', set_text_weight: A => (A.weight != null ? `w${A.weight}` : 'weight') };
 const CALL = {
-  add_text_animator: (A, R) => [['Animator', String(A.preset ?? A.kind ?? 'custom'), true], ['Range', A.range ?? A.based_on ?? null]],
+  add_text_animator: (A, R) => [['Animator', String(A.preset ?? A.kind ?? 'custom'), true], ['Range', A.range ?? A.based_on ?? null], ['Fill', A.fill != null ? (rgb(A.fill) ?? String(A.fill)) : null], ['Ease', A.ease ?? null]],
   set_text_path: A => [['Text path', Array.isArray(A.points) ? `${A.points.length} points` : A.shape ? String(A.shape) : A.remove ? 'removed' : 'set', true], ['Start', A.start != null ? short(A.start) : null], ['Flip', A.flip != null ? short(A.flip) : null]],
   set_text_style: (A, R, C) => [['Text style', 'applied', true], ...argRows(A, 2), ['Props', fxCount(C)]],
   set_text_weight: (A, R, C) => [['Weight', A.weight != null ? short(A.weight) : 'default', true], ['Props', fxCount(C)]],

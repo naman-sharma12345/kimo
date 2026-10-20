@@ -180,7 +180,7 @@ fn dispatch_core(ss: &mut Session, name: &str, args: &Value) -> Result<Value, St
 }
 
 /// (tool, property, [(alias, canonical)]). The allowed set is the schema's own enum; anything the renderer accepts beyond it is in the schema or an alias here.
-const ENUM_GUARDS: &[(&str, &str, &[(&str, &str)])] = &[("add_text", "align", &[("centre", "center")]), ("set_mask", "shape", &[]), ("add_particles", "kind", &[]), ("add_text_animator", "unit", &[]),
+const ENUM_GUARDS: &[(&str, &str, &[(&str, &str)])] = &[("add_text", "align", &[("centre", "center")]), ("set_mask", "shape", &[]), ("add_particles", "kind", &[]), ("add_text_animator", "unit", &[]), ("add_text_animator", "ease", &[]),
     ("add_transition", "ease", &[]), ("add_transition", "kind", &[]), ("set_blend", "mode", &[])];
 fn guard_enums(name: &str, args: &Value) -> Result<Option<Value>, String> {
     let mut out: Option<Value> = None;
