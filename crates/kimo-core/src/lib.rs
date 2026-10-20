@@ -51,7 +51,7 @@ pub mod pixels;
 pub mod pixel_expr;
 pub mod shader_ops;
 pub mod resource_limits;
-pub mod tracking; pub mod roto;
+pub mod tracking; pub mod roto; pub mod robust_est; pub mod mask_track;
 pub mod edit;
 pub mod effects2;
 pub mod color;

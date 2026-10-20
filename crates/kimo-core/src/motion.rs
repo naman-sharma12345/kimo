@@ -42,7 +42,7 @@ pub fn smooth_points(pts: &[(f64, f64)], closed: bool, tension: f64) -> Vec<Path
     (0..n).map(|i| { let p = pts[i]; let (a, b) = if closed { (pts[(i + n - 1) % n], pts[(i + 1) % n]) } else { (pts[i.saturating_sub(1)], pts[(i + 1).min(n - 1)]) };
         let (tx, ty) = (b.0 - a.0, b.1 - a.1); let s = k * 3.0 / 3.0; let (ox, oy) = (tx * s, ty * s);
         let (ix, iy) = if !closed && i == 0 { (0.0, 0.0) } else { (-ox, -oy) }; let (ox, oy) = if !closed && i == n - 1 { (0.0, 0.0) } else { (ox, oy) };
-        PathPt { x: p.0, y: p.1, ix, iy, ox, oy, f: 0.0 } }).collect()
+        PathPt { x: p.0, y: p.1, ix, iy, ox, oy, f: 0.0, ..Default::default() } }).collect()
 }
 /// Preset paths in normalized canvas coords.
 pub fn preset(shape: &str, cx: f64, cy: f64, rx: f64, ry: f64) -> Option<(Vec<(f64, f64)>, bool)> {

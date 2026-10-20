@@ -351,6 +351,7 @@
 "track_features",
 "track_jitter_metrics",
 "track_long_gap",
+"track_mask",
 "track_matte",
 "track_mesh",
 "track_planar",
