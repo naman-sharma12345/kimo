@@ -277,7 +277,7 @@ set_camera d916f0fec16525a1
 set_camera_keyframe 11674e720d5c77f9
 set_caption_style 7f737a7675810610
 set_clip_input_color 35d16a2902039e00
-set_color_curve 68c1089a7a156224
+set_color_curve 8460ae79f970be75
 set_color_pipeline 24df4408488e6b0b
 set_color_wheels b592ec8e1088b5b2
 set_corner_pin 07dc397461d52ca0
