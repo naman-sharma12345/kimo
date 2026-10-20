@@ -718,6 +718,12 @@ function timelineOps1(tl, ev, fam) {
     const tr = findTrack(tl, T.track_id); if (!tr) return false;
     const k = n.startsWith('mute') ? 'mute' : 'solo'; tr[k] = P.on ?? P.value ?? !tr[k]; tr._flash = now(); return true;
   }
+  // auto_duck: the music track shows its duck (detect rms/speech, amount, hold)
+  if (fam === 'audio' && /^auto_duck/.test(n)) {
+    const R = P.result || {}, A = P.args || {};
+    const tr = findTrack(tl, T.track_id ?? A.track ?? R.track); if (!tr) return false;
+    tr.duck = { detect: R.mode ?? A.detect ?? 'rms', amount_db: A.amount_db ?? -12, hold: R.hold ?? A.hold ?? 0 }; tr._flash = now(); return true;
+  }
   if (fam === 'text' && P.text != null && P.s != null) {
     const tr = findTrack(tl, T.track_id || 'CAP'); if (!tr) return false;
     tr.clips = tr.clips || []; tr.clips.push({ s: +P.s, e: +(P.e ?? +P.s + 2), label: P.text, cls: 'cap', _flash: now() }); return true;
