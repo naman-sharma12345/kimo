@@ -520,7 +520,8 @@ pub fn render_frame_opts(p: &Project, t: f64, cache: &Cache, transparent: bool) 
         let lt = lt0 - ek as f64 * esp; if lt < 0.0 || lt >= c.duration { continue; }
         if let Source::Adjustment = c.source {
             let tpa = std::time::Instant::now(); let mut adj = Frame { w, h, d: out.d.clone() };
-            for e in &c.effects { let tq = std::time::Instant::now(); effects::apply(&e.kind, &e.params, &e.strings, &mut adj, lt, seed)?; if std::env::var("KIMO_PROF").is_ok() { eprintln!("ADJ {} {:.3}", e.kind, tq.elapsed().as_secs_f64()); } }
+            let fl = resolve_flares(p, &c.effects, t, lt, cache)?;
+            for e in fl.as_deref().unwrap_or(&c.effects) { let tq = std::time::Instant::now(); effects::apply(&e.kind, &e.params, &e.strings, &mut adj, lt, seed)?; if std::env::var("KIMO_PROF").is_ok() { eprintln!("ADJ {} {:.3}", e.kind, tq.elapsed().as_secs_f64()); } }
             if let Some(g)=&c.grade_graph{g.apply(&mut adj,lt,seed,p.fps)?;}
             p.grade_scopes.apply_clip(p,&c.id,&mut adj,lt,seed)?;
             prof("adjust", tpa);
@@ -534,7 +535,8 @@ pub fn render_frame_opts(p: &Project, t: f64, cache: &Cache, transparent: bool) 
         // set only now: nested precomp children render inside source_frame and would otherwise clear it
         if c.effects.iter().any(|e| crate::effects2::needs_backdrop(&e.kind)) { BACKDROP.with(|b| *b.borrow_mut() = Some(std::rc::Rc::new(Frame { w, h, d: out.d.clone() }))); }
         if c.effects.iter().any(|e| e.kind == "relight" || e.kind == "fracture_glass") { crate::lighting::set_scene(Some(std::rc::Rc::new(crate::lighting::build_scene(&p.lights, &p.materials, t)))); }
-        let tp=std::time::Instant::now(); let r = apply_effects_masked(p, c, &mut f, lt, seed, t, cache); crate::lighting::set_scene(None); BACKDROP.with(|b| *b.borrow_mut() = None); r?; prof("effects", tp); f };
+        let fc; let ce: &Clip = match resolve_flares(p, &c.effects, t, lt, cache)? { Some(e) => { fc = Clip { effects: e, ..(**c).clone() }; &fc } None => &**c };
+        let tp=std::time::Instant::now(); let r = apply_effects_masked(p, ce, &mut f, lt, seed, t, cache); crate::lighting::set_scene(None); BACKDROP.with(|b| *b.borrow_mut() = None); r?; prof("effects", tp); f };
         if let Some(m) = &c.mask { apply_mask(&mut f, m, lt); if !m.layers.is_empty() { let refs = |id: &str| render_clip_alone(p, id, t, cache); let ctx = crate::masks::Ctx { refs: &refs, fps: p.fps }; crate::masks::apply_stack(&mut f, &m.layers, lt, &ctx); } }
         let mut op = crate::keyframe::clamp_prop("opacity", xprop(p, c, "opacity", lt)) as f32; // the composed (parent x local) opacity is clamped at draw: an elastic/back overshoot never draws past 0..1, while a keep_world local opacity above 1 still composes
         let mut c_blend = c.blend.as_str();
@@ -764,6 +766,22 @@ pub fn render_clip_alone(p: &Project, id: &str, t: f64, cache: &Cache) -> Option
     MATTE_DEPTH.with(|d| d.set(d.get() + 1)); let r = render_frame_opts(&sub, t, cache, true).ok(); MATTE_DEPTH.with(|d| d.set(d.get() - 1)); r
 }
 
+/// lens_flare mode 1: the source position (strings.source_clip / source_light, else x/y) and the occluder visibility (strings.occluder, rendered alone
+/// at t) are resolved here, where the project is known, and injected as params _src_x/_src_y/_visible on a copy of the effect (no render statics).
+/// None when no effect needs it, so every other clip keeps its own effect list untouched.
+pub fn resolve_flares(p: &Project, effs: &[crate::model::Effect], t: f64, lt: f64, cache: &Cache) -> Result<Option<Vec<crate::model::Effect>>, String> {
+    let need = |e: &crate::model::Effect| e.kind == "lens_flare" && e.params.get("mode").map(|q| q.at(lt)).unwrap_or(0.0) >= 0.5 && ["source_clip", "source_light", "occluder"].iter().any(|k| e.strings.contains_key(*k));
+    if !effs.iter().any(need) { return Ok(None); }
+    let mut out = effs.to_vec();
+    for e in out.iter_mut().filter(|e| need(&**e)) {
+        let (sx, sy) = crate::flare::source_px(p, &e.params, &e.strings, t, lt)?; let mut vis = 1.0f32;
+        if let Some(id) = e.strings.get("occluder") { if !p.tracks.iter().any(|tr| tr.clips.iter().any(|c| &c.id == id)) { return Err(format!("lens_flare: no clip '{id}' for occluder")); }
+            if let Some(fr) = render_clip_alone(p, id, t, cache) { let a: Vec<f32> = (0..fr.w * fr.h).map(|i| fr.d[i * 4 + 3]).collect(); vis = crate::flare::flare_visibility(&a, fr.w, fr.h, sx, sy, e.params.get("source_r").map(|q| q.at(lt)).unwrap_or(8.0)); } }
+        e.params.insert("_src_x".into(), crate::keyframe::Prop::new(sx)); e.params.insert("_src_y".into(), crate::keyframe::Prop::new(sy)); e.params.insert("_visible".into(), crate::keyframe::Prop::new(vis as f64));
+    }
+    Ok(Some(out))
+}
+
 /// Effects with a per-effect mask (strings.mask_layer = id of a layer in the clip's mask stack) only apply where that layer covers.
 fn apply_effects_masked(p: &Project, c: &Clip, f: &mut Frame, lt: f64, seed: u64, t: f64, cache: &Cache) -> Result<(), String> {
     if !c.effects.iter().any(|e| e.strings.contains_key("mask_layer")) { apply_effects_local(&c.effects, f, lt, seed)?;if let Some(g)=&c.grade_graph{g.apply(f,lt,seed,p.fps)?;}p.grade_scopes.apply_clip(p,&c.id,f,lt,seed)?;return Ok(()); }
@@ -859,7 +877,7 @@ fn apply_effects_local(effs: &[crate::model::Effect], f: &mut Frame, lt: f64, se
         let e = &effs[i];
         if need && LOCAL.contains(&e.kind.as_str()) {
             // run the whole consecutive run of local effects on one crop
-            let mut j = i; let mut mg = 0.0f64; while j < effs.len() && LOCAL.contains(&effs[j].kind.as_str()) { let rad = effs[j].params.get("radius").map(|p| p.at(lt)).unwrap_or(16.0).abs(); mg += rad * 3.0 + 12.0; j += 1; }
+            let mut j = i; let mut mg = 0.0f64; while j < effs.len() && LOCAL.contains(&effs[j].kind.as_str()) { let rad = effs[j].params.get("radius").map(|p| p.at(lt)).unwrap_or(16.0).abs(); mg += if effs[j].kind == "glow" && crate::glow::mode(&effs[j].params, lt) { crate::glow::support_of(&effs[j].params, lt) as f64 + 12.0 } else { rad * 3.0 + 12.0 }; j += 1; }
             let (x0, y0, x1, y1) = bb.unwrap(); let m = mg.ceil() as usize;
             let (cx0, cy0, cx1, cy1) = (x0.saturating_sub(m), y0.saturating_sub(m), (x1 + m).min(w - 1), (y1 + m).min(h - 1)); let (cw, ch) = (cx1 - cx0 + 1, cy1 - cy0 + 1);
             let mut cf = Frame::new(cw, ch); for y in 0..ch { cf.d[y * cw * 4..(y + 1) * cw * 4].copy_from_slice(&f.d[((y + cy0) * w + cx0) * 4..((y + cy0) * w + cx0 + cw) * 4]); }

@@ -65,6 +65,8 @@ pub mod par;
 pub mod fracture;
 pub mod frosted;
 pub mod lightwrap;
+pub mod glow;
+pub mod flare;
 pub mod castshadow;
 
 pub mod long_gap;

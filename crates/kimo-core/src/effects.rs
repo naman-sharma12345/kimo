@@ -19,7 +19,7 @@ pub(crate) fn p(m: &Params, k: &str, def: f64, t: f64) -> f32 { m.get(k).map(|x|
 
 /// Every `strings` key some effect (or its mask / OCIO / wrapper / LUT reader) reads. add_effect refuses any other key, which would be
 /// stored and never read. Collected from every `strings.get/contains_key/insert/remove("..")` in the crate plus the OCIO keys read by name.
-pub const STRING_KEYS: &[&str] = &["a", "aux_path", "b", "bound_linear_gamut", "cct_space", "cdl_payload", "config_path", "cube_text", "d", "dir", "edge", "expr", "field", "fill_rule", "fps", "g", "height_source", "hits", "interp", "kernel", "keys", "kind", "lights", "linear_space", "mask_layer", "material", "mode", "ocio_config", "ocio_display_space", "ocio_domain", "ocio_linear_space", "ocio_version", "ocio_view_delivery", "ocio_working_space", "path", "position", "profile", "r", "ref_clip", "seed", "shape", "wrapper_gamut", "wrapper_reference_white", "wrapper_transfer", "wrapper_working_gamut"];
+pub const STRING_KEYS: &[&str] = &["a", "aux_path", "b", "bound_linear_gamut", "cct_space", "cdl_payload", "config_path", "cube_text", "d", "dir", "edge", "expr", "field", "fill_rule", "fps", "g", "height_source", "hits", "interp", "kernel", "keys", "kind", "lights", "linear_space", "mask_layer", "material", "mode", "ocio_config", "ocio_display_space", "ocio_domain", "ocio_linear_space", "ocio_version", "ocio_view_delivery", "ocio_working_space", "occluder", "path", "position", "profile", "r", "ref_clip", "seed", "shape", "source_clip", "source_light", "wrapper_gamut", "wrapper_reference_white", "wrapper_transfer", "wrapper_working_gamut"];
 
 /// (kind, description, [(param, default, description)]) - drives list_effects and tool schemas.
 pub const CATALOG: &[(&str, &str, &[(&str, f64, &str)])] = &[
@@ -42,7 +42,9 @@ pub const CATALOG: &[(&str, &str, &[(&str, f64, &str)])] = &[
     ("teal_orange", "Hollywood teal/orange split tone", &[("amount", 0.5, "0..1")]),
     ("vignette", "Darkened edges", &[("amount", 0.5, "0..1"), ("softness", 0.5, "0..1")]),
     ("blur", "Box-approx gaussian blur", &[("radius", 4.0, "pixels")]),
-    ("glow", "Bloom on highlights", &[("amount", 0.5, "0..2"), ("radius", 12.0, "pixels"), ("threshold", 0.7, "0..1")]),
+    ("glow", "Bloom on highlights. mode 1 = deep glow: soft-knee bright pass, exact Gaussian sum or exponential falloff, A/B tint, linear light", &[("amount", 0.5, "0..2"), ("radius", 12.0, "pixels (mode 1: widest Gaussian sigma / exponential R)"), ("threshold", 0.7, "0..1"),
+        ("mode", 0.0, "0 classic, 1 deep glow"), ("falloff", 0.0, "mode 1: 0 sum of Gaussians, 1 exponential exp(-r/radius)"), ("iterations", 5.0, "mode 1 falloff 0: 1..8 Gaussians, sigma_k = radius*2^k/2^(n-1)"), ("exposure", 0.0, "mode 1: -8..8 stops"), ("knee", 0.2, "mode 1: 0..1 soft knee (as bloom)"),
+        ("color_a_r", 1.0, "mode 1: core tint R"), ("color_a_g", 1.0, "mode 1: core tint G"), ("color_a_b", 1.0, "mode 1: core tint B"), ("color_b_r", 1.0, "mode 1: outer tint R"), ("color_b_g", 1.0, "mode 1: outer tint G"), ("color_b_b", 1.0, "mode 1: outer tint B"), ("linear", 1.0, "mode 1: 1 = glow in linear light (sRGB decode/encode)")]),
     ("bloom", "Light-intensity bloom: soft-knee bright-pass, multi-scale blur, energy-conserving by default", &[("amount", 0.6, "0..1 (conserve) or more"), ("threshold", 0.8, "luma where bloom starts"), ("knee", 0.2, "0..1 soft knee"), ("radius", 8.0, "base px, levels double it"), ("levels", 5.0, "1..7 scales"), ("conserve", 1.0, "1 = frame energy preserved, 0 = additive"), ("tint_r", 1.0, "bloom tint R"), ("tint_g", 1.0, "bloom tint G"), ("tint_b", 1.0, "bloom tint B")]),
     ("grain", "Film grain", &[("amount", 0.08, "0..0.5")]),
     ("rgb_split", "Formula: channel(x,y)=src(x+offset_channel*cos(angle),y+offset_channel*sin(angle)); offset truncated toward zero before adding integer position, clamp edges", &[("amount",6.,"legacy +/- red/blue px"),("r_offset",6.,"red px"),("g_offset",0.,"green px"),("b_offset",-6.,"blue px"),("angle",0.,"degrees")]),
@@ -130,6 +132,7 @@ pub fn apply(kind: &str, params: &Params, strings: &BTreeMap<String, String>, f:
                 let i = (y*f.w+x)*4; f.d[i]*=v; f.d[i+1]*=v; f.d[i+2]*=v; } }
         }
         "blur" => { let r = p(params, "radius", 4.0, t) as usize; box_blur3(f, r); }
+        "glow" if crate::glow::mode(params, t) => crate::glow::apply_deep(params, f, t),
         "glow" => {
             let a = p(params, "amount", 0.5, t); let r = p(params, "radius", 12.0, t) as usize; let th = p(params, "threshold", 0.7, t);
             let mut b = Frame { w: f.w, h: f.h, d: f.d.clone() };
@@ -150,7 +153,7 @@ pub fn apply(kind: &str, params: &Params, strings: &BTreeMap<String, String>, f:
             let n = f.w * f.h; let mut ex = vec![0f32; n * 3];
             for i in 0..n { let c = [f.d[i*4], f.d[i*4+1], f.d[i*4+2]]; let l = lum(c); if l <= 1e-6 { continue; }
                 // soft knee: quadratic ramp over [th - knee*th, th + knee*th], linear above
-                let w = knee * th; let lo = th - w; let e = if w > 1e-6 && l > lo && l < th + w { let x = l - lo; x * x / (4.0 * w) } else if l >= th + w { l - th } else { 0.0 };
+                let e = crate::glow::knee_excess(l, th, knee);
                 let k = e / l; for j in 0..3 { ex[i*3+j] = c[j] * k; } }
             let mut acc = vec![0f32; n * 3];
             for lv in 0..levels {

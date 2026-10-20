@@ -128,6 +128,11 @@ function inspectorDiff(state, MODES, ev, fam) {
 // draw the regions they sampled on the viewer.
 const WHEEL_DEF = { lift: 0, gamma: 1, gain: 1 };
 const HUE = { r: 100, g: 220, b: 340 };   // where each channel pulls on the ring (degrees, ccw from 3 o'clock)
+// the params list_effects gives glow / lens_flare / light_wrap (the mode 1 / linear options included), in catalog order
+const GLOW_NEW = ['mode', 'falloff', 'iterations', 'exposure', 'knee', 'color_a_r', 'color_a_g', 'color_a_b', 'color_b_r', 'color_b_g', 'color_b_b', 'linear'];
+const FLARE_NEW = ['mode', 'halo', 'halo_size', 'ring', 'ring_size', 'ghosts', 'ghost_count', 'ghost_spacing', 'ghost_size', 'streak_length', 'streak_width', 'starburst', 'rays', 'ray_length', 'ray_angle', 'source_r'];
+const FX_ROWS = { glow: ['amount', 'radius', 'threshold', ...GLOW_NEW], lens_flare: ['x', 'y', 'brightness', 'streak', ...FLARE_NEW], light_wrap: ['width', 'intensity', 'blur', 'desaturate', 'linear'] };
+const FX_NEW = new Set([...GLOW_NEW, ...FLARE_NEW]);
 function gradeOps(state, MODES, ev) {
   if (ev.phase !== 'complete') return false;
   const P = ev.payload || {}, tn = String(ev.tool_name).toLowerCase();
@@ -162,6 +167,14 @@ function gradeOps(state, MODES, ev) {
       const one = numOf(prm.amount ?? prm.value);
       const NAMES = { temperature: 'Temperature', tint: 'Tint', contrast: 'Contrast', saturation: 'Saturation', exposure: 'Exposure' };
       if (NAMES[kind] && one != null) { setRow(NAMES[kind], fmtVal(one)); hit = true; }
+      // glow (mode 1 deep glow), lens_flare (mode 1 v2) and light_wrap (linear): a row per numeric param the call sets, plus the flare's source/occluder ids;
+      // set_effect_param carries no kind, so only the new param names show from it
+      if (FX_ROWS[kind] && /^(add|apply)_effect$/.test(tn)) {
+        const pr = A.params && typeof A.params === 'object' ? A.params : {}, st = A.strings && typeof A.strings === 'object' ? A.strings : {};
+        for (const k of FX_ROWS[kind]) { const v = numOf(pr[k]); if (v != null) { setRow(`${kind} ${k}`, fmtVal(v, k)); hit = true; } }
+        for (const k of ['source_clip', 'source_light', 'occluder']) if (kind === 'lens_flare' && typeof st[k] === 'string') { setRow(`lens_flare ${k}`, st[k].slice(0, 24)); hit = true; }
+      }
+      if (tn === 'set_effect_param' && FX_NEW.has(String(A.param)) && numOf(A.value) != null) { setRow(String(A.param), fmtVal(numOf(A.value), String(A.param))); hit = true; }
       if (A.clip_id != null && !KV.sub) KV.sub = String(A.clip_id);
     }
     // grade graph (m15 Nodes): node ids/kinds from the call, the output selected; plus rows for CDL / curve / scopes
