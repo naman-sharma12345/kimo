@@ -302,6 +302,7 @@
 "set_limits",
 "set_mask",
 "set_mask_keyframe",
+"set_mask_motion_blur",
 "set_mask_path_key",
 "set_mask_prop_key",
 "set_material",

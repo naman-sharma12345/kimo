@@ -372,12 +372,34 @@ fn raw(l: &MaskLayer, f: &Frame, t: f64, ctx: &Ctx) -> Vec<f32> {
     c
 }
 
+/// Motion-blur window for a layer at t: (shutter open offset s, shutter length s, samples); None when blur is off or the kind is not a shape.
+fn mb_window(l: &MaskLayer, t: f64, fps: f64, w: usize, h: usize) -> Option<(f64, f64, usize)> {
+    let shut = g(l, "shutter", 0.0, t) as f64; let geometric = matches!(l.kind.as_str(), "path" | "rect" | "ellipse" | "linear" | "radial"); if !(shut > 0.0 && geometric) { return None; }
+    let s_len = shut / 360.0 / fps.max(1.0); let open = if l.props.contains_key("shutter_phase") { g(l, "shutter_phase", 0.0, t) as f64 / 360.0 / fps.max(1.0) } else { -0.5 * s_len };
+    let sp = g(l, "samples", 6.0, t); let n = if sp == 0.0 { auto_samples(l, t + open, t + open + s_len, w, h) } else { (sp as usize).clamp(2, 256) }; Some((open, s_len, n))
+}
+/// Auto sample count from the largest pixel travel S of the shape across the shutter (max of open->mid and mid->close, x2 to catch non-monotonic motion).
+/// Midpoint error on an edge pixel is at most S/(4n^2), so n = 16*sqrt(S) keeps it under ~1e-3; n >= S keeps sample spacing <= 1 px. Static = 1.
+fn auto_samples(l: &MaskLayer, ta: f64, tb: f64, w: usize, h: usize) -> usize {
+    let (wf, hf) = (w as f64, h as f64); let tm = 0.5 * (ta + tb); let deg = 0.5 * wf.max(hf) * std::f64::consts::PI / 180.0;
+    let travel = |a: f64, b: f64| -> f64 { if l.kind == "path" { let (pa, pb) = (path_at(l, a), path_at(l, b)); if pa.len() != pb.len() { return wf.max(hf); }
+            let d = |x0: f64, y0: f64, x1: f64, y1: f64| ((x1 - x0) * wf).hypot((y1 - y0) * hf);
+            pa.iter().zip(pb.iter()).map(|(p, q)| d(p.x, p.y, q.x, q.y).max(d(p.x + p.ix, p.y + p.iy, q.x + q.ix, q.y + q.iy)).max(d(p.x + p.ox, p.y + p.oy, q.x + q.ox, q.y + q.oy))).fold(0.0, f64::max) }
+        else { [("cx", wf), ("cy", hf), ("w", wf), ("h", hf), ("r", hf), ("pos", wf), ("rot", deg), ("angle", deg)].iter().filter_map(|(k, sc)| l.props.get(*k).map(|p| (p.at(b) - p.at(a)).abs() * sc)).fold(0.0, f64::max) } };
+    let tr = 2.0 * travel(ta, tm).max(travel(tm, tb)); if !tr.is_finite() { return 256; } if tr <= 0.0 { return 1; } ((16.0 * tr.sqrt()).ceil().max(tr.ceil()) as usize).clamp(1, 256)
+}
+/// Samples the mask motion blur would take at t (0 = blur off), for tests and tools.
+pub fn motion_blur_samples(l: &MaskLayer, t: f64, fps: f64, w: usize, h: usize) -> usize { mb_window(l, t, fps, w, h).map(|x| x.2).unwrap_or(0) }
+
 pub fn layer_coverage(l: &MaskLayer, f: &Frame, t: f64, ctx: &Ctx) -> Vec<f32> {
     let (w, h) = (f.w, f.h); let s = h as f32 / 720.0; let leg = g(l, "legacy", 0.0, t) > 0.5;
-    // temporal supersampling of animated geometry (mask motion blur): shutter in degrees of a frame, samples default 6
-    let shut = g(l, "shutter", 0.0, t) as f64; let geometric = matches!(l.kind.as_str(), "path" | "rect" | "ellipse" | "linear" | "radial");
-    let mut c = if shut > 0.0 && geometric { let n = (g(l, "samples", 6.0, t) as usize).clamp(2, 32); let mut acc = vec![0f32; w * h];
-        for k in 0..n { let off = (k as f64 / (n - 1) as f64 - 0.5) * shut / 360.0 / ctx.fps.max(1.0); let r = raw(l, f, t + off, ctx); for i in 0..w * h { acc[i] += r[i]; } } for v in acc.iter_mut() { *v /= n as f32; } acc } else { raw(l, f, t, ctx) };
+    // mask motion blur (AE): midpoint box-filter integration of the animated shape over the shutter. shutter = angle in degrees of a frame,
+    // shutter_phase = open offset from the frame time in degrees (absent = centred), samples 0 = auto (from the shape's pixel travel) else 2..256
+    let mut c = match mb_window(l, t, ctx.fps, w, h) { None => raw(l, f, t, ctx), Some((open, s_len, n)) => {
+        let mut first: Option<Vec<f32>> = None; let mut acc = vec![0f64; w * h]; let mut all_same = true;
+        for k in 0..n { let r = raw(l, f, t + open + (k as f64 + 0.5) / n as f64 * s_len, ctx); for i in 0..w * h { acc[i] += r[i] as f64; }
+            match &first { None => first = Some(r), Some(f0) => { if all_same && f0[..] != r[..] { all_same = false; } } } }
+        let f0 = first.unwrap_or_else(|| raw(l, f, t, ctx)); if all_same { f0 } else { acc.iter().map(|v| (v / n as f64) as f32).collect() } } };
     let rf = g(l, "refine", 0.0, t) * s; if rf > 0.0 { guided(&mut c, f, rf.round() as usize, g(l, "refine_eps", 1e-3, t).max(1e-6)); }
     let ex = g(l, "expand", 0.0, t) * s; if ex != 0.0 { if leg { morph_legacy(&mut c, w, h, ex.round() as i32); } else { morph(&mut c, w, h, ex); } }
     let fe = g(l, "feather", 0.0, t) * s; if fe > 0.0 && !(l.kind == "path" && l.points.iter().chain(l.path_keys.iter().flat_map(|k| k.points.iter())).any(|p| p.f > 0.0) && !leg) { blur_cov(&mut c, w, h, fe / 2.0); }

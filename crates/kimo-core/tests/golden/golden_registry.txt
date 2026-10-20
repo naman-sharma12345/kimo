@@ -299,6 +299,7 @@ set_light 5b677c590887db11
 set_limits 0fb5b9a5542efe5a
 set_mask d346bd54f9e9523c
 set_mask_keyframe d029bd3397fdc253
+set_mask_motion_blur f50067fc694be22d
 set_mask_path_key f2ede4254a2268ae
 set_mask_prop_key 02b0624d8da951c8
 set_material 1cf1c1110bb19863
