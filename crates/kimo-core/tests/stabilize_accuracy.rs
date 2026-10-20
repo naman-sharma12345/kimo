@@ -7,7 +7,13 @@
 //! phases per parameter: translation 3 px RMS (vector), roll 0.35 deg RMS, scale 0.4 % RMS; the perspective plate adds keystone
 //! h20, h21 of 2e-5 RMS). 384x216, 150 frames, 30 fps, seeded xorshift.
 //! Variants: clean; noise (N(0, 2) per pixel); blur (8 sub-frame positions across a 180 degree shutter); outliers (3 independently
-//! moving textured discs, 30% of the frame together, 3..6 px/frame, bouncing inside the frame).
+//! moving textured discs, 30% of the frame together, 3..6 px/frame, bouncing inside the frame); rolling shutter (row v of frame t
+//! samples the world through T(t + kappa (v/H - 1/2))^-1, kappa = 0.8; T is continuous in time).
+//!
+//! Rolling-shutter cases (`run_rs`): world point x is seen in frame t at the solution p of p = T(t + kappa (p.y/H - 1/2))(x)
+//! (8 fixed-point steps from T_t(x)); q_t = B_t p for rs_uncorrected (rolling_shutter 0), and for rs_corrected (rolling_shutter 0.8)
+//! and gs_with_rs (a global-shutter plate with rolling_shutter 0.8, reported only) q_t = mesh_map of p through the mesh vertices the
+//! tool keys (`rs_mesh`), i.e. what planar::pin_mesh draws. Same metrics as below.
 //!
 //! Metrics, on a 7x5 grid of world points x that land in the central 60% of frame 0, with q_t(x) = B_t(T_t(x)) and B from
 //! frame_corrections(corrections(path, smooth_path(path)), framing):
@@ -72,7 +78,7 @@ fn sim_c(ls: f64, th: f64, tx: f64, ty: f64) -> H3 { let s = ls.exp(); about_c([
 fn ap(h: &H3, p: P) -> P { trackmath::apply(h, p).unwrap() }
 
 #[derive(Clone, Copy, Default)]
-struct Cfg { seed: u64, noise: f64, blur: bool, discs: bool, persp: bool, translation_only: bool }
+struct Cfg { seed: u64, noise: f64, blur: bool, discs: bool, persp: bool, translation_only: bool, kappa: f64 }
 struct Disc { p0: P, v: P, r: f64, off: P }
 struct Plate { cfg: Cfg, tex: Tex, dtex: Tex, jit: Vec<Vec<(f64, f64, f64)>>, discs: Vec<Disc> }
 impl Plate {
@@ -96,9 +102,11 @@ impl Plate {
     fn render(&self, t: usize) -> Vec<f32> {
         let taus: Vec<f64> = if self.cfg.blur { (0..8).map(|k| t as f64 + ((k as f64 + 0.5) / 8.0 - 0.5) * 0.5).collect() } else { vec![t as f64] };
         let mut acc = vec![0f64; W * H]; let mut row = vec![0f64; W];
-        for &tau in &taus { let ti = trackmath::norm_h(&trackmath::inv3(&self.cam(tau)).unwrap()).unwrap(); let affine = ti[2][0] == 0.0 && ti[2][1] == 0.0;
+        for &tau in &taus { let ti0 = trackmath::norm_h(&trackmath::inv3(&self.cam(tau)).unwrap()).unwrap(); let affine0 = ti0[2][0] == 0.0 && ti0[2][1] == 0.0;
             let dp: Vec<P> = self.discs.iter().map(|d| self.disc_at(d, tau)).collect();
             for v in 0..H { let vf = v as f64;
+                // rolling shutter: row v is exposed at tau + kappa (v/H - 1/2)
+                let (ti, affine) = if self.cfg.kappa != 0.0 { let ti = trackmath::norm_h(&trackmath::inv3(&self.cam(tau + self.cfg.kappa * (vf / H as f64 - 0.5))).unwrap()).unwrap(); (ti, ti[2][0] == 0.0 && ti[2][1] == 0.0) } else { (ti0, affine0) };
                 if affine { self.tex.row(ti[0][1] * vf + ti[0][2], ti[1][1] * vf + ti[1][2], ti[0][0], ti[1][0], &mut row); } else { for u in 0..W { let q = ap(&ti, (u as f64, vf)); row[u] = self.tex.at(q.0, q.1); } }
                 for (k, d) in self.discs.iter().enumerate() { let (px, py) = dp[k]; if (vf - py).abs() >= d.r { continue; }
                     for u in 0..W { let uf = u as f64; if (uf - px).powi(2) + (vf - py).powi(2) < d.r * d.r { row[u] = self.dtex.at(uf - px + d.off.0, vf - py + d.off.1); } } }
@@ -106,6 +114,9 @@ impl Plate {
         let k = 1.0 / taus.len() as f64; let mut rn = Rng::new(self.cfg.seed.wrapping_mul(31).wrapping_add(t as u64 * 7919 + 1));
         acc.iter().map(|v| { let n = if self.cfg.noise > 0.0 { self.cfg.noise * rn.gauss() } else { 0.0 }; (v * k + n).clamp(0.0, 255.0) as f32 }).collect()
     }
+    /// Where world point x is seen in (rolling-shutter) frame t: p = T(t + kappa (p.y/H - 1/2))(x), 8 fixed-point steps from T_t(x).
+    fn observe(&self, t: usize, x: P) -> P { let k = self.cfg.kappa; let mut p = ap(&self.cam(t as f64), x); if k == 0.0 { return p; }
+        for _ in 0..8 { p = ap(&self.cam(t as f64 + k * (p.1 / H as f64 - 0.5)), x); } p }
     /// The 7x5 world points that land in the central 60% of frame 0.
     fn grid(&self) -> Vec<P> { let ti = trackmath::inv3(&self.cam(0.0)).unwrap(); let mut v = vec![]; for j in 0..5 { for i in 0..7 { v.push(ap(&ti, (W as f64 * (0.2 + 0.6 * i as f64 / 6.0), H as f64 * (0.2 + 0.6 * j as f64 / 4.0)))); } } v }
 }
@@ -117,10 +128,17 @@ fn lowpass(x: &[f64], sigma: f64) -> Vec<f64> {
     (0..n).map(|i| (-r..=r).map(|k| ws[(k + r) as usize] * at(i + k)).sum::<f64>() / wsum).collect()
 }
 #[derive(Debug, Clone, Copy)]
-struct Metrics { jitter_rms: f64, jitter_worst: f64, path_rms: f64, path_worst: f64, drift: f64 }
+struct Metrics { jitter_rms: f64, jitter_worst: f64, path_rms: f64, path_worst: f64, drift: f64, worst_frame: usize }
 fn metrics(p: &Plate, b: &[H3]) -> Metrics {
-    let xs = p.grid(); let n = b.len(); let m = xs.len();
+    let xs = p.grid(); let n = b.len();
     let q: Vec<Vec<P>> = (0..n).map(|t| { let cam = p.cam(t as f64); xs.iter().map(|x| ap(&b[t], ap(&cam, *x))).collect() }).collect();
+    metrics_q(p, &q)
+}
+/// The metrics from the output positions q[t][k] of the grid points.
+fn metrics_q(p: &Plate, q: &[Vec<P>]) -> Metrics { let all: Vec<usize> = (0..p.grid().len()).collect(); metrics_qk(p, q, &all) }
+/// metrics_q over the grid points `keep` (q[t] holds exactly those points, in that order).
+fn metrics_qk(p: &Plate, q: &[Vec<P>], keep: &[usize]) -> Metrics {
+    let g0 = p.grid(); let xs: Vec<P> = keep.iter().map(|&k| g0[k]).collect(); let n = q.len(); let m = xs.len();
     let g: Vec<Vec<P>> = (0..n).map(|t| { let gt = p.g(t as f64); xs.iter().map(|x| ap(&gt, *x)).collect() }).collect();
     let drift = (0..n).flat_map(|t| (0..m).map(move |k| (t, k))).map(|(t, k)| trackmath::dist(q[t][k], q[0][k])).fold(0.0, f64::max);
     let (gs, qs): (Vec<P>, Vec<P>) = (0..n).flat_map(|t| (0..m).map(move |k| (t, k))).map(|(t, k)| (g[t][k], q[t][k])).unzip();
@@ -130,7 +148,8 @@ fn metrics(p: &Plate, b: &[H3]) -> Metrics {
     let mut hp2 = vec![0.0; n];
     for k in 0..m { for c in 0..2 { let s: Vec<f64> = (0..n).map(|t| if c == 0 { e[t][k].0 } else { e[t][k].1 }).collect(); let lp = lowpass(&s, 5.0); for t in 0..n { hp2[t] += (s[t] - lp[t]).powi(2); } } }
     let jitter_rms = (hp2.iter().sum::<f64>() / (n * m) as f64).sqrt(); let jitter_worst = hp2.iter().map(|v| (v / m as f64).sqrt()).fold(0.0, f64::max);
-    Metrics { jitter_rms, jitter_worst, path_rms, path_worst, drift }
+    let worst_frame = (0..n).fold(0, |b, t| if hp2[t] > hp2[b] { t } else { b });
+    Metrics { jitter_rms, jitter_worst, path_rms, path_worst, drift, worst_frame }
 }
 
 fn run(name: &str, cfg: Cfg, o: &Opts) -> Metrics {
@@ -160,7 +179,92 @@ fn locked_opts() -> Opts { Opts { fps: FPS, mode: Mode::Locked, framing: Framing
 #[test] fn l1_clean() { let o = Opts { smoothing: Smoothing::L1, ..smooth_opts() }; let m = run("l1_clean", Cfg { seed: 11, ..Default::default() }, &o); assert!(m.jitter_rms <= 0.08 && m.path_rms <= 1.00, "{m:?}"); }
 #[test] fn position_translation_only() { let o = Opts { method: Method::Position, ..smooth_opts() }; let m = run("position", Cfg { seed: 16, translation_only: true, ..Default::default() }, &o); assert!(m.jitter_rms <= 0.05, "{m:?}"); }
 
+/// Rolling-shutter run: q_t(x) for the observed position p = observe(t, x) is B_t p (rolling_shutter 0) or, with rolling_shutter on,
+/// mesh_map through the MESH_NX x MESH_NY vertices the tool keys (`rs_mesh`, pixel-edge coordinates: p + 0.5 in, - 0.5 out).
+/// The input jitter is q_t = p.
+fn run_rs(name: &str, cfg: Cfg, o: &Opts) -> Metrics {
+    let p = Plate::new(cfg); let mut render_s = 0.0; let t0 = std::time::Instant::now();
+    let est = { let mut frames = |i: usize| -> Result<Vec<f32>, String> { let s = std::time::Instant::now(); let f = p.render(i); render_s += s.elapsed().as_secs_f64(); Ok(f) }; estimate_path_rs(&mut frames, N, W, H, o.method, o).unwrap_or_else(|e| panic!("{name}: {e}")) };
+    let sm = smooth_path(&est.path, W, H, o.method, o); let fr = frame_corrections(&corrections(&est.path, &sm), W, H, o.framing);
+    let ms = ((t0.elapsed().as_secs_f64() - render_s) * 1000.0 / N as f64).max(0.0);
+    let xs = p.grid(); let obs_all: Vec<Vec<P>> = (0..N).map(|t| xs.iter().map(|x| p.observe(t, *x)).collect()).collect();
+    // only points that are inside the source frame on every frame exist in the footage (the plate pans ~160 px, so some grid points
+    // leave it); mesh_map has no cell for the others. The same set is used for every rolling-shutter case (observe ignores the Opts).
+    let inside = |s: &P| s.0 >= 0.0 && s.1 >= 0.0 && s.0 <= W as f64 - 1.0 && s.1 <= H as f64 - 1.0;
+    let keep: Vec<usize> = (0..xs.len()).filter(|&k| (0..N).all(|t| inside(&obs_all[t][k]))).collect();
+    assert!(keep.len() >= 8, "{name}: only {} grid points stay inside the frame", keep.len());
+    let obs: Vec<Vec<P>> = obs_all.iter().map(|r| keep.iter().map(|&k| r[k]).collect()).collect();
+    let q: Vec<Vec<P>> = if o.rolling_shutter > 0.0 { let cp = ContPath::new(&est.path, W, H, o.method);
+        (0..N).map(|t| { let v = rs_mesh(&cp, &fr.corr[t], t, o.rolling_shutter, W, H).unwrap_or_else(|| panic!("{name}: no mesh at frame {t}"));
+            obs[t].iter().map(|s| { let e = mesh_map(&v, MESH_NX, MESH_NY, W, H, (s.0 + 0.5, s.1 + 0.5)).unwrap_or_else(|| panic!("{name}: {s:?} outside the mesh")); (e.0 - 0.5, e.1 - 0.5) }).collect() }).collect()
+    } else { (0..N).map(|t| obs[t].iter().map(|s| ap(&fr.corr[t], *s)).collect()).collect() };
+    let m = metrics_qk(&p, &q, &keep); let inp = metrics_qk(&p, &obs, &keep);
+    println!("case={name} points={}/{} method={} smoothing={} kappa={} rolling_shutter={} jitter_rms={:.4} jitter_worst={:.4} worst_frame={} path_rms={:.4} path_worst={:.4} input_jitter_rms={:.4} input_jitter_worst={:.4} reanchors={} zoom={:.4} ms_per_frame={:.1}",
+        keep.len(), xs.len(), o.method.name(), o.smoothing.name(), cfg.kappa, o.rolling_shutter, m.jitter_rms, m.jitter_worst, m.worst_frame, m.path_rms, m.path_worst, inp.jitter_rms, inp.jitter_worst, est.reanchors, fr.zoom, ms);
+    assert!(inp.jitter_rms > 1.0, "{name}: the plate is not shaky ({})", inp.jitter_rms);
+    m
+}
+#[test] fn rolling_shutter_plate() {
+    let rs = Cfg { seed: 17, kappa: 0.8, ..Default::default() }; let on = Opts { rolling_shutter: 0.8, ..smooth_opts() };
+    let u = run_rs("rs_uncorrected", rs, &smooth_opts()); let c = run_rs("rs_corrected", rs, &on);
+    // reported, not gated: a global-shutter plate stabilized with a mis-set readout
+    let _ = run_rs("gs_with_rs", Cfg { seed: 17, ..Default::default() }, &on);
+    assert!(c.jitter_rms <= 0.15, "rs_corrected {c:?} (uncorrected {u:?})"); assert!(c.jitter_rms * 3.0 <= u.jitter_rms, "rs_corrected {c:?} vs rs_uncorrected {u:?}");
+}
+
 // ---------- unit tests ----------
+#[test] fn mesh_map_reproduces_a_similarity() {
+    // mesh_map is pin_mesh_exact's map: the exact cell homography, so a mesh whose vertices all come from one similarity M maps every
+    // point exactly through M
+    let mut r = Rng::new(31);
+    for _ in 0..6 { let s = r.range(0.9, 1.2); let m = sim_c(s.ln(), r.range(-0.2, 0.2), r.range(-20.0, 20.0), r.range(-12.0, 12.0));
+        let verts: Vec<[f64; 2]> = (0..MESH_NX * MESH_NY).map(|k| { let q = ap(&m, (W as f64 * (k % MESH_NX) as f64 / (MESH_NX - 1) as f64, H as f64 * (k / MESH_NX) as f64 / (MESH_NY - 1) as f64)); [q.0, q.1] }).collect();
+        let mut err = 0f64;
+        for _ in 0..300 { let p = (r.range(0.0, W as f64), r.range(0.0, H as f64)); let got = mesh_map(&verts, MESH_NX, MESH_NY, W, H, p).expect("inside"); err = err.max(trackmath::dist(got, ap(&m, p))); }
+        assert!(err <= 1e-9, "mesh_map vs the similarity: {err}"); }
+    assert!(mesh_map(&[[0.0, 0.0]; 4], 2, 2, W, H, (-1.0, 5.0)).is_none() && mesh_map(&[[0.0, 0.0]; 3], 2, 2, W, H, (1.0, 1.0)).is_none());
+}
+/// The renderer draws where mesh_map says, and the exact mesh leaves no seams. A non-rigid, rolling-shutter-like mesh
+/// (x' = s x + 4 sin(pi y / H) + 6, y' = s y + 1.5 x / W - 3). Gates: centroid of a drawn Gaussian dot within 0.1 px of mesh_map
+/// of its source centre at 12 positions; no destination pixel whose source point lies 2 px inside the frame has alpha < 0.999.
+#[test] fn pin_mesh_exact_draws_where_mesh_map_says_and_has_no_seams() {
+    use kimo_core::effects::Frame; use kimo_core::planar::{pin_mesh, pin_mesh_exact};
+    let s = 0.97; let f = |p: P| -> P { (s * p.0 + 4.0 * (std::f64::consts::PI * p.1 / H as f64).sin() + 6.0, s * p.1 + 1.5 * p.0 / W as f64 - 3.0) };
+    let verts: Vec<[f64; 2]> = (0..MESH_NX * MESH_NY).map(|k| { let q = f((W as f64 * (k % MESH_NX) as f64 / (MESH_NX - 1) as f64, H as f64 * (k / MESH_NX) as f64 / (MESH_NY - 1) as f64)); [q.0, q.1] }).collect();
+    let mut white = Frame::new(W, H); for v in white.d.iter_mut() { *v = 1.0; }
+    let (ex, df) = (pin_mesh_exact(&white, &verts, MESH_NX, MESH_NY, 1.0), pin_mesh(&white, &verts, MESH_NX, MESH_NY, 1.0));
+    let (mut holes_exact, mut holes_default, mut checked) = (0usize, 0usize, 0usize);
+    for y in 0..H { for x in 0..W { let d = (x as f64 + 0.5, y as f64 + 0.5);
+        // invert f by fixed-point iteration (f is a small perturbation of a scale)
+        let mut p = ((d.0 - 6.0) / s, (d.1 + 3.0) / s); for _ in 0..30 { let q = f(p); p = (p.0 + (d.0 - q.0) / s, p.1 + (d.1 - q.1) / s); }
+        if p.0 < 2.0 || p.1 < 2.0 || p.0 > W as f64 - 2.0 || p.1 > H as f64 - 2.0 { continue; } checked += 1;
+        if ex.d[(y * W + x) * 4 + 3] < 0.999 { holes_exact += 1; } if df.d[(y * W + x) * 4 + 3] < 0.999 { holes_default += 1; } } }
+    println!("case=pin_mesh_exact seams: checked={checked} alpha<0.999 exact={holes_exact} default_pin_mesh={holes_default}");
+    assert!(checked > W * H / 2); assert_eq!(holes_exact, 0, "pin_mesh_exact left {holes_exact} seam pixels");
+    let mut worst = 0f64; let mut rr = Rng::new(77);
+    for _ in 0..12 { let c0 = (rr.range(30.0, W as f64 - 30.0), rr.range(30.0, H as f64 - 30.0)); let sg = 1.5;
+        let mut dot = Frame::new(W, H); for y in 0..H { for x in 0..W { let i = (y * W + x) * 4; let v = (-((x as f64 + 0.5 - c0.0).powi(2) + (y as f64 + 0.5 - c0.1).powi(2)) / (2.0 * sg * sg)).exp() as f32; dot.d[i] = v; dot.d[i + 1] = v; dot.d[i + 2] = v; dot.d[i + 3] = 1.0; } }
+        let o = pin_mesh_exact(&dot, &verts, MESH_NX, MESH_NY, 1.0); let want = mesh_map(&verts, MESH_NX, MESH_NY, W, H, c0).unwrap();
+        let (mut sw, mut sx, mut sy) = (0f64, 0f64, 0f64); let (x0, y0) = (want.0 as i64 - 10, want.1 as i64 - 10);
+        for y in y0.max(0)..(y0 + 21).min(H as i64) { for x in x0.max(0)..(x0 + 21).min(W as i64) { let v = o.d[(y as usize * W + x as usize) * 4] as f64; sw += v; sx += v * (x as f64 + 0.5); sy += v * (y as f64 + 0.5); } }
+        let got = (sx / sw, sy / sw); worst = worst.max(trackmath::dist(got, want)); }
+    println!("case=pin_mesh_exact dot_centroid worst_err_px={worst:.4}"); assert!(worst <= 0.1, "drawn dot {worst} px from mesh_map");
+}
+#[test] fn rolling_shutter_zero_keeps_the_rigid_keys() {
+    let mut r = Rng::new(41); let path: Vec<H3> = (0..24).map(|i| sim_c(r.range(-0.01, 0.01), r.range(-0.5, 0.5).to_radians(), -0.9 * i as f64 + r.range(-3.0, 3.0), r.range(-3.0, 3.0))).collect();
+    let o = Opts { fps: FPS, ..Opts::default() }; assert_eq!(o.rolling_shutter, 0.0);
+    let sm = smooth_path(&path, W, H, o.method, &o); let fr = frame_corrections(&corrections(&path, &sm), W, H, o.framing);
+    let rows = key_rows(&path, &sm, &fr, W, H, FPS, &o).unwrap(); assert_eq!(rows.len(), path.len());
+    for (i, row) in rows.iter().enumerate() { let (x, y, s, rd) = similarity_to_props(&fr.corr[i], W, H);
+        assert_eq!(row.props, vec![("x", x), ("y", y), ("scale", s), ("rotation", rd)], "frame {i}"); assert_eq!(row.t, i as f64 / FPS); assert!(row.crop_quad.is_none()); }
+    // on: only the mesh vertices, no rigid or pin keys
+    let on = Opts { rolling_shutter: 0.8, ..o.clone() }; let rows = key_rows(&path, &sm, &fr, W, H, FPS, &on).unwrap();
+    for row in &rows { assert_eq!(row.props.len(), 2 * MESH_NX * MESH_NY); for k in 0..MESH_NX * MESH_NY { assert_eq!(row.props[2 * k].0, format!("mx{k}")); assert_eq!(row.props[2 * k + 1].0, format!("my{k}")); } }
+    // the continuous path passes through the per-frame path, and R_t is the identity on the middle row
+    let cp = ContPath::new(&path, W, H, Method::Similarity);
+    for (t, c) in path.iter().enumerate() { let ct = cp.at(t as f64).unwrap(); for p in [(0.0, 0.0), (W as f64, 0.0), (W as f64, H as f64), (0.0, H as f64)] { assert!(trackmath::dist(ap(&ct, p), ap(c, p)) < 1e-9, "C({t})"); }
+        let mid = (100.0, H as f64 * 0.5); assert!(trackmath::dist(cp.rs_undo(t, 0.8, mid).unwrap(), mid) < 1e-9); }
+}
 #[test] fn gaussian_odd_reflection_reproduces_a_ramp() {
     let x: Vec<f64> = (0..80).map(|i| 3.0 - 0.7 * i as f64).collect();
     for s in [0.5, 2.0, 15.0, 60.0] { let y = gauss_odd(&x, s); let e = x.iter().zip(&y).map(|(a, b)| (a - b).abs()).fold(0.0, f64::max); assert!(e <= 1e-9, "sigma {s}: {e}"); }

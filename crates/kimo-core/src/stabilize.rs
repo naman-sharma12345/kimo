@@ -25,6 +25,13 @@
 //! - L1: the objective is minimised on the series minus its least-squares line (added back afterwards). With w1 = 10 the plain
 //!   form shortens any monotone pan by the whole box (|D1 p|_1 only sees the end points), i.e. it slows deliberate pans;
 //!   detrended, D1 penalises departures from the shot's mean velocity, so a static shot still stays static.
+//!
+//! Rolling-shutter repair (AE "Rolling Shutter Ripple", opt-in `Opts::rolling_shutter` = readout time kappa as a fraction of the
+//! frame interval): row y of frame t is exposed at tau = t + kappa (y/H - 1/2). `ContPath` makes the per-frame path continuous
+//! (Catmull-Rom on the smoothing parameters), C_t being the pose of the middle row. `estimate_path_rs` re-estimates the path on
+//! frames unwarped to the middle-row time with the previous estimate (`RS_PASSES` times), since a similarity fitted to rolling-shutter
+//! frames picks up a velocity-dependent rotation and scale. The output map M_t = B_t R_t, R_t(p) = C_t C(tau_p)^-1 p, is not rigid,
+//! so it is keyed as a MESH_NX x MESH_NY mesh pin (`rs_mesh`; `mesh_map` is the mapping planar::pin_mesh draws).
 use crate::keyframe::{Ease, Prop};
 use crate::model::{Mask, Project, Source};
 use crate::robust_est::{self, Model};
@@ -66,9 +73,10 @@ impl Framing {
 /// smoothness: 0..100 %; Gaussian sigma = smoothness% of one second of frames, L1 box = smoothness% of 10% of min(w, h).
 /// synthesis_range: seconds on each side that SynthesizeEdges fills from (AE "Synthesis Input Range"); synth_frames is that range in
 /// frames at `fps` (`synth_frames_for`; `stabilize_clip` recomputes it at the project fps).
+/// rolling_shutter: sensor readout time as a fraction of the frame interval, 0..1; 0 (default) is off, > 0 keys a mesh pin.
 #[derive(Clone, Debug)]
-pub struct Opts { pub method: Method, pub mode: Mode, pub smoothing: Smoothing, pub smoothness: f64, pub framing: Framing, pub max_features: usize, pub ransac_px: f64, pub seed: u64, pub fps: f64, pub synthesis_range: f64, pub synth_frames: usize }
-impl Default for Opts { fn default() -> Self { Opts { method: Method::Similarity, mode: Mode::Smooth, smoothing: Smoothing::Gaussian, smoothness: 50.0, framing: Framing::CropAutoScale, max_features: 400, ransac_px: 1.0, seed: 0x5eed, fps: 30.0, synthesis_range: 0.3, synth_frames: synth_frames_for(0.3, 30.0) } } }
+pub struct Opts { pub method: Method, pub mode: Mode, pub smoothing: Smoothing, pub smoothness: f64, pub framing: Framing, pub max_features: usize, pub ransac_px: f64, pub seed: u64, pub fps: f64, pub synthesis_range: f64, pub synth_frames: usize, pub rolling_shutter: f64 }
+impl Default for Opts { fn default() -> Self { Opts { method: Method::Similarity, mode: Mode::Smooth, smoothing: Smoothing::Gaussian, smoothness: 50.0, framing: Framing::CropAutoScale, max_features: 400, ransac_px: 1.0, seed: 0x5eed, fps: 30.0, synthesis_range: 0.3, synth_frames: synth_frames_for(0.3, 30.0), rolling_shutter: 0.0 } } }
 /// Frames on each side for a synthesis range of `secs` seconds: round(secs * fps) clamped to 1..30.
 pub fn synth_frames_for(secs: f64, fps: f64) -> usize { let n = (secs * fps).round(); if n.is_finite() { (n as i64).clamp(1, 30) as usize } else { 1 } }
 
@@ -363,6 +371,105 @@ pub fn similarity_to_props(b: &H3, w: usize, h: usize) -> (f64, f64, f64, f64) {
     (a * c.0 - s * c.1 + bn[0][2] - c.0, s * c.0 + a * c.1 + bn[1][2] - c.1, a.hypot(s), s.atan2(a).to_degrees())
 }
 
+// ---------- rolling shutter ----------
+/// Mesh pin size of the rolling-shutter correction (columns x rows; rows are where the readout time varies).
+pub const MESH_NX: usize = 9;
+pub const MESH_NY: usize = 17;
+/// Re-estimations of the path on frames unwarped to the middle-row time (`estimate_path_rs`).
+pub const RS_PASSES: usize = 3;
+/// Continuous camera path C(tau), tau in frames: Catmull-Rom through the per-frame path's parameters (Position / Similarity:
+/// (log s, theta unwrapped, tx, ty) about the centre as in `smooth_path`; Perspective: the 4 mapped frame corners), linear
+/// extrapolation from the end segments outside [0, n-1]. C(t) = C_t at integer t.
+pub struct ContPath { method: Method, w: usize, h: usize, q: Vec<Vec<f64>> }
+impl ContPath {
+    pub fn new(path: &[H3], w: usize, h: usize, method: Method) -> ContPath {
+        let q: Vec<Vec<f64>> = if method == Method::Perspective { let cs = corners(w, h);
+            path.iter().map(|p| { let mut v = Vec::with_capacity(8); for k in 0..4 { let r = trackmath::apply(p, cs[k]).unwrap_or(cs[k]); v.push(r.0); v.push(r.1); } v }).collect()
+        } else { let c = (w as f64 * 0.5, h as f64 * 0.5); let mut ps: Vec<[f64; 4]> = path.iter().map(|p| sim_params(p, c)).collect();
+            for i in 1..ps.len() { let d = ps[i][1] - ps[i - 1][1]; ps[i][1] -= (d / std::f64::consts::TAU).round() * std::f64::consts::TAU; }
+            ps.iter().map(|p| p.to_vec()).collect() };
+        ContPath { method, w, h, q }
+    }
+    fn params(&self, tau: f64) -> Vec<f64> {
+        let n = self.q.len(); if n == 0 { return vec![]; } if n == 1 || !tau.is_finite() { return self.q[0].clone(); }
+        let (m, last) = (self.q[0].len(), (n - 1) as f64);
+        let lin = |a: usize, b: usize, u: f64| -> Vec<f64> { (0..m).map(|k| self.q[a][k] + u * (self.q[b][k] - self.q[a][k])).collect() };
+        if tau <= 0.0 { return lin(0, 1, tau); } if tau >= last { return lin(n - 2, n - 1, tau - last + 1.0); }
+        // samples -1 and n are the linear extrapolations of the end segments
+        let g = |j: i64, k: usize| -> f64 { if j < 0 { 2.0 * self.q[0][k] - self.q[1][k] } else if j as usize >= n { 2.0 * self.q[n - 1][k] - self.q[n - 2][k] } else { self.q[j as usize][k] } };
+        let i = (tau.floor() as usize).min(n - 2); let u = tau - i as f64; let (u2, u3) = (u * u, u * u * u); let i = i as i64;
+        let wt = [0.5 * (-u3 + 2.0 * u2 - u), 0.5 * (3.0 * u3 - 5.0 * u2 + 2.0), 0.5 * (-3.0 * u3 + 4.0 * u2 + u), 0.5 * (u3 - u2)];
+        (0..m).map(|k| wt[0] * g(i - 1, k) + wt[1] * g(i, k) + wt[2] * g(i + 1, k) + wt[3] * g(i + 2, k)).collect()
+    }
+    /// C(tau): frame-0 pixels -> pixels of the (global-shutter) view at time tau.
+    pub fn at(&self, tau: f64) -> Option<H3> {
+        let v = self.params(tau); if v.is_empty() { return None; }
+        if self.method == Method::Perspective { let cs = corners(self.w, self.h); let d: Vec<P> = (0..4).map(|k| (v[2 * k], v[2 * k + 1])).collect(); trackmath::dlt(&cs, &d) }
+        else { Some(sim_from([v[0], v[1], v[2], v[3]], (self.w as f64 * 0.5, self.h as f64 * 0.5))) }
+    }
+    /// R_t(p) = C_t C(t + kappa (p.y/H - 1/2))^-1 p: rolling-shutter frame-t pixel -> its middle-row-time position (pixel-index coordinates).
+    pub fn rs_undo(&self, t: usize, kappa: f64, p: P) -> Option<P> {
+        let tau = t as f64 + kappa * (p.1 / self.h as f64 - 0.5); trackmath::apply(&trackmath::mul(&self.at(t as f64)?, &trackmath::inv3(&self.at(tau)?)?), p)
+    }
+}
+/// Middle-row-time view of rolling-shutter frame t: out(g) = img(p) with R_t(p) = g, i.e. p = C(tau_p) C_t^-1 g, solved by fixed-point
+/// iteration on the row (4 steps; C(tau) C_t^-1 tabulated per integer row and interpolated linearly), Keys bicubic sampling, edge-clamped.
+fn rs_unwarp(img: Vec<f32>, cp: &ContPath, t: usize, kappa: f64, w: usize, h: usize) -> Vec<f32> {
+    let Some(cti) = cp.at(t as f64).and_then(|c| trackmath::inv3(&c)) else { return img };
+    let (pad, hf) = (64i64, h as f64);
+    let rows: Vec<H3> = (-pad..=h as i64 + pad).map(|y| cp.at(t as f64 + kappa * (y as f64 / hf - 0.5)).map(|c| nh(&trackmath::mul(&c, &cti))).unwrap_or(IDENT)).collect();
+    let a_at = |y: f64| -> H3 { let f = (y + pad as f64).clamp(0.0, (rows.len() - 1) as f64); let i = (f.floor() as usize).min(rows.len() - 2); let u = f - i as f64;
+        let mut m = rows[i]; for r in 0..3 { for c in 0..3 { m[r][c] += u * (rows[i + 1][r][c] - rows[i][r][c]); } } m };
+    let lvl = Lvl { d: img, w, h }; let (xmax, ymax) = (w as f64 - 3.0, h as f64 - 3.0); let mut o = vec![0f32; w * h];
+    for y in 0..h { for x in 0..w { let g = (x as f64, y as f64); let mut p = g;
+        for _ in 0..4 { match trackmath::apply(&a_at(p.1), g) { Some(q) if q.0.is_finite() && q.1.is_finite() => p = q, _ => break } }
+        o[y * w + x] = samp(&lvl, p.0.clamp(1.0, xmax), p.1.clamp(1.0, ymax), true) as f32; } }
+    o
+}
+/// `estimate_path`, then with o.rolling_shutter > 0 `RS_PASSES` re-estimations on the frames unwarped to the middle-row time with
+/// the previous path (`rs_unwarp`); frames are requested in order 0..n once per pass. rolling_shutter 0 is exactly `estimate_path`.
+pub fn estimate_path_rs(frames: &mut dyn FnMut(usize) -> Result<Vec<f32>, String>, n: usize, w: usize, h: usize, method: Method, o: &Opts) -> Result<PathEstimate, String> {
+    let mut est = estimate_path(frames, n, w, h, method, o)?; let kappa = o.rolling_shutter; if !(kappa > 0.0) { return Ok(est); }
+    for _ in 0..RS_PASSES { let cp = ContPath::new(&est.path, w, h, method);
+        let mut gs = |i: usize| -> Result<Vec<f32>, String> { let img = frames(i)?; if img.len() != w * h { return Ok(img); } Ok(rs_unwarp(img, &cp, i, kappa, w, h)) };
+        est = estimate_path(&mut gs, n, w, h, method, o)?; }
+    Ok(est)
+}
+/// Mesh pin vertices of frame t with rolling-shutter repair: vertex k = j * MESH_NX + i of the SOURCE grid (w i/(MESH_NX-1),
+/// h j/(MESH_NY-1)) in pixel-edge coordinates (planar::pin_mesh's cells), mapped by M_t = B_t R_t (`ContPath::rs_undo`) in pixel-index
+/// coordinates (edge = index + 0.5). `b` is the framed correction B_t (incl. the auto-scale zoom).
+pub fn rs_mesh(cp: &ContPath, b: &H3, t: usize, kappa: f64, w: usize, h: usize) -> Option<Vec<[f64; 2]>> {
+    let (wf, hf) = (w as f64, h as f64); let mut v = Vec::with_capacity(MESH_NX * MESH_NY);
+    for j in 0..MESH_NY { for i in 0..MESH_NX { let e = (wf * i as f64 / (MESH_NX - 1) as f64, hf * j as f64 / (MESH_NY - 1) as f64);
+        let r = cp.rs_undo(t, kappa, (e.0 - 0.5, e.1 - 0.5))?; let q = trackmath::apply(b, r)?; if !(q.0.is_finite() && q.1.is_finite()) { return None; } v.push([q.0 + 0.5, q.1 + 0.5]); } }
+    Some(v)
+}
+/// Where planar::pin_mesh_exact (the mesh pin with clip prop mesh_exact = 1, which the rolling-shutter keys set) draws source point
+/// `p` (pixel-edge coordinates, inside [0, w] x [0, h]) of an nx x ny mesh: the cell rect containing p (on a shared edge the
+/// later-drawn cell, which wins there) and the exact cell rect -> quad homography that pin_rect inverts (solved here in cell-local
+/// coordinates for conditioning; the same map). None outside the frame or for a degenerate cell. (The default pin_mesh grows each
+/// quad by 0.7 px about its centroid to hide seams, which moves points by up to 0.7 px as they cross cells: 0.25 px of jitter on
+/// the rolling-shutter plate, so the stabilizer does not use it.)
+pub fn mesh_map(verts: &[[f64; 2]], nx: usize, ny: usize, w: usize, h: usize, p: (f64, f64)) -> Option<(f64, f64)> {
+    if nx < 2 || ny < 2 || verts.len() < nx * ny { return None; } let (wf, hf) = (w as f64, h as f64);
+    if !(p.0 >= 0.0 && p.1 >= 0.0 && p.0 <= wf && p.1 <= hf) { return None; }
+    let xa = |i: usize| wf * i as f64 / (nx - 1) as f64; let ya = |j: usize| hf * j as f64 / (ny - 1) as f64;
+    let mut i = ((p.0 / wf * (nx - 1) as f64).floor().max(0.0) as usize).min(nx - 2); while i > 0 && p.0 < xa(i) { i -= 1; } while i < nx - 2 && p.0 >= xa(i + 1) { i += 1; }
+    let mut j = ((p.1 / hf * (ny - 1) as f64).floor().max(0.0) as usize).min(ny - 2); while j > 0 && p.1 < ya(j) { j -= 1; } while j < ny - 2 && p.1 >= ya(j + 1) { j += 1; }
+    let rect = [xa(i), ya(j), xa(i + 1), ya(j + 1)];
+    let q = [verts[j * nx + i], verts[j * nx + i + 1], verts[(j + 1) * nx + i + 1], verts[(j + 1) * nx + i]]; let c = [(q[0][0] + q[1][0] + q[2][0] + q[3][0]) / 4.0, (q[0][1] + q[1][1] + q[2][1] + q[3][1]) / 4.0];
+    let (rw, rh) = (rect[2] - rect[0], rect[3] - rect[1]); let from: crate::planar::Quad = [[0.0, 0.0], [rw, 0.0], [rw, rh], [0.0, rh]];
+    let mut to = q; for v in to.iter_mut() { v[0] -= c[0]; v[1] -= c[1]; }
+    let hm = crate::planar::solve_h(&from, &to)?; let (x, y) = (p.0 - rect[0], p.1 - rect[1]); let d = hm[6] * x + hm[7] * y + 1.0; if !(d.abs() > 1e-12) { return None; }
+    let r = ((hm[0] * x + hm[1] * y + hm[2]) / d + c[0], (hm[3] * x + hm[4] * y + hm[5]) / d + c[1]); if r.0.is_finite() && r.1.is_finite() { Some(r) } else { None }
+}
+/// "mx{k}" (axis 0) / "my{k}" (axis 1) for the MESH_NX * MESH_NY rolling-shutter mesh vertices.
+fn mesh_key(axis: usize, k: usize) -> &'static str {
+    static NAMES: std::sync::OnceLock<[Vec<String>; 2]> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| [(0..MESH_NX * MESH_NY).map(|k| format!("mx{k}")).collect(), (0..MESH_NX * MESH_NY).map(|k| format!("my{k}")).collect()])[axis][k].as_str()
+}
+fn is_mesh_key(k: &str) -> bool { (k.starts_with("mx") || k.starts_with("my")) && k.len() > 2 && k.as_bytes()[2..].iter().all(|b| b.is_ascii_digit()) }
+
 /// SynthesizeEdges props (render.rs reads them): the smooth path S_t (scale, rotation deg, x, y px about the frame centre, the
 /// convention of x/y/scale/rotation) and the static number of frames on each side to fill from.
 pub const SYNTH_KEYS: [&str; 5] = ["stab_ss", "stab_sr", "stab_sx", "stab_sy", "stab_fill"];
@@ -376,12 +483,32 @@ pub fn stabilize_clip(p: &Project, clip_id: &str, o: &Opts) -> Result<(Vec<KeyRo
     if n < 2 { return Err(format!("clip '{clip_id}' is shorter than 2 frames: nothing to stabilize")); }
     let mut o = o.clone(); o.fps = p.fps; o.synth_frames = synth_frames_for(o.synthesis_range, p.fps); let t0 = std::time::Instant::now();
     let mut cache = crate::render::Cache::new(); let mut frames = |i: usize| crate::tracking::clip_gray_pub(p, &mut cache, &c, i);
-    let est = estimate_path(&mut frames, n, w, h, o.method, &o)?;
+    let est = estimate_path_rs(&mut frames, n, w, h, o.method, &o)?;
     let sm = smooth_path(&est.path, w, h, o.method, &o); let corr = corrections(&est.path, &sm); let fr = frame_corrections(&corr, w, h, o.framing);
-    let cen = (w as f64 * 0.5, h as f64 * 0.5); let cs = corners(w, h); let (wf, hf) = (w as f64, h as f64);
+    let cen = (w as f64 * 0.5, h as f64 * 0.5); let cs = corners(w, h);
+    let rows = key_rows(&est.path, &sm, &fr, w, h, p.fps, &o)?;
+    let (mut mpx, mut mdeg) = (0f64, 0f64); for b in &corr { for k in 0..4 { if let Some(q) = trackmath::apply(b, cs[k]) { mpx = mpx.max(trackmath::dist(q, cs[k])); } } mdeg = mdeg.max(sim_params(b, cen)[1].to_degrees().abs()); }
+    let fr_in = &est.inlier_frac[1..]; let mean_in = fr_in.iter().sum::<f64>() / fr_in.len() as f64; let min_in = fr_in.iter().cloned().fold(1.0, f64::min);
+    let synth: Option<usize> = if o.framing == Framing::SynthesizeEdges { Some(o.synth_frames) } else { None };
+    let mut rep = json!({"engine": "warp", "frames": n, "method": o.method.name(), "mode": o.mode.name(), "smoothing": o.smoothing.name(), "smoothness": o.smoothness, "framing": o.framing.name(), "synth_frames": synth,
+        "zoom": fr.zoom, "crop": fr.crop, "crop_limited": fr.zoom >= 1.0 / MIN_CROP - 1e-9, "reanchors": est.reanchors, "inlier_fraction_mean": mean_in, "inlier_fraction_min": min_in,
+        "fit_rms_px_median": trackmath::percentile(&est.fit_rms_px[1..], 50.0), "max_correction_px": mpx, "max_correction_deg": mdeg, "ms_per_frame": t0.elapsed().as_secs_f64() * 1000.0 / n as f64});
+    if o.rolling_shutter > 0.0 { rep["rolling_shutter"] = json!(o.rolling_shutter); rep["mesh"] = json!([MESH_NX, MESH_NY]); }
+    Ok((rows, rep))
+}
+/// Per-frame keys at clip-local times i / fps from the path, the smooth path and the framed corrections: x/y/scale/rotation (plus the
+/// stab_s* path for SynthesizeEdges), or pin corners for Perspective; with o.rolling_shutter > 0 instead the mx{k}/my{k} vertices of
+/// `rs_mesh`. The crop mask quad for Crop.
+pub fn key_rows(path: &[H3], sm: &[H3], fr: &Framed, w: usize, h: usize, fps: f64, o: &Opts) -> Result<Vec<KeyRow>, String> {
+    let cs = corners(w, h); let (wf, hf) = (w as f64, h as f64); let n = fr.corr.len();
+    let cp = if o.rolling_shutter > 0.0 { Some(ContPath::new(path, w, h, o.method)) } else { None };
     let mut rows = Vec::with_capacity(n);
-    for i in 0..n { let b = &fr.corr[i]; let t = i as f64 / p.fps;
-        let props: Vec<(&'static str, f64)> = if o.method == Method::Perspective {
+    for i in 0..n { let b = &fr.corr[i]; let t = i as f64 / fps;
+        let props: Vec<(&'static str, f64)> = if let Some(cp) = cp.as_ref() {
+            // rolling-shutter repair: the mesh M_t = B_t R_t replaces x/y/scale/rotation and the pin corners
+            let v = rs_mesh(cp, b, i, o.rolling_shutter, w, h).ok_or_else(|| format!("stabilize: degenerate rolling-shutter correction at frame {i}"))?;
+            let mut m = Vec::with_capacity(2 * v.len()); for (k, q) in v.iter().enumerate() { m.push((mesh_key(0, k), q[0])); m.push((mesh_key(1, k), q[1])); } m
+        } else if o.method == Method::Perspective {
             // pin quads are in pixel-edge coordinates: corner k of the source rect [0,w]x[0,h] is pixel-index point cs[k] - 0.5
             let mut v = vec![]; for k in 0..4 { let q = trackmath::apply(b, (cs[k].0 - 0.5, cs[k].1 - 0.5)).ok_or_else(|| format!("stabilize: degenerate correction at frame {i}"))?; v.push((PIN_KEYS[2 * k], q.0 + 0.5)); v.push((PIN_KEYS[2 * k + 1], q.1 + 0.5)); } v
         } else { let (x, y, s, r) = similarity_to_props(b, w, h); let mut v = vec![("x", x), ("y", y), ("scale", s), ("rotation", r)];
@@ -391,13 +518,7 @@ pub fn stabilize_clip(p: &Project, clip_id: &str, o: &Opts) -> Result<(Vec<KeyRo
                 for (k, pt) in [(r[0], r[1]), (r[2], r[1]), (r[2], r[3]), (r[0], r[3])].into_iter().enumerate() { let s = trackmath::apply(&bi, pt).ok_or_else(|| format!("stabilize: degenerate crop at frame {i}"))?; q[k] = ((s.0 + 0.5) / wf, (s.1 + 0.5) / hf); } Some(q) }
             None => None };
         rows.push(KeyRow { t, props, crop_quad }); }
-    let (mut mpx, mut mdeg) = (0f64, 0f64); for b in &corr { for k in 0..4 { if let Some(q) = trackmath::apply(b, cs[k]) { mpx = mpx.max(trackmath::dist(q, cs[k])); } } mdeg = mdeg.max(sim_params(b, cen)[1].to_degrees().abs()); }
-    let fr_in = &est.inlier_frac[1..]; let mean_in = fr_in.iter().sum::<f64>() / fr_in.len() as f64; let min_in = fr_in.iter().cloned().fold(1.0, f64::min);
-    let synth: Option<usize> = if o.framing == Framing::SynthesizeEdges { Some(o.synth_frames) } else { None };
-    let rep = json!({"engine": "warp", "frames": n, "method": o.method.name(), "mode": o.mode.name(), "smoothing": o.smoothing.name(), "smoothness": o.smoothness, "framing": o.framing.name(), "synth_frames": synth,
-        "zoom": fr.zoom, "crop": fr.crop, "crop_limited": fr.zoom >= 1.0 / MIN_CROP - 1e-9, "reanchors": est.reanchors, "inlier_fraction_mean": mean_in, "inlier_fraction_min": min_in,
-        "fit_rms_px_median": trackmath::percentile(&est.fit_rms_px[1..], 50.0), "max_correction_px": mpx, "max_correction_deg": mdeg, "ms_per_frame": t0.elapsed().as_secs_f64() * 1000.0 / n as f64});
-    Ok((rows, rep))
+    Ok(rows)
 }
 
 fn str_opt<'a>(a: &'a Value, k: &str) -> Result<Option<&'a str>, String> { match a.get(k) { None | Some(Value::Null) => Ok(None), Some(Value::String(s)) => Ok(Some(s.as_str())), Some(v) => Err(format!("{k} must be a string, got {v}")) } }
@@ -412,11 +533,18 @@ pub fn opts_from_args(a: &Value) -> Result<Opts, String> {
     if let Some(x) = num_opt(a, "max_features")? { if !(50.0..=2000.0).contains(&x) { return Err(format!("max_features {x} out of range 50..2000")); } o.max_features = x.round() as usize; }
     if let Some(x) = num_opt(a, "synthesis_range")? { if !(0.03..=2.0).contains(&x) { return Err(format!("synthesis_range {x} out of range 0.03..2 seconds")); } o.synthesis_range = x; o.synth_frames = synth_frames_for(x, o.fps); }
     if o.framing == Framing::SynthesizeEdges && o.method == Method::Perspective { return Err("synthesize_edges supports position and position_scale_rotation (not perspective)".into()); }
+    if let Some(x) = num_opt(a, "rolling_shutter")? { if !(0.0..=1.0).contains(&x) { return Err(format!("rolling_shutter {x} out of range 0..1 (readout time as a fraction of the frame interval)")); } o.rolling_shutter = x; }
+    if o.rolling_shutter > 0.0 && o.framing == Framing::SynthesizeEdges { return Err("rolling_shutter does not combine with synthesize_edges yet".into()); }
+    if o.rolling_shutter > 0.0 && o.framing == Framing::Crop { return Err("rolling_shutter does not combine with framing crop (the crop mask assumes a rigid correction); use crop_auto_scale".into()); }
     Ok(o)
 }
 /// Write the rows as linear keys on the clip (replacing those props), pin_on for Perspective, stab_fill = synth_frames for
 /// SynthesizeEdges, and the "stabilize_crop" path mask layer (hard-edged, straight segments) for Crop; a stale "stabilize_crop" layer
 /// and stale stab_* props from an earlier run are removed.
+/// Rolling shutter (o.rolling_shutter > 0): the rows carry mx{k}/my{k}; this adds pin_on, mesh_nx, mesh_ny, mesh_exact (planar::pin_mesh_exact) and the stab_rs marker
+/// (the readout), drops the quad pin corners and any earlier mesh, and resets x/y/scale/rotation to static identity (the renderer
+/// reads a missing scale as 0, so they are reset rather than removed) so the correction is not applied twice. A later run without
+/// rolling_shutter removes a mesh pin that carries stab_rs (and its pin_on unless that run is Perspective).
 pub fn write_keys(p: &mut Project, clip_id: &str, o: &Opts, rows: &[KeyRow]) -> Result<(), String> {
     let mask_id = if rows.iter().any(|r| r.crop_quad.is_some()) { Some(p.gen_id("mask")) } else { None };
     let nfill = synth_frames_for(o.synthesis_range, p.fps); // at the project fps, as stabilize_clip reports it (the caller's Opts carry the default fps)
@@ -424,9 +552,13 @@ pub fn write_keys(p: &mut Project, clip_id: &str, o: &Opts, rows: &[KeyRow]) -> 
     let mut props: Vec<(&'static str, Prop)> = vec![];
     for r in rows { for (k, v) in &r.props { match props.iter().position(|(n, _)| n == k) { Some(j) => props[j].1.set_key(r.t, *v, Ease::Linear), None => { let mut pr = Prop::new(*v); pr.set_key(r.t, *v, Ease::Linear); props.push((*k, pr)); } } } }
     for k in SYNTH_KEYS { c.props.remove(k); }
+    let rs = o.rolling_shutter > 0.0;
+    if rs || c.props.contains_key("stab_rs") { c.props.retain(|k, _| !is_mesh_key(k)); for k in ["mesh_nx", "mesh_ny", "mesh_exact", "stab_rs"] { c.props.remove(k); } if !rs && o.method != Method::Perspective { c.props.remove("pin_on"); } }
     for (k, pr) in props { c.props.insert(k.to_string(), pr); }
     if o.framing == Framing::SynthesizeEdges && o.method != Method::Perspective { c.props.insert("stab_fill".into(), Prop::new(nfill as f64)); }
     if o.method == Method::Perspective { c.props.insert("pin_on".into(), Prop::new(1.0)); }
+    if rs { for k in PIN_KEYS { c.props.remove(k); } for (k, v) in [("x", 0.0), ("y", 0.0), ("scale", 1.0), ("rotation", 0.0)] { c.props.insert(k.into(), Prop::new(v)); }
+        for (k, v) in [("pin_on", 1.0), ("mesh_nx", MESH_NX as f64), ("mesh_ny", MESH_NY as f64), ("mesh_exact", 1.0), ("stab_rs", o.rolling_shutter)] { c.props.insert(k.into(), Prop::new(v)); } }
     if let Some(m) = c.mask.as_mut() { m.layers.retain(|l| l.name != "stabilize_crop"); }
     if let Some(id) = mask_id {
         let pts = |q: &[(f64, f64); 4]| -> Vec<crate::masks::PathPt> { q.iter().map(|v| crate::masks::PathPt { x: v.0, y: v.1, ..Default::default() }).collect() };

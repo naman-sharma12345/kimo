@@ -160,6 +160,32 @@ fn synth_case(range: Option<f64>, nf: usize) {
     c(&mut se, "stabilize", json!({"clip_id": id, "framing": "stabilize_only"})); let cl = se.project.find_clip(&id).unwrap();
     for k in ["stab_fill", "stab_ss", "stab_sr", "stab_sx", "stab_sy"] { assert!(cl.props.get(k).is_none(), "{k} left behind"); }
 }
+#[test] fn rolling_shutter_keys_a_mesh_pin_and_drops_the_rigid_keys() {
+    let (mut s, id) = setup();
+    // an earlier perspective run (pin corners) and similarity run (x/y/scale/rotation keys) must not survive as a second correction
+    c(&mut s, "stabilize", json!({"clip_id": id, "method": "perspective"})); c(&mut s, "stabilize", json!({"clip_id": id, "method": "position_scale_rotation"}));
+    let r = c(&mut s, "stabilize", json!({"clip_id": id, "rolling_shutter": 0.8}));
+    assert_eq!(r["engine"], "warp"); assert_eq!(r["rolling_shutter"], 0.8); assert_eq!(r["mesh"], json!([9, 17]));
+    let cl = s.project.find_clip(&id).unwrap();
+    for (k, v) in [("pin_on", 1.0), ("mesh_nx", 9.0), ("mesh_ny", 17.0), ("mesh_exact", 1.0)] { let p = cl.props.get(k).unwrap_or_else(|| panic!("{k} missing")); assert_eq!(p.base, v, "{k}"); assert!(p.keys.is_empty(), "{k} is static"); }
+    for k in 0..9 * 17 { for a in ["mx", "my"] { let ks = keys(&s, &id, &format!("{a}{k}")); assert_eq!(ks.len(), N, "{a}{k}"); for (i, (t, _)) in ks.iter().enumerate() { assert!((t - i as f64 / FPS).abs() < 1e-9); } } }
+    for (p, v) in [("x", 0.0), ("y", 0.0), ("scale", 1.0), ("rotation", 0.0)] { let pr = &cl.props[p]; assert!(pr.keys.is_empty() && pr.base == v, "{p} still carries a correction"); }
+    for i in 0..4 { for a in ["x", "y"] { assert!(cl.props.get(&format!("pin{i}{a}")).is_none(), "pin{i}{a} left behind"); } }
+    // the mesh renders: crop_auto_scale covers the frame centre
+    let f = render_t(&s, 24.0 / FPS, "rs"); let i = ((H / 2) * W + W / 2) * 4; assert!(f.d[i + 3] >= 0.99, "centre alpha {}", f.d[i + 3]);
+    // a later run without rolling_shutter removes the mesh pin again
+    c(&mut s, "stabilize", json!({"clip_id": id, "method": "position_scale_rotation"})); let cl = s.project.find_clip(&id).unwrap();
+    for k in ["pin_on", "mesh_nx", "mesh_ny", "mesh_exact", "stab_rs", "mx0", "my152"] { assert!(cl.props.get(k).is_none(), "{k} left behind"); }
+    assert_eq!(keys(&s, &id, "x").len(), N);
+}
+#[test] fn rolling_shutter_refusals_leave_the_project_unchanged() {
+    let (mut s, id) = setup(); let before = serde_json::to_string(&s.project).unwrap();
+    for (a, want) in [(json!({"clip_id": id, "rolling_shutter": -0.1}), "0..1"), (json!({"clip_id": id, "rolling_shutter": 1.5}), "0..1"), (json!({"clip_id": id, "rolling_shutter": "fast"}), "rolling_shutter"),
+        (json!({"clip_id": id, "rolling_shutter": 0.8, "framing": "synthesize_edges"}), "rolling_shutter does not combine with synthesize_edges"),
+        (json!({"clip_id": id, "rolling_shutter": 0.8, "framing": "crop"}), "crop_auto_scale"), (json!({"clip_id": id, "rolling_shutter": 0.8, "smooth": 5}), "classic engine")] {
+        let e = dispatch(&mut s, "stabilize", &a).expect_err(&format!("accepted {a}")); assert!(e.contains(want), "{a}: {e}");
+        assert_eq!(before, serde_json::to_string(&s.project).unwrap(), "{a}: a refused call changed the project"); }
+}
 #[test] fn synthesize_edges_refusals_leave_the_project_unchanged() {
     let (mut s, id) = setup(); let before = serde_json::to_string(&s.project).unwrap();
     for (a, want) in [(json!({"clip_id": id, "method": "perspective", "framing": "synthesize_edges"}), "synthesize_edges supports position and position_scale_rotation"),

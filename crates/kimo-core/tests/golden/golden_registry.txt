@@ -334,7 +334,7 @@ solve_camera 109d6fc96592a39e
 solve_constraints 3ea242b079bf2ed1
 split_all_at 846f25f325036668
 split_clip 1a109f15314ba83d
-stabilize 5583e19eed638aab
+stabilize 5f55e3dca0e1efe1
 swap_clips 7e618d3ff4d26a38
 switch_angle 2a55c52c71e95121
 sync_clips 9a610496e2de2b51

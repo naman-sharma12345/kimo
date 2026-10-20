@@ -122,9 +122,10 @@ pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
             ("framing", json!({"type":"string","enum":["stabilize_only","crop","crop_auto_scale","synthesize_edges"],"description":"warp: stabilize_only, crop (stabilize_crop mask), crop_auto_scale (default, zoom to fill) or synthesize_edges (fill borders from nearby frames)"})),
             ("max_features", n("warp engine: tracked features per frame, 50..2000, default 400")),
             ("synthesis_range", n("warp engine, synthesize_edges: seconds of frames before and after to fill borders from, 0.03..2, default 0.3")),
+            ("rolling_shutter", n("warp engine: rolling-shutter readout as a fraction of the frame time, 0..1 (0 off); undoes jello/skew with a 9x17 mesh")),
             ("smooth", n("classic engine: sigma in frames, default 10")), ("lock", json!({"type":"boolean","description":"classic engine: true holds the camera fixed (tripod)"})), ("rotation", json!({"type":"boolean","description":"classic engine: false corrects translation only"}))], &["clip_id"]),
         run: |ss, a| { let id = str_arg(a, "clip_id")?.to_string(); let has = |k: &str| a.get(k).is_some_and(|v| !v.is_null());
-            if ["method", "mode", "smoothness", "smoothing", "framing", "max_features", "synthesis_range"].iter().any(|k| has(*k)) {
+            if ["method", "mode", "smoothness", "smoothing", "framing", "max_features", "synthesis_range", "rolling_shutter"].iter().any(|k| has(*k)) {
                 if ["smooth", "lock", "rotation"].iter().any(|k| has(*k)) { return Err("smooth/lock/rotation belong to the classic engine; use smoothness/mode/method".into()); }
                 let o = crate::stabilize::opts_from_args(a)?; let (rows, rep) = crate::stabilize::stabilize_clip(&ss.project, &id, &o)?; crate::stabilize::write_keys(&mut ss.project, &id, &o, &rows)?; return Ok(rep); }
             let off = crate::tracking::stabilize(&ss.project, &id, opt_num(a, "smooth", 10.0).clamp(0.0, 300.0), a.get("lock").and_then(|v| v.as_bool()).unwrap_or(false), a.get("rotation").and_then(|v| v.as_bool()).unwrap_or(true))?;
