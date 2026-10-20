@@ -28,7 +28,7 @@ pub fn op(id: &str, tool: &str, args: Value) -> Op { Op { id: id.into(), tool: t
 pub fn kf(id: &str, clip: &str, prop: &str, time: f64, value: f64, ease: &str) -> Op { op(id, "set_keyframe", json!({"clip_id": format!("${clip}.clip_id"), "property": prop, "time": time, "value": value, "ease": ease})) }
 pub fn sety(clip: &str, y: f64) -> Op { op(&format!("{clip}_y"), "set_property", json!({"clip_id": format!("${clip}.clip_id"), "property": "y", "value": y})) }
 pub fn setx(clip: &str, x: f64) -> Op { op(&format!("{clip}_x"), "set_property", json!({"clip_id": format!("${clip}.clip_id"), "property": "x", "value": x})) }
-pub const EASES: &[&str] = &["linear", "in", "out", "in_out", "out_quart", "out_expo", "out_back", "in_out_quint", "in_expo"];
+pub const EASES: &[&str] = &["linear", "in", "out", "in_out", "out_quart", "out_expo", "out_back", "in_out_quint", "in_expo", "in_back", "in_out_back", "in_elastic", "out_elastic", "in_out_elastic", "in_bounce", "out_bounce", "in_out_bounce"]; // keyframe::EASE_NAMES minus hold
 
 pub fn all() -> Vec<&'static Recipe> {
     use std::sync::OnceLock; static R: OnceLock<Vec<Recipe>> = OnceLock::new();

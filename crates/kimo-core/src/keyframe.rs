@@ -2,7 +2,53 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub enum Ease { Linear, In, Out, InOut, Hold, OutQuart, OutExpo, OutBack, InOutQuint, InExpo }
+pub enum Ease { Linear, In, Out, InOut, Hold, OutQuart, OutExpo, OutBack, InOutQuint, InExpo,
+    /// AE/easings.net overshoot and spring curves; values leave 0..1 mid-segment (bounded props are clamped where read, see `clamp_prop`), endpoints are exact.
+    InBack, InOutBack, InElastic, OutElastic, InOutElastic, InBounce, OutBounce, InOutBounce }
+
+/// Every easing name, in schema order: the ONE list every keyframe tool (clip, effect, mask, camera, audio volume, speed ramp, text animator,
+/// motion path) and recipes take, and transitions add to their own. Same names serde reads into `Ease`.
+pub const EASE_NAMES: &[&str] = &["linear", "in", "out", "in_out", "hold", "out_quart", "out_expo", "out_back", "in_out_quint", "in_expo",
+    "in_back", "in_out_back", "in_elastic", "out_elastic", "in_out_elastic", "in_bounce", "out_bounce", "in_out_bounce"];
+
+fn out_bounce(u: f64) -> f64 { let (n, d) = (7.5625, 2.75); if u < 1.0 / d { n * u * u } else if u < 2.0 / d { let u = u - 1.5 / d; n * u * u + 0.75 } else if u < 2.5 / d { let u = u - 2.25 / d; n * u * u + 0.9375 } else { let u = u - 2.625 / d; n * u * u + 0.984375 } }
+
+impl Ease {
+    /// The shared easing primitive: progress u in 0..1 -> eased progress. The first ten arms are the curves kimo always drew (unchanged, bit for bit).
+    pub fn apply(self, u: f64) -> f64 {
+        use std::f64::consts::PI;
+        let (c1, c4, c5) = (1.70158, 2.0 * PI / 3.0, 2.0 * PI / 4.5); let c2 = c1 * 1.525;
+        let new_curve = !matches!(self, Ease::Linear | Ease::Hold | Ease::In | Ease::Out | Ease::OutQuart | Ease::OutExpo | Ease::InExpo | Ease::OutBack | Ease::InOutQuint | Ease::InOut);
+        if new_curve { if u <= 0.0 { return 0.0; } if u >= 1.0 { return 1.0; } }
+        match self {
+            Ease::Linear | Ease::Hold => u,
+            Ease::In => u * u * u,
+            Ease::Out => 1.0 - (1.0 - u).powi(3),
+            Ease::OutQuart => 1.0 - (1.0 - u).powi(4),
+            Ease::OutExpo => if u >= 1.0 { 1.0 } else { 1.0 - 2f64.powf(-10.0 * u) },
+            Ease::InExpo => if u <= 0.0 { 0.0 } else { 2f64.powf(10.0 * u - 10.0) },
+            Ease::OutBack => { let (c1, c3) = (1.2, 2.2); 1.0 + c3 * (u - 1.0).powi(3) + c1 * (u - 1.0).powi(2) }
+            Ease::InOutQuint => if u < 0.5 { 16.0 * u.powi(5) } else { 1.0 - (-2.0 * u + 2.0).powi(5) / 2.0 },
+            Ease::InOut => if u < 0.5 { 4.0 * u * u * u } else { 1.0 - (-2.0 * u + 2.0).powi(3) / 2.0 },
+            Ease::InBack => (c1 + 1.0) * u * u * u - c1 * u * u,
+            Ease::InOutBack => if u < 0.5 { (2.0 * u).powi(2) * ((c2 + 1.0) * 2.0 * u - c2) / 2.0 } else { ((2.0 * u - 2.0).powi(2) * ((c2 + 1.0) * (u * 2.0 - 2.0) + c2) + 2.0) / 2.0 },
+            Ease::InElastic => -(2f64.powf(10.0 * u - 10.0)) * ((u * 10.0 - 10.75) * c4).sin(),
+            Ease::OutElastic => 2f64.powf(-10.0 * u) * ((u * 10.0 - 0.75) * c4).sin() + 1.0,
+            Ease::InOutElastic => if u < 0.5 { -(2f64.powf(20.0 * u - 10.0) * ((20.0 * u - 11.125) * c5).sin()) / 2.0 } else { 2f64.powf(-20.0 * u + 10.0) * ((20.0 * u - 11.125) * c5).sin() / 2.0 + 1.0 },
+            Ease::InBounce => 1.0 - out_bounce(1.0 - u),
+            Ease::OutBounce => out_bounce(u),
+            Ease::InOutBounce => if u < 0.5 { (1.0 - out_bounce(1.0 - 2.0 * u)) / 2.0 } else { (1.0 + out_bounce(2.0 * u - 1.0)) / 2.0 },
+        }
+    }
+    /// The easing a name means (any of EASE_NAMES), or None.
+    pub fn parse(name: &str) -> Option<Ease> { serde_json::from_value(serde_json::Value::String(name.to_string())).ok() }
+}
+
+/// The per-property clamp flag: properties whose value range is bounded (an elastic/back overshoot must not push opacity past 1 or volume
+/// below 0). Position, scale, rotation and every other property are left unclamped, so overshoot reads as motion.
+pub const BOUNDED_PROPS: &[(&str, f64, f64)] = &[("opacity", 0.0, 1.0), ("fill_alpha", 0.0, 1.0), ("stroke_alpha", 0.0, 1.0), ("reveal", 0.0, 1.0), ("volume", 0.0, f64::INFINITY)];
+/// `v` clamped to the property's range when it is bounded, else unchanged.
+pub fn clamp_prop(name: &str, v: f64) -> f64 { match BOUNDED_PROPS.iter().find(|(n, _, _)| *n == name) { Some((_, lo, hi)) => v.clamp(*lo, *hi), None => v } }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Key { pub t: f64, pub v: f64, #[serde(default = "d_ease")] pub ease: Ease, /// Optional cubic-bezier timing curve [x1,y1,x2,y2] for the segment leaving this key (overrides `ease`; y may overshoot).
@@ -110,17 +156,7 @@ impl Prop {
                 let u = (t - w[0].t) / (w[1].t - w[0].t).max(1e-9);
                 if w[0].out.is_some() || w[1].inn.is_some() { return handle_segment(&w[0], &w[1], u); }
                 if let Some(b) = w[0].bez { let y = bezier_ease(b, u); return w[0].v + (w[1].v - w[0].v) * y; }
-                let u = match w[0].ease {
-                    Ease::Linear | Ease::Hold => u,
-                    Ease::In => u * u * u,
-                    Ease::Out => 1.0 - (1.0 - u).powi(3),
-                    Ease::OutQuart => 1.0 - (1.0 - u).powi(4),
-                    Ease::OutExpo => if u >= 1.0 { 1.0 } else { 1.0 - 2f64.powf(-10.0 * u) },
-                    Ease::InExpo => if u <= 0.0 { 0.0 } else { 2f64.powf(10.0 * u - 10.0) },
-                    Ease::OutBack => { let (c1, c3) = (1.2, 2.2); 1.0 + c3 * (u - 1.0).powi(3) + c1 * (u - 1.0).powi(2) }
-                    Ease::InOutQuint => if u < 0.5 { 16.0 * u.powi(5) } else { 1.0 - (-2.0 * u + 2.0).powi(5) / 2.0 },
-                    Ease::InOut => if u < 0.5 { 4.0 * u * u * u } else { 1.0 - (-2.0 * u + 2.0).powi(3) / 2.0 },
-                };
+                let u = w[0].ease.apply(u);
                 return w[0].v + (w[1].v - w[0].v) * u;
             }
         }

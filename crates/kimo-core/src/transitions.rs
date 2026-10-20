@@ -4,7 +4,7 @@ use crate::effects::Frame;
 use crate::model::Transition;
 
 pub const KINDS: &[&str] = &["crossfade", "dissolve", "wipe", "wipe_left", "wipe_right", "wipe_up", "wipe_down", "diagonal", "blinds", "checker", "iris", "clock", "split_h", "split_v", "noise_dissolve", "slide_left", "slide_right", "slide_up", "slide_down", "zoom", "zoom_blur", "spin", "flash", "dip_black", "dip_white", "dip_color", "light_leak", "glitch", "whip_left", "whip_right", "shatter", "shatter_cells"];
-pub const EASES: &[&str] = &["linear", "in", "out", "in_out", "in_cubic", "out_cubic", "in_out_cubic", "in_out_expo", "out_back", "out_bounce"];
+pub const EASES: &[&str] = &["linear", "in", "out", "in_out", "in_cubic", "out_cubic", "in_out_cubic", "in_out_expo", "out_back", "out_bounce", "out_quart", "out_expo", "in_expo", "in_out_quint", "in_back", "in_out_back", "in_elastic", "out_elastic", "in_out_elastic", "in_bounce", "in_out_bounce"];
 
 pub fn ease(name: &str, t: f64) -> f64 {
     let t = t.clamp(0.0, 1.0);
@@ -13,6 +13,7 @@ pub fn ease(name: &str, t: f64) -> f64 {
         "in_out_expo" => if t <= 0.0 { 0.0 } else if t >= 1.0 { 1.0 } else if t < 0.5 { 2f64.powf(20.0 * t - 10.0) / 2.0 } else { (2.0 - 2f64.powf(-20.0 * t + 10.0)) / 2.0 },
         "out_back" => { let (c1, c3) = (1.70158, 2.70158); 1.0 + c3 * (t - 1.0).powi(3) + c1 * (t - 1.0).powi(2) }
         "out_bounce" => { let (n, d) = (7.5625, 2.75); if t < 1.0 / d { n * t * t } else if t < 2.0 / d { let t = t - 1.5 / d; n * t * t + 0.75 } else if t < 2.5 / d { let t = t - 2.25 / d; n * t * t + 0.9375 } else { let t = t - 2.625 / d; n * t * t + 0.984375 } }
+        n if n != "in_out" && n != "hold" && crate::keyframe::Ease::parse(n).is_some() => crate::keyframe::Ease::parse(n).unwrap().apply(t), // the shared keyframe easings
         _ => t * t * (3.0 - 2.0 * t) }
 }
 fn sstep(x: f32) -> f32 { let t = x.clamp(0.0, 1.0); t * t * (3.0 - 2.0 * t) }

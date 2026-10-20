@@ -9,7 +9,7 @@ pub const SUMMARY: &str = "Title and optional subtitle over a styled panel with 
 /// Param schema used by recipe_describe and recipe_apply. Layout uses pixels,
 /// colors use 0..1 channels, timing uses seconds. No normalized layout coordinates.
 pub fn schema() -> Value {
-    let easing = json!({"type":"string","enum":["linear","in","out","in_out","hold","out_quart","out_expo","out_back","in_out_quint","in_expo"],"description":"Easing on the key leaving each animated segment"});
+    let easing = json!({"type":"string","enum":crate::keyframe::EASE_NAMES,"description":"Easing on the key leaving each animated segment"});
     let color = json!({"type":"array","items":{"type":"number","minimum":0,"maximum":1},"minItems":3,"maxItems":4,"description":"RGB or RGBA channels in 0..1"});
     let mut v = obj(vec![
         ("title",s("Required nonempty title; literal text, including $")), ("subtitle",s("Optional subtitle; empty omits its clip")),
@@ -84,7 +84,7 @@ pub fn expand(ss: &Session, a: &Value) -> Result<Vec<Op>, String> {
     }
     let enter_ease = string(a,"enter_ease","out_quart")?;
     let exit_ease = string(a,"exit_ease","in")?;
-    for e in [enter_ease,exit_ease] { serde_json::from_value::<crate::keyframe::Ease>(json!(e)).map_err(|_| format!("lower_third: easing '{e}' not allowed. Valid: linear, in, out, in_out, hold, out_quart, out_expo, out_back, in_out_quint, in_expo"))?; }
+    for e in [enter_ease,exit_ease] { serde_json::from_value::<crate::keyframe::Ease>(json!(e)).map_err(|_| format!("lower_third: easing '{e}' not allowed. Valid: {}", crate::keyframe::EASE_NAMES.join(", ")))?; }
     let font = string(a,"font","Montserrat")?;
     let subfont = string(a,"subtitle_font",font)?;
     let title_color = rgba(a,"title_color",json!([1,1,1]))?;

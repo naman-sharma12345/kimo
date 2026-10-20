@@ -113,7 +113,7 @@ pub fn smooth_d(pts: &[[f64; 2]], closed: bool, tension: f64) -> String {
     if closed { s += " Z"; } s
 }
 
-fn ease(u: f64, kind: &str) -> f64 { let u = u.clamp(0.0, 1.0); match kind { "in" => u * u * u, "out" => 1.0 - (1.0 - u).powi(3), "in_out" => if u < 0.5 { 4.0 * u * u * u } else { 1.0 - (-2.0 * u + 2.0).powi(3) / 2.0 }, "hold" => 0.0, _ => u } }
+fn ease(u: f64, kind: &str) -> f64 { let u = u.clamp(0.0, 1.0); match kind { "in" => u * u * u, "out" => 1.0 - (1.0 - u).powi(3), "in_out" => if u < 0.5 { 4.0 * u * u * u } else { 1.0 - (-2.0 * u + 2.0).powi(3) / 2.0 }, "hold" => 0.0, n => crate::keyframe::Ease::parse(n).map_or(u, |e| e.apply(u)) } }
 /// Interpolate two token lists with identical structure (same commands, same argument counts). Arc flags snap to the nearer key.
 fn lerp_tokens(a: &[(char, Vec<f64>)], b: &[(char, Vec<f64>)], u: f64) -> Result<Vec<(char, Vec<f64>)>, String> {
     if a.len() != b.len() { return Err("morph keys must have the same path structure (command count differs)".into()); }
