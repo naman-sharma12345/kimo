@@ -47,7 +47,7 @@ pub const CATALOG: &[(&str, &str, &[(&str, f64, &str)])] = &[
     ("grain", "Film grain", &[("amount", 0.08, "0..0.5")]),
     ("rgb_split", "Formula: channel(x,y)=src(x+offset_channel*cos(angle),y+offset_channel*sin(angle)); offset truncated toward zero before adding integer position, clamp edges", &[("amount",6.,"legacy +/- red/blue px"),("r_offset",6.,"red px"),("g_offset",0.,"green px"),("b_offset",-6.,"blue px"),("angle",0.,"degrees")]),
     ("invert", "Invert colors", &[]),
-    ("chroma_key", "Remove a key color to alpha", &[("r",0.0,"key R"),("g",1.0,"key G"),("b",0.0,"key B"),("tolerance",0.35,"0..1"),("softness",0.1,"0..1")]),
+    ("chroma_key", "Remove a key color to alpha (space 1: YCbCr chroma distance)", &[("r",0.0,"key R"),("g",1.0,"key G"),("b",0.0,"key B"),("tolerance",0.35,"0..1"),("softness",0.1,"0..1"),("space",0.0,"0 RGB distance (default), 1 YCbCr chroma distance (ignores screen shading)")]),
     ("lut", "3D LUT (.cube) via strings.path", &[("intensity", 1.0, "0..1")]),
     ("hsl", "Hue/Sat/Lum, global + per color band (red,yellow,green,cyan,blue,magenta _hue/_sat/_lum)", &[("hue",0.0,"-1..1 (x60deg)"),("sat",0.0,"-1..1"),("lum",0.0,"-1..1"),("red_sat",0.0,"band"),("blue_hue",0.0,"band")]),
     ("sharpen", "Unsharp mask", &[("amount", 0.8, "0..3"), ("radius", 2.0, "px")]),
@@ -179,8 +179,12 @@ pub fn apply(kind: &str, params: &Params, strings: &BTreeMap<String, String>, f:
         "chroma_key" => {
             let k = [p(params,"r",0.0,t), p(params,"g",1.0,t), p(params,"b",0.0,t)];
             let tol = p(params,"tolerance",0.35,t); let soft = p(params,"softness",0.1,t).max(0.001);
+            let space = p(params,"space",0.0,t); if space != 0.0 && space != 1.0 { return Err("chroma_key: space must be 0 (RGB) or 1 (YCbCr)".into()); }
+            // Rec.709 Cb/Cr: space 1 ignores luma so a shaded screen still keys
+            let cbcr = |c: &[f32]| { let y = 0.2126*c[0]+0.7152*c[1]+0.0722*c[2]; [(c[2]-y)/1.8556, (c[0]-y)/1.5748] }; let kc = cbcr(&k[..]);
             for i in 0..f.w*f.h { let c = &mut f.d[i*4..i*4+4];
-                let dist = ((c[0]-k[0]).powi(2)+(c[1]-k[1]).powi(2)+(c[2]-k[2]).powi(2)).sqrt()/1.732;
+                let dist = if space == 0.0 { ((c[0]-k[0]).powi(2)+(c[1]-k[1]).powi(2)+(c[2]-k[2]).powi(2)).sqrt()/1.732 }
+                    else { let q = cbcr(&*c); ((q[0]-kc[0]).powi(2)+(q[1]-kc[1]).powi(2)).sqrt()/std::f32::consts::SQRT_2 };
                 let al = ((dist - tol)/soft).clamp(0.0,1.0); c[3] *= al;
                 if al < 1.0 && c[1] > c[0].max(c[2]) { c[1] = c[0].max(c[2]); } } // despill
         }

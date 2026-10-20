@@ -189,6 +189,7 @@
 "normalize_loudness",
 "particle_simulate_raw",
 "path_info",
+"pick_key_color",
 "pick_white_balance",
 "pin_layer",
 "preview_material",

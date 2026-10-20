@@ -77,6 +77,8 @@ Precision fixture: 1024-level 16-bit PNG decoded, composited and exported to FFV
 
 `keyer` matte_model 1 (Smith & Blinn linear colour difference, trimap + projection edges) takes a clean plate (strings.ref_clip clip or strings.aux_path image, per-pixel screen colour), garbage/core mattes (strings.garbage_mask/core_mask = mask layer ids, mode none), despill_mode average/double/limit/min with despill_bias and replace colour, and view 3 status (black/grey/white, yellow = opaque but despilled) / 4 raw screen matte; matte_model 0 is the legacy keyer unchanged.
 
+`pick_key_color` sets a keyer's (or chroma_key's) r,g,b to the per-channel median of a region (default top-left 15 %) of the clip rendered without its keyers, adding a keyer if the clip has none. `chroma_key` space 1 keys on Rec.709 CbCr distance (luma ignored, so a shaded screen still keys); space 0 (default) is the old RGB distance.
+
 Limits: legacy color/HSL/keyers/film effects assume display encoding; explicitly wrap them with color_managed transforms or use linear_grade. Managed source optical-flow blur uses float working-linear neighbours; its tracking-quality gaps remain (see below). Lab match_grade and portable clip-grade bake require legacy/display project (avoid silently treating linear data as sRGB). No gamut-aware 3D physical light calibration or per-media metadata auto-detection; caller explicitly names input encoding. High-bit export currently serial (bounded memory, no GPU), and PNG preview is 8-bit SDR only when output configured SDR. The managed decode cache keeps float windows and creates a quantized compatibility copy lazily for legacy tracking APIs; managed decoding uses more memory than legacy.
 
 ### High-bit still / honest preview

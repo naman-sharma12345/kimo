@@ -121,6 +121,7 @@ export function colourRows(tool, A, R, refName) {
   const luma = a => (Array.isArray(a) && a.length >= 3 && a.slice(0, 3).every(x => num(x) != null) ? r2(0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2]) : null);
   const L = a => (Array.isArray(a) && num(a[0]) != null ? r2(a[0]) : null), G = R.gains || [];
   const rows = tool === 'pick_white_balance' ? [['WB R', num(G[0]) != null ? r2(G[0]) : null], ['WB G', num(G[1]) != null ? r2(G[1]) : null], ['WB B', num(G[2]) != null ? r2(G[2]) : null]]
+    : tool === 'pick_key_color' ? [0, 1, 2].map(j => [`Key ${'RGB'[j]}`, Array.isArray(R.sampled_rgb) && num(R.sampled_rgb[j]) != null ? r2(R.sampled_rgb[j]) : null])
     : tool === 'match_color' ? [['Match', 'colour'], ['Ref', refName], ['Src luma', luma(R.src_mean)], ['Ref luma', luma(R.ref_mean)]]
     : tool === 'match_grade' ? [['Match', 'Lab'], ['Ref', refName], ['Src L', L(R.source_lab_mean)], ['Ref L', L(R.reference_lab_mean)]] : [];
   return rows.filter(r => r[1] != null && r[1] !== '').map(r => [String(r[0]), String(r[1])]);
@@ -132,6 +133,7 @@ export function scopeLine(tool, R) {
   else if (tool === 'analyze_color') { if (rgb(R.mean)) parts.push(`mean ${rgb(R.mean)}`); if (Array.isArray(R.mean) && num(R.mean[3]) != null) parts.push(`luma ${r2(R.mean[3])}`); if (Array.isArray(R.min) && Array.isArray(R.max)) parts.push(`range ${r2(R.min[3] ?? R.min[0])}–${r2(R.max[3] ?? R.max[0])}`); }
   else if (tool === 'describe_frame') { const S = R.frame_stats || {}; if (num(S.clipped_white_pct) != null) parts.push(`clip ${pct(S.clipped_white_pct)}`); if (num(S.clipped_black_pct) != null) parts.push(`crush ${pct(S.clipped_black_pct)}`); }
   else if (tool === 'pick_white_balance') { if (rgb(R.gains)) parts.push(`WB gains ${rgb(R.gains)}`); }
+  else if (tool === 'pick_key_color') { if (rgb(R.sampled_rgb)) parts.push(`key ${rgb(R.sampled_rgb)}`); }
   else if (tool === 'match_color') { if (rgb(R.src_mean) && rgb(R.ref_mean)) parts.push(`mean ${rgb(R.src_mean)} → ${rgb(R.ref_mean)}`); }
   else if (tool === 'match_grade') { if (rgb(R.source_lab_mean) && rgb(R.reference_lab_mean)) parts.push(`Lab ${rgb(R.source_lab_mean)} → ${rgb(R.reference_lab_mean)}`); }
   else return null;

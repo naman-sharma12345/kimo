@@ -24,7 +24,7 @@ export const FAMILIES = [
   ['edit', /^(cut|split|blade|razor|trim|extend|ripple|slip|slide|move_clip|delete_clip|lift|roll)|^(duplicate_clip|swap_clips|loop_clip|freeze_frame|delete_track|set_speed|rate_stretch|set_speed_ramp|group_clips|ungroup_clip|distribute_clips|set_blend|set_echo|set_flow_blur|add_camera_shake|remove_audio_effect|set_track|project_set)$/],
   ['effects', /^(add_effect|apply_effect|set_effect|add_transition|remove_effect|add_speed|set_posterize|add_adjustment|add_managed_linear_effect$)/],
   ['transform', /^(set_property|set_clip_property|set_props?$|transform|set_transform|keyframe|set_keyframe|add_keyframe|scale|rotate|position|set_motion|add_null|set_parent|set_expression)/],
-  ['color', /^(grade|color|colour|lut|apply_lut|set_lut|ocio|render_scope|analyze_exposure|wheel|curve|node_|hdr|render_ocio|render_exposure|render_gamut|set_grade_node|set_grade_graph|pick_white_balance|match_grade|match_color|set_white_balance|set_grade_output|remove_grade_node|generate_lut_node|add_acescct_primaries|create_shared_grade_graph|bind_shared_grade_graphs|remove_shared_grade_graph|set_node_param|set_node_mask|apply_asc_cdl|set_color_curve|set_grade_scopes|add_node$|connect_nodes|disconnect_nodes)/],
+  ['color', /^(grade|color|colour|lut|apply_lut|set_lut|ocio|render_scope|analyze_exposure|wheel|curve|node_|hdr|render_ocio|render_exposure|render_gamut|set_grade_node|set_grade_graph|pick_white_balance|pick_key_color|match_grade|match_color|set_white_balance|set_grade_output|remove_grade_node|generate_lut_node|add_acescct_primaries|create_shared_grade_graph|bind_shared_grade_graphs|remove_shared_grade_graph|set_node_param|set_node_mask|apply_asc_cdl|set_color_curve|set_grade_scopes|add_node$|connect_nodes|disconnect_nodes)/],
   ['audio', /^(set_|add_|apply_|auto_|measure_|normalize_|analyze_)?(mix|audio|gain|fader|mute|solo|pan|compress|eq|limiter|limit|loudness|duck|stem|bus|route_)|^track_beats$/],
   ['text', /^(caption|subtitle|add_caption|add_subtitle|edit_caption|transcript_edit|transcri|add_title|title|text|set_text|add_text|set_caption|validate_captions)/],
   ['3d', /^(add_mesh|mesh|model|extrude|bevel|light|camera|particle|emit|simulate|scene|render_3d|add_light|set_light|solve_camera|track|set_camera|add_scene3d|instantiate_gltf|generate_mesh_primitive|contour_sdf_graph|set_mesh_pin|derive_vertex_tangents|fit_track_homography|ecc_refine_track|decompose_track_homography|corner_disagreement|lk_residual_audit|validate_planar_track|undistort_clip|stabilize|apply_camera_solve|pin_layer|set_corner_pin|add_emitter|add_particles|add_shard_burst|set_material$|remove_material$|preview_material$|set_relight$|remove_light$)/],
@@ -215,11 +215,12 @@ function gradeOps(state, MODES, ev) {
   const box = (r, label) => Array.isArray(r) && r.length === 4 && r.every(v => numOf(v) != null) ? { rect: r.map(numOf), label } : null;
   const regs = [];
   if (tn === 'pick_white_balance' && [A.x, A.y, A.w, A.h].every(v => numOf(v) != null)) regs.push(box([A.x, A.y, A.w, A.h], 'neutral'));
+  if (tn === 'pick_key_color') regs.push(box([A.x ?? 0, A.y ?? 0, A.w ?? 0.15, A.h ?? 0.15], 'screen'));
   if (tn === 'match_grade' || tn === 'match_color') { const s1 = box(A.source_region, 'source'), s2 = box(A.ref_region, A.ref_clip_id ? `ref · ${A.ref_clip_id}` : 'ref'); if (s1) regs.push(s1); if (s2) regs.push(s2); }
   if (regs.length) { vw.overlay = (vw.overlay || []).filter(o => o._kind !== tn).concat(regs.filter(Boolean).map(o => ({ ...o, _call: ev.call_id, _kind: tn }))); hit = true; }
-  if ((tn === 'match_grade' || tn === 'match_color' || tn === 'pick_white_balance') && !regs.length) { vw.wipe = 1; hit = true; }
+  if ((tn === 'match_grade' || tn === 'match_color' || tn === 'pick_white_balance' || tn === 'pick_key_color') && !regs.length) { vw.wipe = 1; hit = true; }
   // GUI-FIX-1: what the pick / match computed, in the Grade list of the screen it lands on and the Color scopes' stats line
-  if (tn === 'match_grade' || tn === 'match_color' || tn === 'pick_white_balance') {
+  if (tn === 'match_grade' || tn === 'match_color' || tn === 'pick_white_balance' || tn === 'pick_key_color') {
     const tl = timelineView(state, MODES), nm = id => { if (id == null) return null; const [t, i] = tl ? findClip(tl, { clip_id: id }) : [null, -1]; const lb = t ? t.clips[i].label : null; return lb && !RAW_ID.test(String(lb)) ? lb : (RAW_ID.test(String(id)) ? null : String(id)); };
     const rows = colourRows(tn, A, R, nm(A.ref_clip_id));
     const K = (MODES[mode] && Object.entries(MODES[mode].panels).find(([, sp]) => sp.kind === 'kv')) || null;
