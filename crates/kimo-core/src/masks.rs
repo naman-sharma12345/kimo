@@ -60,6 +60,15 @@ pub fn defaults(kind: &str) -> Vec<(&'static str, f64)> {
     }
 }
 
+/// Optional numeric params a kind accepts beyond `defaults` (never written by `new_layer`): (kind, key, lo, hi).
+pub const EXTRA: &[(&str, &str, f64, f64)] = &[("hsl", "hue_soft", 0.0, 180.0), ("hsl", "sat_soft", 0.0, 1.0), ("hsl", "lum_soft", 0.0, 1.0)];
+/// Validate a value for an EXTRA key: wrong kind or out-of-range/nonfinite is refused. Keys not in EXTRA pass through unchanged.
+pub fn check_extra(kind: &str, key: &str, v: f64) -> Result<(), String> {
+    if !EXTRA.iter().any(|e| e.1 == key) { return Ok(()); }
+    let Some(&(_, _, lo, hi)) = EXTRA.iter().find(|e| e.0 == kind && e.1 == key) else { return Err(format!("mask param '{key}' only applies to kind {:?}, not '{kind}'", EXTRA.iter().filter(|e| e.1 == key).map(|e| e.0).collect::<Vec<_>>())) };
+    if !v.is_finite() || v < lo || v > hi { return Err(format!("mask param '{key}' must be finite in {lo}..{hi}, got {v}")); } Ok(())
+}
+
 pub fn new_layer(id: String, kind: &str) -> MaskLayer {
     let mut props = BTreeMap::new();
     for (k, v) in defaults(kind) { props.insert(k.to_string(), Prop::new(v)); }
@@ -274,9 +283,17 @@ fn raw(l: &MaskLayer, f: &Frame, t: f64, ctx: &Ctx) -> Vec<f32> {
                 let key = [kr, kg, kb_]; for i in 0..n { if kb[i] < 0.02 || nb[i] < 0.01 { continue; } let fc = [ch[0][i] / nb[i], ch[1][i] / nb[i], ch[2][i] / nb[i]];
                     let (fk, pk) = ([fc[0] - key[0], fc[1] - key[1], fc[2] - key[2]], [f.d[i*4] - key[0], f.d[i*4+1] - key[1], f.d[i*4+2] - key[2]]); let den = fk[0] * fk[0] + fk[1] * fk[1] + fk[2] * fk[2]; if den < 1e-4 { continue; }
                     let a = ((pk[0] * fk[0] + pk[1] * fk[1] + pk[2] * fk[2]) / den).clamp(0.0, 1.0); c[i] = 1.0 - a; } } }
+        // HSL qualifier. Per pixel (h,s,l) = rgb2hsl(r,g,b) above: h in degrees [0,360), s and l in 0..1 for in-gamut rgb (grey: h=0,s=0).
+        // dh = circular |h - hue| in 0..180; sstep(a,b,x) = t*t*(3-2t), t = clamp((x-a)/(b-a),0,1) (b<=a: hard step x>=a).
+        // so = soft + 1e-4; ramp widths HS = hue_soft if set else so*90, SS = sat_soft if set else so, LS = lum_soft if set else so
+        // (optional props, unset = -1 = absent; explicit values are floored to 1e-4 so bounds stay inclusive).
+        // coverage = (1 - sstep(hue_width/2, hue_width/2 + HS, dh)) * sstep(s_lo - SS, s_lo, s) * (1 - sstep(s_hi, s_hi + SS, s))
+        //          * sstep(l_lo - LS, l_lo, l) * (1 - sstep(l_hi, l_hi + LS, l)): exactly 1 inside the inclusive ranges, ramps to 0 outside.
         "hsl" => { let (hu, hw, s0, s1, l0, l1, so) = (g(l, "hue", 0.0, t), g(l, "hue_width", 30.0, t), g(l, "s_lo", 0.2, t), g(l, "s_hi", 1.0, t), g(l, "l_lo", 0.0, t), g(l, "l_hi", 1.0, t), g(l, "soft", 0.1, t) + 1e-4);
+            let (hso, sso, lso) = (g(l, "hue_soft", -1.0, t), g(l, "sat_soft", -1.0, t), g(l, "lum_soft", -1.0, t));
+            let hs = if hso >= 0.0 { hso.max(1e-4) } else { so * 90.0 }; let ssw = if sso >= 0.0 { sso.max(1e-4) } else { so }; let ls = if lso >= 0.0 { lso.max(1e-4) } else { so };
             for i in 0..w * h { let (hh, ss, ll) = rgb2hsl(f.d[i*4], f.d[i*4+1], f.d[i*4+2]); let mut dh = (hh - hu).abs() % 360.0; if dh > 180.0 { dh = 360.0 - dh; }
-                c[i] = (1.0 - sstep(hw / 2.0, hw / 2.0 + so * 90.0, dh)) * sstep(s0 - so, s0, ss) * (1.0 - sstep(s1, s1 + so, ss)) * sstep(l0 - so, l0, ll) * (1.0 - sstep(l1, l1 + so, ll)); } }
+                c[i] = (1.0 - sstep(hw / 2.0, hw / 2.0 + hs, dh)) * sstep(s0 - ssw, s0, ss) * (1.0 - sstep(s1, s1 + ssw, ss)) * sstep(l0 - ls, l0, ll) * (1.0 - sstep(l1, l1 + ls, ll)); } }
         "difference" => { if let Some(rf) = l.strings.get("ref_clip").and_then(|id| (ctx.refs)(id)) { let (tol, so) = (g(l, "tol", 0.08, t), g(l, "soft", 0.06, t) + 1e-4);
             for i in 0..w * h { let d = ((f.d[i*4] - rf.d[i*4]).abs() + (f.d[i*4+1] - rf.d[i*4+1]).abs() + (f.d[i*4+2] - rf.d[i*4+2]).abs()) / 3.0; c[i] = sstep(tol, tol + so, d); } } }
         "wand" => { let (sx, sy) = (((g(l, "x", 0.5, t) * wf) as usize).min(w - 1), ((g(l, "y", 0.5, t) * hf) as usize).min(h - 1)); let (tol, so, contig) = (g(l, "tol", 0.12, t), g(l, "soft", 0.05, t), g(l, "contiguous", 1.0, t) > 0.5);

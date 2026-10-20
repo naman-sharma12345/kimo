@@ -100,6 +100,7 @@ fn mask_stack<'a>(p: &'a mut Project, a: &Value) -> Result<&'a mut Mask, String>
 fn parse_pts(v: &Value) -> Result<Vec<crate::masks::PathPt>, String> { serde_json::from_value(v.clone()).map_err(|e| format!("bad points: {e}")) }
 fn pt_arr(v: &Value) -> Vec<[f64; 2]> { v.as_array().map(|a| a.iter().filter_map(|p| { let q = p.as_array()?; Some([q.get(0)?.as_f64()?, q.get(1)?.as_f64()?]) }).collect()).unwrap_or_default() }
 fn apply_layer_args(l: &mut crate::masks::MaskLayer, a: &Value) -> Result<(), String> {
+    if let Some(o) = a.get("params").and_then(|v| v.as_object()) { for (k, v) in o { if let Some(x) = v.as_f64() { crate::masks::check_extra(&l.kind, k, x)?; } } }   // validate before any mutation
     if let Some(m) = a.get("mode").and_then(|v| v.as_str()) { if !crate::masks::MODES.contains(&m) { return Err(format!("bad mode '{m}', one of {:?}", crate::masks::MODES)); } l.mode = m.into(); }
     if let Some(b) = a.get("invert").and_then(|v| v.as_bool()) { l.invert = b; } if let Some(b) = a.get("enabled").and_then(|v| v.as_bool()) { l.enabled = b; } if let Some(b) = a.get("closed").and_then(|v| v.as_bool()) { l.closed = b; }
     if let Some(n) = a.get("name").and_then(|v| v.as_str()) { l.name = n.into(); } if let Some(n) = a.get("interp").and_then(|v| v.as_str()) { l.strings.insert("interp".into(), n.into()); } if let Some(n) = a.get("ref_clip").and_then(|v| v.as_str()) { l.strings.insert("ref_clip".into(), n.into()); }

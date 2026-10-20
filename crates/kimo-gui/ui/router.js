@@ -589,6 +589,8 @@ function maskOps(state, MODES, ev) {
     else if (cx != null && cy != null && w != null && h != null) { const o = ov(); o.push({ shape: /ellipse|circle/.test(kind) ? 'ellipse' : 'rect', rect: [cx - w / 2, cy - h / 2, w, h], _kind: 'mask:' + mid }); hit = true; }
     if (K) { K.sub = `${mid} - ${kind}${P2.length ? ` · ${P2.length} pts` : ''}`; }
     rowsSet('Refine matte', [['Feather', numOf(A.feather) != null ? `${fmtVal(numOf(A.feather))} px` : null], ['Choke', numOf(A.expand) != null ? fmtVal(-numOf(A.expand)) : null]]);   // only the rows m12 draws (choke = negative expand)
+    const qs = ['hue_soft', 'sat_soft', 'lum_soft'].map(k => A.params && typeof A.params === 'object' ? numOf(A.params[k]) : null);
+    if (qs.some(v => v != null)) rowsSet('Refine matte', [['Qualifier soft h/s/l', qs.map((v, i) => v == null ? '-' : i ? fmtVal(v) : `${fmtVal(v)}°`).join(' / ')]]);
   }
   if (tn === 'set_mask_path_key') { lane(`${mid} path`, fr(A.time)); if (P2.length >= 2) { const o = ov(); o.push({ path: P2, closed: true, _kind: 'mask:' + mid }); } }
   if (tn === 'set_mask_prop_key' || tn === 'set_mask_keyframe') { const pr = String(A.property ?? 'value'); lane(`${mid} ${pr}`, fr(A.time)); if (numOf(A.value) != null && /^(feather|expand)$/.test(pr)) rowsSet('Refine matte', [[pr === 'feather' ? 'Feather' : 'Choke', pr === 'feather' ? `${fmtVal(numOf(A.value))} px` : fmtVal(-numOf(A.value))]]); }
