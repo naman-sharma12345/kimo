@@ -1222,12 +1222,13 @@ function sceneOps(state, MODES, ev) {
       const z = numOf(R.zoom ?? R.scale ?? R.crop_scale);
       if (z != null && z >= 1) { const o = ov(); o.push({ crop: 1 / z, _call: ev.call_id, _kind: tn }); }
       // warp engine (method / mode / smoothness / smoothing / framing) vs the classic engine (smooth / lock / rotation)
-      const warp = ['method', 'mode', 'smoothness', 'smoothing', 'framing', 'max_features'].some(k => A[k] != null) || R.engine === 'warp';
+      const warp = ['method', 'mode', 'smoothness', 'smoothing', 'framing', 'max_features', 'synthesis_range'].some(k => A[k] != null) || R.engine === 'warp';
+      const framing = A.framing ?? R.framing;
       const meth = { position: 'position', position_scale_rotation: 'similarity', similarity: 'similarity', perspective: 'perspective' }[R.method ?? A.method];
       const sm = numOf(A.smoothness ?? R.smoothness);
       vw.left = (warp
         ? ['warp stabilize', meth || null, (A.mode ?? R.mode) === 'no_motion' ? 'locked' : (sm != null ? `smooth ${fmtVal(sm)}%` : null), (A.smoothing ?? R.smoothing) === 'l1' ? 'L1 path' : null,
-          (A.framing ?? R.framing) ? String(A.framing ?? R.framing).replace(/_/g, ' ') : null, z != null && z > 1 ? `zoom ${fmtVal(z)}×` : null]
+          framing === 'synthesize_edges' ? 'synth edges' : framing ? String(framing).replace(/_/g, ' ') : null, z != null && z > 1 ? `zoom ${fmtVal(z)}×` : null]
         : ['stabilize', numOf(A.smooth) != null ? `smooth ${fmtVal(A.smooth)}` : null, A.lock ? 'locked' : null, A.rotation === false ? 'no rotation' : null, z != null ? `zoom ${fmtVal(z)}×` : null]).filter(Boolean).join(' · '); hit = true;
     }
     if (tn === 'apply_camera_solve' && ev.phase === 'complete') {

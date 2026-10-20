@@ -210,6 +210,16 @@ fn quad(b: &H3, r: [f64; 4]) -> [P; 4] { [ap(b, (r[0], r[1])), ap(b, (r[2], r[1]
     assert_eq!(Method::parse("similarity").unwrap(), Method::Similarity); assert_eq!(Method::parse("position_scale_rotation").unwrap(), Method::Similarity); assert_eq!(Method::parse("perspective").unwrap(), Method::Perspective); assert_eq!(Method::parse("position").unwrap(), Method::Position);
     assert_eq!(Mode::parse("no_motion").unwrap(), Mode::Locked); assert_eq!(Smoothing::parse("l1").unwrap(), Smoothing::L1); assert_eq!(Framing::parse("crop").unwrap(), Framing::Crop);
     for bad in ["bogus", "", "Similarity", "subspace_warp"] { assert!(Method::parse(bad).is_err(), "{bad}"); }
-    assert!(Mode::parse("locked").is_err()); assert!(Smoothing::parse("l2").is_err()); assert!(Framing::parse("synthesize_edges").is_err());
+    assert!(Mode::parse("locked").is_err()); assert!(Smoothing::parse("l2").is_err()); assert!(Framing::parse("synthesize").is_err());
     let e = Method::parse("bogus").unwrap_err(); for v in METHODS { assert!(e.contains(v), "{e}"); }
+}
+#[test] fn synthesize_edges_parses_and_keeps_the_corrections() {
+    assert_eq!(Framing::parse("synthesize_edges").unwrap(), Framing::SynthesizeEdges); assert_eq!(Framing::SynthesizeEdges.name(), "synthesize_edges");
+    assert!(FRAMINGS.contains(&"synthesize_edges")); for f in FRAMINGS { assert_eq!(Framing::parse(f).unwrap().name(), f); }
+    let e = Framing::parse("bogus").unwrap_err(); assert!(e.contains("synthesize_edges"), "{e}");
+    // corrections unchanged, no zoom, no crop (like stabilize_only)
+    let corr = vec![IDENT, trackmath::mul(&tr(5.0, -3.0), &IDENT)]; let fr = frame_corrections(&corr, W, H, Framing::SynthesizeEdges);
+    assert_eq!(fr.corr, corr); assert_eq!(fr.zoom, 1.0); assert!(fr.crop.is_none());
+    // synthesis range in frames: round(secs * fps) clamped 1..30
+    assert_eq!(synth_frames_for(0.3, 24.0), 7); assert_eq!(synth_frames_for(0.3, 30.0), 9); assert_eq!(synth_frames_for(0.03, 24.0), 1); assert_eq!(synth_frames_for(2.0, 60.0), 30); assert_eq!(Opts::default().synth_frames, 9);
 }

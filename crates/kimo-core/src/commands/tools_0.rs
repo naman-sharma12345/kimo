@@ -113,17 +113,18 @@ pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
             let (mut kx, mut ky, mut kr, mut ks) = (Prop::new(bx), Prop::new(by), Prop::new(br), Prop::new(bs)); let n = tr.len();
             for (i, s_) in tr.iter().enumerate() { if i % step != 0 && i != n - 1 { continue; } let lt = s_.t + src - t0; kx.set_key(lt, bx + s_.x - nx * w, Ease::Linear); ky.set_key(lt, by + s_.y - ny * h, Ease::Linear); if rigid { kr.set_key(lt, br + s_.rot_deg, Ease::Linear); ks.set_key(lt, bs * s_.scale, Ease::Linear); } }
             tc.props.insert("x".into(), kx); tc.props.insert("y".into(), ky); if rigid { tc.props.insert("rotation".into(), kr); tc.props.insert("scale".into(), ks); } let e = &tr[n-1]; Ok(json!({"frames":n,"end_px":[e.x, e.y],"end_rotation_deg":e.rot_deg,"end_scale":e.scale})) } },
-    Command { name: "stabilize", description: "Warp-stabilize a media clip (AE/Premiere Warp Stabilizer): robust camera path, smooth or locked, position/similarity/perspective, crop+auto-scale.", mutates: true,
+    Command { name: "stabilize", description: "Warp-stabilize a media clip (AE/Premiere Warp Stabilizer): robust path, smooth or locked, position/similarity/perspective, crop, zoom or synth edges.", mutates: true,
         schema: obj(vec![("clip_id", s("media clip")),
             ("method", json!({"type":"string","enum":["position","position_scale_rotation","perspective"],"description":"warp engine: what the correction may move (AE Method); similarity = position_scale_rotation (default); perspective keys pin corners"})),
             ("mode", json!({"type":"string","enum":["smooth_motion","no_motion"],"description":"warp engine: smooth_motion (default) keeps the camera move, no_motion locks the framing of the first frame"})),
             ("smoothness", n("warp engine: 0..100 %, default 50; Gaussian sigma is that % of one second, the L1 crop box that % of 10% of the frame")),
             ("smoothing", json!({"type":"string","enum":["gaussian","l1"],"description":"warp engine path smoother: gaussian (default) or l1 (Grundmann 2011 L1-optimal camera path)"})),
-            ("framing", json!({"type":"string","enum":["stabilize_only","crop","crop_auto_scale"],"description":"warp engine: stabilize_only, crop (adds a stabilize_crop mask) or crop_auto_scale (default: zoom so every frame is filled)"})),
+            ("framing", json!({"type":"string","enum":["stabilize_only","crop","crop_auto_scale","synthesize_edges"],"description":"warp: stabilize_only, crop (stabilize_crop mask), crop_auto_scale (default, zoom to fill) or synthesize_edges (fill borders from nearby frames)"})),
             ("max_features", n("warp engine: tracked features per frame, 50..2000, default 400")),
+            ("synthesis_range", n("warp engine, synthesize_edges: seconds of frames before and after to fill borders from, 0.03..2, default 0.3")),
             ("smooth", n("classic engine: sigma in frames, default 10")), ("lock", json!({"type":"boolean","description":"classic engine: true holds the camera fixed (tripod)"})), ("rotation", json!({"type":"boolean","description":"classic engine: false corrects translation only"}))], &["clip_id"]),
         run: |ss, a| { let id = str_arg(a, "clip_id")?.to_string(); let has = |k: &str| a.get(k).is_some_and(|v| !v.is_null());
-            if ["method", "mode", "smoothness", "smoothing", "framing", "max_features"].iter().any(|k| has(*k)) {
+            if ["method", "mode", "smoothness", "smoothing", "framing", "max_features", "synthesis_range"].iter().any(|k| has(*k)) {
                 if ["smooth", "lock", "rotation"].iter().any(|k| has(*k)) { return Err("smooth/lock/rotation belong to the classic engine; use smoothness/mode/method".into()); }
                 let o = crate::stabilize::opts_from_args(a)?; let (rows, rep) = crate::stabilize::stabilize_clip(&ss.project, &id, &o)?; crate::stabilize::write_keys(&mut ss.project, &id, &o, &rows)?; return Ok(rep); }
             let off = crate::tracking::stabilize(&ss.project, &id, opt_num(a, "smooth", 10.0).clamp(0.0, 300.0), a.get("lock").and_then(|v| v.as_bool()).unwrap_or(false), a.get("rotation").and_then(|v| v.as_bool()).unwrap_or(true))?;

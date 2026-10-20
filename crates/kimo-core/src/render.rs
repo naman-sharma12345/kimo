@@ -247,9 +247,11 @@ fn prepare_window(p: &Project, cache: &mut Cache, t0: f64, t1: f64, window:usize
         let total = media_total(c,p.fps);
         let (ta, tb) = match c.time_mode { TimeMode::Normal => (t0, t1), TimeMode::Reverse => (c.start + c.duration - (t1 - c.start), c.start + c.duration - (t0 - c.start)), TimeMode::Freeze { at } => (c.start + at, c.start + at) };
         let (t0, t1) = (ta, tb);
-        let (ia, mut ib) = if all { (0, total - 1) } else if c.speed_curve.is_some(){(media_index(c,(t0-c.start).min(c.duration),p.fps).min(total-1),media_index(c,(t1-c.start).min(c.duration),p.fps).min(total-1))}else { ((((t0 - c.start).max(0.0) * p.fps).floor() as usize).min(total - 1), (((t1 - c.start).max(0.0) * p.fps).ceil() as usize).min(total - 1)) };
+        let (mut ia, mut ib) = if all { (0, total - 1) } else if c.speed_curve.is_some(){(media_index(c,(t0-c.start).min(c.duration),p.fps).min(total-1),media_index(c,(t1-c.start).min(c.duration),p.fps).min(total-1))}else { ((((t0 - c.start).max(0.0) * p.fps).floor() as usize).min(total - 1), (((t1 - c.start).max(0.0) * p.fps).ceil() as usize).min(total - 1)) };
         // Instant normal playback samples floor(index), except flow needs the next frame.
         if !all&&matches!(c.time_mode,TimeMode::Normal)&&t0==t1{let flow=c.props.get("flow_blur").map(|v|v.at((t0-c.start).max(0.))>0.).unwrap_or(false);ib=if flow{(ia+1).min(total-1)}else{ia};}
+        // Stabilize, Synthesize Edges (stab_fill, see synth_edges) reads up to stab_fill frames before and after; other clips decode as before.
+        if !all { let nf = c.props.get("stab_fill").map(|q| q.at(0.0)).unwrap_or(0.0); if nf >= 1.0 { let nf = nf.min(30.0) as usize; ia = ia.saturating_sub(nf); ib = (ib + nf).min(total - 1); } }
         let a = p.assets.get(asset).ok_or(format!("asset {asset} missing"))?;
         let apath=p.resolve(&a.path);let stat=std::fs::metadata(&apath).map_err(|e|format!("media stat: {e}"))?;
         let sig = format!("{asset}|{}|{}|{}|{:?}|{:?}|{:?}|{:?}|{:?}|{}|{}|{:?}", c.in_point, c.duration, c.speed, c.speed_curve.as_ref().map(|p| serde_json::to_string(p).unwrap_or_default()), p.color_pipeline,c.props.get("input_gamut"),c.props.get("input_transfer"),c.props.get("fit"),a.path,stat.len(),stat.modified().ok());
@@ -475,6 +477,41 @@ fn transform_bb(src: &Frame, bb: Option<(usize, usize, usize, usize)>, scale: f6
     prof("tb_loop", tpl); let _ = ow; o
 }
 
+/// Stabilize, Synthesize Edges (stabilize.rs Framing::SynthesizeEdges, AE "Stabilize, Synthesize Edges"). Pixels of the transformed
+/// frame `f` with alpha < 1 are filled by compositing UNDER them (premultiplied: out = cur + (1 - cur.a) nb) the clip's neighbouring
+/// source frames k = +1, -1, +2, -2, ... up to +-stab_fill, each warped into this output by W_k = A_t B_t^-1 S_t S_u^-1 B_u at
+/// u = lt + k / fps: B_u is the clip's own x/y/scale/rotation at u, S_u the smooth path rebuilt from stab_ss/sr/sx/sy the same way,
+/// A_t = (scale, rotation, dx, dy) the transform drawn now (== B_t unless a parent, motion path or transition adds to it).
+/// The neighbour is this clip's decoded media frame at u (`source_frame`: time mode, speed, fit, flow blur, colour input stage)
+/// WITHOUT the clip's effects and masks. Neighbours outside the clip or the decoded window (prepare_window widens it by stab_fill)
+/// are skipped; stops once every pixel is opaque. `f` holds straight colour (transform_bb's convention), and so does the result.
+fn synth_edges(p: &Project, c: &Clip, f: &mut Frame, lt: f64, a_t: (f64, f64, f64, f64), cache: &Cache) {
+    const OPAQUE: f32 = 1.0 - 1e-6;
+    let n = prop(c, "stab_fill", lt).min(30.0) as i64; if n < 1 { return; }
+    let open = |g: &Frame| g.d.chunks_exact(4).any(|px| px[3] < OPAQUE); if !open(&*f) { return; }
+    let (cx, cy) = (f.w as f64 / 2.0, f.h as f64 / 2.0);
+    // similarity p -> [a -b; b a] p + (tx, ty) as [a, b, tx, ty], from transform_bb's (scale, rotation deg, x, y) about the centre
+    let sim = |s: f64, r: f64, x: f64, y: f64| -> [f64; 4] { let (a, b) = (s * r.to_radians().cos(), s * r.to_radians().sin()); [a, b, cx + x - (a * cx - b * cy), cy + y - (b * cx + a * cy)] };
+    let mul = |m: [f64; 4], q: [f64; 4]| -> [f64; 4] { [m[0] * q[0] - m[1] * q[1], m[1] * q[0] + m[0] * q[1], m[0] * q[2] - m[1] * q[3] + m[2], m[1] * q[2] + m[0] * q[3] + m[3]] };
+    let inv = |m: [f64; 4]| -> [f64; 4] { let d = (m[0] * m[0] + m[1] * m[1]).max(1e-300); let (a, b) = (m[0] / d, -m[1] / d); [a, b, -(a * m[2] - b * m[3]), -(b * m[2] + a * m[3])] };
+    // the stabilizer keyed B_u in the clip's LOCAL props (parenting enters through A_t), so they are read directly here
+    let b_at = |u: f64| /* xform-lint: ok */ sim(prop(c, "scale", u), prop(c, "rotation", u), prop(c, "x", u), prop(c, "y", u));
+    let s_at = |u: f64| sim(prop(c, "stab_ss", u), prop(c, "stab_sr", u), prop(c, "stab_sx", u), prop(c, "stab_sy", u));
+    let pre = mul(sim(a_t.0, a_t.1, a_t.2, a_t.3), mul(inv(b_at(lt)), s_at(lt)));
+    let fr = cache.frames_of(&c.id);
+    for j in 0..2 * n { let k = if j % 2 == 0 { j / 2 + 1 } else { -(j / 2 + 1) };
+        let u = lt + k as f64 / p.fps; if u < 0.0 || u >= c.duration { continue; }
+        // only frames inside the decoded window: Frames::get clamps, which would composite the wrong frame
+        let idx = media_index(c, c.display_time(u), p.fps); if !fr.is_some_and(|fr| fr.covers(idx, idx)) { continue; }
+        let wk = mul(pre, mul(inv(s_at(u)), b_at(u)));
+        let (sc, rot) = (wk[0].hypot(wk[1]), wk[1].atan2(wk[0]).to_degrees()); let (dx, dy) = (wk[0] * cx - wk[1] * cy + wk[2] - cx, wk[1] * cx + wk[0] * cy + wk[3] - cy);
+        let src = source_frame(p, c, u, cache); let nb = transform_bb(&src, alpha_bbox(&src), sc, rot, dx, dy);
+        for (px, q) in f.d.chunks_exact_mut(4).zip(nb.d.chunks_exact(4)) { let (ca, na) = (px[3], q[3]); if ca >= OPAQUE || na <= 0.0 { continue; }
+            let kb = (1.0 - ca) * na; let oa = ca + kb; for i in 0..3 { px[i] = (px[i] * ca + q[i] * kb) / oa; } px[3] = oa; }
+        if !open(&*f) { break; }
+    }
+}
+
 fn blend(dst: &mut Frame, src: &Frame, opacity: f32, mode: &str, mask: Option<&dyn Fn(usize, usize) -> f32>) { blend_region(dst, src, opacity, mode, mask, None) }
 /// `region` (x0,y0,x1,y1 inclusive) must contain every pixel of `src` with alpha > 0; pixels outside are skipped without scanning (bit-identical to a full scan).
 fn blend_region(dst: &mut Frame, src: &Frame, opacity: f32, mode: &str, mask: Option<&dyn Fn(usize, usize) -> f32>, region: Option<(usize, usize, usize, usize)>) {
@@ -570,6 +607,10 @@ pub fn render_frame_opts(p: &Project, t: f64, cache: &Cache, transparent: bool) 
             if let Some((rx0, ry0, rx1, ry1)) = u { for y in ry0..=ry1 { for x in rx0..=rx1 { let i = y * w + x; if wsum[i] > 0.0 { for j in 0..3 { acc.d[i * 4 + j] /= wsum[i]; } } acc.d[i * 4 + 3] /= n as f32; } } } acc }
             else if (sc - 1.0).abs() < 1e-9 && xprop(p, c, "rotation", lt) + rot_extra == 0.0 && dx == 0.0 && dy == 0.0 { f } else { from_tb = true; transform_bb(&f, bbf, sc, xprop(p, c, "rotation", lt) + rot_extra, dx, dy) };
         prof("transform", tp);
+        // Stabilize, Synthesize Edges: opt-in, only media clips the stabilizer gave stab_fill and the stab_s* path; the fill can write outside
+        // transform_bb's rect, so the blend scans the whole frame and the buffer is not handed back to the pool
+        let mut f = f; if !moving && matches!(c.source, Source::Media { .. }) && prop(c, "stab_fill", lt) >= 1.0 && ["stab_ss", "stab_sr", "stab_sx", "stab_sy"].iter().all(|k| c.props.contains_key(*k)) {
+            synth_edges(p, c, &mut f, lt, (sc, xprop(p, c, "rotation", lt) + rot_extra, dx, dy), cache); from_tb = false; }
         let mut f = f; if let Some(mt) = c.mask.as_ref().and_then(|m| m.matte.as_ref()) { if let Some(src) = render_clip_alone(p, &mt.source, t, cache) { let cov = crate::masks::matte_coverage(mt, &src); for i in 0..w * h { f.d[i * 4 + 3] *= cov[i]; } } }
         // frosted_glass runs here, after the layer transform, so it frosts what is really under the pane
         if c.effects.iter().any(|e| crate::effects2::is_post(&e.kind)) { BACKDROP.with(|b| *b.borrow_mut() = Some(std::rc::Rc::new(Frame { w, h, d: out.d.clone() }))); crate::frosted::set_post(true);

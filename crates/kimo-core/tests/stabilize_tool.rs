@@ -1,8 +1,10 @@
 //! `stabilize` end to end through the command, on a short lossless synthetic plate (ffv1 in .mkv, 48 frames 256x144, 24 fps)
 //! with an exact ground-truth camera: classic args reach the classic engine untouched; the warp engine keys x/y/scale/rotation
 //! (or pin corners) at every frame, adds the crop mask, and its residual jitter measured from the KEYS (the transform_bb convention
-//! rebuilt from x/y/scale/rotation) is gated; refusals leave the project unchanged.
+//! rebuilt from x/y/scale/rotation) is gated; synthesize_edges fills the stabilize_only borders with pixels checked against the analytic
+//! texture; refusals leave the project unchanged.
 use kimo_core::commands::{dispatch, Session};
+use kimo_core::effects::Frame;
 use kimo_core::robust_est::{self, Model};
 use kimo_core::trackmath::{self, H3, P};
 use serde_json::{json, Value};
@@ -109,6 +111,60 @@ fn residual_jitter(pl: &Plate, b: &[H3]) -> f64 {
     for (a, want) in [(json!({"clip_id": id, "method": "bogus"}), "position_scale_rotation"), (json!({"clip_id": id, "smoothness": 101}), "0..100"), (json!({"clip_id": id, "smoothness": -1}), "0..100"),
         (json!({"clip_id": id, "smooth": 5, "method": "perspective"}), "classic engine"), (json!({"clip_id": id, "max_features": 10}), "50..2000"), (json!({"clip_id": id, "mode": "locked"}), "no_motion"),
         (json!({"clip_id": sh, "method": "position"}), "media clip")] {
+        let e = dispatch(&mut s, "stabilize", &a).expect_err(&format!("accepted {a}")); assert!(e.contains(want), "{a}: {e}");
+        assert_eq!(before, serde_json::to_string(&s.project).unwrap(), "{a}: a refused call changed the project"); }
+}
+
+/// Frame at timeline time t on a TRANSPARENT canvas (render_frame_opts(.., true)): the canvas keeps the clip's alpha, which an opaque
+/// render (render_frame / render_png) composites onto black. Colour is premultiplied there: gray = rgb / alpha. Also writes the
+/// opaque PNG of the same frame to the temp dir for eyeballing.
+fn render_t(s: &Session, t: f64, tag: &str) -> Frame {
+    let mut cache = kimo_core::render::Cache::new(); kimo_core::render::prepare_at(&s.project, &mut cache, Some(t)).unwrap();
+    let f = kimo_core::render::render_frame_opts(&s.project, t, &cache, true).unwrap(); assert_eq!((f.w, f.h), (W, H));
+    let png = std::env::temp_dir().join(format!("kimo-stab-synth-{}-{tag}-{:02}.png", std::process::id(), (t * FPS).round())); kimo_core::render::render_png(&s.project, t, png.to_str().unwrap(), &mut cache).unwrap(); f
+}
+fn gray(f: &Frame, i: usize) -> f64 { let a = f.d[i + 3] as f64; if a > 0.0 { f.d[i] as f64 / a * 255.0 } else { 0.0 } }
+/// Synthesize Edges against the exact ground truth (the world is static): output pixel o at frame t shows tex(T_t^-1 B_t^-1 o), with
+/// B_t rebuilt from the keys (pixel-index coordinates, transform_bb's convention, the same as residual_jitter). Uncovered = alpha < 0.5
+/// in the stabilize_only render of the same corrections; the fill must cover them (alpha >= 0.99) with pixels as accurate as the
+/// interior (2 px band at the frame-t image edge excluded), and must not touch the interior.
+#[test] fn synthesize_edges_fills_borders_with_the_right_pixels() { synth_case(None, 7); }
+#[test] fn synthesize_edges_fills_borders_with_the_right_pixels_range_05() { synth_case(Some(0.5), 12); }
+/// range None = the default synthesis_range 0.3 s (7 frames at 24 fps)
+fn synth_case(range: Option<f64>, nf: usize) {
+    let pl = Plate::new();
+    let mut a = json!({"method": "position_scale_rotation", "framing": "synthesize_edges"}); if let Some(r) = range { a["synthesis_range"] = json!(r); }
+    let (mut se, id) = setup(); a["clip_id"] = json!(id); let r = c(&mut se, "stabilize", a);
+    assert_eq!(r["framing"], "synthesize_edges"); assert_eq!(r["zoom"], 1.0); assert!(r["crop"].is_null(), "{r}"); assert_eq!(r["synth_frames"], nf, "{r}");
+    assert_eq!(se.project.find_clip(&id).unwrap().props["stab_fill"].at(0.0), nf as f64); for p in ["stab_ss", "stab_sr", "stab_sx", "stab_sy"] { assert_eq!(keys(&se, &id, p).len(), N, "{p}"); }
+    let (mut so, id2) = setup(); c(&mut so, "stabilize", json!({"clip_id": id2, "method": "position_scale_rotation", "framing": "stabilize_only"}));
+    for p in ["x", "y", "scale", "rotation"] { assert_eq!(keys(&se, &id, p), keys(&so, &id2, p), "synthesize_edges keeps the stabilize_only corrections ({p})"); }
+    assert!(so.project.find_clip(&id2).unwrap().props.get("stab_fill").is_none());
+    let b = b_from_keys(&se, &id); let mut total_unc = 0;
+    for t in [12usize, 24, 36] {
+        let (fo, fs) = (render_t(&so, t as f64 / FPS, "only"), render_t(&se, t as f64 / FPS, "synth"));
+        let (bi, ti) = (trackmath::inv3(&b[t]).unwrap(), trackmath::inv3(&pl.cam(t as f64)).unwrap());
+        let (mut unc, mut filled, mut ef, mut ni, mut ei, mut changed) = (0usize, 0usize, 0f64, 0usize, 0f64, 0usize);
+        for y in 0..H { for x in 0..W { let i = (y * W + x) * 4; let q = ap(&bi, (x as f64, y as f64)); let wp = ap(&ti, q); let truth = pl.tex(wp.0, wp.1).clamp(0.0, 255.0);
+            if (fo.d[i + 3] as f64) < 0.5 { unc += 1; if fs.d[i + 3] as f64 >= 0.99 { filled += 1; ef += (gray(&fs, i) - truth).abs(); } }
+            else if q.0 >= 1.5 && q.1 >= 1.5 && q.0 <= W as f64 - 2.5 && q.1 <= H as f64 - 2.5 { ni += 1; ei += (gray(&fs, i) - truth).abs(); if fo.d[i..i + 4] != fs.d[i..i + 4] { changed += 1; } } } }
+        total_unc += unc; let ff = if unc == 0 { 1.0 } else { filled as f64 / unc as f64 }; let mf = if filled == 0 { 0.0 } else { ef / filled as f64 }; let mi = ei / ni.max(1) as f64;
+        println!("stabilize_tool synthesize_edges range={} t={t} uncovered={unc} filled_frac={ff:.4} mae_filled={mf:.3} mae_interior={mi:.3} interior_px={ni} interior_changed={changed}", range.unwrap_or(0.3));
+        assert!(ni > W * H / 2, "frame {t}: only {ni} interior pixels");
+        assert!(ff >= 0.99, "frame {t}: filled {filled} of {unc} uncovered pixels ({ff})");
+        assert!(mf <= 1.5 * mi + 0.5, "frame {t}: filled MAE {mf} vs interior MAE {mi}");
+        assert_eq!(changed, 0, "frame {t}: the fill changed {changed} interior pixels");
+    }
+    assert!(total_unc > 0, "stabilize_only left no border on the tested frames: nothing was tested");
+    // another framing removes the stale synthesize props
+    c(&mut se, "stabilize", json!({"clip_id": id, "framing": "stabilize_only"})); let cl = se.project.find_clip(&id).unwrap();
+    for k in ["stab_fill", "stab_ss", "stab_sr", "stab_sx", "stab_sy"] { assert!(cl.props.get(k).is_none(), "{k} left behind"); }
+}
+#[test] fn synthesize_edges_refusals_leave_the_project_unchanged() {
+    let (mut s, id) = setup(); let before = serde_json::to_string(&s.project).unwrap();
+    for (a, want) in [(json!({"clip_id": id, "method": "perspective", "framing": "synthesize_edges"}), "synthesize_edges supports position and position_scale_rotation"),
+        (json!({"clip_id": id, "framing": "synthesize_edges", "synthesis_range": 0}), "0.03..2"), (json!({"clip_id": id, "framing": "synthesize_edges", "synthesis_range": 5}), "0.03..2"),
+        (json!({"clip_id": id, "framing": "synthesize_edges", "smooth": 5}), "classic engine")] {
         let e = dispatch(&mut s, "stabilize", &a).expect_err(&format!("accepted {a}")); assert!(e.contains(want), "{a}: {e}");
         assert_eq!(before, serde_json::to_string(&s.project).unwrap(), "{a}: a refused call changed the project"); }
 }

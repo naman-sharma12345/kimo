@@ -1,5 +1,5 @@
 //! Warp stabilizer (After Effects / Premiere Warp Stabilizer, DaVinci Resolve stabilizer): a drift-free robust camera path,
-//! path smoothing (Gaussian or L1-optimal) or a locked camera, and framing (stabilize only, crop, crop + auto-scale).
+//! path smoothing (Gaussian or L1-optimal) or a locked camera, and framing (stabilize only, crop, crop + auto-scale, synthesize edges).
 //!
 //! Two passes, the overall structure of OpenCV videostab (Apache-2.0; ideas only, no code ported from it):
 //! 1. `estimate_path`: camera path C_t (frame-0 pixels -> frame-t pixels). Consecutive frames give a prediction (Shi-Tomasi
@@ -35,15 +35,16 @@ use std::rc::Rc;
 pub const METHODS: [&str; 3] = ["position", "position_scale_rotation", "perspective"];
 pub const MODES: [&str; 2] = ["smooth_motion", "no_motion"];
 pub const SMOOTHINGS: [&str; 2] = ["gaussian", "l1"];
-pub const FRAMINGS: [&str; 3] = ["stabilize_only", "crop", "crop_auto_scale"];
+pub const FRAMINGS: [&str; 4] = ["stabilize_only", "crop", "crop_auto_scale", "synthesize_edges"];
 
 /// AE "Method": what the correction may contain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub enum Method { Position, Similarity, Perspective }
 /// AE "Result": smooth the camera move, or no motion (lock frame 0's framing).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub enum Mode { Smooth, Locked }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub enum Smoothing { Gaussian, L1 }
-/// AE "Framing".
-#[derive(Clone, Copy, Debug, PartialEq, Eq)] pub enum Framing { StabilizeOnly, Crop, CropAutoScale }
+/// AE "Framing". SynthesizeEdges ("Stabilize, Synthesize Edges") keeps the corrections and lets the renderer fill the empty borders
+/// from earlier and later frames (the stab_s* / stab_fill props, see `write_keys` and render.rs `synth_edges`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)] pub enum Framing { StabilizeOnly, Crop, CropAutoScale, SynthesizeEdges }
 impl Method {
     pub fn parse(s: &str) -> Result<Self, String> { match s { "position" => Ok(Method::Position), "position_scale_rotation" | "similarity" => Ok(Method::Similarity), "perspective" => Ok(Method::Perspective), _ => Err(format!("unknown method '{s}' (valid: {})", METHODS.join(", "))) } }
     pub fn name(self) -> &'static str { match self { Method::Position => METHODS[0], Method::Similarity => METHODS[1], Method::Perspective => METHODS[2] } }
@@ -58,14 +59,18 @@ impl Smoothing {
     pub fn name(self) -> &'static str { match self { Smoothing::Gaussian => SMOOTHINGS[0], Smoothing::L1 => SMOOTHINGS[1] } }
 }
 impl Framing {
-    pub fn parse(s: &str) -> Result<Self, String> { match s { "stabilize_only" => Ok(Framing::StabilizeOnly), "crop" => Ok(Framing::Crop), "crop_auto_scale" => Ok(Framing::CropAutoScale), _ => Err(format!("unknown framing '{s}' (valid: {})", FRAMINGS.join(", "))) } }
-    pub fn name(self) -> &'static str { match self { Framing::StabilizeOnly => FRAMINGS[0], Framing::Crop => FRAMINGS[1], Framing::CropAutoScale => FRAMINGS[2] } }
+    pub fn parse(s: &str) -> Result<Self, String> { match s { "stabilize_only" => Ok(Framing::StabilizeOnly), "crop" => Ok(Framing::Crop), "crop_auto_scale" => Ok(Framing::CropAutoScale), "synthesize_edges" => Ok(Framing::SynthesizeEdges), _ => Err(format!("unknown framing '{s}' (valid: {})", FRAMINGS.join(", "))) } }
+    pub fn name(self) -> &'static str { match self { Framing::StabilizeOnly => FRAMINGS[0], Framing::Crop => FRAMINGS[1], Framing::CropAutoScale => FRAMINGS[2], Framing::SynthesizeEdges => FRAMINGS[3] } }
 }
 
 /// smoothness: 0..100 %; Gaussian sigma = smoothness% of one second of frames, L1 box = smoothness% of 10% of min(w, h).
+/// synthesis_range: seconds on each side that SynthesizeEdges fills from (AE "Synthesis Input Range"); synth_frames is that range in
+/// frames at `fps` (`synth_frames_for`; `stabilize_clip` recomputes it at the project fps).
 #[derive(Clone, Debug)]
-pub struct Opts { pub method: Method, pub mode: Mode, pub smoothing: Smoothing, pub smoothness: f64, pub framing: Framing, pub max_features: usize, pub ransac_px: f64, pub seed: u64, pub fps: f64 }
-impl Default for Opts { fn default() -> Self { Opts { method: Method::Similarity, mode: Mode::Smooth, smoothing: Smoothing::Gaussian, smoothness: 50.0, framing: Framing::CropAutoScale, max_features: 400, ransac_px: 1.0, seed: 0x5eed, fps: 30.0 } } }
+pub struct Opts { pub method: Method, pub mode: Mode, pub smoothing: Smoothing, pub smoothness: f64, pub framing: Framing, pub max_features: usize, pub ransac_px: f64, pub seed: u64, pub fps: f64, pub synthesis_range: f64, pub synth_frames: usize }
+impl Default for Opts { fn default() -> Self { Opts { method: Method::Similarity, mode: Mode::Smooth, smoothing: Smoothing::Gaussian, smoothness: 50.0, framing: Framing::CropAutoScale, max_features: 400, ransac_px: 1.0, seed: 0x5eed, fps: 30.0, synthesis_range: 0.3, synth_frames: synth_frames_for(0.3, 30.0) } } }
+/// Frames on each side for a synthesis range of `secs` seconds: round(secs * fps) clamped to 1..30.
+pub fn synth_frames_for(secs: f64, fps: f64) -> usize { let n = (secs * fps).round(); if n.is_finite() { (n as i64).clamp(1, 30) as usize } else { 1 } }
 
 /// path[t] = C_t maps frame-0 pixels to frame-t pixels (C_0 = identity). Per frame: inlier fraction and number of tracked reference
 /// features of the fit that produced C_t, and the RMS residual (px) of its inliers.
@@ -342,10 +347,10 @@ fn crop_fraction(corr: &[H3], w: usize, h: usize) -> f64 {
     let ok = |f: f64| quads.iter().all(|q| match q { Some(q) => cs.iter().all(|p| in_convex(q, (c.0 + (p.0 - c.0) * f, c.1 + (p.1 - c.1) * f))), None => false });
     if ok(1.0) { return 1.0; } let (mut lo, mut hi) = (0.0, 1.0); for _ in 0..60 { let mid = 0.5 * (lo + hi); if ok(mid) { lo = mid; } else { hi = mid; } } lo.max(MIN_CROP)
 }
-/// Framing (AE): StabilizeOnly leaves the corrections; Crop reports the crop rect; CropAutoScale zooms about the centre by 1/fraction
-/// so every frame is filled.
+/// Framing (AE): StabilizeOnly and SynthesizeEdges leave the corrections; Crop reports the crop rect; CropAutoScale zooms about the
+/// centre by 1/fraction so every frame is filled.
 pub fn frame_corrections(corr: &[H3], w: usize, h: usize, framing: Framing) -> Framed {
-    if framing == Framing::StabilizeOnly || corr.is_empty() { return Framed { corr: corr.to_vec(), zoom: 1.0, crop: None }; }
+    if matches!(framing, Framing::StabilizeOnly | Framing::SynthesizeEdges) || corr.is_empty() { return Framed { corr: corr.to_vec(), zoom: 1.0, crop: None }; }
     let f = crop_fraction(corr, w, h); let (cx, cy) = (w as f64 * 0.5, h as f64 * 0.5); let rect = [cx - f * cx, cy - f * cy, cx + f * cx, cy + f * cy];
     if framing == Framing::Crop { return Framed { corr: corr.to_vec(), zoom: 1.0, crop: Some(rect) }; }
     let z = 1.0 / f; let zm: H3 = [[z, 0.0, cx * (1.0 - z)], [0.0, z, cy * (1.0 - z)], [0.0, 0.0, 1.0]];
@@ -358,6 +363,9 @@ pub fn similarity_to_props(b: &H3, w: usize, h: usize) -> (f64, f64, f64, f64) {
     (a * c.0 - s * c.1 + bn[0][2] - c.0, s * c.0 + a * c.1 + bn[1][2] - c.1, a.hypot(s), s.atan2(a).to_degrees())
 }
 
+/// SynthesizeEdges props (render.rs reads them): the smooth path S_t (scale, rotation deg, x, y px about the frame centre, the
+/// convention of x/y/scale/rotation) and the static number of frames on each side to fill from.
+pub const SYNTH_KEYS: [&str; 5] = ["stab_ss", "stab_sr", "stab_sx", "stab_sy", "stab_fill"];
 const PIN_KEYS: [&str; 8] = ["pin0x", "pin0y", "pin1x", "pin1y", "pin2x", "pin2y", "pin3x", "pin3y"];
 /// Run the warp stabilizer on a media clip: per-frame keys (x/y/scale/rotation, or pin corners for Perspective, plus the crop
 /// mask quad for Crop) and the report.
@@ -366,7 +374,7 @@ pub fn stabilize_clip(p: &Project, clip_id: &str, o: &Opts) -> Result<(Vec<KeyRo
     if !matches!(c.source, Source::Media { .. }) { return Err(format!("stabilize needs a media clip: '{clip_id}' is not one")); }
     let (w, h) = (p.width as usize, p.height as usize); let n = ((c.duration * p.fps).ceil() as usize).max(1);
     if n < 2 { return Err(format!("clip '{clip_id}' is shorter than 2 frames: nothing to stabilize")); }
-    let mut o = o.clone(); o.fps = p.fps; let t0 = std::time::Instant::now();
+    let mut o = o.clone(); o.fps = p.fps; o.synth_frames = synth_frames_for(o.synthesis_range, p.fps); let t0 = std::time::Instant::now();
     let mut cache = crate::render::Cache::new(); let mut frames = |i: usize| crate::tracking::clip_gray_pub(p, &mut cache, &c, i);
     let est = estimate_path(&mut frames, n, w, h, o.method, &o)?;
     let sm = smooth_path(&est.path, w, h, o.method, &o); let corr = corrections(&est.path, &sm); let fr = frame_corrections(&corr, w, h, o.framing);
@@ -376,14 +384,17 @@ pub fn stabilize_clip(p: &Project, clip_id: &str, o: &Opts) -> Result<(Vec<KeyRo
         let props: Vec<(&'static str, f64)> = if o.method == Method::Perspective {
             // pin quads are in pixel-edge coordinates: corner k of the source rect [0,w]x[0,h] is pixel-index point cs[k] - 0.5
             let mut v = vec![]; for k in 0..4 { let q = trackmath::apply(b, (cs[k].0 - 0.5, cs[k].1 - 0.5)).ok_or_else(|| format!("stabilize: degenerate correction at frame {i}"))?; v.push((PIN_KEYS[2 * k], q.0 + 0.5)); v.push((PIN_KEYS[2 * k + 1], q.1 + 0.5)); } v
-        } else { let (x, y, s, r) = similarity_to_props(b, w, h); vec![("x", x), ("y", y), ("scale", s), ("rotation", r)] };
+        } else { let (x, y, s, r) = similarity_to_props(b, w, h); let mut v = vec![("x", x), ("y", y), ("scale", s), ("rotation", r)];
+            // SynthesizeEdges: the smooth output path S_t in the same convention, so the renderer rebuilds S_t exactly like B_t
+            if o.framing == Framing::SynthesizeEdges { let (sx, sy, ss, sr) = similarity_to_props(&sm[i], w, h); v.extend([("stab_ss", ss), ("stab_sr", sr), ("stab_sx", sx), ("stab_sy", sy)]); } v };
         let crop_quad = match fr.crop { Some(r) => { let bi = trackmath::inv3(b).ok_or_else(|| format!("stabilize: singular correction at frame {i}"))?; let mut q = [(0.0, 0.0); 4];
                 for (k, pt) in [(r[0], r[1]), (r[2], r[1]), (r[2], r[3]), (r[0], r[3])].into_iter().enumerate() { let s = trackmath::apply(&bi, pt).ok_or_else(|| format!("stabilize: degenerate crop at frame {i}"))?; q[k] = ((s.0 + 0.5) / wf, (s.1 + 0.5) / hf); } Some(q) }
             None => None };
         rows.push(KeyRow { t, props, crop_quad }); }
     let (mut mpx, mut mdeg) = (0f64, 0f64); for b in &corr { for k in 0..4 { if let Some(q) = trackmath::apply(b, cs[k]) { mpx = mpx.max(trackmath::dist(q, cs[k])); } } mdeg = mdeg.max(sim_params(b, cen)[1].to_degrees().abs()); }
     let fr_in = &est.inlier_frac[1..]; let mean_in = fr_in.iter().sum::<f64>() / fr_in.len() as f64; let min_in = fr_in.iter().cloned().fold(1.0, f64::min);
-    let rep = json!({"engine": "warp", "frames": n, "method": o.method.name(), "mode": o.mode.name(), "smoothing": o.smoothing.name(), "smoothness": o.smoothness, "framing": o.framing.name(),
+    let synth: Option<usize> = if o.framing == Framing::SynthesizeEdges { Some(o.synth_frames) } else { None };
+    let rep = json!({"engine": "warp", "frames": n, "method": o.method.name(), "mode": o.mode.name(), "smoothing": o.smoothing.name(), "smoothness": o.smoothness, "framing": o.framing.name(), "synth_frames": synth,
         "zoom": fr.zoom, "crop": fr.crop, "crop_limited": fr.zoom >= 1.0 / MIN_CROP - 1e-9, "reanchors": est.reanchors, "inlier_fraction_mean": mean_in, "inlier_fraction_min": min_in,
         "fit_rms_px_median": trackmath::percentile(&est.fit_rms_px[1..], 50.0), "max_correction_px": mpx, "max_correction_deg": mdeg, "ms_per_frame": t0.elapsed().as_secs_f64() * 1000.0 / n as f64});
     Ok((rows, rep))
@@ -391,23 +402,30 @@ pub fn stabilize_clip(p: &Project, clip_id: &str, o: &Opts) -> Result<(Vec<KeyRo
 
 fn str_opt<'a>(a: &'a Value, k: &str) -> Result<Option<&'a str>, String> { match a.get(k) { None | Some(Value::Null) => Ok(None), Some(Value::String(s)) => Ok(Some(s.as_str())), Some(v) => Err(format!("{k} must be a string, got {v}")) } }
 fn num_opt(a: &Value, k: &str) -> Result<Option<f64>, String> { match a.get(k) { None | Some(Value::Null) => Ok(None), Some(v) => v.as_f64().filter(|x| x.is_finite()).map(Some).ok_or_else(|| format!("{k} must be a finite number, got {v}")) } }
-/// Warp-engine options from `stabilize` tool arguments, validated (enums, smoothness 0..100, max_features 50..2000).
+/// Warp-engine options from `stabilize` tool arguments, validated (enums, smoothness 0..100, max_features 50..2000, synthesis_range
+/// 0.03..2 s; synthesize_edges needs position or position_scale_rotation).
 pub fn opts_from_args(a: &Value) -> Result<Opts, String> {
     let mut o = Opts::default();
     if let Some(s) = str_opt(a, "method")? { o.method = Method::parse(s)?; } if let Some(s) = str_opt(a, "mode")? { o.mode = Mode::parse(s)?; }
     if let Some(s) = str_opt(a, "smoothing")? { o.smoothing = Smoothing::parse(s)?; } if let Some(s) = str_opt(a, "framing")? { o.framing = Framing::parse(s)?; }
     if let Some(x) = num_opt(a, "smoothness")? { if !(0.0..=100.0).contains(&x) { return Err(format!("smoothness {x} out of range 0..100")); } o.smoothness = x; }
     if let Some(x) = num_opt(a, "max_features")? { if !(50.0..=2000.0).contains(&x) { return Err(format!("max_features {x} out of range 50..2000")); } o.max_features = x.round() as usize; }
+    if let Some(x) = num_opt(a, "synthesis_range")? { if !(0.03..=2.0).contains(&x) { return Err(format!("synthesis_range {x} out of range 0.03..2 seconds")); } o.synthesis_range = x; o.synth_frames = synth_frames_for(x, o.fps); }
+    if o.framing == Framing::SynthesizeEdges && o.method == Method::Perspective { return Err("synthesize_edges supports position and position_scale_rotation (not perspective)".into()); }
     Ok(o)
 }
-/// Write the rows as linear keys on the clip (replacing those props), pin_on for Perspective, and the "stabilize_crop" path mask layer
-/// (hard-edged, straight segments) for Crop; a stale "stabilize_crop" layer from an earlier run is removed.
+/// Write the rows as linear keys on the clip (replacing those props), pin_on for Perspective, stab_fill = synth_frames for
+/// SynthesizeEdges, and the "stabilize_crop" path mask layer (hard-edged, straight segments) for Crop; a stale "stabilize_crop" layer
+/// and stale stab_* props from an earlier run are removed.
 pub fn write_keys(p: &mut Project, clip_id: &str, o: &Opts, rows: &[KeyRow]) -> Result<(), String> {
     let mask_id = if rows.iter().any(|r| r.crop_quad.is_some()) { Some(p.gen_id("mask")) } else { None };
+    let nfill = synth_frames_for(o.synthesis_range, p.fps); // at the project fps, as stabilize_clip reports it (the caller's Opts carry the default fps)
     let c = p.find_clip_mut(clip_id).ok_or("no such clip")?;
     let mut props: Vec<(&'static str, Prop)> = vec![];
     for r in rows { for (k, v) in &r.props { match props.iter().position(|(n, _)| n == k) { Some(j) => props[j].1.set_key(r.t, *v, Ease::Linear), None => { let mut pr = Prop::new(*v); pr.set_key(r.t, *v, Ease::Linear); props.push((*k, pr)); } } } }
+    for k in SYNTH_KEYS { c.props.remove(k); }
     for (k, pr) in props { c.props.insert(k.to_string(), pr); }
+    if o.framing == Framing::SynthesizeEdges && o.method != Method::Perspective { c.props.insert("stab_fill".into(), Prop::new(nfill as f64)); }
     if o.method == Method::Perspective { c.props.insert("pin_on".into(), Prop::new(1.0)); }
     if let Some(m) = c.mask.as_mut() { m.layers.retain(|l| l.name != "stabilize_crop"); }
     if let Some(id) = mask_id {
