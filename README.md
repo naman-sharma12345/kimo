@@ -98,7 +98,7 @@ How the numbers fit: `kimo_info` and the golden registry (`crates/kimo-core/test
 | Compositing | `masks`, `graphics` | mask layers and roto, shapes, HUD frames, counters, boxes |
 | Text | `text` | titles, captions, SRT import, text animators |
 | VFX | `vfx3d` | particles, emitters, shard bursts, 3D scene, physics, lights and materials |
-| Tracking | `tracking` | point, planar and mesh tracking, stabilize, camera solve |
+| Tracking | `tracking` | point, planar and mesh tracking, warp stabilize (smooth or locked, position / similarity / perspective, crop + auto-scale), camera solve |
 | Color | `color_grade`, `color_science`, `scopes` | grade graphs, curves, ASC CDL, LUTs, ACES and OCIO tools, scopes and exposure analysis |
 | Audio | `audio` | clips, effects, beats, loudness, ducking, speech intervals |
 | Output | `output` | frame and video export, chunked export jobs, GIF, EXR, manifests, frame lint, contact sheets |
