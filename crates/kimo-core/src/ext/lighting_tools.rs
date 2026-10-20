@@ -75,7 +75,7 @@ pub fn commands() -> Vec<Command> { vec![
             let id = match idx { Some(i) => { c.effects[i].params = params; c.effects[i].strings = strings; c.effects[i].id.clone() } None => { let id = "relight".to_string(); c.effects.push(Effect { id: id.clone(), kind: "relight".into(), params, strings }); id } };
             Ok(json!({"effect_id": id, "kind": "relight"})) } },
     Command { name: "preview_material", description: "Render a lit sphere with the project lights and a material to a PNG, to judge lights and materials without a layer. Returns the path and mean/max luminance.", mutates: false,
-        schema: obj(vec![("path", s("output .png")), ("material", s("material name or preset")), ("size", n("px 64..1024, default 384")), ("color", json!({"type":"array","items":{"type":"number"},"description":"base colour when the material has no albedo"}))], &["path", "material"]),
+        schema: obj(vec![("path", s("output .png")), ("material", s("material name or preset")), ("size", n("px 64..1024, default 384")), ("color", crate::commands::col_schema("base colour when the material has no albedo", false))], &["path", "material"]),
         run: |ss, a| { let path = str_arg(a, "path")?; let size = opt_num(a, "size", 384.0); if !size.is_finite() || !(64.0..=1024.0).contains(&size) { return Err("size must be 64..1024".into()); }
             let col = crate::commands::color(a, "color", [0.8; 3])?;
             let scene = lighting::build_scene(&ss.project.lights, &ss.project.materials, 0.0); let f = lighting::preview(&scene, str_arg(a, "material")?, size as usize, col)?;

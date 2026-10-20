@@ -42,6 +42,14 @@ pub struct Command {
 
 fn s(desc: &str) -> Value { json!({"type":"string","description":desc}) }
 fn n(desc: &str) -> Value { json!({"type":"number","description":desc}) }
+/// Schema of a colour argument, saying what `color` / `color_opt` take: [r,g,b] or [r,g,b,a] with values 0..1, or a hex string.
+/// It said array-only before, so a client validating against the schema could refuse "#ff0000" before kimo saw it (task brief item c).
+/// `clear` adds the [] that set_text_style reads as "clear".
+pub(crate) fn col_schema(desc: &str, clear: bool) -> Value {
+    let arr = if clear { json!({"type":"array","items":{"type":"number"},"maxItems":4}) } else { json!({"type":"array","items":{"type":"number"},"minItems":3,"maxItems":4}) };
+    let what = if clear { "[r,g,b] or [r,g,b,a] with values 0..1, hex \"#rrggbb\" (also #rgb, #rgba, #rrggbbaa), or [] to clear" } else { "[r,g,b] or [r,g,b,a] with values 0..1, or hex \"#rrggbb\" (also #rgb, #rgba, #rrggbbaa)" };
+    json!({"description": if desc.is_empty() { what.to_string() } else { format!("{what}; {desc}") }, "oneOf": [arr, {"type":"string"}]})
+}
 fn obj(props: Vec<(&str, Value)>, req: &[&str]) -> Value {
     let mut m = serde_json::Map::new(); for (k, v) in props { m.insert(k.into(), v); }
     json!({"type":"object","properties":m,"required":req})
