@@ -250,6 +250,8 @@ fn prepare_window(p: &Project, cache: &mut Cache, t0: f64, t1: f64, window:usize
         let (ia, mut ib) = if all { (0, total - 1) } else if c.speed_curve.is_some(){(media_index(c,(t0-c.start).min(c.duration),p.fps).min(total-1),media_index(c,(t1-c.start).min(c.duration),p.fps).min(total-1))}else { ((((t0 - c.start).max(0.0) * p.fps).floor() as usize).min(total - 1), (((t1 - c.start).max(0.0) * p.fps).ceil() as usize).min(total - 1)) };
         // Instant normal playback samples floor(index), except flow needs the next frame.
         if !all&&matches!(c.time_mode,TimeMode::Normal)&&t0==t1{let flow=c.props.get("flow_blur").map(|v|v.at((t0-c.start).max(0.))>0.).unwrap_or(false);ib=if flow{(ia+1).min(total-1)}else{ia};}
+        // Vector flow blur also needs the previous frame.
+        let ia=if !all&&c.props.get("flow_mode").map(|v|v.base.round()==1.).unwrap_or(false){ia.saturating_sub(1)}else{ia};
         let a = p.assets.get(asset).ok_or(format!("asset {asset} missing"))?;
         let apath=p.resolve(&a.path);let stat=std::fs::metadata(&apath).map_err(|e|format!("media stat: {e}"))?;
         let sig = format!("{asset}|{}|{}|{}|{:?}|{:?}|{:?}|{:?}|{:?}|{}|{}|{:?}", c.in_point, c.duration, c.speed, c.speed_curve.as_ref().map(|p| serde_json::to_string(p).unwrap_or_default()), p.color_pipeline,c.props.get("input_gamut"),c.props.get("input_transfer"),c.props.get("fit"),a.path,stat.len(),stat.modified().ok());
@@ -350,7 +352,14 @@ fn source_frame_h(p: &Project, c: &Clip, lt_in: f64, cache: &Cache) -> (Frame, O
             let idx = media_index(c,lt,p.fps);
             if let Some(b)=fr.get_float(idx){f.d.copy_from_slice(b)}else if let Some(b) = fr.get(idx) { for (i, v) in b.iter().enumerate() { f.d[i] = *v as f32 / 255.0; } }
             let fb = prop(c, "flow_blur", lt) as f32;
-            if fb > 0.0 { let nxt=if fr.len()>0 {Some(idx+1)}else{None};
+            if fb > 0.0 && c.props.get("flow_mode").map(|v|v.base.round()==1.).unwrap_or(false) {
+                let load=|i:usize|->Option<Frame>{if !fr.covers(i,i){return None}let mut g=Frame::new(w,h);if let Some(b)=fr.get_float(i){g.d.copy_from_slice(b)}else if let Some(nb)=fr.get(i){for (k,v) in nb.iter().enumerate(){g.d[k]=*v as f32/255.;}}else{return None}Some(g)};
+                let (mut pv,mut nx)=(if idx>0{load(idx-1)}else{None},load(idx+1));
+                if p.color_pipeline.enabled && !source_linear {let mut bad=crate::color::pipeline::input(p,c,&mut f).is_err();for g in [&mut pv,&mut nx].into_iter().flatten(){bad|=crate::color::pipeline::input(p,c,g).is_err();}source_linear=true;if bad{f.d.fill(f32::NAN);}}
+                let q = (prop(c, "flow_quality", lt) as usize).clamp(3,6); let amt=fb.clamp(0.,2.); let ph=c.props.get("flow_phase").map(|v|(v.at(lt)/360.) as f32).unwrap_or(-amt/2.);
+                let cv=crate::shutter::curve_from_props(c.props.get("flow_curve").map(|v|v.base),c.props.get("flow_curve_pts"));
+                let src = Frame { w, h, d: f.d.clone() }; f = crate::flow::vector_blur(pv.as_ref(), &src, nx.as_ref(), amt, ph, q, &cv); }
+            else if fb > 0.0 { let nxt=if fr.len()>0 {Some(idx+1)}else{None};
                 if let Some(next_idx) = nxt { let mut g2 = Frame::new(w, h);
                     if let Some(b)=fr.get_float(next_idx){g2.d.copy_from_slice(b)}else if let Some(nb)=fr.get(next_idx){for (i,v) in nb.iter().enumerate(){g2.d[i]=*v as f32/255.;}}
                     if p.color_pipeline.enabled && !source_linear {let a=crate::color::pipeline::input(p,c,&mut f);let b=crate::color::pipeline::input(p,c,&mut g2);source_linear=true;if a.is_err()||b.is_err(){f.d.fill(f32::NAN);}}
