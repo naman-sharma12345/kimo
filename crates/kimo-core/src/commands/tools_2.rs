@@ -42,8 +42,8 @@ pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
             let id = str_arg(a, "clip_id")?.to_string(); let nid = ss.project.gen_id("clip");
             let tr = ss.project.tracks.iter_mut().find(|t| t.clips.iter().any(|c| c.id == id)).ok_or("no such clip")?;
             let c = tr.clips.iter_mut().find(|c| c.id == id).map(|c| std::sync::Arc::make_mut(c)).unwrap();
-            let mut r = c.clone(); r.id = nid.clone(); r.start = at; r.duration = c.start + c.duration - at; r.in_point = c.in_point + (at - c.start) * c.speed; r.transition_in = None; r.time_mode = TimeMode::Freeze { at: 0.0 };
-            c.duration = at - c.start; tr.clips.push(std::sync::Arc::new(r)); ss.project.grade_scopes.copy_binding(&id, &nid); Ok(json!({"ok":true,"right_clip_id":nid})) } },
+            let mut r = c.clone(); r.id = nid.clone(); r.start = at; r.duration = c.start + c.duration - at; r.in_point = c.in_point + (at - c.start) * c.speed; r.transition_in = None; r.time_mode = TimeMode::Freeze { at: 0.0 }; r.audio.lead = 0.0;
+            c.duration = at - c.start; c.audio.tail = 0.0; tr.clips.push(std::sync::Arc::new(r)); ss.project.grade_scopes.copy_binding(&id, &nid); Ok(json!({"ok":true,"right_clip_id":nid})) } },
     Command { name: "set_corner_pin", description: "Perspective corner pin: pixel offsets of the 4 corners [[dx,dy] x4: top-left, top-right, bottom-right, bottom-left] from their normal positions. Pass null/empty to clear.", mutates: true,
         schema: obj(vec![("clip_id", s("clip")), ("corners", json!({"type":"array","items":{"type":"array","items":{"type":"number"}}}))], &["clip_id"]),
         run: |ss, a| { let cs = a.get("corners").and_then(|v| v.as_array()); let c = clip(&mut ss.project, a)?; match cs { Some(v) if v.len() == 4 => { let mut o = [[0.0; 2]; 4]; for (i, p) in v.iter().enumerate() { let p = p.as_array().ok_or("corner must be [dx,dy]")?; o[i] = [p.get(0).and_then(|x| x.as_f64()).unwrap_or(0.0), p.get(1).and_then(|x| x.as_f64()).unwrap_or(0.0)]; } c.corners = Some(o); } _ => c.corners = None } Ok(json!({"ok":true})) } },
@@ -59,8 +59,8 @@ pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
             let tr = ss.project.tracks.iter_mut().find(|t| t.clips.iter().any(|c| c.id == id)).ok_or("no such clip")?;
             let c = tr.clips.iter_mut().find(|c| c.id == id).map(|c| std::sync::Arc::make_mut(c)).unwrap();
             if at <= c.start || at >= c.start + c.duration { return Err("split point outside clip".into()); }
-            let mut r = c.clone(); r.id = nid.clone(); r.start = at; r.duration = c.start + c.duration - at; r.in_point = c.in_point + (at - c.start) * c.speed; r.transition_in = None;
-            c.duration = at - c.start; tr.clips.push(std::sync::Arc::new(r)); ss.project.grade_scopes.copy_binding(&id,&nid); Ok(json!({"right_clip_id":nid})) } },
+            let mut r = c.clone(); r.id = nid.clone(); r.start = at; r.duration = c.start + c.duration - at; r.in_point = c.in_point + (at - c.start) * c.speed; r.transition_in = None; r.audio.lead = 0.0;
+            c.duration = at - c.start; c.audio.tail = 0.0; tr.clips.push(std::sync::Arc::new(r)); ss.project.grade_scopes.copy_binding(&id,&nid); Ok(json!({"right_clip_id":nid})) } },
     Command { name: "delete_clip", description: "Delete a clip.", mutates: true,
         schema: obj(vec![("clip_id", s("clip"))], &["clip_id"]),
         run: |ss, a| { let id = str_arg(a, "clip_id")?; let mut found = false; for t in ss.project.tracks.iter_mut() { let l = t.clips.len(); t.clips.retain(|c| c.id != id); found |= t.clips.len() != l; } if found { Ok(json!({"ok":true})) } else { Err("no such clip".into()) } } },

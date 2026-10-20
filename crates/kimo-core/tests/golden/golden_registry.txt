@@ -316,6 +316,7 @@ set_property 1123a56f6fa267dd
 set_relight 99922396faa38f30
 set_speed 0e5aa672ac57bbd2
 set_speed_ramp 4b9c32bc74409983
+set_split_edit af640587669e23fa
 set_text d628ca3c50430b08
 set_text_path 85287b0a5760e681
 set_text_style 06cd30c9ffc935b3

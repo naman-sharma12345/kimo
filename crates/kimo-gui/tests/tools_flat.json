@@ -319,6 +319,7 @@
 "set_relight",
 "set_speed",
 "set_speed_ramp",
+"set_split_edit",
 "set_text",
 "set_text_path",
 "set_text_style",
