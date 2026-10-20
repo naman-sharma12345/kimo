@@ -47,6 +47,8 @@ pub struct Options {
     pub reference_white_nits: f64,
     pub hlg_peak_nits: f64,
     pub hlg_system_gamma: f64,
+    /// Vectorscope PNG only: also draw half-size, dimmer boxes at the 75% targets.
+    pub targets_75: bool,
 }
 impl Options {
     pub fn sdr(kind: Kind) -> Self {
@@ -59,6 +61,7 @@ impl Options {
             reference_white_nits: 100.,
             hlg_peak_nits: 1000.,
             hlg_system_gamma: 1.2,
+            targets_75: false,
         }
     }
     pub(super) fn validate(&self) -> Result<(), String> {
@@ -131,8 +134,7 @@ pub struct ScopeImage {
     pub png: Vec<u8>,
     pub metadata: Value,
 }
-pub fn render(frame: &Frame, o: Options) -> Result<ScopeImage, String> {
-    o.validate()?;
+fn check_frame(frame: &Frame) -> Result<(), String> {
     let count = frame.w.checked_mul(frame.h).ok_or("scope frame overflow")?;
     if count == 0
         || count as u128 > crate::guard::limits().max_pixels as u128
@@ -140,6 +142,36 @@ pub fn render(frame: &Frame, o: Options) -> Result<ScopeImage, String> {
     {
         return Err("invalid or oversized scope frame".into());
     }
+    Ok(())
+}
+enum Sample {
+    Invalid,
+    Transparent,
+    Visible([f64; 3], [f64; 4]),
+}
+/// Shared pixel selection for `render` and `data`: encoded RGB plus `o.values` levels.
+fn sample(p: &[f32], o: &Options) -> Sample {
+    if p.iter().any(|v| !v.is_finite()) || !(0. ..=1.).contains(&p[3]) {
+        return Sample::Invalid;
+    }
+    if p[3] == 0. {
+        return Sample::Transparent;
+    }
+    let rgb = [p[0] as f64, p[1] as f64, p[2] as f64];
+    // PQ/HLG nominal encoded range enforced before their bounded EOTF.
+    if matches!(o.encoding, Encoding::Pq | Encoding::Hlg) && rgb.iter().any(|v| *v < 0. || *v > 1.)
+    {
+        return Sample::Invalid;
+    }
+    let values = o.values(rgb);
+    if values.iter().any(|v| !v.is_finite()) {
+        return Sample::Invalid;
+    }
+    Sample::Visible(rgb, values)
+}
+pub fn render(frame: &Frame, o: Options) -> Result<ScopeImage, String> {
+    o.validate()?;
+    check_frame(frame)?;
     // Includes accumulator, raster, scanlines, stored-zlib PNG and metadata headroom.
     crate::guard::reserve(WIDTH * HEIGHT * 40 + 65536);
     let mut acc = vec![[0u64; 3]; WIDTH * HEIGHT];
@@ -151,27 +183,17 @@ pub fn render(frame: &Frame, o: Options) -> Result<ScopeImage, String> {
         if i % 16384 == 0 {
             crate::guard::check();
         }
-        if p.iter().any(|v| !v.is_finite()) || !(0. ..=1.).contains(&p[3]) {
-            invalid += 1;
-            continue;
-        }
-        if p[3] == 0. {
-            transparent += 1;
-            continue;
-        }
-        let rgb = [p[0] as f64, p[1] as f64, p[2] as f64];
-        // PQ/HLG nominal encoded range enforced before their bounded EOTF.
-        if matches!(o.encoding, Encoding::Pq | Encoding::Hlg)
-            && rgb.iter().any(|v| *v < 0. || *v > 1.)
-        {
-            invalid += 1;
-            continue;
-        }
-        let values = o.values(rgb);
-        if values.iter().any(|v| !v.is_finite()) {
-            invalid += 1;
-            continue;
-        }
+        let (rgb, values) = match sample(p, &o) {
+            Sample::Invalid => {
+                invalid += 1;
+                continue;
+            }
+            Sample::Transparent => {
+                transparent += 1;
+                continue;
+            }
+            Sample::Visible(rgb, values) => (rgb, values),
+        };
         visible += 1;
         for j in 0..4 {
             lo[j] = lo[j].min(values[j]);
@@ -347,6 +369,125 @@ pub fn render(frame: &Frame, o: Options) -> Result<ScopeImage, String> {
         metadata,
     })
 }
+const TARGETS: [(&str, [f64; 3]); 6] = [
+    ("R", [1., 0., 0.]),
+    ("Y", [1., 1., 0.]),
+    ("G", [0., 1., 0.]),
+    ("C", [0., 1., 1.]),
+    ("B", [0., 0., 1.]),
+    ("M", [1., 0., 1.]),
+];
+/// Grid cell [row, col]: row 0 is Cr +0.5 (top), col 0 is Cb -0.5 (left), clamped to the grid.
+fn vector_cell(c: [f64; 2], grid: usize) -> [usize; 2] {
+    let g = grid as f64;
+    [
+        ((0.5 - c[1]) * g).floor().clamp(0., g - 1.) as usize,
+        ((c[0] + 0.5) * g).floor().clamp(0., g - 1.) as usize,
+    ]
+}
+/// Exact integer scope counts with the same pixel selection and level mapping as `render`.
+/// Levels span 0..ceiling; out-of-range values land in the edge bins (the plot clamp) and are
+/// also counted in under/over. The vectorscope needs IRE mode (encoded CbCr), else it is null.
+pub fn data(
+    frame: &Frame,
+    o: Options,
+    bins: usize,
+    columns: usize,
+    grid: usize,
+) -> Result<Value, String> {
+    o.validate()?;
+    if !(16..=4096).contains(&bins) {
+        return Err("bins must be 16..4096".into());
+    }
+    if !(1..=4096).contains(&columns) {
+        return Err("columns must be 1..4096".into());
+    }
+    if !(16..=1024).contains(&grid) {
+        return Err("grid must be 16..1024".into());
+    }
+    check_frame(frame)?;
+    let vector = o.units == Units::Ire;
+    // Counts plus their JSON values and headroom.
+    let cells = columns * bins * 4 + bins * 4 + if vector { grid * grid } else { 0 };
+    crate::guard::reserve(cells * 56 + 65536);
+    let (min, max) = (0., o.ceiling);
+    let bin = |v: f64| {
+        ((v - min) / (max - min) * (bins - 1) as f64 + 0.5)
+            .floor()
+            .clamp(0., (bins - 1) as f64) as usize
+    };
+    let mut wave = vec![0u64; columns * bins];
+    let mut parade = vec![vec![0u64; columns * bins]; 3];
+    let mut hist = vec![vec![0u64; bins]; 4];
+    let mut vec_counts = vec![0u64; if vector { grid * grid } else { 0 }];
+    let (mut visible, mut transparent, mut invalid, mut excursions) = (0u64, 0u64, 0u64, 0u64);
+    let (mut under, mut over) = ([0u64; 4], [0u64; 4]);
+    for (i, p) in frame.d.chunks_exact(4).enumerate() {
+        if i % 16384 == 0 {
+            crate::guard::check();
+        }
+        let (rgb, values) = match sample(p, &o) {
+            Sample::Invalid => {
+                invalid += 1;
+                continue;
+            }
+            Sample::Transparent => {
+                transparent += 1;
+                continue;
+            }
+            Sample::Visible(rgb, values) => (rgb, values),
+        };
+        visible += 1;
+        let col = ((i % frame.w) as u128 * columns as u128 / frame.w as u128) as usize;
+        for j in 0..4 {
+            under[j] += u64::from(values[j] < min);
+            over[j] += u64::from(values[j] > max);
+            hist[j][bin(values[j])] += 1;
+        }
+        wave[col * bins + bin(values[3])] += 1;
+        for j in 0..3 {
+            parade[j][col * bins + bin(values[j])] += 1;
+        }
+        if vector {
+            let c = o.cbcr(rgb);
+            if c.iter().any(|v| v.abs() > 0.5) {
+                excursions += 1;
+            }
+            let [row, col] = vector_cell(c, grid);
+            vec_counts[row * grid + col] += 1;
+        }
+    }
+    crate::guard::check();
+    let rows = |v: &[u64], n: usize| v.chunks(n).map(<[u64]>::to_vec).collect::<Vec<_>>();
+    let per = |a: [u64; 4]| json!({"r":a[0],"g":a[1],"b":a[2],"luma":a[3]});
+    let vectorscope = if vector {
+        let targets = |scale: f64| {
+            let mut m = serde_json::Map::new();
+            for (label, rgb) in TARGETS {
+                let c = o.cbcr(rgb.map(|v| v * scale));
+                m.insert(label.into(), json!({"cbcr":c,"cell":vector_cell(c, grid)}));
+            }
+            Value::Object(m)
+        };
+        json!({"grid":grid,"counts":rows(&vec_counts,grid),
+            "axes":"row 0 = Cr +0.5 (top), col 0 = Cb -0.5 (left); col = floor((cb+0.5)*grid), row = floor((0.5-cr)*grid), clamped",
+            "targets":{"100":targets(1.),"75":targets(0.75)},"skin_line_deg":123.0,"skin_line_note":"I-line, angle from +Cb counter-clockwise",
+            "outside_grid_pixels":excursions})
+    } else {
+        Value::Null
+    };
+    Ok(json!({
+        "levels":{"units":if o.units==Units::Ire{"IRE"}else{"NITS"},"min":min,"max":max,"bins":bins,
+            "bin":"floor((v-min)/(max-min)*(bins-1)+0.5) clamped; out-of-range values sit in the edge bins and are also counted in under/over",
+            "under":per(under),"over":per(over)},
+        "waveform":{"columns":columns,"column":"x*columns/width","luma_weights":o.weights(),"counts":rows(&wave,bins)},
+        "parade":{"columns":columns,"r":rows(&parade[0],bins),"g":rows(&parade[1],bins),"b":rows(&parade[2],bins)},
+        "histogram":{"r":hist[0],"g":hist[1],"b":hist[2],"luma":hist[3]},
+        "vectorscope":vectorscope,
+        "pixels":{"visible":visible,"invalid":invalid,"transparent":transparent},
+        "vectorscope_note":if vector{Value::Null}else{json!("vectorscope requires IRE mode: encoded CbCr, not nits")}
+    }))
+}
 fn scaled(x: usize, n: usize, span: usize) -> usize {
     if n <= 1 {
         span / 2
@@ -425,6 +566,15 @@ fn vector_grid(image: &mut [u8], o: Options) {
         line(image, x - 3, y - 3, x - 3, y + 3, c);
         line(image, x + 3, y - 3, x + 3, y + 3, c);
         text(image, x + 7, y.saturating_sub(3), label, c);
+        if o.targets_75 {
+            // Half-size box, half brightness, no label.
+            let (x, y) = vector_xy(o.cbcr(rgb.map(|v| v * 0.75)));
+            let c = c.map(|v| v / 2);
+            line(image, x - 2, y - 2, x + 2, y - 2, c);
+            line(image, x - 2, y + 2, x + 2, y + 2, c);
+            line(image, x - 2, y - 2, x - 2, y + 2, c);
+            line(image, x + 2, y - 2, x + 2, y + 2, c);
+        }
     }
     text(
         image,

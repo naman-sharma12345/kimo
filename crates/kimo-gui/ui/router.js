@@ -187,6 +187,7 @@ function gradeOps(state, MODES, ev) {
       else if (tn === 'set_color_curve' && Array.isArray(A.points)) { const ch = String(A.channel ?? 'm'), hl = { hue_sat: 'Hue vs Sat', hue_hue: 'Hue vs Hue', lum_sat: 'Lum vs Sat' }[ch]; setRow(hl ?? `Curve ${ch}`, `${A.points.length} pts`); const pts = A.points.filter(q => Array.isArray(q) && numOf(q[0]) != null && numOf(q[1]) != null).map(q => [numOf(q[0]), numOf(q[1])]); if (!hl && pts.length >= 2) KV._curve = { pts, ch }; }
       else if (tn === 'set_color_wheels') { const w = k => Array.isArray(A[k]) && A[k].length === 4 ? `${k[0].toUpperCase()}${k.slice(1, 3)} ${A[k].map(v => numOf(v) ?? '?').join('/')}` : null; setRow('Wheels', ['lift', 'gamma', 'gain', 'offset'].map(w).filter(Boolean).join(' · ') || (A.space ? String(A.space) : 'neutral')); }
       else if (tn === 'set_grade_scopes' && A.scopes && typeof A.scopes === 'object') { const g = A.scopes.groups, r = A.scopes.graphs; setRow('Scopes', [Array.isArray(g) ? `${g.length} groups` : null, r && typeof r === 'object' ? `${Object.keys(r).length} graphs` : null].filter(Boolean).join(' · ') || 'set'); }
+      else if ((tn === 'render_display_scope' || tn === 'render_scope') && (A.data === true || A.targets_75 === true)) setRow('Scope', [A.scope != null ? String(A.scope) : null, A.data === true ? 'data' : null, A.targets_75 === true ? '75% targets' : null].filter(Boolean).join(' · '));
       else if (tn === 'add_acescct_primaries') { const pr = A.params || {}; for (const k of ['lift', 'gamma', 'gain', 'offset']) if (numOf(pr[k]) != null) setRow(k[0].toUpperCase() + k.slice(1), fmtVal(pr[k])); }
       else graphHit = false;
       if (graphHit) {
@@ -978,8 +979,10 @@ export function route(ev, state, MODES) {
   if (fam === 'pipeline') pipelineOps(state, MODES, ev);
   if (fam === 'project') projectOps(state, MODES, ev);
   if (fam === 'qa') qaOps(state, MODES, ev);
-  if (ev.phase === 'start' && (fam === 'color' || fam === 'effects')) (state._gradeArgs || (state._gradeArgs = {}))[ev.call_id] = (ev.payload || {}).args || {};
-  if ((fam === 'color' || fam === 'effects') && gradeOps(state, MODES, ev)) ev._kvDone = true;
+  const dA = (ev.payload || {}).args || (state._gradeArgs || {})[ev.call_id] || {};
+  const dScope = ev.tool_name === 'render_display_scope' && (dA.data === true || dA.targets_75 === true);   /* family 'export' (^render): only its data / 75% targets row goes in the Grade list */
+  if (ev.phase === 'start' && (fam === 'color' || fam === 'effects' || dScope)) (state._gradeArgs || (state._gradeArgs = {}))[ev.call_id] = (ev.payload || {}).args || {};
+  if ((fam === 'color' || fam === 'effects' || dScope) && gradeOps(state, MODES, ev)) ev._kvDone = true;
   covbLearn(state, ev);   // key lists the engine reports, for the graph tools
   if (COVB.test(String(ev.tool_name)) && covbOps(state, MODES, ev, COVB_H)) ev._kvDone = true;
   if (ev.phase === 'start' && /^(open_project|load_project|new_project|save_project|project_set)$/.test(String(ev.tool_name))) {   // the topbar's project name, from the call's own args
