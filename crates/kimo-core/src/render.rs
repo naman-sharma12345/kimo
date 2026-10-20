@@ -284,7 +284,12 @@ fn source_frame_h(p: &Project, c: &Clip, lt_in: f64, cache: &Cache) -> (Frame, O
     let mut source_linear=false;
     match &c.source {
         Source::Solid { color } => { let fa = prop_or(c, "fill_alpha", lt, 1.0).clamp(0.0, 1.0) as f32; for i in 0..w*h { f.d[i*4]=color[0] as f32; f.d[i*4+1]=color[1] as f32; f.d[i*4+2]=color[2] as f32; f.d[i*4+3]=fa; } }, // fill_alpha: the colour's alpha (add_clip) or set_property; layer opacity composes with it
-        Source::Gradient { c1, c2 } => for y in 0..h { let k = y as f64 / h as f64; for x in 0..w { let i=(y*w+x)*4; for j in 0..3 { f.d[i+j] = (c1[j]*(1.0-k)+c2[j]*k) as f32; } f.d[i+3]=1.0; } },
+        Source::Gradient { c1, c2 } => { // end alphas from the colours (add_clip color/color2 alpha), interpolated premultiplied; x fill_alpha; layer opacity composes in blend
+            let (a1, a2, fa) = (prop_or(c, "color_alpha", lt, 1.0).clamp(0.0, 1.0), prop_or(c, "color2_alpha", lt, 1.0).clamp(0.0, 1.0), prop_or(c, "fill_alpha", lt, 1.0).clamp(0.0, 1.0));
+            for y in 0..h { let k = y as f64 / h as f64; for x in 0..w { let i=(y*w+x)*4;
+                if a1 == 1.0 && a2 == 1.0 { for j in 0..3 { f.d[i+j] = (c1[j]*(1.0-k)+c2[j]*k) as f32; } f.d[i+3]=fa as f32; continue; }
+                let al = if a1 == a2 { a1 } else { a1*(1.0-k)+a2*k };
+                for j in 0..3 { f.d[i+j] = if al > 0.0 { ((c1[j]*a1*(1.0-k)+c2[j]*a2*k)/al) as f32 } else { (c1[j]*(1.0-k)+c2[j]*k) as f32 }; } f.d[i+3]=(al*fa) as f32; } } },
         Source::Adjustment => {}
         Source::Precomp { tracks } => { let mut sub = Project { grade_scopes: p.grade_scopes.subset(tracks), lights: p.lights.clone(), materials: p.materials.clone(), editorial: p.editorial.clone(), ocio_view_delivery: None, occluders: p.occluders.clone(), color_pipeline: p.color_pipeline.clone(), tracks: tracks.clone(), assets: p.assets.clone(), camera: p.camera.clone(), markers: vec![], name: String::new(), width: p.width, height: p.height, fps: p.fps, next_id: 0, deps: None, templates: vec![], base_dir: p.base_dir.clone() }; sub.name = c.id.clone(); match render_frame_opts(&sub, lt, cache, true) {Ok(fr)=>f=fr,Err(_)=>f.d.fill(f32::NAN)} }
         Source::Shape { shape, width, height, fill, stroke_width, stroke_color, sides, corner_radius } => {
