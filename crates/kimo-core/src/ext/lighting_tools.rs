@@ -77,7 +77,7 @@ pub fn commands() -> Vec<Command> { vec![
     Command { name: "preview_material", description: "Render a lit sphere with the project lights and a material to a PNG, to judge lights and materials without a layer. Returns the path and mean/max luminance.", mutates: false,
         schema: obj(vec![("path", s("output .png")), ("material", s("material name or preset")), ("size", n("px 64..1024, default 384")), ("color", json!({"type":"array","items":{"type":"number"},"description":"base colour when the material has no albedo"}))], &["path", "material"]),
         run: |ss, a| { let path = str_arg(a, "path")?; let size = opt_num(a, "size", 384.0); if !size.is_finite() || !(64.0..=1024.0).contains(&size) { return Err("size must be 64..1024".into()); }
-            let col = a.get("color").and_then(|v| v.as_array()).map(|v| v.iter().map(|x| x.as_f64().unwrap_or(0.8)).collect::<Vec<_>>()).filter(|v| v.len() == 3).map(|v| [v[0], v[1], v[2]]).unwrap_or([0.8; 3]);
+            let col = crate::commands::color(a, "color", [0.8; 3])?;
             let scene = lighting::build_scene(&ss.project.lights, &ss.project.materials, 0.0); let f = lighting::preview(&scene, str_arg(a, "material")?, size as usize, col)?;
             let (mut sum, mut mx, mut cnt) = (0f64, 0f64, 0f64); for i in 0..f.w * f.h { if f.d[i * 4 + 3] > 0.0 { let l = (0.2126 * f.d[i * 4] + 0.7152 * f.d[i * 4 + 1] + 0.0722 * f.d[i * 4 + 2]) as f64; sum += l; mx = mx.max(l); cnt += 1.0; } }
             crate::render::write_image(&f, path)?; Ok(json!({"path": path, "mean_luma": sum / cnt.max(1.0), "max_luma": mx, "lights": scene.lights.len()})) } },

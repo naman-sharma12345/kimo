@@ -66,21 +66,22 @@ pub(crate) fn hex_rgba(s: &str) -> Option<[f64; 4]> {
 /// A colour argument: absent or null -> the default `d`; an [r,g,b] / [r,g,b,a] array (0..1) as before; a hex string
 /// "#rrggbb" (also "#rgb", "#rgba", "#rrggbbaa"). Anything else is an error naming the argument. Before this, a hex
 /// string (or any non-array) silently fell back to the default, so "#ffffff" on a solid rendered black.
-fn color(a: &Value, k: &str, d: [f64; 3]) -> Result<[f64; 3], String> {
+pub(crate) fn color(a: &Value, k: &str, d: [f64; 3]) -> Result<[f64; 3], String> { Ok(color_opt(a, k)?.map_or(d, |c| [c[0], c[1], c[2]])) }
+/// The same reading with alpha kept and no default: absent or null -> None, [r,g,b] -> alpha 1. Also used by the readers that
+/// once parsed arrays by hand and read a bad element as 0 (set_text_style bg / shadow_color / glow_color / gradient_*,
+/// add_transition color, preview_material color; task brief item d).
+pub(crate) fn color_opt(a: &Value, k: &str) -> Result<Option<[f64; 4]>, String> {
     match a.get(k) {
-        None | Some(Value::Null) => Ok(d),
+        None | Some(Value::Null) => Ok(None),
         Some(Value::Array(x)) => {
             // A wrong-length array ([1,1], five values) used to fall back to the default silently, and a non-number
             // element read as 0. Both are now errors naming the argument (Naman m:48b79971).
             if x.len() != 3 && x.len() != 4 { return Err(format!("{k}: expected 3 or 4 numbers, got {}", x.len())); }
-            let mut c = [0.0; 3];
-            for (i, v) in x.iter().enumerate() {
-                let n = v.as_f64().ok_or_else(|| format!("{k}: expected 3 or 4 numbers, element {i} is {v}"))?;
-                if i < 3 { c[i] = n; }
-            }
-            Ok(c)
+            let mut c = [0.0, 0.0, 0.0, 1.0];
+            for (i, v) in x.iter().enumerate() { c[i] = v.as_f64().ok_or_else(|| format!("{k}: expected 3 or 4 numbers, element {i} is {v}"))?; }
+            Ok(Some(c))
         }
-        Some(Value::String(s)) => hex_rgba(s).map(|c| [c[0], c[1], c[2]]).ok_or_else(|| format!("{k}: \"{s}\" is not a colour; use [r,g,b] with values 0..1, or hex \"#rrggbb\"")),
+        Some(Value::String(s)) => hex_rgba(s).map(Some).ok_or_else(|| format!("{k}: \"{s}\" is not a colour; use [r,g,b] with values 0..1, or hex \"#rrggbb\"")),
         Some(v) => Err(format!("{k}: {v} is not a colour; use [r,g,b] with values 0..1, or hex \"#rrggbb\"")),
     }
 }
