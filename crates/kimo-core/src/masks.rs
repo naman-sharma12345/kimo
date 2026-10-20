@@ -396,10 +396,13 @@ pub fn layer_coverage(l: &MaskLayer, f: &Frame, t: f64, ctx: &Ctx) -> Vec<f32> {
     // mask motion blur (AE): midpoint box-filter integration of the animated shape over the shutter. shutter = angle in degrees of a frame,
     // shutter_phase = open offset from the frame time in degrees (absent = centred), samples 0 = auto (from the shape's pixel travel) else 2..256
     let mut c = match mb_window(l, t, ctx.fps, w, h) { None => raw(l, f, t, ctx), Some((open, s_len, n)) => {
+        // shutter_curve (Nuke / RenderMan / Arnold efficiency): box keeps the plain average below; other curves weight each sample (weights sum to 1)
+        let curve = crate::shutter::curve_from_props(l.props.get("shutter_curve").map(|p| p.base), l.props.get("shutter_curve_pts")); let box_c = curve == crate::shutter::Curve::Box;
+        let wts = if box_c { vec![] } else { crate::shutter::weighted_midpoints(open, s_len, n, &curve) };
         let mut first: Option<Vec<f32>> = None; let mut acc = vec![0f64; w * h]; let mut all_same = true;
-        for k in 0..n { let r = raw(l, f, t + open + (k as f64 + 0.5) / n as f64 * s_len, ctx); for i in 0..w * h { acc[i] += r[i] as f64; }
+        for k in 0..n { let r = raw(l, f, t + open + (k as f64 + 0.5) / n as f64 * s_len, ctx); if box_c { for i in 0..w * h { acc[i] += r[i] as f64; } } else { let wk = wts[k].1; for i in 0..w * h { acc[i] += wk * r[i] as f64; } }
             match &first { None => first = Some(r), Some(f0) => { if all_same && f0[..] != r[..] { all_same = false; } } } }
-        let f0 = first.unwrap_or_else(|| raw(l, f, t, ctx)); if all_same { f0 } else { acc.iter().map(|v| (v / n as f64) as f32).collect() } } };
+        let f0 = first.unwrap_or_else(|| raw(l, f, t, ctx)); if all_same { f0 } else if box_c { acc.iter().map(|v| (v / n as f64) as f32).collect() } else { acc.iter().map(|v| *v as f32).collect() } } };
     let rf = g(l, "refine", 0.0, t) * s; if rf > 0.0 { guided(&mut c, f, rf.round() as usize, g(l, "refine_eps", 1e-3, t).max(1e-6)); }
     let ex = g(l, "expand", 0.0, t) * s; if ex != 0.0 { if leg { morph_legacy(&mut c, w, h, ex.round() as i32); } else { morph(&mut c, w, h, ex); } }
     let fe = g(l, "feather", 0.0, t) * s; if fe > 0.0 && !(l.kind == "path" && l.points.iter().chain(l.path_keys.iter().flat_map(|k| k.points.iter())).any(|p| p.f > 0.0) && !leg) { blur_cov(&mut c, w, h, fe / 2.0); }

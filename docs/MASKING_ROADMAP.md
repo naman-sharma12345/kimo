@@ -12,7 +12,7 @@ Everything below is callable over MCP. Tiers: SOLID = works at full strength and
 | Linear / radial gradient masks | kind=linear / radial | SOLID | |
 | Feather (px, gaussian-like), expand / choke (px, signed), opacity, invert | on every layer | SOLID / BASIC | expand uses a square structuring element (not euclidean) |
 | Every param keyframable (and expression-capable) | set_mask_prop_key | SOLID | |
-| Motion blur on animated roto shapes (AE shutter angle / phase) | set_mask_motion_blur | SOLID | done: midpoint box-filter over the shutter, samples 0 = auto from pixel travel; static masks stay bit-identical |
+| Motion blur on animated roto shapes (AE shutter angle / phase, shutter curves) | set_mask_motion_blur | SOLID | done: midpoint box-filter over the shutter, samples 0 = auto from pixel travel; static masks stay bit-identical; shutter_curve box / triangle / gaussian / custom [[s,w],..] (Nuke / RenderMan / Arnold shutter efficiency) weights the samples, also on layer blur via set_motion_blur (box = unchanged) |
 | Luma selection, color selection, HSL qualifier (hue, sat, lum windows, softness) | kind=luma / color / hsl | SOLID | Resolve-qualifier style, no despill |
 | Difference matte vs a clean-plate clip | kind=difference (ref_clip) | BASIC | RGB distance, no noise reduction |
 | Magic wand (contiguous or global, tolerance, softness) | kind=wand | SOLID | |
@@ -36,7 +36,7 @@ Everything below is callable over MCP. Tiers: SOLID = works at full strength and
 
 ## Quality pass (commit "Masking quality")
 - Exact-area path rasterizer (signed-area accumulation): sub-pixel accurate, no shimmer on moving edges (was 4x4 supersampling).
-- Spline path-key interpolation (cardinal spline through keys, no stop at each key); `interp` = spline | smooth | linear. Mask motion blur: `shutter` (degrees), `shutter_phase` and `samples` (0 = auto) params on geometric layers, set with `set_mask_motion_blur`.
+- Spline path-key interpolation (cardinal spline through keys, no stop at each key); `interp` = spline | smooth | linear. Mask motion blur: `shutter` (degrees), `shutter_phase` and `samples` (0 = auto) params on geometric layers, set with `set_mask_motion_blur`; `shutter_curve` (0 box, 1 triangle, 2 gaussian, 3 custom) + `shutter_curve_pts` (keys t = s, v = w) weight the shutter samples.
 - Variable feather: per-point `f` (px) on path points, exact distance-based falloff. Layer feather stays Gaussian.
 - Euclidean (EDT) expand/choke from a sub-pixel signed distance field, circular and smooth (was square).
 - Guided-filter edge refine (`refine` px, `refine_eps`) snaps any coverage to image edges.
