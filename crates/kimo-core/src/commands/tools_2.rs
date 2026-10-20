@@ -88,7 +88,13 @@ pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
         run: |_, _| Ok(json!(CATALOG.iter().chain(CATALOG2.iter()).chain(catalog3().iter()).map(|(k, d, ps)| json!({"kind":k,"description":d,"params":ps.iter().map(|(n,dv,dd)| json!({"name":n,"default":dv,"description":dd})).collect::<Vec<_>>()})).collect::<Vec<_>>())) },
     Command { name: "add_effect", description: "Add an effect to a clip (see list_effects). params is {name: number}. Effects run in order.", mutates: true,
         schema: obj(vec![("clip_id", s("clip")), ("kind", json!({"type":"string","enum":eff_kinds})), ("params", json!({"type":"object","additionalProperties":{"type":"number"}})), ("strings", json!({"type":"object","additionalProperties":{"type":"string"},"description":"string params, e.g. lut: {path:\"/x.cube\"}"}))], &["clip_id","kind"]),
-        run: |ss, a| { let kind = str_arg(a, "kind")?.to_string(); if !CATALOG.iter().chain(CATALOG2.iter()).chain(catalog3().iter()).any(|c| c.0 == kind) { return Err(format!("unknown effect '{kind}'")); }
+        run: |ss, a| { let kind = str_arg(a, "kind")?.to_string(); let Some(cat) = CATALOG.iter().chain(CATALOG2.iter()).chain(catalog3().iter()).find(|c| c.0 == kind) else { return Err(format!("unknown effect '{kind}'")); };
+            // A key the effect does not read used to be stored and ignored in silence (chroma_key strings {"screen":"green"} -> ok, nothing keyed;
+            // a params typo never read). Both are refused, naming the tool, the effect and the key (task brief item b, Naman m:abe1df3d).
+            if let Some(o) = a.get("params").and_then(|v| v.as_object()) { for k in o.keys() { if !cat.2.iter().any(|p| p.0 == k.as_str()) {
+                let valid: Vec<&str> = cat.2.iter().map(|p| p.0).collect(); return Err(format!("add_effect: unknown param '{k}' for effect '{kind}': nothing reads it, so it would silently do nothing. Valid params: {}", if valid.is_empty() { "(none)".to_string() } else { valid.join(", ") })); } } }
+            if let Some(o) = a.get("strings").and_then(|v| v.as_object()) { for k in o.keys() { if !crate::effects::STRING_KEYS.contains(&k.as_str()) {
+                return Err(format!("add_effect: unknown strings key '{k}' for effect '{kind}': no effect reads it, so it would silently do nothing. String keys effects read: {}", crate::effects::STRING_KEYS.join(", "))); } } }
             let eid = ss.project.gen_id("fx"); let mut params = std::collections::BTreeMap::new();
             let mut strings = std::collections::BTreeMap::new();
             if let Some(o) = a.get("strings").and_then(|v| v.as_object()) { for (k, v) in o { strings.insert(k.clone(), v.as_str().unwrap_or("").to_string()); } }
