@@ -33,6 +33,7 @@ PROBE = r"""
 })();
 """
 JS = r"""
+window.ap = e => { __kimo.apply(e); window.__drainAt = __kimo.metrics.raf };   /* every apply: the frame count at enqueue; drained() waits past it */
 window.T = sel => [...document.querySelectorAll(sel)].map(e => e.textContent.replace(/\s+/g, ' ').trim());
 window.has = (sel, ...parts) => T(sel).some(s => parts.every(p => s.includes(p)));
 window.hud = s => { const h = document.querySelector('[data-panel=viewer] .hud'); return !!h && h.textContent.includes(s); };
@@ -185,20 +186,30 @@ async def proof(b, url, fails):
         pg.on('pageerror', lambda e: errs.append(str(e)))
         await pg.goto(url); await pg.wait_for_function('window.__kimo && __kimo.metrics.renders > 0'); await pg.evaluate(JS)
         scr = PSCR[tool]
+        async def drained():
+            # The page's own drain signal: app.js frame() bumps __kimo.metrics.raf and drains the WHOLE event queue in
+            # the same synchronous call, so once raf has moved past its value at the last apply (window.__drainAt, set by
+            # ap() in JS at every apply) that event is drained and every flash stamp it set (router.js now(): the frame's
+            # clock) is in the past. If raf never moves, wait_for_function raises at Playwright's own default timeout and
+            # the run fails; nothing falls through.
+            await pg.wait_for_function('() => __kimo.metrics.raf > (window.__drainAt ?? -1)', polling=10)
         async def panels(which=None):
+            # the 720 ms count from the frame that landed the last event, not from this call: on a loaded box that frame
+            # runs late, so a count started at the apply could end <700 ms after the stamp and read a stale "flash" class.
+            await drained()
             await pg.wait_for_timeout(720)   # flash stamps run out (FLASH_MS 700)
             out, m0 = [], await pg.evaluate('__kimo.state.mode')
             for m, name in (which or scr):
-                await pg.evaluate('m => __kimo.apply({ type: "mode", mode: m })', m); await pg.wait_for_timeout(200)
+                await pg.evaluate('m => ap({ type: "mode", mode: m })', m); await pg.wait_for_timeout(200)
                 out.append(await pg.evaluate('p => { const e = document.querySelector(`[data-panel=${p}]`); return e ? e.innerHTML : "<missing>" }', name))
-            await pg.evaluate('m => __kimo.apply({ type: "mode", mode: m })', m0); await pg.wait_for_timeout(120)
+            await pg.evaluate('m => ap({ type: "mode", mode: m })', m0); await pg.wait_for_timeout(120)
             await pg.evaluate('() => { __kimo.state.explicitMode = false }')
             return out
         async def rows(m, name):
-            await pg.evaluate('m => __kimo.apply({ type: "mode", mode: m })', m); await pg.wait_for_timeout(200)
+            await pg.evaluate('m => ap({ type: "mode", mode: m })', m); await pg.wait_for_timeout(200)
             r = await pg.evaluate('p => [...document.querySelectorAll(`[data-panel=${p}] .row`)].map(r => r.textContent.replace(/\\s+/g, " ").trim())', name)
             await pg.evaluate('() => { __kimo.state.explicitMode = false }'); return r
-        st = lambda: pg.evaluate("() => ({ model: __c.model(), canon: __c.canon(), depth: __c.depth() })")
+        async def st(): await drained(); return await pg.evaluate("() => ({ model: __c.model(), canon: __c.canon(), depth: __c.depth() })")
         def check(desc, res):
             nonlocal ok
             if res is True: ok += 1; print(f'PASS  proof {tool}: {desc}')
@@ -216,12 +227,12 @@ async def proof(b, url, fails):
             if ph == 'start' and cid is not None and cid == succ_cid:
                 Dpre = await panels(); Spre = await st(); pre_rows = await rows('color', 'pipe')
                 if tool in RO_C: Dst = await panels(STILL)
-            await pg.evaluate('e => __kimo.apply(e)', ev)
+            await pg.evaluate('e => ap(e)', ev)
             if ph != 'complete' and ph != 'error': continue
             P_ = ev.get('payload') or {}; R = P_.get('result') if isinstance(P_.get('result'), dict) else {}
             if tn == 'add_clip' and ph == 'complete': ids.append(R.get('clip_id'))
             if cid == fail_cid:
-                await pg.wait_for_timeout(60)
+                await pg.wait_for_timeout(60); await drained()
                 L = await pg.evaluate('__c.last()'); H = await pg.evaluate('__c.hud()'); S1 = await st()
                 check(f"real refused call shows as failed: its rail row in the error state with the engine's words ({P_.get('error')})", L['name'] == tool and L['status'] == 'error' and L['rowErr'] and L['error'] == P_.get('error') or L)
                 if tool == 'set_ocio_view_delivery':
@@ -240,7 +251,7 @@ async def proof(b, url, fails):
                     D1 = await panels(); check(f"no fake visual: panels byte-identical after the failure ({', '.join(f'{m}:{n}' for m, n in scr)})", D1 == D0)
                 phase = 'failed'
             elif cid == succ_cid and ph == 'complete':
-                await pg.wait_for_timeout(60)
+                await pg.wait_for_timeout(60); await drained()
                 A_ = next((e['payload'].get('args') for e in events[:i] if e.get('call_id') == cid and e.get('phase') == 'start'), {}) or {}
                 vals, rws, before_rows = PROOF_SUCCESS(tool, R, A_, ids)
                 if before_rows is not None: check(f"before the call the Color pipeline list read {before_rows}", pre_rows == before_rows or pre_rows)
@@ -310,7 +321,7 @@ async def main():
                 key = f'{name}#{k}' if f'{name}#{k}' in CHECK else (name if k == 1 and name in CHECK else None)
                 if key is None: print(f'FAIL  no check for {name} #{k}'); fails.append(f'{name}#{k}'); continue
                 await frame(); before = await pg.evaluate(CHECK[key]); m0 = await pg.evaluate('__kimo.state.mode'); v0 = await pg.evaluate("[...document.querySelectorAll('[data-panel=viewer] .frame > :not(.hud)')].map(e => e.outerHTML).join('')")
-                await pg.evaluate('e => __kimo.apply(e)', e); await frame()
+                await pg.evaluate('e => ap(e)', e); await frame()
                 after = await pg.evaluate(CHECK[key])
                 bad = await pg.evaluate(f"""() => [...document.querySelectorAll('{PANELS}')].map(x => x.textContent).filter(s => {RAW}.test(s) || /\\b(undefined|NaN|null)\\b/.test(s)).map(s => s.slice(0, 80))""")
                 mode = await pg.evaluate('__kimo.state.mode')
@@ -323,7 +334,7 @@ async def main():
                 print(f"{'PASS' if ok else 'FAIL'}  {key:<26} [{mode}] before={before!s:<5} after={after!s:<5}" + (f' raw/bad text: {bad[:2]}' if bad else ''), flush=True)
                 if not ok: fails.append(key)
             else:
-                await pg.evaluate('e => __kimo.apply(e)', e)
+                await pg.evaluate('e => ap(e)', e)
         missing = [t for t in TOOLS if t not in seen]
         if missing: print('FAIL  never exercised:', missing); fails += missing
         await pg.wait_for_timeout(2000)
