@@ -19,7 +19,7 @@ pub(crate) fn p(m: &Params, k: &str, def: f64, t: f64) -> f32 { m.get(k).map(|x|
 
 /// Every `strings` key some effect (or its mask / OCIO / wrapper / LUT reader) reads. add_effect refuses any other key, which would be
 /// stored and never read. Collected from every `strings.get/contains_key/insert/remove("..")` in the crate plus the OCIO keys read by name.
-pub const STRING_KEYS: &[&str] = &["a", "aux_path", "b", "bound_linear_gamut", "cct_space", "cdl_payload", "config_path", "cube_text", "d", "dir", "edge", "expr", "field", "fill_rule", "fps", "g", "height_source", "hits", "interp", "kernel", "keys", "kind", "lights", "linear_space", "mask_layer", "material", "mode", "ocio_config", "ocio_display_space", "ocio_domain", "ocio_linear_space", "ocio_version", "ocio_view_delivery", "ocio_working_space", "path", "position", "profile", "r", "ref_clip", "seed", "shape", "wrapper_gamut", "wrapper_reference_white", "wrapper_transfer", "wrapper_working_gamut"];
+pub const STRING_KEYS: &[&str] = &["a", "aux_path", "b", "bound_linear_gamut", "cct_space", "cdl_payload", "config_path", "core_mask", "cube_text", "d", "dir", "edge", "expr", "field", "fill_rule", "fps", "g", "garbage_mask", "height_source", "hits", "interp", "kernel", "keys", "kind", "lights", "linear_space", "mask_layer", "material", "mode", "ocio_config", "ocio_display_space", "ocio_domain", "ocio_linear_space", "ocio_version", "ocio_view_delivery", "ocio_working_space", "path", "position", "profile", "r", "ref_clip", "seed", "shape", "wrapper_gamut", "wrapper_reference_white", "wrapper_transfer", "wrapper_working_gamut"];
 
 /// (kind, description, [(param, default, description)]) - drives list_effects and tool schemas.
 pub const CATALOG: &[(&str, &str, &[(&str, f64, &str)])] = &[

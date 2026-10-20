@@ -226,6 +226,16 @@ function gradeOps(state, MODES, ev) {
     if (rows.length && K) { const KV = V2[K[0]] || (V2[K[0]] = {}); KV.blocks = (KV.blocks || []).filter(b => !b._cread); for (const b of KV.blocks) b.ch = false; const t = now(); KV.blocks.push({ sec: tn, _grade: true, _cread: true }, ...rows.map(([k, v]) => ({ k, v, ch: true, _grade: true, _cread: true, _flash: t }))); hit = true; }
     scopeStats(state, MODES, scopeLine(tn, R));
   }
+  // keyer: one row with the matte model, clean plate, garbage/core mattes, despill mode and the non-result view
+  if (tn === 'add_effect' && kind === 'keyer') {
+    const pr = A.params || {}, st = A.strings || {}, mm = numOf(pr.matte_model) ?? 0, kv = numOf(pr.view) ?? 0, dm = numOf(pr.despill_mode);
+    const tl = timelineView(state, MODES), nm = id => { const [t, i] = tl ? findClip(tl, { clip_id: id }) : [null, -1]; const lb = t ? t.clips[i].label : null; return lb && !RAW_ID.test(String(lb)) ? lb : String(id); };
+    const plate = st.ref_clip ? `clean plate ${nm(st.ref_clip)}` : st.aux_path ? `clean plate ${String(st.aux_path).split(/[\\/]/).pop()}` : null;
+    const mattes = [st.garbage_mask ? 'garbage' : null, st.core_mask ? 'core' : null].filter(Boolean).join('/');
+    const txt = ['keyer', `model ${mm}`, plate, mattes || null, dm != null ? `despill ${['average', 'double', 'limit', 'min'][dm] ?? dm}` : null, kv ? `${['result', 'matte', 'despilled', 'status', 'raw screen'][kv] ?? kv} view` : null].filter(Boolean).join(' · ');
+    const K = (MODES[mode] && Object.entries(MODES[mode].panels).find(([, sp]) => sp.kind === 'kv')) || null;
+    if (K) { const KV = V2[K[0]] || (V2[K[0]] = {}); KV.blocks = (KV.blocks || []).filter(b => !b._kread); for (const b of KV.blocks) b.ch = false; KV.blocks.push({ k: 'Keyer', v: txt, ch: true, _grade: true, _kread: true, _flash: now() }); hit = true; }
+  }
   return hit;
 }
 function scopeStats(state, MODES, text) {
