@@ -19,7 +19,7 @@ Everything below is callable over MCP. Tiers: SOLID = works at full strength and
 | Edge mask (Sobel band, thickness) | kind=edge | SOLID | |
 | Own-alpha mask (threshold, softness) for shrink/grow/outline work | kind=alpha | SOLID | |
 | Procedural noise mask, animated threshold (organic dissolves) | kind=noise | SOLID | kimo extra |
-| Track mattes: alpha, luma, inverted alpha, inverted luma, hide source | set_track_matte | SOLID | matte clip is rendered with its own transforms, effects, masks |
+| Track mattes: alpha, alpha_inverted, luma, luma_inverted (legacy inv_alpha / inv_luma), luma_space linear (default, linear light Rec.709) or display, hide source | set_track_matte | SOLID | matte clip is rendered with its own transforms, effects, masks |
 | Per-effect masks: any effect gated by any mask layer | set_effect_mask | SOLID | |
 | Masks on adjustment layers keyed on the image below | add_mask on adjustment clip | SOLID | power-window + qualifier workflow |
 | Mask inspection (matte / overlay / cutout PNG) | render_mask | SOLID | |

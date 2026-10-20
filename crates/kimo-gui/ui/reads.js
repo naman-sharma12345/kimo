@@ -93,6 +93,7 @@ const CALL = {
   set_text_style: (A, R, C) => [['Text style', 'applied', true], ...argRows(A, 2), ['Props', fxCount(C)]],
   set_text_weight: (A, R, C) => [['Weight', A.weight != null ? short(A.weight) : 'default', true], ['Props', fxCount(C)]],
   set_audio_effect_key: A => [[`Key ${A.coefficient ?? ''}`.trim(), `${short(A.value) ?? ''}${A.time != null ? ` @ ${short(A.time)}s` : ''}`], ['Effect', A.effect_index != null ? `#${A.effect_index}` : null]],
+  set_track_matte: A => [['Track matte', String(A.mode ?? 'alpha') + (A.luma_space ? ` (${A.luma_space})` : '')], ['Matte clip', A.matte_clip_id ?? null], ['Matte visible', A.hide_source === false ? 'yes' : 'no']],
   remove_track_matte: () => [['Track matte', 'removed']],
   validate_captions: (A, R) => T.validate_captions(R || {}),
 };

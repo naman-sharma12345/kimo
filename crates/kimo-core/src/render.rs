@@ -564,7 +564,7 @@ pub fn render_frame_opts(p: &Project, t: f64, cache: &Cache, transparent: bool) 
             if let Some((rx0, ry0, rx1, ry1)) = u { for y in ry0..=ry1 { for x in rx0..=rx1 { let i = y * w + x; if wsum[i] > 0.0 { for j in 0..3 { acc.d[i * 4 + j] /= wsum[i]; } } acc.d[i * 4 + 3] /= n as f32; } } } acc }
             else if (sc - 1.0).abs() < 1e-9 && xprop(p, c, "rotation", lt) + rot_extra == 0.0 && dx == 0.0 && dy == 0.0 { f } else { from_tb = true; transform_bb(&f, bbf, sc, xprop(p, c, "rotation", lt) + rot_extra, dx, dy) };
         prof("transform", tp);
-        let mut f = f; if let Some(mt) = c.mask.as_ref().and_then(|m| m.matte.as_ref()) { if let Some(src) = render_clip_alone(p, &mt.source, t, cache) { let cov = crate::masks::matte_coverage(mt, &src); for i in 0..w * h { f.d[i * 4 + 3] *= cov[i]; } } }
+        let mut f = f; if let Some(mt) = c.mask.as_ref().and_then(|m| m.matte.as_ref()) { if let Some(src) = render_clip_alone(p, &mt.source, t, cache) { let cov = crate::masks::matte_coverage(mt, &src, &p.color_pipeline); for i in 0..w * h { f.d[i * 4 + 3] *= cov[i]; } } }
         // frosted_glass runs here, after the layer transform, so it frosts what is really under the pane
         if c.effects.iter().any(|e| crate::effects2::is_post(&e.kind)) { BACKDROP.with(|b| *b.borrow_mut() = Some(std::rc::Rc::new(Frame { w, h, d: out.d.clone() }))); crate::frosted::set_post(true);
             let r: Result<(), String> = (|| { for e in c.effects.iter().filter(|e| crate::effects2::is_post(&e.kind)) { effects::apply(&e.kind, &e.params, &e.strings, &mut f, lt, seed)?; } Ok(()) })();
