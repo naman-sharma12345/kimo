@@ -27,7 +27,7 @@ export const FAMILIES = [
   ['color', /^(grade|color|colour|lut|apply_lut|set_lut|ocio|render_scope|analyze_exposure|wheel|curve|node_|hdr|render_ocio|render_exposure|render_gamut|set_grade_node|set_grade_graph|pick_white_balance|match_grade|match_color|set_white_balance|set_grade_output|remove_grade_node|generate_lut_node|add_acescct_primaries|create_shared_grade_graph|bind_shared_grade_graphs|remove_shared_grade_graph|set_node_param|set_node_mask|apply_asc_cdl|set_color_curve|set_color_wheels|set_grade_scopes|add_node$|connect_nodes|disconnect_nodes)/],
   ['audio', /^(set_|add_|apply_|auto_|measure_|normalize_|analyze_)?(mix|audio|gain|fader|mute|solo|pan|compress|eq|limiter|limit|loudness|duck|stem|bus|route_)|^track_beats$/],
   ['text', /^(caption|subtitle|add_caption|add_subtitle|edit_caption|transcript_edit|transcri|add_title|title|text|set_text|add_text|set_caption|validate_captions)/],
-  ['3d', /^(add_mesh|mesh|model|extrude|bevel|light|camera|particle|emit|simulate|scene|render_3d|add_light|set_light|solve_camera|track|set_camera|add_scene3d|instantiate_gltf|generate_mesh_primitive|contour_sdf_graph|set_mesh_pin|derive_vertex_tangents|fit_track_homography|ecc_refine_track|decompose_track_homography|corner_disagreement|lk_residual_audit|validate_planar_track|undistort_clip|stabilize|apply_camera_solve|pin_layer|set_corner_pin|add_emitter|add_particles|add_shard_burst|set_material$|remove_material$|preview_material$|set_relight$|remove_light$)/],
+  ['3d', /^(add_mesh|mesh|model|extrude|bevel|light|camera|particle|emit|simulate|scene|render_3d|add_light|set_light|solve_camera|track|set_camera|add_scene3d|instantiate_gltf|generate_mesh_primitive|contour_sdf_graph|set_mesh_pin|derive_vertex_tangents|fit_track_homography|ecc_refine_track|decompose_track_homography|corner_disagreement|lk_residual_audit|validate_planar_track|undistort_clip|stabilize|apply_camera_solve|pin_layer|set_corner_pin|add_emitter|add_particles|add_shard_burst|set_particles3d$|set_material$|remove_material$|preview_material$|set_relight$|remove_light$)/],
   ['graphics', /^(add_shape|add_path_shape|set_path|add_path_key|clear_path_keys|add_shape_modifier|remove_shape_modifier|add_modifier|remove_modifier|set_layer_style|remove_layer_style|add_box_expand|add_detection_box|add_hud_frame|add_counter|add_prompt_box|add_glitch_confetti)$/],
   ['roto', /^(add_mask|set_mask|set_mask_keyframe|set_mask_path_key|set_mask_prop_key|update_mask|reorder_mask|remove_mask|remove_mask_layer|roto_propagate|refine_matte|set_track_matte|remove_track_matte)$/],
   ['export', /^(export|render|queue_render|encode|deliver|join_export$|preview_range$|collect_project$|contact_sheet$|cancel_job$|resume_job$)/],
@@ -1256,9 +1256,11 @@ function sceneOps(state, MODES, ev) {
     }
     // particles (m10): the emitter joins Emitters with its rate/count, gets a Simulation lane with a dot at its
     // start and end frame, and writes its own numbers into the Inspector in the mockup's sections — all from args
-    if ((tn === 'add_emitter' || tn === 'add_particles' || tn === 'add_shard_burst') && ev.phase === 'complete') {
-      const C = (A.config && typeof A.config === 'object') ? { ...A, ...A.config } : A;
-      const name = String(C.name ?? A.preset ?? A.kind ?? (tn === 'add_shard_burst' ? 'shards' : C.shape ? `${C.shape} emitter` : 'emitter'));
+    // add_particles3d / set_particles3d (K4): nested emitter / physics / sprite objects flatten into the same rows (sprite size wins over box size)
+    if ((tn === 'add_emitter' || tn === 'add_particles' || tn === 'add_shard_burst' || tn === 'add_particles3d' || tn === 'set_particles3d') && ev.phase === 'complete') {
+      const p3 = tn === 'add_particles3d' || tn === 'set_particles3d', ob = x => (x && typeof x === 'object' && !Array.isArray(x)) ? x : {};
+      const C = p3 ? { ...A, ...ob(A.emitter), ...ob(A.physics), ...ob(A.sprite) } : (A.config && typeof A.config === 'object') ? { ...A, ...A.config } : A;
+      const name = p3 ? String(A.clip_id ?? `${ob(A.emitter).kind ?? 'point'} 3D emitter`) : String(C.name ?? A.preset ?? A.kind ?? (tn === 'add_shard_burst' ? 'shards' : C.shape ? `${C.shape} emitter` : 'emitter'));
       const rate = numOf(C.rate ?? C.rate_per_s ?? C.spawn_rate), count = numOf(C.count ?? C.shards ?? C.num_shards);
       const v = rate != null ? `${Math.round(rate).toLocaleString('en-US')}/s` : count != null ? Math.round(count).toLocaleString('en-US') : '';
       const P = MODES[mode] ? MODES[mode].panels : {};

@@ -20,6 +20,7 @@ add_multicam f0d46cf978e1e7f9
 add_node 80183e29bc04e1bb
 add_null ea896e17d6abe009
 add_particles ba89115d7dbca8ef
+add_particles3d 12b4473cad931dfb
 add_path_key cf58f43b9b5a2a16
 add_path_shape 7a38d9af75a4a47f
 add_prompt_box 1f7b236e95633eb0
@@ -311,6 +312,7 @@ set_node_mask 19c5bb5789c89632
 set_node_param 20b86ed963a1e02c
 set_ocio_view_delivery f6f2f235a93c3d77
 set_parent e09ac27176002af4
+set_particles3d 8a34fcdfc233c9ab
 set_path 6620245c892b0ea5
 set_posterize_time 03737fb4f2ea4cab
 set_property 1123a56f6fa267dd

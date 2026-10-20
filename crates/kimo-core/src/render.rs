@@ -328,6 +328,7 @@ fn source_frame_h(p: &Project, c: &Clip, lt_in: f64, cache: &Cache) -> (Frame, O
             crate::particles::render_fps(e, &mut f, lt, p.fps); if has { crate::particles::set_layer_masks(Vec::new()); crate::particles::clear_layer_bins(); } if emit { crate::particles::set_emit_mask(None, false); crate::particles::clear_emit_bins(); } }
         Source::SpeedLines(s) => crate::speedlines::render(s, &mut f, lt),
         Source::GlitchConfetti(s) => crate::confetti::render(s, &mut f, lt),
+        Source::Particles3D(e) => crate::particles3d::render_layer(p, c, e, lt, &mut f, cache),
         Source::Scene3D(e) => { let t0 = c.start + lt; crate::scene3d::render_blur(e, &mut f, lt, p.fps, &|off| crate::three_d::Camera::from_props(&p.camera, t0 + off)) }
         Source::ShardBurst(e) => { if let Some(tid) = e.plane.as_ref().and_then(|pl| pl.occlusion_target.as_ref()) { if let Some(occ) = target_screen_occ(p, tid, c.start + lt) { crate::shards::EXT_OCC.with(|cell| *cell.borrow_mut() = Some(occ)); } } let ctx = crate::shards::RenderCtx { work_linear: p.color_pipeline.enabled && p.color_pipeline.linear_resample }; crate::shards::render_ctx(&ctx, e, &mut f, lt, &crate::three_d::Camera::from_props(&p.camera, c.start + lt), p.fps, c.duration) }
         Source::Particles { kind, count, color, size, seed } => {
@@ -508,7 +509,8 @@ pub fn render_frame_opts(p: &Project, t: f64, cache: &Cache, transparent: bool) 
     let mut out = Frame::new(w, h);
     if !transparent { for i in 0..w*h { out.d[i*4+3] = 1.0; } } // opaque black canvas
     let seed = (t * p.fps).round() as u64;
-    let hidden: std::collections::HashSet<&str> = p.tracks.iter().flat_map(|tr| tr.clips.iter()).filter_map(|c| c.mask.as_ref().and_then(|m| m.matte.as_ref()).filter(|m| m.hide_source).map(|m| m.source.as_str())).collect();
+    let hidden: std::collections::HashSet<&str> = p.tracks.iter().flat_map(|tr| tr.clips.iter()).filter_map(|c| c.mask.as_ref().and_then(|m| m.matte.as_ref()).filter(|m| m.hide_source).map(|m| m.source.as_str()))
+        .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).filter_map(|c| match &c.source { Source::Particles3D(e) if e.sprite.kind == "layer" && e.sprite.hide_source && !e.sprite.clip_id.is_empty() => Some(e.sprite.clip_id.as_str()), _ => None })).collect(); // a Particles3D layer sprite's source is drawn only as the sprite
     for tr in &p.tracks { for c in &tr.clips {
         if !crate::editorial::caption_visible(p, &c.id) { continue; }
         if t < c.start - 1e-9 || t >= c.start + c.duration - 1e-9 || (hidden.contains(c.id.as_str()) && MATTE_DEPTH.with(|d| d.get()) == 0) { continue; }

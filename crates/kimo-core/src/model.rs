@@ -19,6 +19,9 @@ pub enum Source {
     SpeedLines(crate::speedlines::SpeedLines),
     GlitchConfetti(crate::confetti::GlitchConfetti),
     Scene3D(crate::scene3d::Scene3D),
+    /// 3D particle layer (Trapcode Particular class) seen through the project camera; closed-form physics, scrub-exact (see particles3d.rs).
+    #[serde(rename = "particles3d")]
+    Particles3D(crate::particles3d::Particles3D),
     Particles { kind: String, count: u32, color: [f64; 3], size: f64, seed: u64 },
     /// Adjustment layer: its effects/mask/opacity apply to everything composited beneath it.
     Adjustment,
@@ -227,6 +230,7 @@ pub fn clip_refs(c: &Clip) -> Vec<(String, String)> {
             if !e.emit_clip.is_empty() { v.push(("source.emit_clip".to_string(), e.emit_clip.clone())); }
             for (i, k) in e.colliders.iter().enumerate() { if k.kind == "layer" && !k.clip_id.is_empty() { v.push((format!("source.colliders.{i}.clip_id"), k.clip_id.clone())); } }
         }
+        Source::Particles3D(e) => { if !e.sprite.clip_id.is_empty() { v.push(("source.sprite.clip_id".to_string(), e.sprite.clip_id.clone())); } }
         _ => {}
     }
     v
@@ -249,6 +253,7 @@ fn clear_in_tracks(tracks: &mut Vec<Track>, ids: &[String], out: &mut Vec<Cleare
             if field == "mask.matte.source" { if let Some(m) = c.mask.as_mut() { m.matte = None; } }
             else if field == "source.plane.occlusion_target" { if let Source::ShardBurst(e) = &mut c.source { if let Some(p) = e.plane.as_mut() { p.occlusion_target = None; } } }
             else if field == "source.emit_clip" { if let Source::Emitter(e) = &mut c.source { e.emit_clip.clear(); } }
+            else if field == "source.sprite.clip_id" { if let Source::Particles3D(e) = &mut c.source { e.sprite.clip_id.clear(); } }
             else if let Some(i) = field.strip_prefix("source.colliders.").and_then(|x| x.strip_suffix(".clip_id")).and_then(|x| x.parse::<usize>().ok()) { if let Source::Emitter(e) = &mut c.source { if i < e.colliders.len() { e.colliders[i].clip_id.clear(); } } }
             else if let Some(lid) = field.strip_prefix("mask.layers.").and_then(|x| x.strip_suffix(".ref_clip")) { if let Some(m) = c.mask.as_mut() { for l in m.layers.iter_mut().filter(|l| l.id == lid) { l.strings.remove("ref_clip"); } } }
             out.push(ClearedRef { clip_id: c.id.clone(), field, removed_id: rid });
