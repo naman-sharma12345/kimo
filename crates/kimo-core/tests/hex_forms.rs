@@ -28,7 +28,7 @@ fn every_px(px: &[f32], want: [f32; 4]) -> usize { px.chunks_exact(4).filter(|p|
 
 #[test]
 fn hex_short_upper_and_8_digit_forms_draw_their_colour_on_a_solid() {
-    for (h, want) in [("#fff", [1.0, 1.0, 1.0, 1.0]), ("#FFF", [1.0, 1.0, 1.0, 1.0]), ("#FFFFFF", [1.0, 1.0, 1.0, 1.0]), ("#FFFFFFFF", [1.0, 1.0, 1.0, 1.0]), ("#ff000080", [1.0, 0.0, 0.0, 1.0])] {
+    for (h, want) in [("#fff", [1.0, 1.0, 1.0, 1.0]), ("#FFF", [1.0, 1.0, 1.0, 1.0]), ("#FFFFFF", [1.0, 1.0, 1.0, 1.0]), ("#FFFFFFFF", [1.0, 1.0, 1.0, 1.0]), ("#ff000080", [(128.0f64 / 255.0) as f32, 0.0, 0.0, 1.0])] {
         let px = solid(json!(h)).unwrap_or_else(|e| panic!("{h} must be accepted: {e}"));
         let off = every_px(&px, want);
         eprintln!("solid {h:>10}: first px {:?}, want {want:?}, off {off}/{}", &px[..4], px.len() / 4);

@@ -38,7 +38,7 @@ fn hex_white_solid_renders_white_not_black() {
 
 #[test]
 fn hex_forms_match_their_arrays() {
-    for (h, a) in [("#3366cc", json!([0.2, 0.4, 0.8])), ("#36c", json!([0.2, 0.4, 0.8])), ("#3366CC", json!([0.2, 0.4, 0.8])), ("#ff000080", json!([1, 0, 0])), ("#000", json!([0, 0, 0]))] {
+    for (h, a) in [("#3366cc", json!([0.2, 0.4, 0.8])), ("#36c", json!([0.2, 0.4, 0.8])), ("#3366CC", json!([0.2, 0.4, 0.8])), ("#ff000080", json!([1.0, 0.0, 0.0, 128.0 / 255.0])), ("#000", json!([0, 0, 0]))] {
         assert_eq!(solid(json!(h)).unwrap_or_else(|e| panic!("{h}: {e}")), solid(a).unwrap(), "{h}");
     }
 }

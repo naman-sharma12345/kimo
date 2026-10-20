@@ -32,6 +32,8 @@ pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
                 o => return Err(format!("bad source_type {o}")) };
             let id = ss.project.gen_id("clip");
             let mut c = Clip { id: id.clone(), source: src, start: num_arg(a, "start")?, duration: num_arg(a, "duration")?, in_point: opt_num(a, "in_point", 0.0), speed: opt_num(a, "speed", 1.0), speed_curve: None, props: default_props(), grade_graph: None, effects: vec![], blend: "normal".into(), mask: None, time_mode: TimeMode::Normal, corners: None, audio: Audio::default(), motion_blur: 0.0, echo: None, motion_path: None, posterize_fps: 0.0, text_fx: None, parent: None, inherit: Default::default(), name: None, role: None, tags: vec![], transition_in: None };
+            // A solid's colour alpha ("#rrggbbaa" / [r,g,b,a]) was dropped and the solid drew opaque; it is the clip's fill_alpha, as on add_shape (separate from layer opacity, composed with it).
+            if matches!(c.source, Source::Solid { .. }) { let al = color_alpha(a, "color"); if al < 1.0 { c.props.insert("fill_alpha".into(), Prop::new(al)); } }
             match a.get("fit").and_then(|v| v.as_str()) { Some("cover") => { c.props.insert("fit".into(), Prop::new(1.0)); } Some("stretch") => { c.props.insert("fit".into(), Prop::new(2.0)); } Some("contain") | None => {} Some(o) => return Err(format!("bad fit {o}; use contain, cover or stretch")) }
             let tr = ss.project.tracks.iter_mut().find(|t| t.id == tid).ok_or(format!("no track '{tid}'"))?; tr.clips.push(std::sync::Arc::new(c));
             Ok(json!({"clip_id":id})) } },
