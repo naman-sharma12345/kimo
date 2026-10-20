@@ -282,6 +282,7 @@
 "set_clip_input_color",
 "set_color_curve",
 "set_color_pipeline",
+"set_color_wheels",
 "set_corner_pin",
 "set_echo",
 "set_effect_encoding",

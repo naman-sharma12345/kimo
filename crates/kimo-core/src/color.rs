@@ -14,6 +14,7 @@ pub mod scope_command;
 pub mod matching;
 pub mod idt;
 pub mod cdl;
+pub mod wheels;
 pub mod cdl_xml;
 pub mod cdl_file;
 pub mod blur;
@@ -62,7 +63,7 @@ pub fn catalog3() -> &'static [Entry] {
             ("gamma_r", 1.0, "mids"), ("gamma_g", 1.0, ""), ("gamma_b", 1.0, ""), ("gamma_m", 1.0, "master"),
             ("gain_r", 1.0, "highlights"), ("gain_g", 1.0, ""), ("gain_b", 1.0, ""), ("gain_m", 1.0, "master"),
             ("offset_r", 0.0, "overall"), ("offset_g", 0.0, ""), ("offset_b", 0.0, ""), ("offset_m", 0.0, "master"),
-            ("contrast", 1.0, "0..3"), ("pivot", 0.435, "0..1"), ("saturation", 1.0, "0..3"), ("shadows", 0.0, "-1..1"), ("highlights", 0.0, "-1..1"), ("temperature", 0.0, "-1..1"), ("tint", 0.0, "-1..1")])));
+            ("contrast", 1.0, "0..3"), ("pivot", 0.435, "0..1"), ("saturation", 1.0, "0..3"), ("shadows", 0.0, "-1..1"), ("highlights", 0.0, "-1..1"), ("temperature", 0.0, "-1..1"), ("tint", 0.0, "-1..1"), ("model", 0.0, "0 legacy, 1 exact LGG/CDL (neutral = bit-identical)"), ("space", 0.0, "model 1 grading encoding: 0 as stored, 1 sRGB, 2 Rec709, 3 ACEScct, 4 LogC3, 5 S-Log3")])));
         v.push(("log_wheels", "Resolve 'Log' wheels: independent shadow / midtone / highlight color+luma offsets with adjustable range, plus global offset. Values are signed offsets (-1..1 scaled).", lv(vec![
             ("shadow_r", 0.0, "R"), ("shadow_g", 0.0, "G"), ("shadow_b", 0.0, "B"), ("shadow_m", 0.0, "luma"),
             ("mid_r", 0.0, "R"), ("mid_g", 0.0, "G"), ("mid_b", 0.0, "B"), ("mid_m", 0.0, "luma"),
@@ -162,6 +163,7 @@ pub fn apply3(kind: &str, pr: &Params, f: &mut Frame, t: f64, _seed: u64) -> Res
         "color_managed" => return managed::apply(pr, f, t),
         "color_space" => { let (a, b) = (g("from", 1.0) as u32, g("to", 0.0) as u32); for i in 0..n { for j in 0..3 { f.d[i * 4 + j] = from_lin(b, to_lin(a, f.d[i * 4 + j])); } } }
         "primaries" => {
+            if g("model", 0.0) >= 0.5 { return wheels::primaries_exact(pr, f, t); }
             let lift = [g("lift_r", 0.0) + g("lift_m", 0.0), g("lift_g", 0.0) + g("lift_m", 0.0), g("lift_b", 0.0) + g("lift_m", 0.0)]; let gam = [g("gamma_r", 1.0) * g("gamma_m", 1.0), g("gamma_g", 1.0) * g("gamma_m", 1.0), g("gamma_b", 1.0) * g("gamma_m", 1.0)];
             let gain = [g("gain_r", 1.0) * g("gain_m", 1.0), g("gain_g", 1.0) * g("gain_m", 1.0), g("gain_b", 1.0) * g("gain_m", 1.0)]; let off = [g("offset_r", 0.0) + g("offset_m", 0.0), g("offset_g", 0.0) + g("offset_m", 0.0), g("offset_b", 0.0) + g("offset_m", 0.0)];
             let (ct, pv, sat, sh, hi, tp, tn) = (g("contrast", 1.0), g("pivot", 0.435), g("saturation", 1.0), g("shadows", 0.0), g("highlights", 0.0), g("temperature", 0.0) * 0.15, g("tint", 0.0) * 0.15);
