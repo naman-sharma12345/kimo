@@ -44,6 +44,25 @@ pub fn flow_blur(cur: &Frame, next: &Frame, amount: f32, quality: usize) -> Fram
     o
 }
 
+/// Exact sRGB piecewise curves (encoded 0..1 <-> linear light), in f64.
+pub fn srgb_eotf(v: f64) -> f64 { if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) } }
+pub fn srgb_oetf(l: f64) -> f64 { if l <= 0.0031308 { 12.92 * l } else { 1.055 * l.powf(1.0 / 2.4) - 0.055 } }
+/// Mix two RGBA pixels/frames with weight `w` on `b`, in linear light: `srgb` = values are sRGB-encoded (RGB linearised, mixed, re-encoded; alpha mixes linearly), else they are already linear.
+pub fn mix_linear(a: &[f32], b: &[f32], w: f64, srgb: bool, o: &mut [f32]) {
+    for (i, (x, y)) in a.iter().zip(b).enumerate() { let (x, y) = (*x as f64, *y as f64); o[i] = if srgb && i % 4 != 3 { srgb_oetf((1.0 - w) * srgb_eotf(x) + w * srgb_eotf(y)) as f32 } else { ((1.0 - w) * x + w * y) as f32 }; }
+}
+/// Optical-flow frame interpolation at weight `w` between `a` (0) and `b` (1): `a` is sampled back along the forward flow, `b` along the backward flow, then the two are mixed in linear light (see mix_linear).
+pub fn flow_interpolate(a: &Frame, b: &Frame, w: f32, srgb: bool, quality: usize) -> Frame {
+    let (fu, fv, fw, fh) = flow(a, b, quality); let (gu, gv, _, _) = flow(b, a, quality); let (wd, h) = (a.w, a.h); let (sx, sy) = (fw as f32 / wd as f32, fh as f32 / h as f32); let mut o = Frame::new(wd, h);
+    let samp = |d: &[f32], px: f32, py: f32, out: &mut [f32]| { let (px, py) = (px.clamp(0.0, wd as f32 - 1.0), py.clamp(0.0, h as f32 - 1.0)); let (x0, y0) = (px as usize, py as usize); let (x1, y1) = ((x0 + 1).min(wd - 1), (y0 + 1).min(h - 1)); let (ax, ay) = (px - x0 as f32, py - y0 as f32);
+        for j in 0..4 { let (p, q, r, s) = (d[(y0 * wd + x0) * 4 + j], d[(y0 * wd + x1) * 4 + j], d[(y1 * wd + x0) * 4 + j], d[(y1 * wd + x1) * 4 + j]); out[j] = p + (q - p) * ax + (r - p) * ay + (p - q - r + s) * ax * ay; } };
+    let (ad, bd) = (&a.d[..], &b.d[..]); crate::par::rows_mut(&mut o.d, wd * 4, |y, orow| { for x in 0..wd { let (fx, fy) = (((x as f32 + 0.5) * sx - 0.5).max(0.0), ((y as f32 + 0.5) * sy - 0.5).max(0.0));
+        let (f1, f2) = (bil(&fu, fw, fh, fx, fy) / sx, bil(&fv, fw, fh, fx, fy) / sy); let (g1, g2) = (bil(&gu, fw, fh, fx, fy) / sx, bil(&gv, fw, fh, fx, fy) / sy);
+        let (mut pa, mut pb) = ([0f32; 4], [0f32; 4]); samp(ad, x as f32 - w * f1, y as f32 - w * f2, &mut pa); samp(bd, x as f32 - (1.0 - w) * g1, y as f32 - (1.0 - w) * g2, &mut pb);
+        mix_linear(&pa, &pb, w as f64, srgb, &mut orow[x * 4..x * 4 + 4]); } });
+    o
+}
+
 /// Colour-wheel visualisation of a flow field (hue = direction, brightness = magnitude / max).
 pub fn flow_viz(u: &[f32], v: &[f32], w: usize, h: usize, maxmag: f32) -> Frame { let mut o = Frame::new(w, h);
     for i in 0..w * h { let (a, b) = (u[i], v[i]); let m = ((a * a + b * b).sqrt() / maxmag).min(1.0); let hue = (b.atan2(a) / std::f32::consts::TAU + 1.0).fract() * 6.0; let k = hue.floor() as i32; let f = hue - k as f32;

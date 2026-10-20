@@ -21,7 +21,7 @@ export const FAMILIES = [
   ['pipeline', COV_C.pipeline], ['project', COV_C.project], ['qa', COV_C.qa],   /* project_ops.js: colour pipeline rows, m02 history / diff / batch / media, QA + cache in the HUD toast + rail row */
   ['edit', COV_A],   /* markers, cut / beat detection, beat binding, silence cuts, time mode, sync, multicam, burn-in, raw transition, event matching: cov_a.js */
   ['ingest', /^(import|ingest|add_media|relink|load_media|add_clip|add_track|insert)/],
-  ['edit', /^(cut|split|blade|razor|trim|extend|ripple|slip|slide|move_clip|delete_clip|lift|roll)|^(duplicate_clip|swap_clips|loop_clip|freeze_frame|delete_track|set_speed|rate_stretch|set_speed_ramp|group_clips|ungroup_clip|distribute_clips|set_blend|set_echo|set_flow_blur|add_camera_shake|remove_audio_effect|set_track|project_set)$/],
+  ['edit', /^(cut|split|blade|razor|trim|extend|ripple|slip|slide|move_clip|delete_clip|lift|roll)|^(duplicate_clip|swap_clips|loop_clip|freeze_frame|delete_track|set_speed|rate_stretch|set_speed_ramp|set_time_remap|group_clips|ungroup_clip|distribute_clips|set_blend|set_echo|set_flow_blur|add_camera_shake|remove_audio_effect|set_track|project_set)$/],
   ['effects', /^(add_effect|apply_effect|set_effect|add_transition|remove_effect|add_speed|set_posterize|add_adjustment|add_managed_linear_effect$)/],
   ['transform', /^(set_property|set_clip_property|set_props?$|transform|set_transform|keyframe|set_keyframe|add_keyframe|scale|rotate|position|set_motion|add_null|set_parent|set_expression)/],
   ['color', /^(grade|color|colour|lut|apply_lut|set_lut|ocio|render_scope|analyze_exposure|wheel|curve|node_|hdr|render_ocio|render_exposure|render_gamut|set_grade_node|set_grade_graph|pick_white_balance|match_grade|match_color|set_white_balance|set_grade_output|remove_grade_node|generate_lut_node|add_acescct_primaries|create_shared_grade_graph|bind_shared_grade_graphs|remove_shared_grade_graph|set_node_param|set_node_mask|apply_asc_cdl|set_color_curve|set_grade_scopes|add_node$|connect_nodes|disconnect_nodes)/],
@@ -540,6 +540,13 @@ function editOps2(state, MODES, tl, ev, A) {
     const keys = Array.isArray(A.keys) ? A.keys.map(k => N(Array.isArray(k) ? k[0] : k && typeof k === 'object' ? k.t : null)).filter(x => x != null) : [];
     if (!keys.length) { c.fx = (c.fx || []).filter(x => x !== 'ramp'); c.keys = (c.keys || []).filter(k => !k._ramp); c._flash = now(); return true; }
     badge(c, 'ramp', /^[\d.]+×$/); c.keys = [...(c.keys || []).filter(k => !k._ramp), ...keys.map(x => ({ t: c.s + x, _ramp: true }))]; return true;
+  }
+  if (n === 'set_time_remap') {
+    const given = Array.isArray(A.keys); const keys = given ? A.keys.map(k => N(Array.isArray(k) ? k[0] : null)).filter(x => x != null) : [];
+    if (given && !keys.length) { c.fx = (c.fx || []).filter(x => !/^remap/.test(x)); c.keys = (c.keys || []).filter(k => !k._remap); c._flash = now(); return true; }
+    const fb = A.frame_blend ?? (c.fx || []).map(x => /^remap · (frame mix|flow)$/.exec(x)).filter(Boolean).map(m => m[1] === 'flow' ? 'optical_flow' : 'frame_mix')[0];
+    badge(c, fb === 'frame_mix' ? 'remap · frame mix' : fb === 'optical_flow' ? 'remap · flow' : 'remap', /^remap/);
+    if (given) c.keys = [...(c.keys || []).filter(k => !k._remap), ...keys.map(x => ({ t: c.s + x, _remap: true }))]; return true;
   }
   if (n === 'set_blend') { if (!A.mode) return false; badge(c, String(A.mode), /^(normal|add|multiply|screen|overlay)$/); return true; }
   if (n === 'set_echo') { badge(c, N(A.count) != null ? `echo ×${Math.round(N(A.count))}` : 'echo', /^echo/); return true; }

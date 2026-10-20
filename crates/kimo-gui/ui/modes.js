@@ -139,7 +139,7 @@ const RULES = [
   [/scene_add|light_add|camera_set|keyframe/, 'scene3d'],
   [/grade|white_balance|match_shot|analyze_frame/, 'grading'],
   [/trim|cut|add_clip|split|ripple/, 'edit'],
-  [/^(duplicate_clip|swap_clips|loop_clip|freeze_frame|set_speed|rate_stretch|set_speed_ramp|group_clips|ungroup_clip|distribute_clips|set_blend|set_echo|set_flow_blur|add_camera_shake|project_set)$/, 'edit'],   // whole-clip timeline ops
+  [/^(duplicate_clip|swap_clips|loop_clip|freeze_frame|set_speed|rate_stretch|set_speed_ramp|set_time_remap|group_clips|ungroup_clip|distribute_clips|set_blend|set_echo|set_flow_blur|add_camera_shake|project_set)$/, 'edit'],   // whole-clip timeline ops
 ];
 // Read-only tools (queries, probes, samples, listings, descriptions): they change nothing, so they
 // never move the workspace; the router gives them the "inspect" HUD state instead.

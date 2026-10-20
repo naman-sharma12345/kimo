@@ -23,7 +23,7 @@ fn match_block(prev: &[f32], cur: &[f32], w: usize, h: usize, cx: f32, cy: f32, 
 
 fn clip_gray(p: &Project, cache: &mut Cache, c: &Clip, i: usize) -> Result<Vec<f32>, String> {
     let t = c.start + i as f64 / p.fps + 1e-4; crate::render::prepare_range(p, cache, t, t)?;
-    let fr = cache.frames_of(&c.id).ok_or("clip is not a media clip")?; let gi = if c.speed_curve.is_some() { c.source_index(i as f64 / p.fps, p.fps) } else { i }; let b = fr.get(gi).ok_or("no frame")?; Ok(gray(b, p.width as usize, p.height as usize))
+    let fr = cache.frames_of(&c.id).ok_or("clip is not a media clip")?; let gi = if c.retimed() { c.source_index(i as f64 / p.fps, p.fps) } else { i }; let b = fr.get(gi).ok_or("no frame")?; Ok(gray(b, p.width as usize, p.height as usize))
 }
 pub fn clip_gray_pub(p: &Project, cache: &mut Cache, c: &Clip, i: usize) -> Result<Vec<f32>, String> { clip_gray(p, cache, c, i) }
 fn nframes(p: &Project, c: &Clip) -> usize { ((c.duration * p.fps).ceil() as usize).max(1) }

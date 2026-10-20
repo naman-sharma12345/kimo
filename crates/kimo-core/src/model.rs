@@ -63,6 +63,8 @@ pub struct Clip {
     /// Optional speed ramp (multiplier over clip-local time); overrides `speed` for video.
     #[serde(default)]
     pub speed_curve: Option<Prop>,
+    /// Optional time remap (source time vs clip time); overrides speed, speed ramp, reverse and freeze for video and audio.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub time_remap: Option<TimeRemap>,
     pub props: BTreeMap<String, Prop>, // opacity, x, y, scale, rotation
     pub effects: Vec<Effect>,
     #[serde(default)] pub grade_graph: Option<crate::color::node_graph::Graph>,
@@ -108,6 +110,14 @@ impl Inherit { pub fn is_default(&self) -> bool { *self == Inherit::default() } 
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum TimeMode { #[default] Normal, Reverse, /// hold the frame at clip-local time `at`
     Freeze { at: f64 } }
+
+/// How a time remap shows source times that fall between frames.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum FrameBlend { #[default] Off, FrameMix, OpticalFlow }
+/// AE-style time remap: `curve` gives source seconds after in_point as a function of clip-local seconds (+ `offset`, set by split_clip so the right half continues the curve).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TimeRemap { pub curve: Prop, #[serde(default)] pub offset: f64, #[serde(default)] pub blend: FrameBlend }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Audio { #[serde(default)] pub effects: Vec<crate::editorial::AudioEffect>, #[serde(default)] pub pan: f64, #[serde(default = "unity_prop")] pub duck_gain: Prop, pub mute: bool, pub volume: Prop, pub fade_in: f64, pub fade_out: f64, pub pitch: f64, pub highpass: f64, pub lowpass: f64, pub denoise: f64, pub compress: bool, pub echo: f64, pub reverse: bool }
@@ -171,10 +181,28 @@ impl Default for Project {
 
 impl Clip {
     /// Map clip-local time to the local time whose frame should be shown (reverse/freeze).
-    pub fn display_time(&self, lt: f64) -> f64 { match self.time_mode { TimeMode::Normal => lt, TimeMode::Reverse => (self.duration - lt).max(0.0), TimeMode::Freeze { at } => at } }
+    pub fn display_time(&self, lt: f64) -> f64 { if self.time_remap.is_some() { return lt; } match self.time_mode { TimeMode::Normal => lt, TimeMode::Reverse => (self.duration - lt).max(0.0), TimeMode::Freeze { at } => at } }
     /// Source-media time consumed after `lt` seconds of clip time.
     /// Source frame index shown at clip time `lt`; the 1e-6 frame epsilon absorbs quadrature rounding (0.36*25 -> 8.9999999) so boundaries pick the intended frame.
-    pub fn source_index(&self, lt: f64, fps: f64) -> usize { ((self.source_time(lt.max(0.0)) * fps) + 1e-6).floor() as usize }
+    pub fn source_index(&self, lt: f64, fps: f64) -> usize { if let Some((a, _, _)) = self.remap_pos(lt.max(0.0), fps) { return a; } ((self.source_time(lt.max(0.0)) * fps) + 1e-6).floor() as usize }
+    /// Remapped source seconds (after in_point) at clip time `lt`, when the clip has a time remap.
+    pub fn remap_source(&self, lt: f64) -> Option<f64> { self.time_remap.as_ref().map(|r| r.curve.at(lt + r.offset).max(0.0)) }
+    /// True when video is indexed by source frame (speed ramp or time remap) rather than by constant speed.
+    pub fn retimed(&self) -> bool { self.speed_curve.is_some() || self.time_remap.is_some() }
+    /// Remapped source position at clip time `lt`: (frame a, frame b, weight of b). Positions within 1e-6 frame of a whole frame snap to it (0.7*10 -> 6.9999999).
+    pub fn remap_pos(&self, lt: f64, fps: f64) -> Option<(usize, usize, f64)> {
+        let x = self.remap_source(lt)? * fps; let r = x.round();
+        if (x - r).abs() < 1e-6 { return Some((r as usize, r as usize, 0.0)); }
+        let a = x.floor(); Some((a as usize, a as usize + 1, x - a))
+    }
+    /// Min/max remapped source seconds over clip time [lt0, lt1] (curves may reverse or overshoot): both ends, every key inside and a <= 1/240 s grid (<= 4096 steps).
+    pub fn remap_span(&self, lt0: f64, lt1: f64) -> (f64, f64) {
+        let Some(r) = &self.time_remap else { return (0.0, 0.0) }; let (lt0, lt1) = (lt0.min(lt1), lt0.max(lt1));
+        let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY); let mut f = |t: f64| { let v = r.curve.at(t + r.offset).max(0.0); lo = lo.min(v); hi = hi.max(v); };
+        f(lt0); f(lt1); for k in &r.curve.keys { let t = k.t - r.offset; if t > lt0 && t < lt1 { f(t); } }
+        let n = ((lt1 - lt0) * 240.0).ceil().clamp(1.0, 4096.0) as usize; for i in 1..n { f(lt0 + (lt1 - lt0) * i as f64 / n as f64); }
+        (lo, hi)
+    }
     pub fn source_time(&self, lt: f64) -> f64 {
         match &self.speed_curve { None => lt * self.speed, Some(p) => { let n = (lt * 240.0).ceil().max(1.0) as usize; let dt = lt / n as f64; (0..n).map(|i| p.at((i as f64 + 0.5) * dt).max(0.0) * dt).sum() } }
     }

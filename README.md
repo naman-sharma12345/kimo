@@ -87,9 +87,9 @@ More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/EXTENDING.md](docs/EXT
 
 A default `tools/list` shows 17 grouped entries; set `KIMO_TOOLS=flat` to list all 378 (see [Tool list profiles](#tool-list-profiles)).
 
-How the numbers fit: `kimo_info` and the golden registry (`crates/kimo-core/tests/golden/golden_registry.txt`) count 376 tools in 14 groups. A flat `tools/list` (`KIMO_TOOLS=flat`) lists 378: those 376 plus the two meta tools `search_tools` and `kimo_describe`. Of the 378, 362 are live in the default build and 16 are feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah); the gated ones stay in the list and answer with a clear refusal until their feature is built in.
+How the numbers fit: `kimo_info` and the golden registry (`crates/kimo-core/tests/golden/golden_registry.txt`) count 377 tools in 14 groups. A flat `tools/list` (`KIMO_TOOLS=flat`) lists 379: those 377 plus the two meta tools `search_tools` and `kimo_describe`. Of the 379, 363 are live in the default build and 16 are feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah); the gated ones stay in the list and answer with a clear refusal until their feature is built in.
 
-376 registered tools sit in 14 groups (full list [below](#tool-listing-376-tools)):
+377 registered tools sit in 14 groups (full list [below](#tool-listing-377-tools)):
 
 | Area | Groups | Examples |
 |---|---|
@@ -457,14 +457,14 @@ and carry no reason. Details: `crates/kimo-mcp/src/preview.rs` ("Headless skips"
 
 Call a group with `{"action": "<tool name>", "args": {...}}`, for example `{"name": "vfx3d", "action": "add_scene3d", "args": {...}}`. Calling a tool by its own name also works.
 
-## Tool listing (376 tools)
+## Tool listing (377 tools)
 
-This is the list the v3 build registers (read from `tools/list` of the grouped server plus `kimo_describe group=<name>`, 376 tools in 14 groups; the grouped `tools/list` itself shows 14 group tools plus `search_tools`, `kimo_describe`, `kimo_enable_group`). `kimo --version` and `kimo_info` report the workspace version, which is 5.0.0 from this release. Get any tool's arguments with `kimo tools describe <name>` or `kimo_describe`, and find tools by words with `search_tools`.
+This is the list the v3 build registers (read from `tools/list` of the grouped server plus `kimo_describe group=<name>`, 377 tools in 14 groups; the grouped `tools/list` itself shows 14 group tools plus `search_tools`, `kimo_describe`, `kimo_enable_group`). `kimo --version` and `kimo_info` report the workspace version, which is 5.0.0 from this release. Get any tool's arguments with `kimo tools describe <name>` or `kimo_describe`, and find tools by words with `search_tools`.
 
 | Group | Tools |
 |---|---|
 | `project` (35) | `project_set`, `import_media`, `get_project`, `save_project`, `load_project`, `kimo_info`, `cache_stats`, `cache_clear`, `cache_set_budget`, `undo`, `redo`, `history_list`, `checkpoint`, `restore`, `checkpoint_delete`, `batch`, `list_dependencies`, `collect_project`, `relink_media`, `ext_list`, `set_meta`, `find`, `read_pixels`, `import_pixels`, `project_diff`, `recipe_list`, `recipe_describe`, `recipe_apply`, `set_limits`, `get_limits`, `template_define`, `template_apply`, `template_list`, `template_describe`, `template_delete` |
-| `timeline` (37) | `add_track`, `add_clip`, `set_speed_ramp`, `group_clips`, `ungroup_clip`, `set_time_mode`, `freeze_frame`, `move_clip`, `trim_clip`, `split_clip`, `delete_clip`, `set_speed`, `ripple_delete`, `ripple_trim`, `roll_edit`, `slip_clip`, `slide_clip`, `insert_gap`, `lift_range`, `duplicate_clip`, `loop_clip`, `distribute_clips`, `swap_clips`, `rate_stretch`, `add_marker`, `list_markers`, `remove_marker`, `snap_time`, `list_edit_points`, `set_track`, `delete_track`, `split_all_at`, `remove_silence_cuts`, `sync_clips`, `add_multicam`, `switch_angle`, `list_multicam` |
+| `timeline` (38) | `add_track`, `add_clip`, `set_speed_ramp`, `set_time_remap`, `group_clips`, `ungroup_clip`, `set_time_mode`, `freeze_frame`, `move_clip`, `trim_clip`, `split_clip`, `delete_clip`, `set_speed`, `ripple_delete`, `ripple_trim`, `roll_edit`, `slip_clip`, `slide_clip`, `insert_gap`, `lift_range`, `duplicate_clip`, `loop_clip`, `distribute_clips`, `swap_clips`, `rate_stretch`, `add_marker`, `list_markers`, `remove_marker`, `snap_time`, `list_edit_points`, `set_track`, `delete_track`, `split_all_at`, `remove_silence_cuts`, `sync_clips`, `add_multicam`, `switch_angle`, `list_multicam` |
 | `animate` (32) | `set_expression`, `set_keyframe_bezier`, `add_camera_shake`, `set_motion_blur`, `set_camera`, `set_camera_keyframe`, `set_corner_pin`, `set_property`, `set_keyframe`, `set_blend`, `set_motion_path`, `remove_motion_path`, `set_flow_blur`, `render_flow`, `get_curve`, `move_key`, `remove_key`, `copy_curve`, `simplify_curve`, `smooth_curve`, `track_beats`, `bind_beats`, `set_mesh_pin`, `apply_motion_preset`, `motion_extract`, `motion_diff`, `set_keyframes`, `sample_property`, `bake_property`, `add_null`, `set_parent`, `get_transform` |
 | `effects` (19) | `sample_field`, `sample_noise`, `list_transitions`, `add_adjustment_layer`, `add_speed_lines`, `add_glitch_confetti`, `set_echo`, `set_posterize_time`, `list_effects`, `add_effect`, `set_effect_param`, `remove_effect`, `add_transition`, `set_effect_mask`, `add_managed_linear_effect`, `set_effect_encoding`, `effect_describe`, `effect_uv_sample`, `transition_render_raw` |
 | `masks` (16) | `set_mask`, `set_mask_keyframe`, `remove_mask`, `add_mask`, `update_mask`, `remove_mask_layer`, `reorder_mask`, `list_masks`, `set_mask_prop_key`, `set_mask_path_key`, `roto_propagate`, `set_track_matte`, `remove_track_matte`, `render_mask`, `track_matte`, `refine_matte` |
@@ -480,7 +480,7 @@ This is the list the v3 build registers (read from `tools/list` of the grouped s
 
 ## Verification status
 
-- Registry: 376 tools (`crates/kimo-core/tests/golden/golden_registry.txt`, 376 lines). A default-feature `kimo-mcp` at `af615ca` lists 378 entries in `flat` mode: those 376 plus `search_tools` and `kimo_describe`. Of the 378, 362/378 live in the default build + 16 feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah).
+- Registry: 377 tools (`crates/kimo-core/tests/golden/golden_registry.txt`, 377 lines). A default-feature `kimo-mcp` at `af615ca` lists 379 entries in `flat` mode: those 377 plus `search_tools` and `kimo_describe`. Of the 379, 363/379 live in the default build + 16 feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah).
 - Fuzz: 6497 calls, 0 failures, as recorded in the v3 notes at 327 tools. Not re-run for this README.
 - Linux spectator installers (`.deb`, `.AppImage`): built on CI runners (dry run at `ca0334f`, then version `0.1.0`; the `5.0.0` files come from the same steps in the `v5.0.0` tag build), downloaded and smoke-tested on Debian 12 x86_64 on 2026-10-17: sha256 matches, the `.deb` installs (`Depends: libwebkit2gtk-4.1-0, libgtk-3-0`) and uninstalls cleanly, and both the `.deb` and the AppImage (`--appimage-extract-and-run`) launch under Xvfb, listen on 127.0.0.1:7421 and draw the `frame_rendered` frames a real `kimo-mcp` (commit `af615ca`) sends after `project_set`, `add_track`, `add_text`. Unsigned draft; other distributions not tested.
 - Windows spectator installer (`Kimo-Spectator_5.0.0_x64_en-US.msi`): **unsigned draft, built on CI runners.** CI installs, launches and uninstalls it on a GitHub Windows runner (the `v5.0.0` tag build); not installed on a real Windows PC yet.

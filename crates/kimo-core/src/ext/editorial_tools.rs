@@ -454,7 +454,7 @@ fn sync_clips_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {
         {
             return Err("sync needs unlocked media clips".into());
         }
-        if c.speed != 1. || c.speed_curve.is_some() || !matches!(c.time_mode, TimeMode::Normal) {
+        if c.speed != 1. || c.speed_curve.is_some() || c.time_remap.is_some() || !matches!(c.time_mode, TimeMode::Normal) {
             return Err("sync requires normal 1x clips".into());
         }
     }
@@ -625,6 +625,7 @@ fn add_multicam_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {
         if !matches!(c.source, Source::Media { .. })
             || c.speed != 1.
             || c.speed_curve.is_some()
+            || c.time_remap.is_some()
             || !matches!(c.time_mode, TimeMode::Normal)
         {
             return Err("angles need normal 1x media clips; synchronize first".into());
