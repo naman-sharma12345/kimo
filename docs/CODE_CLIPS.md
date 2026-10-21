@@ -49,6 +49,8 @@ window.__ready = true;                                                      // o
   `performance.now` are frozen, and `Math.random` is a seeded generator restarted on every page load.
 - Limits: each page load and each frame has a timeout (`KIMO_CODECLIP_FRAME_TIMEOUT_MS`, default 20000), and a whole
   batch has a deadline after which the renderer's process group is killed. Errors are loud (`renderer_failed`).
+- The folder is a project dependency like media: `list_dependencies` reports it, `collect_project` copies it with its
+  subfolders and points the copy at it, `relink_media` can repoint it.
 - `KIMO_CODECLIP_LOCK=<file>` makes every browser launch take an exclusive lock on that file (shared machines).
 
 ## Not yet

@@ -30,7 +30,8 @@ fn fixture() -> Project {
     let nested_text = clip("text3", json!({"type": "text", "text": "in", "font": "/refs/fonts/Nested.otf", "size": 40.0, "color": [1.0, 1.0, 1.0], "letter_spacing": 0.0, "stroke_width": 0.0, "stroke_color": [0.0, 0.0, 0.0], "shadow": 0.0, "align": "center"}));
     let precomp = clip("pre1", json!({"type": "precomp", "tracks": [{"id": "ptrack", "clips": [nested_text]}]}));
     let shards = clip("shards1", json!({"type": "shard_burst", "plane": {"occlusion": "/refs/occ/occ_%04d.png", "texture": "/refs/img/tex.png"}}));
-    v["tracks"] = json!([{"id": "t1", "clips": [shape, text_file, text_family, precomp, shards]}]);
+    let code = clip("code1", json!({"type": "code", "dir": "/refs/code/orbit", "entry": "index.html", "width": 64, "height": 36}));
+    v["tracks"] = json!([{"id": "t1", "clips": [shape, text_file, text_family, precomp, shards, code]}]);
     v["occluders"] = json!({"occ1": {"src": "shape1", "src_start": 0.0, "path": "/refs/media/v1.mp4", "src_time": 0.0, "q0": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]], "soft": 0.0, "chroma": 0.0, "w": 4, "h": 4}});
     v["ocio_view_delivery"] = json!({"config_path": "/refs/ocio/delivery.ocio", "source": "a", "display": "b", "view": "c", "input_gamut": 0, "output_gamut": 0, "output_transfer": 0});
     p = serde_json::from_value(v).unwrap_or_else(|e| panic!("fixture does not deserialize: {e}"));
@@ -48,7 +49,8 @@ fn table_is_exact() {
         ("Other", "clip[shape1].mask.layers[0].strings.dir", "/refs/matte/shot1"),
         ("Lut", "clip[shape1].grade_graph.nodes[n1].effect.strings.path", "/refs/luts/node.cube"), ("Other", "clip[shape1].grade_graph.nodes[n1].mask.strings.dir", "/refs/matte/node"),
         ("Font", "clip[text1].source.font", "/refs/fonts/Custom.ttf"), ("Font", "clip[text2].source.font", "Inter"), ("Font", "clip[text3].source.font", "/refs/fonts/Nested.otf"),
-        ("Occlusion", "clip[shards1].source.plane.occlusion", "/refs/occ/occ_%04d.png"), ("Image", "clip[shards1].source.plane.texture", "/refs/img/tex.png")];
+        ("Occlusion", "clip[shards1].source.plane.occlusion", "/refs/occ/occ_%04d.png"), ("Image", "clip[shards1].source.plane.texture", "/refs/img/tex.png"),
+        ("Other", "clip[code1].source.dir", "/refs/code/orbit")];
     let want: Vec<(String, String, String)> = want.into_iter().map(|(a, b, c)| (a.into(), b.into(), c.into())).collect();
     assert_eq!(got, want);
     let fam: Vec<_> = p.external_refs().into_iter().filter(|r| r.family).map(|r| r.path).collect(); assert_eq!(fam, vec!["Inter"]);
@@ -98,7 +100,7 @@ fn unregistered_path_fields_fail() {
         ("model.rs", "path", "REF Asset.path and OccSpec.path"), ("model.rs", "font", "REF Source::Text.font"),
         ("shards.rs", "occlusion", "REF Plane.occlusion"), ("shards.rs", "texture", "REF Plane.texture"),
         ("color/view_video.rs", "config_path", "REF Project.ocio_view_delivery.config_path"),
-        ("deps.rs", "path", "OUTPUT: ExtRef.path / Resolved.path"), ("deps.rs", "rel_path", "OUTPUT: DepRecord.rel_path, informational"), ("text.rs", "font_file", "OUTPUT: TextMetrics.font_file, the font file a measurement resolved to, informational"), ("model.rs", "src", "NOT A FILE: OccSpec.src is a clip id"), ("planar.rs", "src", "NOT A FILE: Anchor.src is a clip id (runtime, not serialized in the project)"),
+        ("deps.rs", "path", "OUTPUT: ExtRef.path / Resolved.path"), ("deps.rs", "rel_path", "OUTPUT: DepRecord.rel_path, informational"), ("text.rs", "font_file", "OUTPUT: TextMetrics.font_file, the font file a measurement resolved to, informational"), ("model.rs", "src", "NOT A FILE: OccSpec.src is a clip id"), ("codeclip.rs", "dir", "REF Source::Code dir (code clip project folder, a directory)"), ("planar.rs", "src", "NOT A FILE: Anchor.src is a clip id (runtime, not serialized in the project)"),
         ("color/bake.rs", "path", "NOT A PROJECT FIELD: bake step input, per call"), ("color/bake.rs", "config_path", "NOT A PROJECT FIELD: bake step input, per call"),
         ("color/mux.rs", "dir", "NOT A PROJECT FIELD: temp transaction dir"), ("audio.rs", "path", "NOT A PROJECT FIELD: temp wav"), ("commands.rs", "path", "OUTPUT: Media.path, an image a tool call produced (cleared every dispatch), not stored in the project"),
     ];
@@ -137,6 +139,7 @@ fn unregistered_path_fields_fail() {
 fn open_sites_are_classified() {
     const SITES: &[(&str, usize, &str)] = &[
         ("audio.rs", 7, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),
+        ("codeclip.rs", 7, "3 PROJECT-DERIVED, under resolve_dir (Source::Code.dir resolved through deps): kimo.json, the folder walk and hash; 4 temp: the frame cache, the renderer's output frames and logs"),
         ("color/adjust_v2_proof.rs", 2, "caller path (tool argument / output / temp file / test), not stored in the project"),
         ("color/bake.rs", 2, "caller path (tool argument / output / temp file / test), not stored in the project"),
         ("color/cct_grade.rs", 1, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),

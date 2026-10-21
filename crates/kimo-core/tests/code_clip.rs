@@ -224,3 +224,26 @@ fn three_js_example_renders_through_webgl_and_takes_kimo_effects() {
     }
     assert!(frames.windows(2).all(|w| w[0] != w[1]), "the orbit moves between frames");
 }
+
+/// The folder is a project dependency: list_dependencies reports it as a directory, collect_project copies it with its
+/// subfolders and points the copy at it, and the collected project renders the same pixels with the original folder gone.
+#[test]
+fn collect_project_carries_the_code_clip_folder() {
+    let sc = Scratch::new("collect");
+    let d = sc.0.join("clip"); std::fs::create_dir_all(d.join("lib/deep")).unwrap();
+    std::fs::write(d.join("index.html"), r#"<!doctype html><html><head><style>html,body{margin:0;background:transparent;overflow:hidden}</style></head><body><canvas id="c"></canvas><script src="lib/deep/draw.js"></script></body></html>"#).unwrap();
+    std::fs::write(d.join("lib/deep/draw.js"), "const c = document.getElementById('c'); c.width = innerWidth; c.height = innerHeight; const g = c.getContext('2d');\nwindow.renderFrame = (t) => { g.fillStyle = 'rgb(10,200,30)'; g.fillRect(0, 0, c.width, c.height); };").unwrap();
+    let mut s = Session::new(); s.project.base_dir = Some(sc.0.clone());
+    c(&mut s, "project_set", json!({"width": 64, "height": 36, "fps": 10}));
+    let tr = c(&mut s, "add_track", json!({}))["track_id"].clone();
+    c(&mut s, "add_code_clip", json!({"track_id": tr, "path": d.to_str().unwrap(), "duration": 2}));
+    let l = c(&mut s, "list_dependencies", json!({}));
+    assert_eq!(l["summary"]["missing"], 0, "{l}");
+    assert!(l["items"].as_array().unwrap().iter().any(|i| i["field"].as_str().unwrap_or("").ends_with("source.dir")), "code clip folder not listed: {l}");
+    let dest = sc.0.join("collected"); let r = c(&mut s, "collect_project", json!({"dest_dir": dest.to_str().unwrap()}));
+    assert_eq!(r["missing"], 0, "{r}");
+    std::fs::remove_dir_all(&d).unwrap();
+    let mut b = Session::new(); c(&mut b, "load_project", json!({"path": dest.join("project.kimo").to_str().unwrap()}));
+    let l = c(&mut b, "list_dependencies", json!({})); assert_eq!(l["summary"]["missing"], 0, "collected copy is missing files: {l}");
+    near(px(&mut b, 0.5, 10, 10), [10, 200, 30], 1, "collected code clip (script in a subfolder)");
+}

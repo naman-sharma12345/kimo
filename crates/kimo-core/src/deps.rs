@@ -54,6 +54,7 @@ fn clip_refs(c: &Clip, out: &mut Vec<ExtRef>) {
     let b = format!("clip[{}]", c.id);
     match &c.source {
         Source::Text { font, .. } => out.push(ExtRef { kind: RefKind::Font, owner: owner.clone(), field: format!("{b}.source.font"), path: font.clone(), family: !font_is_path(font) }),
+        Source::Code(cc) => out.push(ExtRef { kind: RefKind::Other, owner: owner.clone(), field: format!("{b}.source.dir"), path: cc.dir.clone(), family: false }),
         Source::ShardBurst(sb) => if let Some(pl) = &sb.plane {
             if let Some(o) = &pl.occlusion { out.push(ExtRef { kind: RefKind::Occlusion, owner: owner.clone(), field: format!("{b}.source.plane.occlusion"), path: o.clone(), family: false }); }
             if let Some(t) = &pl.texture { out.push(ExtRef { kind: RefKind::Image, owner: owner.clone(), field: format!("{b}.source.plane.texture"), path: t.clone(), family: false }); }
@@ -127,6 +128,7 @@ fn slot_mut<'a>(p: &'a mut Project, t: &[Tok]) -> Option<&'a mut String> {
             let c = clip_deep(&mut p.tracks, cid)?;
             match rest {
                 [(s, None), (f, None)] if s == "source" && f == "font" => if let Source::Text { font, .. } = &mut c.source { Some(font) } else { None },
+                [(s, None), (f, None)] if s == "source" && f == "dir" => if let Source::Code(cc) = &mut c.source { Some(&mut cc.dir) } else { None },
                 [(s, None), (pl, None), (f, None)] if s == "source" && pl == "plane" => if let Source::ShardBurst(sb) = &mut c.source { let pl = sb.plane.as_mut()?; if f == "occlusion" { pl.occlusion.as_mut() } else if f == "texture" { pl.texture.as_mut() } else { None } } else { None },
                 [(e, Some(i)), tail @ ..] if e == "effects" => effect_slot(c.effects.get_mut(i.parse::<usize>().ok()?)?, tail),
                 [(m, None), (l, Some(i)), tail @ ..] if m == "mask" && l == "layers" => mask_slot(c.mask.as_mut()?.layers.get_mut(i.parse::<usize>().ok()?)?, tail),
@@ -239,8 +241,11 @@ pub fn seq_frame(pat: &str, i: i64) -> Option<String> {
 pub fn ref_exists(r: &ExtRef, resolved: &str) -> bool {
     if r.family { return family_file(&r.path).is_some(); }
     if let Some(f0) = seq_frame(resolved, 0) { return Path::new(&f0).is_file() || seq_frame(resolved, 1).map_or(false, |f| Path::new(&f).is_file()); }
-    let p = Path::new(resolved); if r.field.ends_with("strings.dir") { p.is_dir() } else { p.is_file() }
+    let p = Path::new(resolved); if is_dir_field(&r.field) { p.is_dir() } else { p.is_file() }
 }
+
+/// Fields whose reference is a directory, not a file: a matte store (`strings.dir`) and a code clip folder (`source.dir`).
+pub fn is_dir_field(field: &str) -> bool { field.ends_with("strings.dir") || field.ends_with("source.dir") }
 
 /// Embedding permission of a font file from OS/2 fsType and the name-table license description (nameID 13). None when the file is not a readable sfnt.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

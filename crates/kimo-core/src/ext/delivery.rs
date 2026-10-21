@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 fn flag(a: &Value, k: &str, d: bool) -> bool { a.get(k).and_then(|v| v.as_bool()).unwrap_or(d) }
 fn kind_s(k: RefKind) -> String { format!("{k:?}").to_lowercase() }
-fn is_dir_ref(it: &DepItem) -> bool { it.field.ends_with("strings.dir") }
+fn is_dir_ref(it: &DepItem) -> bool { crate::deps::is_dir_field(&it.field) }
 fn base(p: &str) -> String { Path::new(&p.replace('\\', "/")).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "file".into()) }
 fn sha8(h: &str) -> &str { &h[..8.min(h.len())] }
 
@@ -20,7 +20,18 @@ fn seq_files(pat: &str) -> Vec<PathBuf> {
     let start = if deps::seq_frame(pat, 0).map_or(false, |f| Path::new(&f).is_file()) { 0 } else { 1 };
     let mut v = vec![]; let mut i = start; while let Some(f) = deps::seq_frame(pat, i) { if !Path::new(&f).is_file() { break; } v.push(PathBuf::from(f)); i += 1; if i > 1_000_000 { break; } } v
 }
-fn dir_files(d: &str) -> Vec<PathBuf> { let mut v: Vec<PathBuf> = std::fs::read_dir(d).map(|r| r.flatten().map(|e| e.path()).filter(|p| p.is_file()).collect()).unwrap_or_default(); v.sort(); v }
+/// Every file under a directory reference, with its path relative to the directory (sorted). A flat matte store lists exactly its
+/// files by name; a code clip folder keeps its subfolders (vendored libraries, modules), so the collected copy still loads.
+fn dir_files(d: &str) -> Vec<(PathBuf, String)> {
+    fn walk(root: &Path, d: &Path, depth: usize, out: &mut Vec<(PathBuf, String)>) {
+        if depth > 32 { return; }
+        let Ok(rd) = std::fs::read_dir(d) else { return };
+        for e in rd.flatten() { let p = e.path(); let Ok(ft) = e.file_type() else { continue };
+            if ft.is_dir() { if e.file_name() != ".kimo_cache" { walk(root, &p, depth + 1, out); } }
+            else if ft.is_file() { if let Ok(r) = p.strip_prefix(root) { out.push((p.clone(), r.to_string_lossy().replace('\\', "/"))); } } }
+    }
+    let mut v = vec![]; walk(Path::new(d), Path::new(d), 0, &mut v); v.sort_by(|a, b| a.1.cmp(&b.1)); v
+}
 
 fn free_kb(dir: &Path) -> Option<u64> {
     let o = std::process::Command::new("df").args(["-Pk"]).arg(dir).output().ok()?; let t = String::from_utf8_lossy(&o.stdout);
@@ -67,9 +78,9 @@ fn collect(ss: &mut Session, a: &Value) -> Result<Value, String> {
         }
         if it.kind == RefKind::Lut && !inc_luts { skipped.push(json!({"field": it.field, "path": it.path, "reason": "include_luts=false"})); continue; }
         if is_dir_ref(it) {
-            let fs = dir_files(&it.resolved); let mut h = deps::Sha256::new(); for f in &fs { h.update(base(&f.to_string_lossy()).as_bytes()); if let Ok((x, _)) = deps::hash_file(f, true) { h.update(x.as_bytes()); } }
-            let hh = h.finish_hex(); let rel = format!("dirs/{}_{}", sha8(&hh), base(&it.resolved)); let bytes = fs.iter().filter_map(|f| std::fs::metadata(f).ok()).map(|m| m.len()).sum();
-            plans.push(Plan { item: i, files: fs.iter().map(|f| (f.clone(), format!("{rel}/{}", base(&f.to_string_lossy())))).collect(), rel, bytes }); continue;
+            let fs = dir_files(&it.resolved); let mut h = deps::Sha256::new(); for (f, r) in &fs { h.update(r.as_bytes()); if let Ok((x, _)) = deps::hash_file(f, true) { h.update(x.as_bytes()); } }
+            let hh = h.finish_hex(); let rel = format!("dirs/{}_{}", sha8(&hh), base(&it.resolved)); let bytes = fs.iter().filter_map(|(f, _)| std::fs::metadata(f).ok()).map(|m| m.len()).sum();
+            plans.push(Plan { item: i, files: fs.iter().map(|(f, r)| (f.clone(), format!("{rel}/{r}"))).collect(), rel, bytes }); continue;
         }
         if deps::seq_frame(&it.resolved, 0).is_some() {
             let fs = seq_files(&it.resolved); let mut h = deps::Sha256::new(); for f in &fs { if let Ok((x, _)) = deps::hash_file(f, true) { h.update(x.as_bytes()); } }
