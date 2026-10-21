@@ -574,7 +574,7 @@ function editOps2(state, MODES, tl, ev, A) {
     badge(c, fb === 'frame_mix' ? 'remap · frame mix' : fb === 'optical_flow' ? 'remap · flow' : 'remap', /^remap/);
     if (given) c.keys = [...(c.keys || []).filter(k => !k._remap), ...keys.map(x => ({ t: c.s + x, _remap: true }))]; return true;
   }
-  if (n === 'set_blend') { if (!A.mode) return false; badge(c, String(A.mode), /^(normal|add|multiply|screen|overlay)$/); return true; }
+  if (n === 'set_blend') { if (!A.mode) return false; badge(c, String(A.mode), /^(normal|add|multiply|screen|overlay|darken|lighten|difference|exclusion|soft_light|hard_light|color_dodge|color_burn|linear_burn|linear_dodge|vivid_light|linear_light|pin_light|hue|saturation|color|luminosity)$/); return true; }
   if (n === 'set_echo') { badge(c, N(A.count) != null ? `echo ×${Math.round(N(A.count))}` : 'echo', /^echo/); return true; }
   if (n === 'set_flow_blur') { const amt = N(A.amount), ph = N(A.shutter_phase), cv = A.shutter_curve ?? (Array.isArray(A.curve_points) ? 'custom' : null); const rd = [amt != null ? fmtVal(amt) : null, A.mode === 'vector' ? 'vector' : null, A.mode === 'vector' && ph != null ? `phase ${ph}°` : null, A.mode === 'vector' && typeof cv === 'string' && cv !== 'box' ? `curve ${cv}${cv === 'custom' && Array.isArray(A.curve_points) ? ` (${A.curve_points.length} pts)` : ''}` : null].filter(Boolean);
     badge(c, rd.length ? `flow blur ${rd.join(' · ')}` : 'flow blur', /^flow blur/); return true; }
