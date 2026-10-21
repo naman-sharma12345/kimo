@@ -26,8 +26,8 @@ fn new_marker_id(p: &mut Project) -> String { p.gen_id("marker") }
 
 /// Split `c` at timeline time `at`; returns right half.
 fn cut(c: &mut Clip, at: f64, id: String) -> Clip {
-    let mut r = c.clone(); r.id = id; r.start = at; r.duration = c.start + c.duration - at; r.in_point = c.in_point + (at - c.start) * c.speed; r.transition_in = None;
-    c.duration = at - c.start; r
+    let mut r = c.clone(); r.id = id; r.start = at; r.duration = c.start + c.duration - at; r.in_point = c.in_point + (at - c.start) * c.speed; r.transition_in = None; r.audio.lead = 0.0;
+    c.duration = at - c.start; c.audio.tail = 0.0; r
 }
 
 pub fn commands() -> Vec<Command> { vec![
@@ -51,6 +51,30 @@ pub fn commands() -> Vec<Command> { vec![
     Command { name: "slip_clip", description: "Slip: shift which part of the source shows inside the clip (in-point += delta) without moving or resizing it.", mutates: true,
         schema: obj(vec![("clip_id", s("clip")), ("delta", n("source seconds"))], &["clip_id","delta"]),
         run: |ss, a| { let (ti, ci) = loc(&ss.project, sa(a, "clip_id")?)?; unlocked(&ss.project, ti)?; let c = ss.project.tracks[ti].cm(ci); c.in_point = (c.in_point + na(a, "delta")?).max(0.0); Ok(json!({"in_point":c.in_point})) } },
+    Command { name: "set_split_edit", description: "J/L cut: the incoming clip's audio starts `seconds` before its video (j) or the outgoing audio runs on (l); video edit unchanged.", mutates: true,
+        schema: obj(vec![("clip_id", s("the INCOMING clip of the cut")), ("kind", json!({"type":"string","enum":["j","l","none"]})), ("seconds", json!({"type":"number","minimum":0,"description":"audio offset; required for j/l, ignored for none"}))], &["clip_id","kind"]),
+        run: |ss, a| { let (ti, bi) = loc(&ss.project, sa(a, "clip_id")?)?; unlocked(&ss.project, ti)?;
+            let kind = sa(a, "kind")?.to_string(); if !matches!(kind.as_str(), "j" | "l" | "none") { return Err(format!("kind must be j, l or none, got '{kind}'")); }
+            let d = if kind == "none" { 0.0 } else { match a.get("seconds").and_then(|v| v.as_f64()) { Some(v) if v.is_finite() && v >= 0.0 => v, _ => return Err("seconds must be a finite number >= 0 for a j or l cut".into()) } };
+            let tr = &ss.project.tracks[ti]; let b: &Clip = &tr.clips[bi];
+            let ai = tr.clips.iter().position(|c| c.id != b.id && (c.start + c.duration - b.start).abs() < EPS);
+            let forward = |c: &Clip| -> Result<(), String> { if !matches!(c.source, Source::Media { .. }) { return Err(format!("clip {} is not a media clip", c.id)); }
+                if c.audio.reverse || !matches!(c.time_mode, TimeMode::Normal) { return Err(format!("clip {}: split edits need forward-playing clips", c.id)); } Ok(()) };
+            forward(b)?; if let Some(i) = ai { forward(&*tr.clips[i])?; }
+            match kind.as_str() {
+                "j" => { if b.in_point - d * b.speed < -1e-9 { return Err(format!("not enough handle: clip {} has {:.3} s of source before its in-point, J needs {d}", b.id, (b.in_point / b.speed).max(0.0))); }
+                    if b.start - d < 0.0 { return Err(format!("clip {} starts at {} s; its audio cannot lead by {d} s", b.id, b.start)); }
+                    if let Some(i) = ai { let o = &tr.clips[i]; if o.duration + o.audio.lead - d <= 0.0 { return Err(format!("the outgoing clip {}'s audio would vanish", o.id)); } } }
+                "l" => { if b.duration + b.audio.tail - d <= 0.0 { return Err(format!("the incoming clip {}'s audio would vanish", b.id)); }
+                    if let Some(i) = ai { let o = &tr.clips[i]; let ad = match &o.source { Source::Media { asset } => ss.project.assets.get(asset).map_or(0.0, |x| x.duration), _ => 0.0 };
+                        if ad > 0.0 && o.in_point + (o.duration + d) * o.speed > ad + EPS { return Err(format!("not enough handle: clip {} has {:.3} s of source after its out-point, L needs {d}", o.id, ((ad - o.in_point) / o.speed - o.duration).max(0.0))); } } }
+                _ => {}
+            }
+            let (lead, tail) = match kind.as_str() { "j" => (d, -d), "l" => (-d, d), _ => (0.0, 0.0) };
+            let tr = &mut ss.project.tracks[ti]; if tr.clips[bi].audio.lead != lead { tr.cm(bi).audio.lead = lead; }
+            if let Some(i) = ai { if tr.clips[i].audio.tail != tail { tr.cm(i).audio.tail = tail; } }
+            let (b, o) = (&tr.clips[bi], ai.map(|i| &tr.clips[i]));
+            Ok(json!({"incoming": b.id, "outgoing": o.map(|o| &o.id), "kind": kind, "seconds": d, "incoming_lead": b.audio.lead, "outgoing_tail": o.map(|o| o.audio.tail)})) } },
     Command { name: "slide_clip", description: "Slide: move a clip by `delta`; the previous clip's tail and next clip's head absorb the change so total length is unchanged.", mutates: true,
         schema: obj(vec![("clip_id", s("clip")), ("delta", n("seconds"))], &["clip_id","delta"]),
         run: |ss, a| { let d = na(a, "delta")?; let (ti, ci) = loc(&ss.project, sa(a, "clip_id")?)?; unlocked(&ss.project, ti)?;

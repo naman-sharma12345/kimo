@@ -46,7 +46,7 @@ audio_probe 6d7f39ef67b65cb5
 audio_speech_intervals 8257897c223ee122
 audio_transients fdd42015ab3821b9
 audit_color_output 58cf03598cf93fb6
-auto_duck 9765e1ee86c49428
+auto_duck 782881168d8430d5
 bake_property 389f09faed23fecf
 batch ef0c6c2068bb9798
 bind_beats 2d8bcd8a43d9aad9
@@ -326,6 +326,7 @@ set_property 1123a56f6fa267dd
 set_relight 99922396faa38f30
 set_speed 0e5aa672ac57bbd2
 set_speed_ramp 668f3a8a6b665d74
+set_split_edit af640587669e23fa
 set_text ba3bc84f3bce516b
 set_text_path 85287b0a5760e681
 set_text_style d238847bc585e2bd

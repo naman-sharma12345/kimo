@@ -342,12 +342,20 @@ fn normalize_loudness_inner(ss: &mut Session, a: &Value) -> Result<Value, String
 }
 fn auto_duck_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let track = str_arg(a, "track")?;
+    let speech = match a.get("detect") {
+        None => false,
+        Some(v) => match v.as_str() { Some("rms") => false, Some("speech") => true, _ => return Err("detect must be \"rms\" or \"speech\"".into()) },
+    };
+    let hold = finite(a, "hold", 0., 0., 5.)?;
+    if speech && a.get("speech_windows").is_some() {
+        return Err("detect \"speech\" cannot be combined with speech_windows".into());
+    }
     let under = if a.get("speech_windows").is_some() { "" } else { str_arg(a, "under")? };
     if track == under {
         return Err("tracks must differ".into());
     }
     let amount = finite(a, "amount_db", -12., -60., 0.)?;
-    let threshold = if a.get("speech_windows").is_some(){-35.0}else{finite(a, "threshold_db", -35., -70., 0.)?};
+    let threshold = if a.get("speech_windows").is_some() || speech {-35.0}else{finite(a, "threshold_db", -35., -70., 0.)?};
     let attack = finite(a, "attack", 0.1, 0.01, 2.)?;
     let release = finite(a, "release", 0.3, 0.01, 5.)?;
     if let Some(w) = a.get("speech_windows") {
@@ -358,33 +366,11 @@ fn auto_duck_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {
             let x = pair[0].as_f64().ok_or_else(||format!("speech_windows[{i}].start must be numeric"))?;
             let y = pair[1].as_f64().ok_or_else(||format!("speech_windows[{i}].end must be numeric"))?;
             if !x.is_finite() || !y.is_finite() || x < 0.0 || y <= x { return Err(format!("speech_windows[{i}] needs finite 0 <= start < end")); }
-            windows.push((x,y));
+            windows.push((x,y+hold));
         }
-        windows.sort_by(|a,b|a.0.total_cmp(&b.0));
-        let supplied=windows.len();let mut merged:Vec<(f64,f64)>=vec![];
-        for (x,y) in windows {match merged.last_mut(){Some(l) if x<=l.1=>l.1=l.1.max(y),_=>merged.push((x,y))}}
-        let merged_count=supplied-merged.len();
-        let rt=ss.project.tracks.iter().find(|t|t.id==track).ok_or("missing target track")?;
-        let mut spans:Vec<(f64,f64)>=rt.clips.iter().map(|c|(c.start,c.start+c.duration)).filter(|(x,y)|x<y).collect();spans.sort_by(|a,b|a.0.total_cmp(&b.0));
-        let mut extents:Vec<(f64,f64)>=vec![];for (x,y) in spans{match extents.last_mut(){Some(l)if x<=l.1=>l.1=l.1.max(y),_=>extents.push((x,y))}}
-        let mut windows_clamped=0usize;let mut windows=vec![];
-        for (x,y) in merged {let mut unchanged=false;for &(lo,hi) in &extents{let (a,b)=(x.max(lo),y.min(hi));if a<b {windows.push((a,b));if a==x&&b==y{unchanged=true;}}}if !unchanged{windows_clamped+=1;}}
-        let mut keyframes_created=0usize;
-        let tr = ss.project.tracks.iter_mut().find(|t|t.id==track && !t.locked).ok_or("missing/locked target track")?;
-        let gain=10f64.powf(amount/20.0);
-        for clip in tr.clips.iter_mut() {
-            let c=&**clip;let mut times=vec![0.0,c.duration];
-            for &(x,y) in &windows { for time in [x-attack,x,y,y+release] { let local=time-c.start;if local>0.0 && local<c.duration {times.push(local);} } }
-            times.sort_by(f64::total_cmp);times.dedup();
-            let mut prop=Prop::new(1.0);
-            for local in times { let t=c.start+local;let v=windows.iter().map(|&(x,y)| {
-                if t<x-attack || t>y+release {1.0} else if t<x {1.0+(gain-1.0)*(t-(x-attack))/attack} else if t<=y {gain} else {gain+(1.0-gain)*(t-y)/release}
-            }).fold(1.0,f64::min);prop.set_key(local,v,Ease::Linear); }
-            if prop.keys.iter().all(|k|(k.v-1.0).abs()<1e-12) {prop=Prop::new(1.0);}
-            keyframes_created+=prop.keys.len();
-            if serde_json::to_value(&c.audio.duck_gain).ok()!=serde_json::to_value(&prop).ok(){std::sync::Arc::make_mut(clip).audio.duck_gain=prop;}
-        }
-        return Ok(json!({"clips":tr.clips.len(),"speech_windows":windows.len(),"windows_used":windows.iter().map(|(x,y)|json!([x,y])).collect::<Vec<_>>(),"merged_count":merged_count,"windows_clamped":windows_clamped,"under_ignored":a.get("under").is_some(),"threshold_ignored":true,"envelope_cleared":windows.is_empty(),"keyframes_created":keyframes_created,"amount_db":amount,"separate_from_volume":true,"mode":"explicit_windows","attack":"linear pre-roll","release":"linear post-roll"}));
+        let mut r = duck_windows(ss, track, windows, amount, attack, release, a.get("under").is_some())?;
+        if a.get("hold").is_some() { r["hold"] = json!(hold); }
+        return Ok(r);
     }
     let mut p = ss.project.clone();
     p.tracks.retain(|t| t.id == under);
@@ -392,6 +378,13 @@ fn auto_duck_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {
         return Err("no under track".into());
     }
     let pcm = crate::audio::mix_strict(&p).map_err(|e| e.to_string())?;
+    if speech {
+        let vad = crate::perception::vad::analyze(&pcm, &crate::perception::vad::Params::default()).map_err(|e| format!("speech detection: {e}"))?;
+        let windows = vad.speech.iter().filter(|w| w.end > w.start).map(|w| (w.start, w.end + hold)).collect();
+        let mut r = duck_windows(ss, track, windows, amount, attack, release, false)?;
+        r["mode"] = json!("speech"); r["detector"] = json!("vad"); r["hold"] = json!(hold);
+        return Ok(r);
+    }
     let hop = 2400usize;
     let mut env = vec![];
     for b in pcm.chunks(hop * 2) {
@@ -401,6 +394,15 @@ fn auto_duck_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {
         } else {
             1.
         });
+    }
+    // hold (a compressor's hold): the duck stays down for hold seconds after the last ducked hop, then releases
+    let hold_hops = (hold / 0.05).round() as usize;
+    if hold_hops > 0 {
+        let mut since: Option<(usize, f64)> = None; // (hops since the last ducked hop, its target)
+        for v in env.iter_mut() {
+            if *v < 1. { since = Some((0, *v)); }
+            else if let Some((k, g)) = since { if k < hold_hops { *v = g; since = Some((k + 1, g)); } else { since = None; } }
+        }
     }
     let tr = ss
         .project
@@ -428,7 +430,38 @@ fn auto_duck_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {
         // write only when the envelope really changes, so clips outside the dialogue stay shared with the undo snapshot
         if serde_json::to_value(&ca.audio.duck_gain).ok() != serde_json::to_value(&prop).ok() { std::sync::Arc::make_mut(ca).audio.duck_gain = prop; }
     }
-    Ok(json!({"clips":tr.clips.len(),"envelope_step":0.05,"separate_from_volume":true}))
+    let mut r = json!({"clips":tr.clips.len(),"envelope_step":0.05,"separate_from_volume":true});
+    if a.get("detect").is_some() || a.get("hold").is_some() { r["mode"] = json!("rms"); r["hold"] = json!(hold); }
+    Ok(r)
+}
+/// Explicit or detected speech windows (ends already extended by hold) -> exact relative duck gain inside the windows,
+/// linear attack pre-roll / release post-roll; windows sorted/merged, then clamped to the target clip extents.
+fn duck_windows(ss: &mut Session, track: &str, mut windows: Vec<(f64, f64)>, amount: f64, attack: f64, release: f64, under_ignored: bool) -> Result<Value, String> {
+        windows.sort_by(|a,b|a.0.total_cmp(&b.0));
+        let supplied=windows.len();let mut merged:Vec<(f64,f64)>=vec![];
+        for (x,y) in windows {match merged.last_mut(){Some(l) if x<=l.1=>l.1=l.1.max(y),_=>merged.push((x,y))}}
+        let merged_count=supplied-merged.len();
+        let rt=ss.project.tracks.iter().find(|t|t.id==track).ok_or("missing target track")?;
+        let mut spans:Vec<(f64,f64)>=rt.clips.iter().map(|c|(c.start,c.start+c.duration)).filter(|(x,y)|x<y).collect();spans.sort_by(|a,b|a.0.total_cmp(&b.0));
+        let mut extents:Vec<(f64,f64)>=vec![];for (x,y) in spans{match extents.last_mut(){Some(l)if x<=l.1=>l.1=l.1.max(y),_=>extents.push((x,y))}}
+        let mut windows_clamped=0usize;let mut windows=vec![];
+        for (x,y) in merged {let mut unchanged=false;for &(lo,hi) in &extents{let (a,b)=(x.max(lo),y.min(hi));if a<b {windows.push((a,b));if a==x&&b==y{unchanged=true;}}}if !unchanged{windows_clamped+=1;}}
+        let mut keyframes_created=0usize;
+        let tr = ss.project.tracks.iter_mut().find(|t|t.id==track && !t.locked).ok_or("missing/locked target track")?;
+        let gain=10f64.powf(amount/20.0);
+        for clip in tr.clips.iter_mut() {
+            let c=&**clip;let mut times=vec![0.0,c.duration];
+            for &(x,y) in &windows { for time in [x-attack,x,y,y+release] { let local=time-c.start;if local>0.0 && local<c.duration {times.push(local);} } }
+            times.sort_by(f64::total_cmp);times.dedup();
+            let mut prop=Prop::new(1.0);
+            for local in times { let t=c.start+local;let v=windows.iter().map(|&(x,y)| {
+                if t<x-attack || t>y+release {1.0} else if t<x {1.0+(gain-1.0)*(t-(x-attack))/attack} else if t<=y {gain} else {gain+(1.0-gain)*(t-y)/release}
+            }).fold(1.0,f64::min);prop.set_key(local,v,Ease::Linear); }
+            if prop.keys.iter().all(|k|(k.v-1.0).abs()<1e-12) {prop=Prop::new(1.0);}
+            keyframes_created+=prop.keys.len();
+            if serde_json::to_value(&c.audio.duck_gain).ok()!=serde_json::to_value(&prop).ok(){std::sync::Arc::make_mut(clip).audio.duck_gain=prop;}
+        }
+        return Ok(json!({"clips":tr.clips.len(),"speech_windows":windows.len(),"windows_used":windows.iter().map(|(x,y)|json!([x,y])).collect::<Vec<_>>(),"merged_count":merged_count,"windows_clamped":windows_clamped,"under_ignored":under_ignored,"threshold_ignored":true,"envelope_cleared":windows.is_empty(),"keyframes_created":keyframes_created,"amount_db":amount,"separate_from_volume":true,"mode":"explicit_windows","attack":"linear pre-roll","release":"linear post-roll"}))
 }
 fn sync_clips_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let names = ids(a, "clip_ids")?;
@@ -729,7 +762,7 @@ pub fn commands() -> Vec<Command> {
  Command{name:"set_audio_pan",description:"Stereo balance -1 left to +1 right; attenuates opposite channel.",mutates:true,schema:obj(vec![("clip_id",s("clip")),("pan",n("-1..1"))],&["clip_id","pan"]),run:set_audio_pan},
  Command{name:"measure_loudness",description:"EBU R128 integrated stereo LUFS and sample peak. Optional clip_id measures decoded post filters/pre gain; absent measures final timeline mix. Silence or <400ms LUFS returns null. true_peak=true adds 4x sinc reconstruction peak estimate (not certified).",mutates:false,schema:obj(vec![("clip_id",s("optional clip")),("true_peak",json!({"type":"boolean","default":false}))],&[]),run:measure_loudness},
  Command{name:"normalize_loudness",description:"Replace clip volume with measured loudness gain. Rejects sample peaks over -1dBFS; target -36..-5 LUFS. Remeasure final timeline after mix.",mutates:true,schema:obj(vec![("clip_id",s("clip")),("target_lufs",n("default -14"))],&["clip_id"]),run:normalize_loudness},
- Command{name:"auto_duck",description:"Measure under-track RMS and generate a separate target-track duck envelope; or use explicit speech_windows without decoding. volume keys preserved. under required only without speech_windows. Re-run replaces the duck envelope.",mutates:true,schema:obj(vec![("track",s("target music track")),("under",s("dialogue track for RMS detection; omit with speech_windows")),("speech_windows",json!({"type":"array","items":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2},"description":"Optional 0..1000 ABSOLUTE timeline-second [start,end] speech windows; sorted/merged, clamped to TARGET clip extents. under and threshold_db are ignored if supplied. Empty list removes the previous duck envelope (unity), never RMS fallback. No RMS decode; exact relative gain during windows, linear attack pre-roll/release post-roll, preserves volume"})),("amount_db",n("-60..0 default -12")),("threshold_db",n("default -35")),("attack",n("seconds default .1")),("release",n("seconds default .3"))],&["track"]),run:auto_duck},
+ Command{name:"auto_duck",description:"Duck a music track under dialogue: detect rms or speech (VAD) on the under track, or explicit speech_windows; amount_db, attack/release/hold s.",mutates:true,schema:obj(vec![("track",s("target music track")),("under",s("dialogue track for RMS detection; omit with speech_windows")),("speech_windows",json!({"type":"array","items":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2},"description":"Optional 0..1000 ABSOLUTE timeline-second [start,end] speech windows; sorted/merged, clamped to TARGET clip extents. under and threshold_db are ignored if supplied. Empty list removes the previous duck envelope (unity), never RMS fallback. No RMS decode; exact relative gain during windows, linear attack pre-roll/release post-roll, preserves volume"})),("amount_db",n("-60..0 default -12")),("threshold_db",n("default -35")),("attack",n("seconds default .1")),("release",n("seconds default .3")),("detect",json!({"type":"string","enum":["rms","speech"],"description":"under-track detection; speech = VAD, ignores room tone/hiss; default rms"})),("hold",n("seconds 0..5 the duck stays down after the voice stops; default 0"))],&["track"]),run:auto_duck},
  Command{name:"sync_clips",description:"Align 1x media clips by bounded RMS audio correlation (5ms resolution; rejects silence and ambiguous repeats), or explicit source in-point SMPTE timecodes, optional drop_frame at 29.97/59.94. Shifts starts, preserves source in-points.",mutates:true,schema:obj(vec![("clip_ids",json!({"type":"array","items":{"type":"string"},"minItems":2,"maxItems":16})),("by",json!({"type":"string","enum":["audio","timecode"]})),("timecodes",json!({"type":"array","items":{"type":"string"}})),("fps",n("integer non-drop or 30000/1001,60000/1001 drop")),("drop_frame",json!({"type":"boolean","default":false})),("window",n("1..60s default30")),("max_offset",n(".05..10s default5")),("min_correlation",n("default .75"))],&["clip_ids","by"]),run:sync_clips},
  Command{name:"add_multicam",description:"Move 2..16 synchronized media clips into persistent multicam group; common interval, angle zero video, fixed audio angle. Generates normal timeline clips for all exports.",mutates:true,schema:obj(vec![("angles",json!({"type":"array","items":{"type":"string"}})),("audio_angle",json!({"type":"integer","minimum":0}))],&["angles"]),run:add_multicam},
  Command{name:"switch_angle",description:"Switch multicam video at absolute timeline seconds t, zero-based angle; continuous audio remains fixed. Rebuilds group track, replacing manual edits there.",mutates:true,schema:obj(vec![("multicam_id",s("group")),("t",n("absolute timeline seconds")),("angle",json!({"type":"integer","minimum":0}))],&["multicam_id","t","angle"]),run:switch_angle},
