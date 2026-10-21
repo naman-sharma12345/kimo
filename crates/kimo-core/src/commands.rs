@@ -180,7 +180,7 @@ fn dispatch_core(ss: &mut Session, name: &str, args: &Value) -> Result<Value, St
     let mut r = dispatch_inner(ss, name, args).map_err(|m| polish_error(ss, args, m)).map_err(|m| {
         let dropped: Vec<String> = unknown.iter().filter(|k| !m.split(|ch: char| !ch.is_alphanumeric() && ch != '_').any(|w| w == k.as_str())).map(|k| unknown_arg_text(name, k)).collect();
         if dropped.is_empty() { m } else { format!("{m}; ignored {}", dropped.join("; ")) } })?;
-    if !unknown.is_empty() { if let Some(o) = r.as_object_mut() { o.insert("warnings".into(), json!(unknown.iter().map(|k| format!("ignored {}", unknown_arg_text(name, k))).collect::<Vec<_>>())); } }
+    if !unknown.is_empty() { if let Some(o) = r.as_object_mut() { let mut w: Vec<Value> = o.get("warnings").and_then(|v| v.as_array()).cloned().unwrap_or_default(); w.extend(unknown.iter().map(|k| json!(format!("ignored {}", unknown_arg_text(name, k))))); o.insert("warnings".into(), json!(w)); } }
     Ok(r)
 }
 
@@ -276,7 +276,7 @@ pub fn dispatch_nested(ss: &mut Session, name: &str, args: &Value) -> Result<Val
     let named; let args = match resolve_names(ss, name, args)? { Some(a) => { named = a; &named } None => args };
     let normalized; let args = match guard_enums(name, args)? { Some(a) => { normalized = a; &normalized } None => args };
     let (mut r, _rec) = run_core(ss, name, args).map_err(|m| polish_error(ss, args, m))?;
-    if !unknown.is_empty() { if let Some(o) = r.as_object_mut() { o.insert("warnings".into(), json!(unknown.iter().map(|k| format!("ignored {}", unknown_arg_text(name, k))).collect::<Vec<_>>())); } }
+    if !unknown.is_empty() { if let Some(o) = r.as_object_mut() { let mut w: Vec<Value> = o.get("warnings").and_then(|v| v.as_array()).cloned().unwrap_or_default(); w.extend(unknown.iter().map(|k| json!(format!("ignored {}", unknown_arg_text(name, k))))); o.insert("warnings".into(), json!(w)); } }
     Ok(r)
 }
 

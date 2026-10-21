@@ -84,6 +84,10 @@ pub fn add_title(ss: &mut Session, a: &Value) -> Result<Value, String> {
         o => return Err(format!("unknown style {o}; styles: {:?}", STYLES)),
     }
     for c in clips.iter_mut() { fit_width(c, wpx)?; }
+    // a preset font that is not installed is drawn in a fallback sans, which changes the whole look: say so in the result
+    let mut warnings: Vec<String> = vec![];
+    for c in &clips { if let Source::Text { font, .. } = &c.source { let (file, sub) = crate::text::resolve_font_info(font); let w = format!("font_substituted: '{font}' was not found, so this title is drawn with {file}. The preset fonts are OFL: run bash fonts/fetch.sh in the repo, or set KIMO_FONTS to a folder holding them (list_fonts shows what is installed)"); if sub && !warnings.contains(&w) { warnings.push(w); } } }
     let ids: Vec<String> = clips.iter().map(|c| c.id.clone()).collect(); let t = ss.project.tracks.iter_mut().find(|t| t.id == tid).ok_or("no such track")?; t.clips.extend(clips.into_iter().map(std::sync::Arc::new));
-    Ok(json!({"clip_ids": ids, "style": style}))
+    let mut r = json!({"clip_ids": ids, "style": style}); if !warnings.is_empty() { r["warnings"] = json!(warnings); }
+    Ok(r)
 }

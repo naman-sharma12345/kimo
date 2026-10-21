@@ -101,6 +101,18 @@ fn bright_box(ss: &Session, t: f64) -> (usize, usize, usize, usize, usize) {
     }
 }
 
+/// add_title drew a fallback sans in place of a preset font that is not installed, and said nothing (fourth dry run).
+#[test] fn a_title_says_when_its_font_is_missing() {
+    let (mut ss, t) = portrait(360, 640);
+    let r = call(&mut ss, "add_title", json!({"track_id": t, "style": "impact", "text": "KIMO", "start": 0, "duration": 2, "font": "NoSuchFontKimo"}));
+    let w = r["warnings"].to_string();
+    assert!(w.contains("'NoSuchFontKimo' was not found") && w.contains("fonts/fetch.sh"), "add_title with a font that is not installed says nothing about it: {r}");
+    // an ignored argument on the same call must not replace the font warning
+    let r = call(&mut ss, "add_title", json!({"track_id": t, "style": "impact", "text": "KIMO", "start": 3, "duration": 2, "font": "NoSuchFontKimo", "colour": [1, 0, 0]}));
+    let w = r["warnings"].to_string();
+    assert!(w.contains("'NoSuchFontKimo' was not found") && w.contains("'colour'"), "font and ignored-argument warnings together: {r}");
+}
+
 /// add_text has no y; the warning said "(did you mean 'x'?)", which sends a model the wrong way.
 #[test] fn unknown_property_argument_points_at_set_property() {
     let (mut ss, t) = portrait(360, 640);
