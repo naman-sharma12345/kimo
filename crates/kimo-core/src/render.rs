@@ -779,7 +779,18 @@ pub fn to_rgba8_tpdf(f: &Frame) -> Vec<u8> { f.d.iter().enumerate().map(|(i, v)|
 
 fn image_encoder_command(w:usize,h:usize,path:&str)->Command{let mut cmd=Command::new("ffmpeg");cmd.args(["-v","error","-y","-f","rawvideo","-pix_fmt","rgba","-s",&format!("{w}x{h}"),"-i","-","-frames:v","1",path]);cmd}
 fn write_image_command(f:&Frame,cmd:&mut Command,deadline:std::time::Duration)->Result<(),String>{let size=f.w.checked_mul(f.h).and_then(|n|n.checked_mul(4)).filter(|n|*n>0&&*n==f.d.len()).ok_or("invalid image frame shape")?;crate::guard::reserve(size);let mut encoder=crate::color::process::EncodeStream::new(cmd,size,deadline)?;encoder.write(to_rgba8(f))?;encoder.finish()}
-pub(crate) fn write_image(f:&Frame,path:&str)->Result<(),String>{write_image_command(f,&mut image_encoder_command(f.w,f.h,path),crate::color::process::encode_deadline(1))}
+pub(crate) fn write_image(f:&Frame,path:&str)->Result<(),String>{check_still_path(path,false)?;write_image_command(f,&mut image_encoder_command(f.w,f.h,path),crate::color::process::encode_deadline(1))}
+/// A still-image writer must never replace a video: two models in the director eval called contact_sheet with path = their
+/// finished export, and the mp4 became a 1-frame video. `image_only` also refuses any extension that is not an image.
+pub(crate) fn check_still_path(path:&str,image_only:bool)->Result<(),String>{
+ let ext=std::path::Path::new(path).extension().and_then(|e|e.to_str()).map(|e|e.to_ascii_lowercase()).unwrap_or_default();
+ let image=matches!(ext.as_str(),"png"|"jpg"|"jpeg"|"webp"|"bmp"|"tif"|"tiff"|"exr"|"ppm"|"tga");
+ let media=matches!(ext.as_str(),"mp4"|"mov"|"m4v"|"mkv"|"webm"|"avi"|"gif"|"wav"|"mp3"|"m4a"|"aac"|"flac"|"ogg"|"opus");
+ let mut head=[0u8;12];let existing_media=std::fs::File::open(path).and_then(|mut f|{use std::io::Read;f.read_exact(&mut head)}).is_ok()&&(&head[4..8]==b"ftyp"||head[..4]==[0x1A,0x45,0xDF,0xA3]||(&head[..4]==b"RIFF"&&(&head[8..12]==b"AVI "||&head[8..12]==b"WAVE"))||&head[..3]==b"ID3"||&head[..4]==b"OggS");
+ if existing_media{return Err(format!("{path} is an existing video or audio file; a still image will not overwrite it. Nothing was written. Use a .png path; to look at a video file (an export or a source clip) use review_export {{path}}"))}
+ if media||(image_only&&!image){return Err(format!("{path}: this writes a still image, so the path must end in .png (or .jpg). Nothing was written. To look at a video file (an export or a source clip) use review_export {{path}}"))}
+ Ok(())
+}
 fn write_image_tpdf_command(f:&Frame,cmd:&mut Command,deadline:std::time::Duration)->Result<(),String>{let size=f.w.checked_mul(f.h).and_then(|n|n.checked_mul(4)).filter(|n|*n>0&&*n==f.d.len()).ok_or("invalid image frame shape")?;crate::guard::reserve(size);let mut encoder=crate::color::process::EncodeStream::new(cmd,size,deadline)?;encoder.write(to_rgba8_tpdf(f))?;encoder.finish()}
 pub(crate) fn write_image_tpdf(f:&Frame,path:&str)->Result<(),String>{write_image_tpdf_command(f,&mut image_encoder_command(f.w,f.h,path),crate::color::process::encode_deadline(1))}
 

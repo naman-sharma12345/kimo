@@ -156,5 +156,8 @@ pub fn commands() -> Vec<Command> { vec![
     Command { name: "remove_silence_cuts", description: "Given [start,end] ranges (e.g. from silence detection), ripple-extract them from a track.", mutates: true,
         schema: obj(vec![("track_id", s("track")), ("ranges", json!({"type":"array","items":{"type":"array","items":{"type":"number"}}}))], &["track_id","ranges"]),
         run: |ss, a| { let tid = sa(a, "track_id")?.to_string(); let mut r: Vec<(f64, f64)> = a.get("ranges").and_then(|v| v.as_array()).ok_or("ranges")?.iter().filter_map(|p| { let p = p.as_array()?; Some((p.get(0)?.as_f64()?, p.get(1)?.as_f64()?)) }).collect();
-            r.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap()); for (st, en) in &r { let ids = [ss.project.gen_id("clip"), ss.project.gen_id("clip")]; let _ = ids; crate::commands::dispatch(ss, "lift_range", &json!({"track_id": tid, "start": st, "end": en, "extract": true}))?; } Ok(json!({"removed": r.len()})) } },
+            r.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap()); for (st, en) in &r { let ids = [ss.project.gen_id("clip"), ss.project.gen_id("clip")]; let _ = ids; crate::commands::dispatch(ss, "lift_range", &json!({"track_id": tid, "start": st, "end": en, "extract": true}))?; }
+            // the clips the track holds now, so the caller has the new ids without a lookup
+            let clips: Vec<Value> = ss.project.tracks.iter().find(|t| t.id == tid).map(|t| t.clips.iter().map(|c| json!({"clip_id": c.id, "start": c.start, "end": c.start + c.duration})).collect()).unwrap_or_default();
+            Ok(json!({"removed": r.len(), "clips": clips})) } },
 ] }

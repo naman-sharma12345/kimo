@@ -31,6 +31,12 @@ fn font(name: &str, weight: f64) -> Result<std::sync::Arc<FontVec>, String> {
     let f = std::sync::Arc::new(f); g.insert(key, f.clone()); Ok(f)
 }
 
+/// Characters of `text` the resolved font has no glyph for (they are skipped when drawing, never shown as a box).
+pub fn missing_glyphs(text: &str, font_name: &str, weight: f64) -> Vec<char> {
+    let Ok(f) = font(font_name, weight) else { return vec![] }; let mut v: Vec<char> = vec![];
+    for ch in text.chars() { if !ch.is_whitespace() && f.glyph_id(ch).0 == 0 && !v.contains(&ch) { v.push(ch); } } v
+}
+
 struct G { c: char, x: f32, y: f32, line: usize, word: usize, adv: f32 }
 
 /// Layout glyphs: kerning, tracking, word wrap to box_width (0 = no wrap), alignment, line spacing. Positions are relative to the text block origin (top-left of block, y = baseline).
@@ -41,7 +47,7 @@ fn layout(text: &str, f: &FontVec, size: f32, spacing: f32, align: &str, cw: f32
     let mut lines: Vec<Vec<(char, f32)>> = vec![]; // per line: (char, advance incl. kerning+spacing)
     for para in text.split('\n') { let mut cur: Vec<(char, f32)> = vec![]; let mut curw = 0f32; let mut prev: Option<char> = None; let words: Vec<&str> = para.split(' ').collect();
         for (wi, wd) in words.iter().enumerate() { let mut chars: Vec<(char, f32)> = vec![]; let mut p2 = prev; if wi > 0 { chars.push((' ', sf.h_advance(f.glyph_id(' ')) + spacing)); p2 = Some(' '); }
-            for ch in wd.chars() { let gid = f.glyph_id(ch); let k = if kern { p2.map(|p| sf.kern(f.glyph_id(p), gid)).unwrap_or(0.0) } else { 0.0 }; chars.push((ch, sf.h_advance(gid) + spacing + k)); p2 = Some(ch); }
+            for ch in wd.chars() { let gid = f.glyph_id(ch); if gid.0 == 0 && !ch.is_whitespace() { continue; } let k = if kern { p2.map(|p| sf.kern(f.glyph_id(p), gid)).unwrap_or(0.0) } else { 0.0 }; chars.push((ch, sf.h_advance(gid) + spacing + k)); p2 = Some(ch); }
             let ww: f32 = chars.iter().map(|c| c.1).sum();
             if let Some(mw) = maxw { if curw + ww > mw && !cur.is_empty() { if chars.first().map(|c| c.0 == ' ').unwrap_or(false) { chars.remove(0); } let ww2: f32 = chars.iter().map(|c| c.1).sum(); lines.push(std::mem::take(&mut cur)); cur = chars; curw = ww2; prev = p2; continue; } }
             curw += ww; cur.extend(chars); prev = p2; }
