@@ -157,6 +157,9 @@ pub struct Project {
     #[serde(default)] pub ocio_view_delivery: Option<crate::color::view_video::Selection>,
     #[serde(default)] pub color_pipeline: crate::color::pipeline::Pipeline,
     #[serde(default)] pub camera: BTreeMap<String, crate::keyframe::Prop>,
+    /// 3D compositor (comp3d.rs, set_3d_compositor): depth sorting, intersections, shadows, depth of field. None (absent from the
+    /// file) or enabled = false renders exactly as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub comp3d: Option<crate::comp3d::Comp3d>,
     pub name: String,
     pub width: u32,
     pub height: u32,
@@ -178,7 +181,7 @@ pub struct Project {
 
 impl Default for Project {
     fn default() -> Self {
-        Project { grade_scopes: Default::default(), lights: BTreeMap::new(), materials: BTreeMap::new(), editorial: Default::default(), ocio_view_delivery: None, occluders: BTreeMap::new(), color_pipeline: Default::default(), camera: BTreeMap::new(), name: "untitled".into(), width: 1280, height: 720, fps: 30.0, assets: BTreeMap::new(), tracks: vec![], next_id: 1, markers: vec![], deps: None, templates: vec![], base_dir: None }
+        Project { grade_scopes: Default::default(), lights: BTreeMap::new(), materials: BTreeMap::new(), editorial: Default::default(), ocio_view_delivery: None, occluders: BTreeMap::new(), color_pipeline: Default::default(), camera: BTreeMap::new(), comp3d: None, name: "untitled".into(), width: 1280, height: 720, fps: 30.0, assets: BTreeMap::new(), tracks: vec![], next_id: 1, markers: vec![], deps: None, templates: vec![], base_dir: None }
     }
 }
 

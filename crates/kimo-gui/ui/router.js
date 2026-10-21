@@ -27,7 +27,7 @@ export const FAMILIES = [
   ['color', /^(grade|color|colour|lut|apply_lut|set_lut|ocio|render_scope|analyze_exposure|wheel|curve|node_|hdr|render_ocio|render_exposure|render_gamut|set_grade_node|set_grade_graph|pick_white_balance|pick_key_color|match_grade|match_color|set_white_balance|set_grade_output|remove_grade_node|generate_lut_node|add_acescct_primaries|create_shared_grade_graph|bind_shared_grade_graphs|remove_shared_grade_graph|set_node_param|set_node_mask|apply_asc_cdl|set_color_curve|set_color_wheels|set_grade_scopes|add_node$|connect_nodes|disconnect_nodes)/],
   ['audio', /^(set_|add_|apply_|auto_|measure_|normalize_|analyze_)?(mix|audio|gain|fader|mute|solo|pan|compress|eq|limiter|limit|loudness|duck|stem|bus|route_)|^track_beats$/],
   ['text', /^(caption|subtitle|add_caption|add_subtitle|edit_caption|transcript_edit|transcri|add_title|title|text|set_text|add_text|set_caption|validate_captions)/],
-  ['3d', /^(add_mesh|mesh|model|extrude|bevel|light|camera|particle|emit|simulate|scene|render_3d|add_light|set_light|solve_camera|track|set_camera|add_scene3d|instantiate_gltf|generate_mesh_primitive|contour_sdf_graph|set_mesh_pin|derive_vertex_tangents|fit_track_homography|ecc_refine_track|decompose_track_homography|corner_disagreement|lk_residual_audit|validate_planar_track|undistort_clip|stabilize|apply_camera_solve|pin_layer|set_corner_pin|add_emitter|add_particles|add_shard_burst|set_particles3d$|set_material$|remove_material$|preview_material$|set_relight$|remove_light$)/],
+  ['3d', /^(add_mesh|mesh|model|extrude|bevel|light|camera|particle|emit|simulate|scene|render_3d|add_light|set_light|set_3d_compositor$|set_3d_layer_shadows$|solve_camera|track|set_camera|add_scene3d|instantiate_gltf|generate_mesh_primitive|contour_sdf_graph|set_mesh_pin|derive_vertex_tangents|fit_track_homography|ecc_refine_track|decompose_track_homography|corner_disagreement|lk_residual_audit|validate_planar_track|undistort_clip|set_ground_plane$|place_at_track$|export_st_map$|stabilize|apply_camera_solve|pin_layer|set_corner_pin|add_emitter|add_particles|add_shard_burst|set_particles3d$|set_material$|remove_material$|preview_material$|set_relight$|remove_light$)/],
   ['graphics', /^(add_shape|add_path_shape|set_path|add_path_key|clear_path_keys|add_shape_modifier|remove_shape_modifier|add_modifier|remove_modifier|set_layer_style|remove_layer_style|add_box_expand|add_detection_box|add_hud_frame|add_counter|add_prompt_box|add_glitch_confetti)$/],
   ['roto', /^(add_mask|set_mask|set_mask_keyframe|set_mask_path_key|set_mask_prop_key|set_mask_motion_blur|update_mask|reorder_mask|remove_mask|remove_mask_layer|roto_propagate|track_mask|refine_matte|set_track_matte|remove_track_matte)$/],
   ['export', /^(export|render|queue_render|encode|deliver|join_export$|preview_range$|collect_project$|contact_sheet$|cancel_job$|resume_job$)/],
@@ -1262,11 +1262,32 @@ function sceneOps(state, MODES, ev) {
     if (tn === 'stabilize') {
       const z = numOf(R.zoom ?? R.scale ?? R.crop_scale);
       if (z != null && z >= 1) { const o = ov(); o.push({ crop: 1 / z, _call: ev.call_id, _kind: tn }); }
-      vw.left = ['stabilize', numOf(A.smooth) != null ? `smooth ${fmtVal(A.smooth)}` : null, A.lock ? 'locked' : null, A.rotation === false ? 'no rotation' : null, z != null ? `zoom ${fmtVal(z)}×` : null].filter(Boolean).join(' · '); hit = true;
+      // warp engine (method / mode / smoothness / smoothing / framing) vs the classic engine (smooth / lock / rotation)
+      const warp = ['method', 'mode', 'smoothness', 'smoothing', 'framing', 'max_features', 'synthesis_range', 'rolling_shutter'].some(k => A[k] != null) || R.engine === 'warp';
+      const framing = A.framing ?? R.framing;
+      const meth = { position: 'position', position_scale_rotation: 'similarity', similarity: 'similarity', perspective: 'perspective' }[R.method ?? A.method];
+      const sm = numOf(A.smoothness ?? R.smoothness);
+      const rs = numOf(A.rolling_shutter ?? R.rolling_shutter);
+      vw.left = (warp
+        ? ['warp stabilize', meth || null, (A.mode ?? R.mode) === 'no_motion' ? 'locked' : (sm != null ? `smooth ${fmtVal(sm)}%` : null), (A.smoothing ?? R.smoothing) === 'l1' ? 'L1 path' : null,
+          framing === 'synthesize_edges' ? 'synth edges' : framing ? String(framing).replace(/_/g, ' ') : null, rs != null && rs > 0 ? `RS ${fmtVal(rs)}` : null, z != null && z > 1 ? `zoom ${fmtVal(z)}×` : null]
+        : ['stabilize', numOf(A.smooth) != null ? `smooth ${fmtVal(A.smooth)}` : null, A.lock ? 'locked' : null, A.rotation === false ? 'no rotation' : null, z != null ? `zoom ${fmtVal(z)}×` : null]).filter(Boolean).join(' · '); hit = true;
     }
     if (tn === 'apply_camera_solve' && ev.phase === 'complete') {
       const n = numOf(R.keys ?? R.keyframes ?? R.count);
       vw.left = ['camera solve → keys', A.solve_id != null ? String(A.solve_id) : null, n != null ? `${fmtVal(n)} keys` : null, A.fov === false ? 'no fov' : null].filter(Boolean).join(' · '); hit = true;
+    }
+    // camera tracker (m07): ground plane fit / layer placed on a solved point / ST map written, on the viewer's left meta line
+    if (tn === 'set_ground_plane' && ev.phase === 'complete') {
+      const ids = Array.isArray(A.track_ids) ? A.track_ids.length : null, sc = numOf(R.scale);
+      vw.left = ['ground plane', A.solve_id != null ? String(A.solve_id) : null, ids != null ? `${ids} points` : null, numOf(R.residual_rms) != null ? `fit ${fmtVal(R.residual_rms)} rms` : null, sc != null && sc !== 1 ? `scale ${fmtVal(sc)}` : null, R.reapplied ? 'keys re-applied' : null].filter(Boolean).join(' · '); hit = true;
+    }
+    if (tn === 'place_at_track' && ev.phase === 'complete') {
+      vw.left = [`${A.kind || 'null'} at track`, A.track_id != null ? `#${A.track_id}` : null, A.solve_id != null ? String(A.solve_id) : null, R.clip_id != null ? String(R.clip_id) : null].filter(Boolean).join(' · '); hit = true;
+    }
+    if (tn === 'export_st_map' && ev.phase === 'complete') {
+      const w = numOf(R.width), h = numOf(R.height);
+      vw.left = ['ST map', A.direction || 'undistort', w != null && h != null ? `${w}×${h}` : null, numOf(R.clamped_pixels) ? `${fmtVal(R.clamped_pixels)} clamped` : null].filter(Boolean).join(' · '); hit = true;
     }
     // corner pin / pin_layer: the pinned quad (pin_layer quads are project pixels; corner-pin offsets are pixels from the frame corners)
     if ((tn === 'pin_layer' || tn === 'set_corner_pin') && state.session && state.session.width && state.session.height) {

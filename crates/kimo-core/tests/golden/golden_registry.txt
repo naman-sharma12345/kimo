@@ -8,7 +8,7 @@ add_captions 59f096446c4d0d66
 add_clip b851a4076e91b8c2
 add_counter 2cfd3406e38575f3
 add_detection_box e740cc0690940b44
-add_effect 61815eb9d10145fe
+add_effect ae2e4a00a10c4da2
 add_emitter 940e20f3bb9b947f
 add_glitch_confetti ea3c9845ccf22d20
 add_hud_frame 4518e23cbffd7cd9
@@ -105,6 +105,7 @@ export_job_start 07ddf323a2e92685
 export_manifest 5127d5c892991c43
 export_ocio_view_video 2eb3c79238b48182
 export_preset e5c29f6d9e3173dc
+export_st_map 19270ee3126a2709
 export_vertex_stream_gltf cb9c0dd901f16703
 export_vertex_stream_obj e4ee4a2a4c9506e2
 export_with_subtitles 824e8be7e0dd374e
@@ -191,6 +192,7 @@ path_info bd40d934b727ca02
 pick_key_color a8a3ff81f7ed7011
 pick_white_balance cfba9bbe722278b3
 pin_layer 24c4c1077888dead
+place_at_track e69bc7f50736dc25
 preview_material f0654be5429689e8
 preview_range 63d94b1e2cb0c89e
 preview_subject_match 8fbee66dc3095cb4
@@ -269,6 +271,8 @@ sample_sdf_raw b0e579f1cde1279c
 sample_texture_material 4a03308329ef702a
 save_project d51a7abb5be457b3
 session_stats 08b78ec5daffb184
+set_3d_compositor c3fab2e718ae3113
+set_3d_layer_shadows 872bd4ddb9990918
 set_animator_keyframe 966192e400dafaf5
 set_audio a4b4452073f105be
 set_audio_effect_key 02e5c3c88e7432d6
@@ -293,6 +297,7 @@ set_grade_graph 6748da7824c2fc7e
 set_grade_node 01ef22101da7231f
 set_grade_output 6560facb5fcf1afa
 set_grade_scopes 10538c1f26d81a94
+set_ground_plane 914a2cd630bf2c94
 set_hdr_mastering 7f72fec86997f9fc
 set_keyframe d367b31d80f6c144
 set_keyframe_bezier cad87fc6c4b57af8
@@ -336,11 +341,11 @@ slide_clip b938e2dc08b653bd
 slip_clip 2c0858c74b31b006
 smooth_curve 76c3081df1b15c57
 snap_time 724db0acdc620969
-solve_camera 109d6fc96592a39e
+solve_camera 26b2c823f551e97e
 solve_constraints 3ea242b079bf2ed1
 split_all_at 846f25f325036668
 split_clip 1a109f15314ba83d
-stabilize 9e45db97224ae6db
+stabilize 5f55e3dca0e1efe1
 swap_clips 7e618d3ff4d26a38
 switch_angle 2a55c52c71e95121
 sync_clips 9a610496e2de2b51

@@ -193,11 +193,15 @@ pub fn pin_quad(c: &Clip, lt: f64) -> Option<Quad> { if c.props.get("pin_on").ma
 pub fn pin_frame(src: &Frame, to: &Quad, gain: f32) -> Frame { let mut o = Frame::new(src.w, src.h); pin_rect(src, [0.0, 0.0, src.w as f64, src.h as f64], to, gain, &mut o); o }
 
 /// Pin the source rectangle `rect` = [x0,y0,x1,y1] (pixels) onto quad `to`, compositing premultiplied over `o`.
-pub fn pin_rect(src: &Frame, rect: [f64; 4], to: &Quad, gain: f32, o: &mut Frame) {
+pub fn pin_rect(src: &Frame, rect: [f64; 4], to: &Quad, gain: f32, o: &mut Frame) { pin_rect_g(src, rect, to, gain, o, [0.0; 4], 0.0) }
+/// pin_rect with coverage grown past the cell: source samples up to ext[side] (source px; [left, top, right, bottom]) outside `rect` are
+/// kept, mapped by the same exact homography, and the destination bbox is grown by `grow` px. ext = 0, grow = 0 is pin_rect exactly.
+fn pin_rect_g(src: &Frame, rect: [f64; 4], to: &Quad, gain: f32, o: &mut Frame, ext: [f64; 4], grow: f64) {
     let (w, h) = (src.w, src.h); let from: Quad = [[rect[0], rect[1]], [rect[2], rect[1]], [rect[2], rect[3]], [rect[0], rect[3]]];
     let Some(hm) = solve_h(to, &from) else { return };
     let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN); for p in to { x0 = x0.min(p[0]); y0 = y0.min(p[1]); x1 = x1.max(p[0]); y1 = y1.max(p[1]); }
     if x1 < 0.0 || y1 < 0.0 || x0 > w as f64 || y0 > h as f64 { return; }
+    let (x0, y0, x1, y1) = (x0 - grow, y0 - grow, x1 + grow, y1 + grow);
     let (bx0, by0, bx1, by1) = ((x0.floor().max(0.0)) as usize, (y0.floor().max(0.0)) as usize, (x1.ceil().min(w as f64 - 1.0)) as usize, (y1.ceil().min(h as f64 - 1.0)) as usize);
     let area = |q: &Quad| 0.5 * ((q[0][0] * q[1][1] - q[1][0] * q[0][1]) + (q[1][0] * q[2][1] - q[2][0] * q[1][1]) + (q[2][0] * q[3][1] - q[3][0] * q[2][1]) + (q[3][0] * q[0][1] - q[0][0] * q[3][1])).abs();
     let ratio = (area(&from) / area(to).max(1.0)).sqrt(); let ss_edge = (ratio.ceil() as usize + 1).clamp(3, 6); let ss_in = if ratio > 1.3 { (ratio.ceil() as usize).clamp(2, 5) } else { 1 };
@@ -205,7 +209,7 @@ pub fn pin_rect(src: &Frame, rect: [f64; 4], to: &Quad, gain: f32, o: &mut Frame
     for y in by0..=by1.min(h - 1) { for x in bx0..=bx1.min(w - 1) { let mut acc = [0f32; 4];
         let (cu, cv) = ap(&hm, x as f64 + 0.5, y as f64 + 0.5); let mg = 2.5 * ratio.max(1.0) + 1.0; let interior = cu > rect[0] + mg && cv > rect[1] + mg && cu < rect[2] - mg && cv < rect[3] - mg; let ss = if interior { ss_in } else { ss_edge }; let inv = 1.0 / (ss * ss) as f32;
         for sy in 0..ss { for sx in 0..ss { let (xf, yf) = (x as f64 + (sx as f64 + 0.5) / ss as f64, y as f64 + (sy as f64 + 0.5) / ss as f64); let (u, v) = ap(&hm, xf, yf);
-            if u < rect[0] || v < rect[1] || u > rect[2] || v > rect[3] { continue; } let (uu, vv) = ((u - 0.5).clamp(0.0, w as f64 - 1.001), (v - 0.5).clamp(0.0, h as f64 - 1.001)); let (ix, iy) = (uu as usize, vv as usize); let (fx, fy) = ((uu - ix as f64) as f32, (vv - iy as f64) as f32);
+            if u < rect[0] - ext[0] || v < rect[1] - ext[1] || u > rect[2] + ext[2] || v > rect[3] + ext[3] { continue; } let (uu, vv) = ((u - 0.5).clamp(0.0, w as f64 - 1.001), (v - 0.5).clamp(0.0, h as f64 - 1.001)); let (ix, iy) = (uu as usize, vv as usize); let (fx, fy) = ((uu - ix as f64) as f32, (vv - iy as f64) as f32);
             let g = |xx: usize, yy: usize| -> [f32; 4] { let i = (yy * w + xx) * 4; let a = src.d[i + 3]; [src.d[i] * a, src.d[i + 1] * a, src.d[i + 2] * a, a] };
             let (a, b, c, d) = (g(ix, iy), g((ix + 1).min(w - 1), iy), g(ix, (iy + 1).min(h - 1)), g((ix + 1).min(w - 1), (iy + 1).min(h - 1)));
             for j in 0..4 { acc[j] += a[j] * (1.0 - fx) * (1.0 - fy) + b[j] * fx * (1.0 - fy) + c[j] * (1.0 - fx) * fy + d[j] * fx * fy; } } }
@@ -223,6 +227,19 @@ pub fn pin_mesh(src: &Frame, verts: &[[f64; 2]], nx: usize, ny: usize, gain: f32
         for p in q.iter_mut() { let (dx, dy) = (p[0] - c[0], p[1] - c[1]); let l = dx.hypot(dy).max(1e-6); p[0] += dx / l * 0.7; p[1] += dy / l * 0.7; }
         let mut rr = rect; rr[0] -= 0.0; rr[1] -= 0.0; pin_rect(src, rr, &q, gain, &mut o); } } o
 }
+/// Mesh pin with exact cell maps (opt-in, clip prop mesh_exact >= 0.5): each cell is drawn through the exact homography of its own
+/// quad (no 0.7 px growth, which moves points by up to 0.7 px), and the seams are covered instead by letting every cell draw one
+/// destination pixel (in source units: `ratio`) past its interior edges with the same homography; edges on the layer border are not
+/// extended. Used by stabilize's rolling-shutter mesh, whose accuracy test maps points through stabilize::mesh_map (this map).
+pub fn pin_mesh_exact(src: &Frame, verts: &[[f64; 2]], nx: usize, ny: usize, gain: f32) -> Frame {
+    let mut o = Frame::new(src.w, src.h); let (w, h) = (src.w as f64, src.h as f64);
+    for j in 0..ny - 1 { for i in 0..nx - 1 { let rect = [w * i as f64 / (nx - 1) as f64, h * j as f64 / (ny - 1) as f64, w * (i + 1) as f64 / (nx - 1) as f64, h * (j + 1) as f64 / (ny - 1) as f64];
+        let q = [verts[j * nx + i], verts[j * nx + i + 1], verts[(j + 1) * nx + i + 1], verts[(j + 1) * nx + i]];
+        let qa = 0.5 * ((q[0][0] * q[1][1] - q[1][0] * q[0][1]) + (q[1][0] * q[2][1] - q[2][0] * q[1][1]) + (q[2][0] * q[3][1] - q[3][0] * q[2][1]) + (q[3][0] * q[0][1] - q[0][0] * q[3][1])).abs();
+        let ratio = ((rect[2] - rect[0]) * (rect[3] - rect[1]) / qa.max(1.0)).sqrt().max(1e-3);
+        let ext = [if i > 0 { ratio } else { 0.0 }, if j > 0 { ratio } else { 0.0 }, if i + 2 < nx { ratio } else { 0.0 }, if j + 2 < ny { ratio } else { 0.0 }];
+        pin_rect_g(src, rect, &q, gain, &mut o, ext, 1.0); } } o
+}
 pub fn mesh_verts(c: &Clip, lt: f64) -> Option<(usize, usize, Vec<[f64; 2]>)> { let nx = c.props.get("mesh_nx")?.base as usize; let ny = c.props.get("mesh_ny")?.base as usize; if nx < 2 || ny < 2 { return None; }
     let mut v = Vec::with_capacity(nx * ny); for k in 0..nx * ny { v.push([c.props.get(&format!("mx{k}"))?.at(lt), c.props.get(&format!("my{k}"))?.at(lt)]); } Some((nx, ny, v)) }
 
@@ -231,7 +248,8 @@ pub fn pin_render(c: &Clip, f: &Frame, lt: f64, fps: f64) -> Option<Frame> {
     let is_mesh = c.props.get("pin_on").map(|p| p.at(lt)).unwrap_or(0.0) >= 0.5 && c.props.contains_key("mesh_nx"); if !is_mesh { pin_quad(c, lt)?; } else if mesh_verts(c, lt).is_none() { return None; }
     let light = c.props.get("pin_light").map(|p| p.at(lt)).unwrap_or(0.0) as f32; let n = if c.motion_blur > 0.0 { ((c.motion_blur / 22.5).ceil() as usize).clamp(2, 16) } else { 1 }; let sh = c.motion_blur / 360.0 / fps;
     let gain_at = |t: f64| -> f32 { 1.0 + (c.props.get("pin_gain").map(|p| p.at(t)).unwrap_or(1.0) as f32 - 1.0) * light };
-    let one = |t: f64| -> Option<Frame> { if is_mesh { let (nx, ny, v) = mesh_verts(c, t)?; Some(pin_mesh(f, &v, nx, ny, gain_at(t))) } else { Some(pin_frame(f, &pin_quad(c, t)?, gain_at(t))) } };
+    let exact = is_mesh && c.props.get("mesh_exact").map(|p| p.base).unwrap_or(0.0) >= 0.5;
+    let one = |t: f64| -> Option<Frame> { if is_mesh { let (nx, ny, v) = mesh_verts(c, t)?; Some(if exact { pin_mesh_exact(f, &v, nx, ny, gain_at(t)) } else { pin_mesh(f, &v, nx, ny, gain_at(t)) }) } else { Some(pin_frame(f, &pin_quad(c, t)?, gain_at(t))) } };
     // opt-in exact shutter (set_motion_blur samples / shutter_phase / shutter_curve): sample count from corner / mesh-vertex travel (px, x2 like the mask auto); None keeps the legacy times
     // cw = non-box shutter_curve weights (sum 1): rgb = sum(w*rgb*a)/sum(w*a), alpha = sum(w*a); None (legacy or box) keeps the plain sums and alpha / n
     let mut cw: Option<Vec<f32>> = None;
