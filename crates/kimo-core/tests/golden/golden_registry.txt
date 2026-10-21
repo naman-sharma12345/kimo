@@ -188,6 +188,7 @@ move_key 8db0720360eda83d
 normalize_loudness d77d16d8f58e8b00
 particle_simulate_raw 13a7503832a95aad
 path_info bd40d934b727ca02
+pick_key_color a8a3ff81f7ed7011
 pick_white_balance cfba9bbe722278b3
 pin_layer 24c4c1077888dead
 preview_material f0654be5429689e8

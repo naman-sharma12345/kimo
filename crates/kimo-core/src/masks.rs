@@ -174,7 +174,7 @@ pub(crate) fn edt(set: &[bool], w: usize, h: usize) -> Vec<f32> {
     g.iter().map(|v| v.sqrt() as f32).collect()
 }
 /// Smooth, circular grow (r>0) or choke (r<0) from a signed distance field of the coverage.
-fn morph(c: &mut Vec<f32>, w: usize, h: usize, r: f32) {
+pub(crate) fn morph(c: &mut Vec<f32>, w: usize, h: usize, r: f32) {
     if r == 0.0 { return; } let inside: Vec<bool> = c.iter().map(|&v| v > 0.5).collect(); let outside: Vec<bool> = inside.iter().map(|b| !b).collect();
     let (d_out, d_in) = (edt(&inside, w, h), edt(&outside, w, h)); // distance to nearest inside / outside pixel
     let mut sd: Vec<f32> = (0..w * h).map(|i| if inside[i] { -(d_in[i] - 0.5) + (c[i] - 1.0).abs() * 0.0 } else { d_out[i] - 0.5 }).collect();

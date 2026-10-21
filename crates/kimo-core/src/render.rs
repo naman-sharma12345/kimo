@@ -519,7 +519,9 @@ pub fn render_frame_opts(p: &Project, t: f64, cache: &Cache, transparent: bool) 
     if !transparent { for i in 0..w*h { out.d[i*4+3] = 1.0; } } // opaque black canvas
     let seed = (t * p.fps).round() as u64;
     let hidden: std::collections::HashSet<&str> = p.tracks.iter().flat_map(|tr| tr.clips.iter()).filter_map(|c| c.mask.as_ref().and_then(|m| m.matte.as_ref()).filter(|m| m.hide_source).map(|m| m.source.as_str()))
-        .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).filter_map(|c| match &c.source { Source::Particles3D(e) if e.sprite.kind == "layer" && e.sprite.hide_source && !e.sprite.clip_id.is_empty() => Some(e.sprite.clip_id.as_str()), _ => None })).collect(); // a Particles3D layer sprite's source is drawn only as the sprite
+        .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).filter_map(|c| match &c.source { Source::Particles3D(e) if e.sprite.kind == "layer" && e.sprite.hide_source && !e.sprite.clip_id.is_empty() => Some(e.sprite.clip_id.as_str()), _ => None })) // a Particles3D layer sprite's source is drawn only as the sprite
+        // a keyer's clean-plate clip (strings.ref_clip) is hidden from the composite like a hidden track-matte source
+        .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).flat_map(|c| c.effects.iter()).filter(|e| e.kind == "keyer").filter_map(|e| e.strings.get("ref_clip").map(|s| s.as_str()))).collect();
     for tr in &p.tracks { for c in &tr.clips {
         if !crate::editorial::caption_visible(p, &c.id) { continue; }
         if t < c.start - 1e-9 || t >= c.start + c.duration - 1e-9 || (hidden.contains(c.id.as_str()) && MATTE_DEPTH.with(|d| d.get()) == 0) { continue; }
@@ -806,21 +808,35 @@ pub fn resolve_flares(p: &Project, effs: &[crate::model::Effect], t: f64, lt: f6
 }
 
 /// Effects with a per-effect mask (strings.mask_layer = id of a layer in the clip's mask stack) only apply where that layer covers.
+/// A keyer with strings.ref_clip / aux_path (clean plate) or garbage_mask / core_mask (mask layer ids, mode none) also runs per effect.
+fn keyer_aux_fx(e: &crate::model::Effect) -> bool { e.kind == "keyer" && ["ref_clip", "aux_path", "garbage_mask", "core_mask"].iter().any(|k| e.strings.contains_key(*k)) }
+fn keyer_aux(p: &Project, c: &Clip, e: &crate::model::Effect, before: &Frame, lt: f64, t: f64, cache: &Cache, ctx: &crate::masks::Ctx) -> Result<crate::keying::KeyerAuxOwned, String> {
+    let clean_plate = if let Some(id) = e.strings.get("ref_clip") { Some(render_clip_alone(p, id, t, cache).ok_or_else(|| format!("keyer: strings.ref_clip '{id}' is not a clip (or could not be rendered)"))?) }
+        else if let Some(path) = e.strings.get("aux_path") { Some(crate::pixels::read(&crate::deps::resolve_str(path)).map_err(|err| format!("keyer: strings.aux_path '{path}' unreadable: {err}"))?) } else { None };
+    let layer = |key: &str, id: Option<&String>| -> Result<Option<Vec<f32>>, String> { let Some(id) = id else { return Ok(None) };
+        let l = c.mask.as_ref().and_then(|m| m.layers.iter().find(|l| &l.id == id)).ok_or_else(|| format!("keyer: strings.{key} '{id}' is not a mask layer of clip {}", c.id))?;
+        Ok(Some(crate::masks::layer_coverage(l, before, lt, ctx))) };
+    Ok(crate::keying::KeyerAuxOwned { clean_plate, garbage: layer("garbage_mask", e.strings.get("garbage_mask"))?, core: layer("core_mask", e.strings.get("core_mask"))? })
+}
 fn apply_effects_masked(p: &Project, c: &Clip, f: &mut Frame, lt: f64, seed: u64, t: f64, cache: &Cache) -> Result<(), String> {
-    if !c.effects.iter().any(|e| e.strings.contains_key("mask_layer")) { apply_effects_local(&c.effects, f, lt, seed)?;if let Some(g)=&c.grade_graph{g.apply(f,lt,seed,p.fps)?;}p.grade_scopes.apply_clip(p,&c.id,f,lt,seed)?;return Ok(()); }
+    let special = |e: &crate::model::Effect| e.strings.contains_key("mask_layer") || keyer_aux_fx(e);
+    if !c.effects.iter().any(special) { apply_effects_local(&c.effects, f, lt, seed)?;if let Some(g)=&c.grade_graph{g.apply(f,lt,seed,p.fps)?;}p.grade_scopes.apply_clip(p,&c.id,f,lt,seed)?;return Ok(()); }
     let mut i = 0;
     while i < c.effects.len() {
         let e = &c.effects[i];
-        if let Some(mid) = e.strings.get("mask_layer") {
+        if special(e) {
             let before = Frame { w: f.w, h: f.h, d: f.d.clone() };
-            apply_effects_local(std::slice::from_ref(e), f, lt, seed)?;
             let refs = |id: &str| render_clip_alone(p, id, t, cache); let ctx = crate::masks::Ctx { refs: &refs, fps: p.fps };
-            if let Some(l) = c.mask.as_ref().and_then(|m| m.layers.iter().find(|l| &l.id == mid)) {
+            if keyer_aux_fx(e) { if e.strings.contains_key("ocio_domain") || e.strings.contains_key("wrapper_working_gamut") { return Err("keyer: a clean plate or garbage/core matte cannot be combined with a colour-domain wrapper (ocio_domain / wrapper_working_gamut)".into()); }
+                // the keyer's per-pixel inputs go straight to keying::apply_keyer (effects::apply carries params and strings only)
+                let aux = keyer_aux(p, c, e, &before, lt, t, cache, &ctx)?; crate::keying::apply_keyer(&e.params, f, lt, &aux.view())?; }
+            else { apply_effects_local(std::slice::from_ref(e), f, lt, seed)?; }
+            if let Some(l) = e.strings.get("mask_layer").and_then(|mid| c.mask.as_ref().and_then(|m| m.layers.iter().find(|l| &l.id == mid))) {
                 let cov = crate::masks::layer_coverage(l, &before, lt, &ctx);
                 for k in 0..f.w * f.h { let a = cov[k]; if a < 1.0 { for j in 0..4 { f.d[k * 4 + j] = before.d[k * 4 + j] * (1.0 - a) + f.d[k * 4 + j] * a; } } }
             }
             i += 1;
-        } else { let j = (i..c.effects.len()).find(|&j| c.effects[j].strings.contains_key("mask_layer")).unwrap_or(c.effects.len()); apply_effects_local(&c.effects[i..j], f, lt, seed)?; i = j; }
+        } else { let j = (i..c.effects.len()).find(|&j| special(&c.effects[j])).unwrap_or(c.effects.len()); apply_effects_local(&c.effects[i..j], f, lt, seed)?; i = j; }
     }
     if let Some(g)=&c.grade_graph{g.apply(f,lt,seed,p.fps)?;}p.grade_scopes.apply_clip(p,&c.id,f,lt,seed)?;
     Ok(())
