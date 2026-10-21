@@ -30,6 +30,9 @@ pub fn path_of(effects: &[Effect], t: f64) -> Option<crate::paths::Path> { let e
 pub fn build<'a>(effects: &'a [Effect], base: impl Fn(f64, f64) -> f64 + 'a, cx: f64, cy: f64, t: f64) -> Stack<'a> {
     let mut dist: Box<dyn Fn(f64, f64) -> f64 + 'a> = Box::new(base);
     let (mut trim, mut grad) = (None, None);
+    // outline parameter for the path operators: arc length on a Bezier path, angle around the centre on primitives (as trim uses)
+    let pth = path_of(effects, t); let rmax = 2.0 * cx.hypot(cy);
+    let u_of: std::rc::Rc<dyn Fn(f64, f64) -> f64 + 'a> = match &pth { Some(p) => { let p = p.clone(); std::rc::Rc::new(move |x, y| p.nearest(x, y).1) } None => std::rc::Rc::new(|x: f64, y: f64| (y.atan2(x) + PI) / TAU) };
     for e in effects.iter().filter(|e| e.kind.starts_with("shape_")) {
         let g = |k: &str, d: f64| e.params.get(k).map(|p| p.at(t)).unwrap_or(d);
         let prev = dist;
@@ -43,10 +46,11 @@ pub fn build<'a>(effects: &'a [Effect], base: impl Fn(f64, f64) -> f64 + 'a, cx:
                 dist = Box::new(move |x, y| { let a = prev(x, y); let b = match &p2 { Some(p) => p.sd(x - cx - dx, y - cy - dy), None => sd(&shape, sides, hw, hh, cr, x - cx - dx, y - cy - dy) }; match mode.as_str() { "subtract" => a.max(-b), "intersect" => a.max(b), "exclude" => a.min(b).max(-(a.max(b))), _ => a.min(b) } }); }
             "shape_trim" => { trim = Some((g("start", 0.0), g("end", 1.0), g("offset", 0.0))); dist = prev; }
             "shape_gradient_stroke" => { grad = Some(([g("r1", 1.0), g("g1", 0.2), g("b1", 0.4)], [g("r2", 0.2), g("g2", 0.6), g("b2", 1.0)], g("angle", 0.0).to_radians())); dist = prev; }
+            k if k.starts_with("shape_op_") => { dist = crate::pathops::apply(e, prev, cx, cy, t, u_of.clone(), rmax); }
             _ => { dist = prev; }
         }
     }
-    Stack { path: path_of(effects, t), dist, trim, grad }
+    Stack { path: pth, dist, trim, grad }
 }
 
 impl Stack<'_> {

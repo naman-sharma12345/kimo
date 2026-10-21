@@ -16,6 +16,7 @@ pub mod telemetry;
 pub mod toolgroups;
 pub mod trackmath;
 pub mod shapemods;
+pub mod pathops;
 pub mod paths;
 pub mod layerstyles;
 pub mod lighting;

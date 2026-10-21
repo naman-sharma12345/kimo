@@ -348,7 +348,10 @@ fn source_frame_h(p: &Project, c: &Clip, lt_in: f64, cache: &Cache) -> (Frame, O
             let (cx, cy) = (w as f64 / 2.0, h as f64 / 2.0); let (hw, hh) = (width / 2.0, height / 2.0);
             // signed distance (negative inside), then shape modifiers (offset/repeater/merge) from shapemods.rs
             let pth = if shape == "path" { crate::shapemods::path_of(&c.effects, lt) } else { None };
-            let base = |x: f64, y: f64| -> f64 { let (px, py) = (x - cx, y - cy); match shape.as_str() {
+            // Round Corners (add_path_operator) acts on the geometry: rect corner radius, exact rounded polygon
+            let rc = c.effects.iter().find(|e| e.kind == "shape_op_round_corners").map_or(0.0, |e| e.params.get("radius").map_or(10.0, |p| p.at(lt)).max(0.0));
+            let corner_radius = &if rc > 0.0 && shape.as_str() == "rect" { (corner_radius + rc).min(hw.min(hh)) } else { *corner_radius };
+            let base = |x: f64, y: f64| -> f64 { let (px, py) = (x - cx, y - cy); if rc > 0.0 && shape.as_str() == "polygon" { return crate::pathops::sd_polygon_rounded(*sides, hw.min(hh), rc, px, py); } match shape.as_str() {
                 "path" => match &pth { Some(p) => p.sd(px, py), None => 1e9 },
                 "ellipse" | "polygon" | "line" => crate::shapemods::sd(shape, *sides, hw, hh, *corner_radius, px, py),
                 _ => { let (qx, qy) = (px.abs() - hw + corner_radius, py.abs() - hh + corner_radius); (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - corner_radius } } };

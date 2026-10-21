@@ -27,6 +27,7 @@
 "add_particles",
 "add_particles3d",
 "add_path_key",
+"add_path_operator",
 "add_path_shape",
 "add_prompt_box",
 "add_scene3d",
