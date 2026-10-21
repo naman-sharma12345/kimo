@@ -10,7 +10,9 @@ use crate::keyframe::Prop;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct PathPt { pub x: f64, pub y: f64, #[serde(default)] pub ix: f64, #[serde(default)] pub iy: f64, #[serde(default)] pub ox: f64, #[serde(default)] pub oy: f64, /// per-point feather width in px@720p (0 = use the layer feather)
-    #[serde(default)] pub f: f64 }
+    #[serde(default)] pub f: f64,
+    /// inner / outer feather in px@720p (Resolve soft edge inner/outer, AE feather pulled in or out); 0 = f/2 each side
+    #[serde(default, skip_serializing_if = "is_zero")] pub fi: f64, #[serde(default, skip_serializing_if = "is_zero")] pub fo: f64 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PathKey { pub t: f64, pub points: Vec<PathPt>, #[serde(default)] pub hold: bool }
@@ -94,14 +96,14 @@ pub fn path_at(l: &MaskLayer, t: f64) -> Vec<PathPt> {
     let i = ks.iter().position(|k| k.t > t).unwrap_or(ks.len() - 1) - 1; let (a, b) = (&ks[i], &ks[i + 1]);
     if a.hold || a.points.len() != b.points.len() { return a.points.clone(); }
     let mode = l.strings.get("interp").map(|s| s.as_str()).unwrap_or("spline"); let u = (t - a.t) / (b.t - a.t).max(1e-9);
-    let comp = |p: &PathPt| [p.x, p.y, p.ix, p.iy, p.ox, p.oy, p.f];
+    let comp = |p: &PathPt| [p.x, p.y, p.ix, p.iy, p.ox, p.oy, p.f, p.fi, p.fo];
     let prev = if i > 0 && ks[i - 1].points.len() == a.points.len() { Some(&ks[i - 1]) } else { None }; let next = if i + 2 < ks.len() && ks[i + 2].points.len() == a.points.len() { Some(&ks[i + 2]) } else { None };
     let dt = b.t - a.t; let (h00, h10, h01, h11) = { let u2 = u * u; let u3 = u2 * u; (2.0 * u3 - 3.0 * u2 + 1.0, u3 - 2.0 * u2 + u, -2.0 * u3 + 3.0 * u2, u3 - u2) };
-    (0..a.points.len()).map(|n| { let (pa, pb) = (comp(&a.points[n]), comp(&b.points[n])); let mut o = [0f64; 7];
-        for c in 0..7 { o[c] = match mode { "linear" => pa[c] + (pb[c] - pa[c]) * u, "smooth" => { let w = u * u * (3.0 - 2.0 * u); pa[c] + (pb[c] - pa[c]) * w }
+    (0..a.points.len()).map(|n| { let (pa, pb) = (comp(&a.points[n]), comp(&b.points[n])); let mut o = [0f64; 9];
+        for c in 0..9 { o[c] = match mode { "linear" => pa[c] + (pb[c] - pa[c]) * u, "smooth" => { let w = u * u * (3.0 - 2.0 * u); pa[c] + (pb[c] - pa[c]) * w }
             _ => { let ma = match prev { Some(p) => (pb[c] - comp(&p.points[n])[c]) / (b.t - p.t).max(1e-9), None => (pb[c] - pa[c]) / dt }; let mb = match next { Some(q) => (comp(&q.points[n])[c] - pa[c]) / (q.t - a.t).max(1e-9), None => (pb[c] - pa[c]) / dt };
                 h00 * pa[c] + h10 * dt * ma + h01 * pb[c] + h11 * dt * mb } }; }
-        PathPt { x: o[0], y: o[1], ix: o[2], iy: o[3], ox: o[4], oy: o[5], f: o[6].max(0.0) } }).collect()
+        PathPt { x: o[0], y: o[1], ix: o[2], iy: o[3], ox: o[4], oy: o[5], f: o[6].max(0.0), fi: o[7].max(0.0), fo: o[8].max(0.0) } }).collect()
 }
 
 pub fn flatten_pub(pts: &[PathPt], closed: bool, w: usize, h: usize) -> Vec<(f64, f64, f64)> { flatten(pts, closed, w, h) }
@@ -117,8 +119,9 @@ fn flatten(pts: &[PathPt], closed: bool, w: usize, h: usize) -> Vec<(f64, f64, f
 }
 
 /// Exact-area coverage rasterizer (signed-area accumulation): sub-pixel accurate, so moving paths do not shimmer.
-fn raster_path(pts: &[PathPt], closed: bool, w: usize, h: usize) -> Vec<f32> {
-    let poly = flatten(pts, closed, w, h); let m = poly.len(); let mut cov = vec![0f32; w * h]; if m < 3 { return cov; }
+fn raster_path(pts: &[PathPt], closed: bool, w: usize, h: usize) -> Vec<f32> { raster_poly(&flatten(pts, closed, w, h), w, h) }
+fn raster_poly(poly: &[(f64, f64, f64)], w: usize, h: usize) -> Vec<f32> {
+    let m = poly.len(); let mut cov = vec![0f32; w * h]; if m < 3 { return cov; }
     let stride = w + 3; let mut acc = vec![0f32; stride * h]; let wf = w as f32;
     for i in 0..m { let (a, b) = (poly[i], poly[(i + 1) % m]); let (p0, p1) = ((a.0 as f32, a.1 as f32), (b.0 as f32, b.1 as f32));
         if p0.1 == p1.1 { continue; } let (dir, p0, p1) = if p0.1 < p1.1 { (1.0f32, p0, p1) } else { (-1.0f32, p1, p0) };
@@ -197,6 +200,71 @@ pub fn guided(cov: &mut Vec<f32>, f: &Frame, r: usize, eps: f32) {
     let (ma, mb) = (mean(&a), mean(&b)); for k in 0..n { cov[k] = (ma[k] * i[k] + mb[k]).clamp(0.0, 1.0); }
 }
 
+fn is_zero(v: &f64) -> bool { *v == 0.0 }
+
+/// Path mask coverage: shape plus per-point feather. The default (precision off, smooth falloff, no inner/outer feather)
+/// is the historic rasteriser exactly. `precise`: curves flattened adaptively to 1e-5 px (exact area coverage of the
+/// flattened outline, so the curve error stays far under 1e-4 coverage). `linear`: linear feather falloff instead of smooth
+/// (AE Mask Feather Falloff). Per-point `fi`/`fo` set the inner/outer feather (Resolve soft edge inner/outer); a point
+/// without them feathers f/2 each side, as before.
+pub fn path_coverage(pts: &[PathPt], closed: bool, w: usize, h: usize, legacy: bool, precise: bool, linear: bool) -> Vec<f32> {
+    if legacy { return raster_path_legacy(pts, closed, w, h); }
+    let io = pts.iter().any(|p| p.fi > 0.0 || p.fo > 0.0);
+    if !precise && !io && !linear { let c = raster_path(pts, closed, w, h); return if pts.iter().any(|p| p.f > 0.0) { variable_feather(pts, closed, &c, w, h, 0.0, h as f32 / 720.0) } else { c }; }
+    let poly = flatten_io(pts, closed, w, h, if precise { Some(1e-5) } else { None });
+    let c = raster_poly(&poly.iter().map(|q| (q.0, q.1, 0.0)).collect::<Vec<_>>(), w, h);
+    if pts.iter().any(|p| p.f > 0.0 || p.fi > 0.0 || p.fo > 0.0) { feather_io(&poly, &c, w, h, h as f64 / 720.0, linear) } else { c }
+}
+
+/// Flatten to (x, y, inner, outer) in px; `tol` = adaptive flatness tolerance in px (None = the historic step count).
+fn flatten_io(pts: &[PathPt], closed: bool, w: usize, h: usize, tol: Option<f64>) -> Vec<(f64, f64, f64, f64)> {
+    let n = pts.len(); let (wf, hf) = (w as f64, h as f64); let mut poly = vec![]; let segs = if closed { n } else { n.saturating_sub(1) };
+    let io = |p: &PathPt| (if p.fi > 0.0 { p.fi } else { p.f * 0.5 }, if p.fo > 0.0 { p.fo } else { p.f * 0.5 });
+    for i in 0..segs { let a = &pts[i]; let b = &pts[(i + 1) % n]; let (ia, ib) = (io(a), io(b));
+        let c = [(a.x * wf, a.y * hf), ((a.x + a.ox) * wf, (a.y + a.oy) * hf), ((b.x + b.ix) * wf, (b.y + b.iy) * hf), (b.x * wf, b.y * hf)];
+        let bez = |u: f64| { let v = 1.0 - u; (v * v * v * c[0].0 + 3.0 * v * v * u * c[1].0 + 3.0 * v * u * u * c[2].0 + u * u * u * c[3].0, v * v * v * c[0].1 + 3.0 * v * v * u * c[1].1 + 3.0 * v * u * u * c[2].1 + u * u * u * c[3].1) };
+        let straight = a.ox == 0.0 && a.oy == 0.0 && b.ix == 0.0 && b.iy == 0.0;
+        let mut us: Vec<f64> = vec![];
+        if straight { us.push(0.0); }
+        else if let Some(t) = tol { // recursive midpoint subdivision until the control polygon is within t of the chord
+            let mut st = vec![(0.0f64, 1.0f64, c, 0u32)];
+            while let Some((u0, u1, q, d)) = st.pop() {
+                let (dx, dy) = (q[3].0 - q[0].0, q[3].1 - q[0].1); let l = (dx * dx + dy * dy).sqrt();
+                let dist = |p: (f64, f64)| if l > 1e-12 { ((p.0 - q[0].0) * dy - (p.1 - q[0].1) * dx).abs() / l } else { (p.0 - q[0].0).hypot(p.1 - q[0].1) };
+                if d >= 24 || dist(q[1]).max(dist(q[2])) <= t { us.push(u0); continue; }
+                let m = |p: (f64, f64), r: (f64, f64)| (0.5 * (p.0 + r.0), 0.5 * (p.1 + r.1));
+                let (p01, p12, p23) = (m(q[0], q[1]), m(q[1], q[2]), m(q[2], q[3])); let (p012, p123) = (m(p01, p12), m(p12, p23)); let mid = m(p012, p123); let um = 0.5 * (u0 + u1);
+                st.push((um, u1, [mid, p123, p23, q[3]], d + 1)); st.push((u0, um, [q[0], p01, p012, mid], d + 1)); }
+            us.sort_by(|x, y| x.partial_cmp(y).unwrap());
+        } else { let ext = (c[0].0 - c[3].0).abs() + (c[0].1 - c[3].1).abs() + (c[1].0 - c[0].0).abs() + (c[1].1 - c[0].1).abs() + (c[3].0 - c[2].0).abs() + (c[3].1 - c[2].1).abs();
+            let steps = ((ext / 6.0) as usize).clamp(16, 96); for s in 0..steps { us.push(s as f64 / steps as f64); } }
+        for u in us { let p = bez(u); poly.push((p.0, p.1, ia.0 + (ib.0 - ia.0) * u, ia.1 + (ib.1 - ia.1) * u)); } }
+    if !closed && n > 0 { let b = &pts[n - 1]; let ib = io(b); poly.push((b.x * wf, b.y * hf, ib.0, ib.1)); }
+    poly
+}
+
+/// Inner/outer feather on the exact distance to the flattened outline (f64): coverage 1 at signed distance <= -inner, 0 at
+/// >= +outer, linear or smoothstep between; pixels outside every band keep the anti-aliased area coverage.
+fn feather_io(poly: &[(f64, f64, f64, f64)], base: &[f32], w: usize, h: usize, s: f64, linear: bool) -> Vec<f32> {
+    let m = poly.len(); if m < 3 { return base.to_vec(); }
+    let maxw = poly.iter().map(|p| p.2.max(p.3) * s).fold(0.0f64, f64::max); let band = maxw + 2.0;
+    let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN); for p in poly { x0 = x0.min(p.0); y0 = y0.min(p.1); x1 = x1.max(p.0); y1 = y1.max(p.1); }
+    let (bx0, by0, bx1, by1) = (((x0 - band).floor().max(0.0)) as usize, ((y0 - band).floor().max(0.0)) as usize, ((x1 + band).ceil().min(w as f64).max(0.0)) as usize, ((y1 + band).ceil().min(h as f64).max(0.0)) as usize);
+    let cell = 32usize; let (gw, gh) = ((w + cell - 1) / cell, (h + cell - 1) / cell); let mut grid: Vec<Vec<u32>> = vec![vec![]; gw * gh];
+    for i in 0..m { let (a, b) = (poly[i], poly[(i + 1) % m]); let (sx0, sx1, sy0, sy1) = (a.0.min(b.0) - band, a.0.max(b.0) + band, a.1.min(b.1) - band, a.1.max(b.1) + band);
+        if sx1 < 0.0 || sy1 < 0.0 { continue; }
+        for gy in ((sy0.max(0.0) as usize) / cell).min(gh - 1)..=(((sy1.max(0.0) as usize) / cell).min(gh - 1)) { for gx in ((sx0.max(0.0) as usize) / cell).min(gw - 1)..=(((sx1.max(0.0) as usize) / cell).min(gw - 1)) { grid[gy * gw + gx].push(i as u32); } } }
+    let mut out = base.to_vec();
+    for y in by0..by1 { for x in bx0..bx1 { let cl = &grid[(y / cell) * gw + x / cell]; if cl.is_empty() { continue; }
+        let (px, py) = (x as f64 + 0.5, y as f64 + 0.5); let (mut best, mut bi, mut bo) = (f64::MAX, 0.0, 0.0);
+        for &si in cl { let (a, b) = (poly[si as usize], poly[(si as usize + 1) % m]); let (ex, ey) = (b.0 - a.0, b.1 - a.1); let l2 = (ex * ex + ey * ey).max(1e-18); let u = (((px - a.0) * ex + (py - a.1) * ey) / l2).clamp(0.0, 1.0);
+            let (dx, dy) = (a.0 + ex * u - px, a.1 + ey * u - py); let d2 = dx * dx + dy * dy; if d2 < best { best = d2; bi = (a.2 + (b.2 - a.2) * u) * s; bo = (a.3 + (b.3 - a.3) * u) * s; } }
+        let tot = bi + bo; if tot < 1e-9 { continue; }
+        let d = best.sqrt(); let sd = if base[y * w + x] > 0.5 { -d } else { d }; if sd < -bi - 1.0 || sd > bo + 1.0 { continue; }
+        let u = ((sd + bi) / tot).clamp(0.0, 1.0); let f = if linear { u } else { u * u * (3.0 - 2.0 * u) }; out[y * w + x] = (1.0 - f) as f32; } }
+    out
+}
+
 fn raster_path_legacy(pts: &[PathPt], closed: bool, w: usize, h: usize) -> Vec<f32> {
     let mut cov = vec![0f32; w * h]; let n = pts.len(); if n < 3 { return cov; }
     let (wf, hf) = (w as f64, h as f64); let mut poly: Vec<(f64, f64)> = vec![];
@@ -266,8 +334,7 @@ fn raw(l: &MaskLayer, f: &Frame, t: f64, ctx: &Ctx) -> Vec<f32> {
             for y in 0..h { for x in 0..w { let (px, py) = (x as f32 + 0.5 - cx, y as f32 + 0.5 - cy); let (ux, uy) = (px * co + py * s, -px * s + py * co);
                 let d = if ell { let k = ((ux / mw.max(0.5)).powi(2) + (uy / mh.max(0.5)).powi(2)).sqrt(); (k - 1.0) * mw.min(mh) } else { let (qx, qy) = (ux.abs() - (mw - rr), uy.abs() - (mh - rr)); (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - rr };
                 c[y * w + x] = (0.5 - d).clamp(0.0, 1.0); } } }
-        "path" => { let leg = g(l, "legacy", 0.0, t) > 0.5; let pts = path_at(l, t); c = if leg { raster_path_legacy(&pts, l.closed, w, h) } else { raster_path(&pts, l.closed, w, h) };
-            if !leg && pts.iter().any(|p| p.f > 0.0) { c = variable_feather(&pts, l.closed, &c, w, h, 0.0, h as f32 / 720.0); } }
+        "path" => { let leg = g(l, "legacy", 0.0, t) > 0.5; let pts = path_at(l, t); c = path_coverage(&pts, l.closed, w, h, leg, g(l, "precision", 0.0, t) > 0.5, g(l, "falloff", 0.0, t) > 0.5); }
         "linear" => { let (a, pos, soft) = (g(l, "angle", 0.0, t).to_radians(), g(l, "pos", 0.5, t), g(l, "soft", 0.1, t).max(1e-4)); let (dx, dy) = (a.cos(), a.sin()); let ext = (wf * dx.abs() + hf * dy.abs()).max(1.0);
             for y in 0..h { for x in 0..w { let u = (((x as f32 + 0.5 - wf / 2.0) * dx + (y as f32 + 0.5 - hf / 2.0) * dy) / ext) + 0.5; c[y * w + x] = 1.0 - sstep(pos - soft / 2.0, pos + soft / 2.0, u); } } }
         "radial" => { let (cx, cy, r, soft) = (g(l, "cx", 0.5, t) * wf, g(l, "cy", 0.5, t) * hf, g(l, "r", 0.3, t) * hf, g(l, "soft", 0.2, t).max(1e-4) * hf);
@@ -322,12 +389,37 @@ fn raw(l: &MaskLayer, f: &Frame, t: f64, ctx: &Ctx) -> Vec<f32> {
     c
 }
 
+/// Motion-blur window for a layer at t: (shutter open offset s, shutter length s, samples); None when blur is off or the kind is not a shape.
+fn mb_window(l: &MaskLayer, t: f64, fps: f64, w: usize, h: usize) -> Option<(f64, f64, usize)> {
+    let shut = g(l, "shutter", 0.0, t) as f64; let geometric = matches!(l.kind.as_str(), "path" | "rect" | "ellipse" | "linear" | "radial"); if !(shut > 0.0 && geometric) { return None; }
+    let s_len = shut / 360.0 / fps.max(1.0); let open = if l.props.contains_key("shutter_phase") { g(l, "shutter_phase", 0.0, t) as f64 / 360.0 / fps.max(1.0) } else { -0.5 * s_len };
+    let sp = g(l, "samples", 6.0, t); let n = if sp == 0.0 { auto_samples(l, t + open, t + open + s_len, w, h) } else { (sp as usize).clamp(2, 256) }; Some((open, s_len, n))
+}
+/// Auto sample count from the largest pixel travel S of the shape across the shutter (max of open->mid and mid->close, x2 to catch non-monotonic motion).
+/// Midpoint error on an edge pixel is at most S/(4n^2), so n = 16*sqrt(S) keeps it under ~1e-3; n >= S keeps sample spacing <= 1 px. Static = 1.
+fn auto_samples(l: &MaskLayer, ta: f64, tb: f64, w: usize, h: usize) -> usize {
+    let (wf, hf) = (w as f64, h as f64); let tm = 0.5 * (ta + tb); let deg = 0.5 * wf.max(hf) * std::f64::consts::PI / 180.0;
+    let travel = |a: f64, b: f64| -> f64 { if l.kind == "path" { let (pa, pb) = (path_at(l, a), path_at(l, b)); if pa.len() != pb.len() { return wf.max(hf); }
+            let d = |x0: f64, y0: f64, x1: f64, y1: f64| ((x1 - x0) * wf).hypot((y1 - y0) * hf);
+            pa.iter().zip(pb.iter()).map(|(p, q)| d(p.x, p.y, q.x, q.y).max(d(p.x + p.ix, p.y + p.iy, q.x + q.ix, q.y + q.iy)).max(d(p.x + p.ox, p.y + p.oy, q.x + q.ox, q.y + q.oy))).fold(0.0, f64::max) }
+        else { [("cx", wf), ("cy", hf), ("w", wf), ("h", hf), ("r", hf), ("pos", wf), ("rot", deg), ("angle", deg)].iter().filter_map(|(k, sc)| l.props.get(*k).map(|p| (p.at(b) - p.at(a)).abs() * sc)).fold(0.0, f64::max) } };
+    let tr = 2.0 * travel(ta, tm).max(travel(tm, tb)); if !tr.is_finite() { return 256; } if tr <= 0.0 { return 1; } ((16.0 * tr.sqrt()).ceil().max(tr.ceil()) as usize).clamp(1, 256)
+}
+/// Samples the mask motion blur would take at t (0 = blur off), for tests and tools.
+pub fn motion_blur_samples(l: &MaskLayer, t: f64, fps: f64, w: usize, h: usize) -> usize { mb_window(l, t, fps, w, h).map(|x| x.2).unwrap_or(0) }
+
 pub fn layer_coverage(l: &MaskLayer, f: &Frame, t: f64, ctx: &Ctx) -> Vec<f32> {
     let (w, h) = (f.w, f.h); let s = h as f32 / 720.0; let leg = g(l, "legacy", 0.0, t) > 0.5;
-    // temporal supersampling of animated geometry (mask motion blur): shutter in degrees of a frame, samples default 6
-    let shut = g(l, "shutter", 0.0, t) as f64; let geometric = matches!(l.kind.as_str(), "path" | "rect" | "ellipse" | "linear" | "radial");
-    let mut c = if shut > 0.0 && geometric { let n = (g(l, "samples", 6.0, t) as usize).clamp(2, 32); let mut acc = vec![0f32; w * h];
-        for k in 0..n { let off = (k as f64 / (n - 1) as f64 - 0.5) * shut / 360.0 / ctx.fps.max(1.0); let r = raw(l, f, t + off, ctx); for i in 0..w * h { acc[i] += r[i]; } } for v in acc.iter_mut() { *v /= n as f32; } acc } else { raw(l, f, t, ctx) };
+    // mask motion blur (AE): midpoint box-filter integration of the animated shape over the shutter. shutter = angle in degrees of a frame,
+    // shutter_phase = open offset from the frame time in degrees (absent = centred), samples 0 = auto (from the shape's pixel travel) else 2..256
+    let mut c = match mb_window(l, t, ctx.fps, w, h) { None => raw(l, f, t, ctx), Some((open, s_len, n)) => {
+        // shutter_curve (Nuke / RenderMan / Arnold efficiency): box keeps the plain average below; other curves weight each sample (weights sum to 1)
+        let curve = crate::shutter::curve_from_props(l.props.get("shutter_curve").map(|p| p.base), l.props.get("shutter_curve_pts")); let box_c = curve == crate::shutter::Curve::Box;
+        let wts = if box_c { vec![] } else { crate::shutter::weighted_midpoints(open, s_len, n, &curve) };
+        let mut first: Option<Vec<f32>> = None; let mut acc = vec![0f64; w * h]; let mut all_same = true;
+        for k in 0..n { let r = raw(l, f, t + open + (k as f64 + 0.5) / n as f64 * s_len, ctx); if box_c { for i in 0..w * h { acc[i] += r[i] as f64; } } else { let wk = wts[k].1; for i in 0..w * h { acc[i] += wk * r[i] as f64; } }
+            match &first { None => first = Some(r), Some(f0) => { if all_same && f0[..] != r[..] { all_same = false; } } } }
+        let f0 = first.unwrap_or_else(|| raw(l, f, t, ctx)); if all_same { f0 } else if box_c { acc.iter().map(|v| (v / n as f64) as f32).collect() } else { acc.iter().map(|v| *v as f32).collect() } } };
     let rf = g(l, "refine", 0.0, t) * s; if rf > 0.0 { guided(&mut c, f, rf.round() as usize, g(l, "refine_eps", 1e-3, t).max(1e-6)); }
     let ex = g(l, "expand", 0.0, t) * s; if ex != 0.0 { if leg { morph_legacy(&mut c, w, h, ex.round() as i32); } else { morph(&mut c, w, h, ex); } }
     let fe = g(l, "feather", 0.0, t) * s; if fe > 0.0 && !(l.kind == "path" && l.points.iter().chain(l.path_keys.iter().flat_map(|k| k.points.iter())).any(|p| p.f > 0.0) && !leg) { blur_cov(&mut c, w, h, fe / 2.0); }

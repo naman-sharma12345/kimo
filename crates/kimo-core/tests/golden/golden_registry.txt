@@ -287,7 +287,7 @@ set_effect_encoding d7d3a7c80cc154d9
 set_effect_mask 500c58e69ce9bb0c
 set_effect_param d0f88adb011e356c
 set_expression 441a6fd40dcdcaa3
-set_flow_blur 1c05d3eb631d2e8d
+set_flow_blur a989b2a1ad21edbc
 set_grade_graph 6748da7824c2fc7e
 set_grade_node 01ef22101da7231f
 set_grade_output 6560facb5fcf1afa
@@ -301,12 +301,13 @@ set_light 5b677c590887db11
 set_limits 0fb5b9a5542efe5a
 set_mask d346bd54f9e9523c
 set_mask_keyframe e5244db8b31ec16b
+set_mask_motion_blur 6a9dfeea31f99f52
 set_mask_path_key f2ede4254a2268ae
 set_mask_prop_key 4660d9a74a80b4f6
 set_material 1cf1c1110bb19863
 set_mesh_pin b5113e088ab75720
 set_meta caac3624df7fb4cf
-set_motion_blur 6995960cf22dfe31
+set_motion_blur 43c53975314e62c0
 set_motion_path 144fc4c2b6370cdb
 set_node_mask 19c5bb5789c89632
 set_node_param 20b86ed963a1e02c
@@ -351,6 +352,7 @@ track_feature_residuals cf04ce2022372886
 track_features 5c13c25653d6f2ca
 track_jitter_metrics 26bcd1975fd68340
 track_long_gap 13078f940f92c4b1
+track_mask ac9dfef40c7e5746
 track_matte fbb4fcfddac13f99
 track_mesh fa4a7d5f69a6aeec
 track_planar 174a3caee49ed7d5

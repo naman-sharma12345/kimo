@@ -65,7 +65,7 @@ pub fn propagate(p: &Project, clip_id: &str, keys: &[PathKey], snap: f64, qualit
             let dis = (0..n0).map(|j| (fwd[i][j].0 - bwd[i][j].0).hypot(fwd[i][j].1 - bwd[i][j].1)).sum::<f64>() / n0 as f64; let wf = (-(dis / (tau * size)).powi(2)).exp();
             let mut pts: Vec<(f64, f64)> = (0..n0).map(|j| (wf * fb[j].0 + (1.0 - wf) * lin[j].0, wf * fb[j].1 + (1.0 - wf) * lin[j].1)).collect();
             snap_sum += snap_points(&mut pts, &grays[i].0, gw, gh, sc, snap); snap_n += 1;
-            let t = (fa + i) as f64 / p.fps; let points: Vec<PathPt> = (0..n0).map(|j| { let (a, b) = (&ka.points[j], &kb.points[j]); let l = |x: f64, y: f64| x + (y - x) * u; PathPt { x: pts[j].0 / w as f64, y: pts[j].1 / h as f64, ix: l(a.ix, b.ix), iy: l(a.iy, b.iy), ox: l(a.ox, b.ox), oy: l(a.oy, b.oy), f: l(a.f, b.f) } }).collect();
+            let t = (fa + i) as f64 / p.fps; let points: Vec<PathPt> = (0..n0).map(|j| { let (a, b) = (&ka.points[j], &kb.points[j]); let l = |x: f64, y: f64| x + (y - x) * u; PathPt { x: pts[j].0 / w as f64, y: pts[j].1 / h as f64, ix: l(a.ix, b.ix), iy: l(a.iy, b.iy), ox: l(a.ox, b.ox), oy: l(a.oy, b.oy), f: l(a.f, b.f), fi: l(a.fi, b.fi), fo: l(a.fo, b.fo) } }).collect();
             out.retain(|k| (k.t - t).abs() > 1e-9); out.push(PathKey { t, points, hold: false }); stats.frames += 1; }
         stats.segments += 1; }
     out.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap()); stats.mean_snap_px = if snap_n > 0 { snap_sum / snap_n as f64 } else { 0.0 }; Ok((out, stats))

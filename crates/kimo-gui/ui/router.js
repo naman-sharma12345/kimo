@@ -29,7 +29,7 @@ export const FAMILIES = [
   ['text', /^(caption|subtitle|add_caption|add_subtitle|edit_caption|transcript_edit|transcri|add_title|title|text|set_text|add_text|set_caption|validate_captions)/],
   ['3d', /^(add_mesh|mesh|model|extrude|bevel|light|camera|particle|emit|simulate|scene|render_3d|add_light|set_light|solve_camera|track|set_camera|add_scene3d|instantiate_gltf|generate_mesh_primitive|contour_sdf_graph|set_mesh_pin|derive_vertex_tangents|fit_track_homography|ecc_refine_track|decompose_track_homography|corner_disagreement|lk_residual_audit|validate_planar_track|undistort_clip|stabilize|apply_camera_solve|pin_layer|set_corner_pin|add_emitter|add_particles|add_shard_burst|set_particles3d$|set_material$|remove_material$|preview_material$|set_relight$|remove_light$)/],
   ['graphics', /^(add_shape|add_path_shape|set_path|add_path_key|clear_path_keys|add_shape_modifier|remove_shape_modifier|add_modifier|remove_modifier|set_layer_style|remove_layer_style|add_box_expand|add_detection_box|add_hud_frame|add_counter|add_prompt_box|add_glitch_confetti)$/],
-  ['roto', /^(add_mask|set_mask|set_mask_keyframe|set_mask_path_key|set_mask_prop_key|update_mask|reorder_mask|remove_mask|remove_mask_layer|roto_propagate|refine_matte|set_track_matte|remove_track_matte)$/],
+  ['roto', /^(add_mask|set_mask|set_mask_keyframe|set_mask_path_key|set_mask_prop_key|set_mask_motion_blur|update_mask|reorder_mask|remove_mask|remove_mask_layer|roto_propagate|track_mask|refine_matte|set_track_matte|remove_track_matte)$/],
   ['export', /^(export|render|queue_render|encode|deliver|join_export$|preview_range$|collect_project$|contact_sheet$|cancel_job$|resume_job$)/],
   ['motion', /^(apply_motion_preset|bake_property|copy_curve|move_key|remove_key|remove_motion_path|set_animator_keyframe|simplify_curve|smooth_curve|motion_diff|motion_extract)$/],   // graph editor: curves, keys, motion (cov_b.js)
   ['measure', /^(solve_constraints|compute_text_bounds|raycast_mesh_raw|compile_scene3d_descriptor|preview_subject_match)$/],   // read-only measures drawn where they apply (cov_b.js)
@@ -558,7 +558,8 @@ function editOps2(state, MODES, tl, ev, A) {
   }
   if (n === 'set_blend') { if (!A.mode) return false; badge(c, String(A.mode), /^(normal|add|multiply|screen|overlay)$/); return true; }
   if (n === 'set_echo') { badge(c, N(A.count) != null ? `echo ×${Math.round(N(A.count))}` : 'echo', /^echo/); return true; }
-  if (n === 'set_flow_blur') { badge(c, 'flow blur', /^flow blur/); return true; }
+  if (n === 'set_flow_blur') { const amt = N(A.amount), ph = N(A.shutter_phase), cv = A.shutter_curve ?? (Array.isArray(A.curve_points) ? 'custom' : null); const rd = [amt != null ? fmtVal(amt) : null, A.mode === 'vector' ? 'vector' : null, A.mode === 'vector' && ph != null ? `phase ${ph}°` : null, A.mode === 'vector' && typeof cv === 'string' && cv !== 'box' ? `curve ${cv}${cv === 'custom' && Array.isArray(A.curve_points) ? ` (${A.curve_points.length} pts)` : ''}` : null].filter(Boolean);
+    badge(c, rd.length ? `flow blur ${rd.join(' · ')}` : 'flow blur', /^flow blur/); return true; }
   if (n === 'remove_audio_effect') { const fx = A.effect_id ?? A.effect ?? A.name; if (fx == null || !(c.fx || []).length) return false; c.fx = c.fx.filter(x => x !== fx); c._flash = now(); return true; }
   return false;
 }
@@ -605,9 +606,12 @@ function maskOps(state, MODES, ev) {
     rowsSet('Refine matte', [['Feather', numOf(A.feather) != null ? `${fmtVal(numOf(A.feather))} px` : null], ['Choke', numOf(A.expand) != null ? fmtVal(-numOf(A.expand)) : null]]);   // only the rows m12 draws (choke = negative expand)
     const qs = ['hue_soft', 'sat_soft', 'lum_soft'].map(k => A.params && typeof A.params === 'object' ? numOf(A.params[k]) : null);
     if (qs.some(v => v != null)) rowsSet('Refine matte', [['Qualifier soft h/s/l', qs.map((v, i) => v == null ? '-' : i ? fmtVal(v) : `${fmtVal(v)}°`).join(' / ')]]);
+    { const io = Array.isArray(A.points) ? A.points.filter(q => q && typeof q === 'object' && !Array.isArray(q) && (numOf(q.fi) > 0 || numOf(q.fo) > 0)) : [];   // roto edge: exact-curve precision, falloff, inner/outer feather points
+      rowsSet('Edge', [['Precision', numOf(pr.precision) != null ? (numOf(pr.precision) > 0.5 ? 'exact curves' : 'standard') : null], ['Falloff', numOf(pr.falloff) != null ? (numOf(pr.falloff) > 0.5 ? 'linear' : 'smooth') : null], ['Inner/outer feather', io.length ? `${io.length} pts` : null]]); }
   }
   if (tn === 'set_mask_path_key') { lane(`${mid} path`, fr(A.time)); if (P2.length >= 2) { const o = ov(); o.push({ path: P2, closed: true, _kind: 'mask:' + mid }); } }
   if (tn === 'set_mask_prop_key' || tn === 'set_mask_keyframe') { const pr = String(A.property ?? 'value'); lane(`${mid} ${pr}`, fr(A.time)); if (numOf(A.value) != null && /^(feather|expand)$/.test(pr)) rowsSet('Refine matte', [[pr === 'feather' ? 'Feather' : 'Choke', pr === 'feather' ? `${fmtVal(numOf(A.value))} px` : fmtVal(-numOf(A.value))]]); }
+  if (tn === 'track_mask' && KK) { const L = (KK.lanes || []).find(l => l.label === `${mid} path`), ks = Array.isArray(R.frames) ? R.frames.map(Number) : null; if (L && ks) { const lo = fr(Math.min(...ks) / (state.fps || 25)), hi = fr(Math.max(...ks) / (state.fps || 25)); L.bar = [[lo, hi, '#3a3935']]; hit = true; } if (K) K.sub = `${mid} - tracked (${A.motion || 'similarity'})`; }
   if (tn === 'roto_propagate' && KK) { const L = (KK.lanes || []).find(l => l.label === `${mid} path`); if (L && L.keys.length >= 2) { const lo = L.keys[0], hi = L.keys[L.keys.length - 1]; L.bar = [[lo, hi, '#3a3935']]; hit = true; }
   }
   if (tn === 'refine_matte') { rowsSet('Refine matte', [['Bg model', A.auto_bg != null ? (A.auto_bg ? 'auto' : 'manual') : null]]); if (K && !K.sub && A.clip_id != null) K.sub = 'refine matte';
@@ -1169,7 +1173,7 @@ function xfOps(state, MODES, ev) {
   // the family's own marks
   if (/add_null/.test(tn)) { g.null = true; g.read.unshift('null'); }
   if (/set_parent/.test(tn)) { const pid = A.parent_id ?? A.parent; g.parent = pid ? store[pid] || { x: 0, y: 0, scale: 1, rotation: 0 } : null; g.read.unshift(pid ? `parent → ${pid}` : 'unparented'); }
-  if (/motion_blur/.test(tn)) { const sa = numOf(A.shutter_angle ?? A.shutter ?? A.angle); if (sa != null) { g.blur = sa; g.read.unshift(`shutter ${sa}°`); } }
+  if (/motion_blur/.test(tn)) { const sa = numOf(A.shutter_angle ?? A.shutter ?? A.angle); if (sa != null) { g.blur = sa; g.read.unshift(`shutter ${sa}°`); } const ns = numOf(A.samples); if (ns != null) g.read.push(`samples ${ns === 0 ? 'auto' : ns}`); const ph = numOf(A.shutter_phase); if (ph != null) g.read.push(`phase ${ph}°`); const cv = A.shutter_curve ?? (Array.isArray(A.curve_points) ? 'custom' : null); if (typeof cv === 'string' && cv !== 'box') g.read.push(`curve ${cv}${cv === 'custom' && Array.isArray(A.curve_points) ? ` (${A.curve_points.length} pts)` : ''}`); }
   if (/expression/.test(tn)) { const op = A.op ?? A.expression ?? A.kind; const ps = ['freq', 'amp', 'mode', 'phase'].filter(x => A[x] != null).map(x => `${x} ${fmtVal(A[x], x)}`).join(', '); if (op) g.read.unshift(`${param ? param + ' = ' : ''}${op}(${ps})`); g.expr = true; }
   if (/bezier/.test(tn)) { const b = A.bezier ?? A.curve ?? A.handles; if (Array.isArray(b) && b.length === 4 && b.every(v => numOf(v) != null)) { g.bez = b.map(numOf); g.read.unshift(`ease [${b.map(v => fmtVal(v)).join(', ')}]`); } }
   if (/motion_path/.test(tn) && Array.isArray(A.points)) { g.path = A.points.filter(p => Array.isArray(p) && p.length >= 2).map(p => [numOf(p[0]), numOf(p[1])]).filter(p => p[0] != null && p[1] != null); g.read.unshift(`motion path · ${g.path.length} points`); }
