@@ -479,7 +479,7 @@ const PIN_KEYS: [&str; 8] = ["pin0x", "pin0y", "pin1x", "pin1y", "pin2x", "pin2y
 pub fn stabilize_clip(p: &Project, clip_id: &str, o: &Opts) -> Result<(Vec<KeyRow>, Value), String> {
     let c = p.find_clip(clip_id).ok_or("no such clip")?.clone();
     if !matches!(c.source, Source::Media { .. }) { return Err(format!("stabilize needs a media clip: '{clip_id}' is not one")); }
-    let (w, h) = (p.width as usize, p.height as usize); let n = ((c.duration * p.fps).ceil() as usize).max(1);
+    let (w, h) = (p.width as usize, p.height as usize); let n = crate::tracking::clip_frame_count(c.duration, p.fps);
     if n < 2 { return Err(format!("clip '{clip_id}' is shorter than 2 frames: nothing to stabilize")); }
     let mut o = o.clone(); o.fps = p.fps; o.synth_frames = synth_frames_for(o.synthesis_range, p.fps); let t0 = std::time::Instant::now();
     let mut cache = crate::render::Cache::new(); let mut frames = |i: usize| crate::tracking::clip_gray_pub(p, &mut cache, &c, i);

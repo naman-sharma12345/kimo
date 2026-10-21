@@ -23,10 +23,14 @@ fn match_block(prev: &[f32], cur: &[f32], w: usize, h: usize, cx: f32, cy: f32, 
 
 fn clip_gray(p: &Project, cache: &mut Cache, c: &Clip, i: usize) -> Result<Vec<f32>, String> {
     let t = c.start + i as f64 / p.fps + 1e-4; crate::render::prepare_range(p, cache, t, t)?;
-    let fr = cache.frames_of(&c.id).ok_or("clip is not a media clip")?; let gi = if c.retimed() { c.source_index(i as f64 / p.fps, p.fps) } else { i }; let b = fr.get(gi).ok_or("no frame")?; Ok(gray(b, p.width as usize, p.height as usize))
+    let fr = cache.frames_of(&c.id).ok_or_else(|| if matches!(c.source, Source::Media { .. }) { format!("clip {} has no decoded frame at {t:.4} s (frame {i} of a {:.4} s clip from {:.4} s); is it hidden, or past its end?", c.id, c.duration, c.start) } else { format!("clip {} is not a media clip", c.id) })?; let gi = if c.retimed() { c.source_index(i as f64 / p.fps, p.fps) } else { i }; let b = fr.get(gi).ok_or("no frame")?; Ok(gray(b, p.width as usize, p.height as usize))
 }
 pub fn clip_gray_pub(p: &Project, cache: &mut Cache, c: &Clip, i: usize) -> Result<Vec<f32>, String> { clip_gray(p, cache, c, i) }
-fn nframes(p: &Project, c: &Clip) -> usize { ((c.duration * p.fps).ceil() as usize).max(1) }
+/// Frames of a clip that tracking reads: frame i is sampled at clip time i/fps + 1e-4 (`clip_gray`), so it exists while that
+/// sample is inside the clip. A duration a hair over a whole frame count (1.266667 s = 38.00001 frames, 1.3334 s = 40.002
+/// at 30 fps) is that count, not one more: the extra frame's sample would land past the clip's end with nothing to decode.
+pub fn clip_frame_count(duration: f64, fps: f64) -> usize { (((duration - 1e-4) * fps).ceil() as usize).max(1) }
+fn nframes(p: &Project, c: &Clip) -> usize { clip_frame_count(c.duration, p.fps) }
 
 /// Similarity transform (scale, rotation, translation) mapping points a -> b, least squares (Umeyama) with iterative outlier rejection.
 /// Returns (s, theta_rad, tx, ty) in pixel coords with q = s*R(theta)*p + t.
