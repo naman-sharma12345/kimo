@@ -269,6 +269,8 @@ sample_sdf_raw b0e579f1cde1279c
 sample_texture_material 4a03308329ef702a
 save_project d51a7abb5be457b3
 session_stats 08b78ec5daffb184
+set_3d_compositor c3fab2e718ae3113
+set_3d_layer_shadows 872bd4ddb9990918
 set_animator_keyframe 966192e400dafaf5
 set_audio a4b4452073f105be
 set_audio_effect_key 02e5c3c88e7432d6

@@ -41,6 +41,25 @@ impl Projector {
         let p = [self.c[0] + t * d[0] - self.p0[0], self.c[1] + t * d[1] - self.p0[1], self.c[2] + t * d[2] - self.p0[2]]; let l = app(&tr(&self.r), p);
         Some((self.w as f64 / 2.0 + l[0] / self.s, self.h as f64 / 2.0 + l[1] / self.s, t, if den < 0.0 { 1.0 } else { -1.0 }))
     }
+    /// Focal length in pixels: f = (h / 2) / tan(fov / 2).
+    pub fn focal(&self) -> f64 { self.f }
+    /// Camera-space depth (px along the camera's view axis) of the plane point seen at screen pixel (x, y). The eye ray
+    /// d = Rc (x - w/2, y - h/2, f) has view-axis component f, so the hit c + t d lies at depth z = t f. A layer at pos_z = 0
+    /// under the default camera has z = f. None if the ray misses the plane or points backward (as dest_to_src).
+    pub fn depth_at(&self, x: f64, y: f64) -> Option<f64> { self.dest_to_src(x, y).map(|(_, _, t, _)| t * self.f) }
+    /// World point c + t d of the plane seen at screen pixel (x, y); None as dest_to_src.
+    pub fn world_at(&self, x: f64, y: f64) -> Option<[f64; 3]> {
+        let (_, _, t, _) = self.dest_to_src(x, y)?; let d = app(&self.rc, [x - self.w as f64 / 2.0, y - self.h as f64 / 2.0, self.f]);
+        Some([self.c[0] + t * d[0], self.c[1] + t * d[1], self.c[2] + t * d[2]])
+    }
+    /// World ray o + u dir against this layer's (infinite) plane: (u, source x, source y) of the hit, u = ((p0 - o).n) / (dir.n).
+    /// None when the ray is parallel to the plane. The caller bounds u and the source coordinates.
+    pub fn ray_hit(&self, o: [f64; 3], dir: [f64; 3]) -> Option<(f64, f64, f64)> {
+        let den = dir[0] * self.n[0] + dir[1] * self.n[1] + dir[2] * self.n[2]; if den.abs() < 1e-12 { return None; }
+        let u = ((self.p0[0] - o[0]) * self.n[0] + (self.p0[1] - o[1]) * self.n[1] + (self.p0[2] - o[2]) * self.n[2]) / den;
+        let p = [o[0] + u * dir[0] - self.p0[0], o[1] + u * dir[1] - self.p0[1], o[2] + u * dir[2] - self.p0[2]]; let l = app(&tr(&self.r), p);
+        Some((u, self.w as f64 / 2.0 + l[0] / self.s, self.h as f64 / 2.0 + l[1] / self.s))
+    }
     /// World-space unit view direction (camera to pixel) and the unit plane normal facing the camera, at a screen pixel.
     pub fn view_and_normal(&self, x: f64, y: f64) -> ([f64; 3], [f64; 3]) {
         let d0 = app(&self.rc, [x - self.w as f64 / 2.0, y - self.h as f64 / 2.0, self.f]); let dl = (d0[0] * d0[0] + d0[1] * d0[1] + d0[2] * d0[2]).sqrt(); let d = [d0[0] / dl, d0[1] / dl, d0[2] / dl];

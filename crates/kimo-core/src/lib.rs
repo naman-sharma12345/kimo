@@ -32,6 +32,7 @@ pub mod scene3d;
 pub mod physics;
 pub mod presets;
 pub mod three_d;
+pub mod comp3d;
 pub mod glass;
 pub mod model;
 pub mod commands;

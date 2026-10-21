@@ -272,6 +272,8 @@
 "save_project",
 "search_tools",
 "session_stats",
+"set_3d_compositor",
+"set_3d_layer_shadows",
 "set_animator_keyframe",
 "set_audio",
 "set_audio_effect_key",
