@@ -7,6 +7,7 @@ pub mod transcript;
 pub mod transcript_parse;
 pub mod caption_validate;
 pub mod transcript_captions;
+pub mod speech_words;
 pub mod transcript_coverage;
 pub mod errors;
 pub mod codeclip;

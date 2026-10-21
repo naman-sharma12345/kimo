@@ -100,7 +100,7 @@ fn unregistered_path_fields_fail() {
         ("model.rs", "path", "REF Asset.path and OccSpec.path"), ("model.rs", "font", "REF Source::Text.font"),
         ("shards.rs", "occlusion", "REF Plane.occlusion"), ("shards.rs", "texture", "REF Plane.texture"),
         ("color/view_video.rs", "config_path", "REF Project.ocio_view_delivery.config_path"),
-        ("deps.rs", "path", "OUTPUT: ExtRef.path / Resolved.path"), ("deps.rs", "rel_path", "OUTPUT: DepRecord.rel_path, informational"), ("text.rs", "font_file", "OUTPUT: TextMetrics.font_file, the font file a measurement resolved to, informational"), ("model.rs", "src", "NOT A FILE: OccSpec.src is a clip id"), ("codeclip.rs", "dir", "REF Source::Code dir (code clip project folder, a directory)"), ("planar.rs", "src", "NOT A FILE: Anchor.src is a clip id (runtime, not serialized in the project)"),
+        ("deps.rs", "path", "OUTPUT: ExtRef.path / Resolved.path"), ("ext/auto_captions.rs", "path", "OUTPUT: Src.path, a clip's media path already resolved through deps, held for one call"), ("deps.rs", "rel_path", "OUTPUT: DepRecord.rel_path, informational"), ("text.rs", "font_file", "OUTPUT: TextMetrics.font_file, the font file a measurement resolved to, informational"), ("model.rs", "src", "NOT A FILE: OccSpec.src is a clip id"), ("codeclip.rs", "dir", "REF Source::Code dir (code clip project folder, a directory)"), ("planar.rs", "src", "NOT A FILE: Anchor.src is a clip id (runtime, not serialized in the project)"),
         ("color/bake.rs", "path", "NOT A PROJECT FIELD: bake step input, per call"), ("color/bake.rs", "config_path", "NOT A PROJECT FIELD: bake step input, per call"),
         ("color/mux.rs", "dir", "NOT A PROJECT FIELD: temp transaction dir"), ("audio.rs", "path", "NOT A PROJECT FIELD: temp wav"), ("commands.rs", "path", "OUTPUT: Media.path, an image a tool call produced (cleared every dispatch), not stored in the project"),
     ];
@@ -162,6 +162,7 @@ fn open_sites_are_classified() {
         ("commands/tools_4.rs", 3, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),
         ("deps.rs", 3, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),
         ("editorial.rs", 1, "caller path (tool argument / output / temp file / test), not stored in the project"),
+        ("ext/auto_captions.rs", 3, "2 PROJECT-DERIVED: a clip's media for its audio and sample frames, resolved through deps (Project::resolve); 1 temp: the recognizer's JSON output"),
         ("ext/cdl_files.rs", 1, "caller path (tool argument / output / temp file / test), not stored in the project"),
         ("ext/delivery.rs", 5, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),
         ("ext/editorial_tools.rs", 3, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),

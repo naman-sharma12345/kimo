@@ -48,6 +48,7 @@ audio_probe 6d7f39ef67b65cb5
 audio_speech_intervals 8257897c223ee122
 audio_transients fdd42015ab3821b9
 audit_color_output 58cf03598cf93fb6
+auto_captions 5a6dcf5950e9cf06
 auto_duck 782881168d8430d5
 bake_property 389f09faed23fecf
 batch ef0c6c2068bb9798
@@ -89,6 +90,7 @@ distribute_clips de3b81a25b80ced1
 duplicate_clip e56f4cc4ca9b6b57
 ecc_refine_track b7e5e34d6eeac2af
 edit_caption 9f54f456c1123d9f
+edit_caption_words 2dff6530ee6bd3a8
 effect_describe 4c04333355609e5d
 effect_uv_sample c4075e4402f9c60d
 evaluate_grade_graph_samples e9370ef17ee49951
@@ -100,6 +102,7 @@ export_alpha 188c7d7584e340b3
 export_asc_cdl bba60640e79ca448
 export_audio 24abf7a62d81ecac
 export_camera_solve f0637248f2aca359
+export_captions 7467456686f5ca4f
 export_color_pipeline_lut cc32ea2c0dd1b8a6
 export_gif e3829ad88866844c
 export_grade_lut c25c05b9400b97b1
