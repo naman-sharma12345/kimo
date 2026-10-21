@@ -50,6 +50,7 @@
 "audio_transients",
 "audit_color_output",
 "auto_duck",
+"auto_reframe",
 "bake_property",
 "batch",
 "bind_beats",

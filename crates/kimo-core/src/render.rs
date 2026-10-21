@@ -167,6 +167,7 @@ fn decode(p: &Project, c: &Clip, path: &str, a: usize, n: usize) -> Result<Frame
     check_decodable(path)?;
     if path.ends_with(".kimopx") {
       let src=crate::pixels::read(path)?;
+      let src=if crate::reframe::active(c){let(rx,ry)=crate::reframe::pos(c,0,p.fps);crate::reframe::crop_frame(&src,w as usize,h as usize,rx,ry)}else{src};
       let d=if src.w==w as usize && src.h==h as usize {src.d} else {crate::color::interchange::fit(&src,w as usize,h as usize,c.props.get("fit").map(|q|q.at(0.)).unwrap_or(0.))?};
       return Ok(Frames{still:true,working_linear:true,quantized:Default::default(),linear_buf:Some(d),buf:vec![],fs:w as usize*h as usize*4,first:0});
     }
@@ -174,12 +175,13 @@ fn decode(p: &Project, c: &Clip, path: &str, a: usize, n: usize) -> Result<Frame
       let mut src=crate::color::interchange::tiff_frame(path,decode_cache_limit())?;
       let fit=c.props.get("fit").map(|q|q.at(0.)).unwrap_or(0.);
       crate::color::pipeline::input(p,c,&mut src)?;
+      let src=if crate::reframe::active(c){let(rx,ry)=crate::reframe::pos(c,0,p.fps);crate::reframe::crop_frame(&src,w as usize,h as usize,rx,ry)}else{src};
       let d=crate::color::interchange::fit(&src,w as usize,h as usize,fit)?;
       return Ok(Frames{still:true,working_linear:true,quantized:Default::default(),linear_buf:Some(d),buf:vec![],fs:w as usize*h as usize*4,first:0})
     } let is_img0 = is_still_path(path); let (a, n) = if is_img0 { (0, 1) } else { (a, n) };
     let (in_pt, speed, span) = if c.retimed() { (c.in_point, 1.0, (a+n) as f64 / p.fps) } else { (c.in_point, c.speed, (a+n) as f64 / p.fps * c.speed) };
     let fit = c.props.get("fit").map(|q| q.at(0.0)).unwrap_or(0.0);
-    let fitf = if fit >= 1.5 { format!("scale={w}:{h}") } else if fit >= 0.5 { format!("scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}") } else { format!("scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0") };
+    let fitf = if crate::reframe::active(c) { crate::reframe::ffmpeg_fit(c, w, h, p.fps, a, n) } else if fit >= 1.5 { format!("scale={w}:{h}") } else if fit >= 0.5 { format!("scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}") } else { format!("scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0") };
     if p.color_pipeline.enabled&&path.to_lowercase().ends_with(".exr"){crate::color::interchange::validate_exr_source(path)?;}
     let float_source=p.color_pipeline.enabled&&[".exr",".pfm"].iter().any(|ext|path.to_lowercase().ends_with(ext));
     let native_fit=float_source||(p.color_pipeline.enabled&&p.color_pipeline.linear_resample);
@@ -206,9 +208,12 @@ fn decode(p: &Project, c: &Clip, path: &str, a: usize, n: usize) -> Result<Frame
         crate::guard::reserve(peak);
         let mut stream=crate::color::process::DecodeStream::new(&mut command,bytes_per_frame,n.max(1),crate::color::process::decode_deadline(n.max(1)))?;
         let mut values:Vec<f32>=Vec::new();values.try_reserve_exact(fs.checked_mul(n.max(1)).ok_or("decode buffer size overflow")?).map_err(|e|format!("cannot allocate the decode buffer for {n} frames ({} MB): {e}",fs.saturating_mul(n.max(1)).saturating_mul(4)>>20))?;
+        let mut fi=0usize;
         while let Some(frame)=stream.next()?{
          let d=if float_source{crate::color::interchange::unpack(&frame,dw,dh)}else{converter.as_ref().ok_or("missing integer input converter")?.decode(&frame)};
-         let fitted=d.and_then(|d|{let mut source=Frame{w:dw,h:dh,d};if float_source{crate::color::pipeline::input(p,c,&mut source)?;}crate::color::interchange::fit(&source,w as usize,h as usize,fit)});values.extend(fitted?);
+         let fitted=d.and_then(|d|{let mut source=Frame{w:dw,h:dh,d};if float_source{crate::color::pipeline::input(p,c,&mut source)?;}
+          if crate::reframe::active(c){let(rx,ry)=crate::reframe::pos(c,a+fi,p.fps);source=crate::reframe::crop_frame(&source,w as usize,h as usize,rx,ry);}
+          crate::color::interchange::fit(&source,w as usize,h as usize,fit)});values.extend(fitted?);fi+=1;
         }
         stream.finish()?;Some(values)
     }else{
@@ -260,6 +265,7 @@ fn prepare_window(p: &Project, cache: &mut Cache, t0: f64, t1: f64, window:usize
         let a = p.assets.get(asset).ok_or(format!("asset {asset} missing"))?;
         let apath=p.resolve(&a.path);let stat=std::fs::metadata(&apath).map_err(|e|format!("media stat: {e}"))?;
         let sig = format!("{asset}|{}|{}|{}|{:?}|{:?}|{:?}|{:?}|{:?}|{}|{}|{:?}", c.in_point, c.duration, c.speed, c.speed_curve.as_ref().map(|p| serde_json::to_string(p).unwrap_or_default()), p.color_pipeline,c.props.get("input_gamut"),c.props.get("input_transfer"),c.props.get("fit"),a.path,stat.len(),stat.modified().ok());
+        let sig = if crate::reframe::active(c) { format!("{sig}|reframe|{}", crate::reframe::sig(c)) } else { sig };
         let sig = match &c.time_remap { Some(r) => format!("{sig}|remap|{}|{}", serde_json::to_string(&r.curve).unwrap_or_default(), r.offset), None => sig };
         if let Some((s, fr)) = cache.frames.get(&c.id) { if *s == sig && fr.covers(ia, ib) { continue; } }
         let shared=cache.frames.values().find(|(s,fr)|*s==sig&&fr.covers(ia,ib)).map(|(_,fr)|fr.clone());
