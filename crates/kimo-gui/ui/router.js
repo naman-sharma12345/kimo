@@ -27,6 +27,7 @@ export const FAMILIES = [
   ['edit', /^paste_attributes$/],   /* paste attributes: each target clip flashes, the Inspector shows what was pasted from the source */
   ['effects', /^add_morph_cut$/],   /* morph cut: the clip after the jump cut flashes, the Inspector shows its morph_cut transition and duration */
   ['effects', /^add_lens_blur$/],   /* lens blur: the clip flashes, the Inspector shows its lens_blur effect (radius, blades, focus) */
+  ['effects', /^add_push_wipe$/],   /* push / gradient wipe: the incoming clip flashes, the Inspector shows its transition (kind, direction or gradient, duration) */
   ['effects', /^(add_effect|apply_effect|set_effect|add_transition|remove_effect|add_speed|set_posterize|add_adjustment|add_managed_linear_effect$)/],
   ['transform', /^(set_property|set_clip_property|set_props?$|transform|set_transform|keyframe|set_keyframe|add_keyframe|scale|rotate|position|set_motion|add_null|set_parent|set_expression)/],
   ['color', /^(grade|color|colour|lut|apply_lut|set_lut|ocio|render_scope|analyze_exposure|wheel|curve|node_|hdr|render_ocio|render_exposure|render_gamut|set_grade_node|set_grade_graph|pick_white_balance|pick_key_color|match_grade|match_color|set_white_balance|set_grade_output|remove_grade_node|generate_lut_node|add_acescct_primaries|create_shared_grade_graph|bind_shared_grade_graphs|remove_shared_grade_graph|set_node_param|set_node_mask|apply_asc_cdl|set_color_curve|set_color_wheels|set_grade_scopes|add_node$|connect_nodes|disconnect_nodes)/],

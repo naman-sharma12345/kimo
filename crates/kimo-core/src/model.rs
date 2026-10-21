@@ -138,7 +138,14 @@ impl Default for Audio { fn default() -> Self { Audio { lead: 0.0, tail: 0.0, ef
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Transition { pub kind: String, pub duration: f64,
     #[serde(default = "d_ease")] pub ease: String, #[serde(default = "d_soft")] pub softness: f64, #[serde(default)] pub angle: f64,
-    #[serde(default)] pub color: [f64; 3], #[serde(default = "d_one")] pub intensity: f64, #[serde(default = "d_count")] pub count: f64, #[serde(default)] pub seed: u32 }
+    #[serde(default)] pub color: [f64; 3], #[serde(default = "d_one")] pub intensity: f64, #[serde(default = "d_count")] pub count: f64, #[serde(default)] pub seed: u32,
+    /// add_push_wipe's extra settings (push direction; gradient wipe shape, centre, luma clip, invert). None for add_transition kinds.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub spec: Option<TransitionSpec> }
+/// Settings of the push and gradient_wipe transitions (add_push_wipe, pushwipe.rs).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct TransitionSpec { #[serde(default, skip_serializing_if = "String::is_empty")] pub direction: String, #[serde(default, skip_serializing_if = "String::is_empty")] pub gradient: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub luma_clip: Option<String>, #[serde(default = "d_center")] pub center: [f64; 2], #[serde(default)] pub invert: bool }
+fn d_center() -> [f64; 2] { [0.5, 0.5] }
 fn d_ease() -> String { "in_out".into() } fn d_soft() -> f64 { 0.08 } fn d_one() -> f64 { 1.0 } fn d_count() -> f64 { 10.0 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -263,6 +270,7 @@ pub fn clip_refs(c: &Clip) -> Vec<(String, String)> {
         if let Some(t) = &m.matte { v.push(("mask.matte.source".to_string(), t.source.clone())); }
         for l in &m.layers { if let Some(r) = l.strings.get("ref_clip") { v.push((format!("mask.layers.{}.ref_clip", l.id), r.clone())); } }
     }
+    if let Some(l) = c.transition_in.as_ref().and_then(|t| t.spec.as_ref()).and_then(|s| s.luma_clip.as_ref()) { v.push(("transition_in.spec.luma_clip".to_string(), l.clone())); } // add_push_wipe's luma clip
     match &c.source {
         Source::ShardBurst(e) => { if let Some(t) = e.plane.as_ref().and_then(|p| p.occlusion_target.as_ref()) { v.push(("source.plane.occlusion_target".to_string(), t.clone())); } }
         Source::Emitter(e) => {
@@ -291,6 +299,7 @@ fn clear_in_tracks(tracks: &mut Vec<Track>, ids: &[String], out: &mut Vec<Cleare
         for (field, rid) in hits {
             if field == "mask.matte.source" { if let Some(m) = c.mask.as_mut() { m.matte = None; } }
             else if field == "source.plane.occlusion_target" { if let Source::ShardBurst(e) = &mut c.source { if let Some(p) = e.plane.as_mut() { p.occlusion_target = None; } } }
+            else if field == "transition_in.spec.luma_clip" { if let Some(s) = c.transition_in.as_mut().and_then(|t| t.spec.as_mut()) { s.luma_clip = None; } } // the wipe falls back to its gradient
             else if field == "source.emit_clip" { if let Source::Emitter(e) = &mut c.source { e.emit_clip.clear(); } }
             else if field == "source.sprite.clip_id" { if let Source::Particles3D(e) = &mut c.source { e.sprite.clip_id.clear(); } }
             else if let Some(i) = field.strip_prefix("source.colliders.").and_then(|x| x.strip_suffix(".clip_id")).and_then(|x| x.parse::<usize>().ok()) { if let Source::Emitter(e) = &mut c.source { if i < e.colliders.len() { e.colliders[i].clip_id.clear(); } } }

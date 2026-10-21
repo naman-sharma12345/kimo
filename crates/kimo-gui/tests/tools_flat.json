@@ -30,6 +30,7 @@
 "add_path_operator",
 "add_path_shape",
 "add_prompt_box",
+"add_push_wipe",
 "add_scene3d",
 "add_shape",
 "add_shape_modifier",

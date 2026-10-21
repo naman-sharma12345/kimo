@@ -249,6 +249,8 @@ fn prepare_window(p: &Project, cache: &mut Cache, t0: f64, t1: f64, window:usize
     // morph_cut: a clip inside its morph needs the outgoing clip's last frame even when the window does not reach it
     let mut morph_t: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
     if !all { for c in flat.iter().filter(|c| active.contains(&c.id)) { if let Some(tr) = c.transition_in.as_ref().filter(|tr| tr.kind == "morph_cut") { if t0 < c.start + tr.duration { if let Some(a) = crate::transitions::morph_prev(p, c) { if !active.contains(&a.id) { morph_t.insert(a.id.clone(), a.start + a.duration - 0.5 / p.fps); } } } } } }
+    // push / gradient_wipe (pushwipe.rs): the outgoing abutting clip's last frame and a luma clip are read too
+    if !all { for c in flat.iter().filter(|c| active.contains(&c.id)) { if c.transition_in.as_ref().is_some_and(|tr| crate::pushwipe::KINDS.contains(&tr.kind.as_str()) && t0 < c.start + tr.duration) { for (id, tm) in crate::pushwipe::needs(p, c, t0.max(c.start)) { if !active.contains(&id) { morph_t.insert(id, tm); } } } } }
     for k in morph_t.keys() { active.insert(k.clone()); }
     if !all { cache.frames.retain(|k, _| active.contains(k)); cache.code.retain(|k, _| active.contains(k)); }
     let media_count=flat.iter().filter(|c|active.contains(&c.id)&&matches!(c.source,Source::Media{..})&&c.props.get("audio_only").map(|q|q.at(0.)).unwrap_or(0.)<0.5).count().max(1);
@@ -670,7 +672,9 @@ pub fn render_frame_opts(p: &Project, t: f64, cache: &Cache, transparent: bool) 
     let hidden: std::collections::HashSet<&str> = p.tracks.iter().flat_map(|tr| tr.clips.iter()).filter_map(|c| c.mask.as_ref().and_then(|m| m.matte.as_ref()).filter(|m| m.hide_source).map(|m| m.source.as_str()))
         .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).filter_map(|c| match &c.source { Source::Particles3D(e) if e.sprite.kind == "layer" && e.sprite.hide_source && !e.sprite.clip_id.is_empty() => Some(e.sprite.clip_id.as_str()), _ => None })) // a Particles3D layer sprite's source is drawn only as the sprite
         // a keyer's clean-plate clip (strings.ref_clip) is hidden from the composite like a hidden track-matte source
-        .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).flat_map(|c| c.effects.iter()).filter(|e| e.kind == "keyer").filter_map(|e| e.strings.get("ref_clip").map(|s| s.as_str()))).collect();
+        .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).flat_map(|c| c.effects.iter()).filter(|e| e.kind == "keyer").filter_map(|e| e.strings.get("ref_clip").map(|s| s.as_str())))
+        // a gradient wipe's luma clip drives the reveal only (pushwipe.rs)
+        .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).filter_map(|c| c.transition_in.as_ref().and_then(|t| t.spec.as_ref()).and_then(|s| s.luma_clip.as_deref()))).collect();
     // 3D compositor (comp3d.rs, opt-in): consecutive 3D layers wait here and are depth-composited when a 2D draw or the end flushes them
     let c3 = crate::comp3d::active(p); let mut g3: Vec<crate::comp3d::Layer> = Vec::new();
     for tr in &p.tracks { for c in &tr.clips {
@@ -711,7 +715,9 @@ pub fn render_frame_opts(p: &Project, t: f64, cache: &Cache, transparent: bool) 
         let mp_at = |l2: f64| -> (f64, f64, f64) { match &c.motion_path { Some(mp) => { let (x, y, a) = crate::motion::sample(mp, prop(c, "path", l2), w, h); (x, y, if mp.auto_orient { a + mp.orient_offset } else { 0.0 }) } None => (0.0, 0.0, 0.0) } };
         let (mp0x, mp0y, mp0a) = mp_at(lt); dx += mp0x; dy += mp0y; rot_extra += mp0a; let mut tplan: Option<crate::transitions::Plan> = None;
         if let Some(tr_in) = &c.transition_in { if lt < tr_in.duration {
-            let pl = crate::transitions::plan(tr_in, lt, w, h); op *= pl.op; dx += pl.dx; dy += pl.dy; sc *= pl.scale; rot_extra += pl.rot;
+            let mut pl = crate::transitions::plan(tr_in, lt, w, h); op *= pl.op; dx += pl.dx; dy += pl.dy; sc *= pl.scale; rot_extra += pl.rot;
+            if let Some(m) = crate::pushwipe::luma_mask(p, tr_in, lt, t, w, cache) { pl.mask = Some(m); } // gradient_wipe driven by a clip's luma
+            if let Some(u) = pl.under.as_ref() { crate::comp3d::flush(&mut out, &mut g3, p, t); let prev = crate::pushwipe::outgoing(p, c, cache); u(&mut out, prev.as_ref()); if !transparent { for i in 0..w * h { out.d[i*4+3] = 1.0; } } } // push / gradient_wipe: the outgoing picture
             if let Some((col, a)) = pl.dip { crate::comp3d::flush(&mut out, &mut g3, p, t); for i in 0..w * h { for j in 0..3 { out.d[i*4+j] = out.d[i*4+j] * (1.0 - a) + col[j] * a; } out.d[i*4+3] = out.d[i*4+3] + a * (1.0 - out.d[i*4+3]); } }
             mask = None; tplan = Some(pl);
         }}

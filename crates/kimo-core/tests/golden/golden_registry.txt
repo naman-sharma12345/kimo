@@ -29,6 +29,7 @@ add_path_key cf58f43b9b5a2a16
 add_path_operator 196bd4ba39ae182d
 add_path_shape 7a38d9af75a4a47f
 add_prompt_box 1f7b236e95633eb0
+add_push_wipe 4869e61f95c4c704
 add_scene3d b2cc280b0ca42a59
 add_shape d5414bb0544a4ab5
 add_shape_modifier 25cf6df0b8d052db
