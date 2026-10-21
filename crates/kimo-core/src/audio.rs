@@ -21,11 +21,25 @@ pub fn filter_chain(c: &Clip) -> String {
     f.join(",")
 }
 
+/// Time-remapped clips decode the source at 1x (speed ignored) for this many seconds, then `remap_pcm` resamples it along the curve.
+fn remap_decode(c: &Clip) -> Option<(Clip, f64)> { c.time_remap.as_ref()?; let mut one = c.clone(); one.speed = 1.0; Some((one, c.remap_span(0.0, c.duration).1 + 0.05)) }
+/// Varispeed playback of 1x source PCM along the clip's time remap (tape style: pitch follows speed, reverse plays backwards); silent where the remap holds.
+fn remap_pcm(c: &Clip, src: &[f32]) -> Vec<f32> {
+    let n = (c.duration * SR as f64).ceil().max(0.0) as usize; let m = src.len() / 2; let mut out = vec![0f32; n * 2]; let sr = SR as f64;
+    let at = |i: isize, ch: usize| -> f64 { if i < 0 || i as usize >= m { 0.0 } else { src[i as usize * 2 + ch] as f64 } };
+    for i in 0..n { let lt = i as f64 / sr; let (Some(s), Some(s1)) = (c.remap_source(lt), c.remap_source(lt + 1.0 / sr)) else { break };
+        if (s1 - s).abs() * sr < 1e-3 { continue; }
+        let x = s * sr; let i0 = x.floor(); let fr = x - i0; let i0 = i0 as isize;
+        for ch in 0..2 { out[i * 2 + ch] = (at(i0, ch) * (1.0 - fr) + at(i0 + 1, ch) * fr) as f32; } }
+    out
+}
+
 pub fn decode_clip(path: &str, c: &Clip) -> Vec<f32> {
-    let mut ch = match Command::new("ffmpeg").args(["-v","error","-ss",&format!("{}", c.in_point),"-t",&format!("{}", c.duration * c.speed),"-i",path,"-vn","-af",&filter_chain(c),"-f","f32le","-ac","2","-ar",&SR.to_string(),"-"])
+    let remap = remap_decode(c); let t = match &remap { Some((_, span)) => format!("{span}"), None => format!("{}", c.duration * c.speed) };
+    let mut ch = match Command::new("ffmpeg").args(["-v","error","-ss",&format!("{}", c.in_point),"-t",&t,"-i",path,"-vn","-af",&filter_chain(remap.as_ref().map_or(c, |(o, _)| o)),"-f","f32le","-ac","2","-ar",&SR.to_string(),"-"])
         .stdout(Stdio::piped()).stderr(Stdio::null()).spawn() { Ok(c) => c, Err(_) => return vec![] };
     let mut b = Vec::new(); ch.stdout.take().unwrap().read_to_end(&mut b).ok(); let _ = ch.wait();
-    { let mut pcm = b.chunks_exact(4).map(|x| f32::from_le_bytes([x[0], x[1], x[2], x[3]])).collect::<Vec<f32>>(); crate::editorial::process_pcm(&mut pcm, &c.audio.effects); pcm }
+    { let mut pcm = b.chunks_exact(4).map(|x| f32::from_le_bytes([x[0], x[1], x[2], x[3]])).collect::<Vec<f32>>(); crate::editorial::process_pcm(&mut pcm, &c.audio.effects); if remap.is_some() { return remap_pcm(c, &pcm); } pcm }
 }
 
 /// Mix every media clip's audio (and audio-only assets) into one interleaved stereo buffer.
@@ -113,9 +127,10 @@ pub(crate) fn strict_decode(path:&str,c:&Clip)->Result<Vec<f32>,AudioError>{
  if !c.speed.is_finite()||c.speed<=0.||!c.in_point.is_finite()||c.in_point<0.||!c.duration.is_finite()||c.duration<0.||[c.audio.pitch,c.audio.highpass,c.audio.lowpass,c.audio.denoise,c.audio.echo].iter().any(|v|!v.is_finite()){return Err(AudioError::InvalidInput("finite clip/audio controls required".into()))}
  let probe=crate::color::process::capture(Command::new("ffprobe").args(["-v","error","-select_streams","a:0","-show_entries","stream=index","-of","json",path]),1024*1024,std::time::Duration::from_secs(30)).map_err(AudioError::DecodeFailed)?;
  let header:serde_json::Value=serde_json::from_slice(&probe).map_err(|e|AudioError::DecodeFailed(e.to_string()))?;let streams=header["streams"].as_array().ok_or_else(||AudioError::DecodeFailed("invalid stream probe".into()))?;if streams.is_empty(){return Err(AudioError::NoAudioTrack)}
- let samples=strict_samples(c.duration+c.audio.echo.max(0.)+2.)?;let bytes=samples.checked_mul(4).ok_or_else(||AudioError::ResourceLimit("decode bytes overflow".into()))?;if bytes>strict_audio_cap(){return Err(AudioError::ResourceLimit(format!("audio decode exceeds{}byte cap",strict_audio_cap())))}crate::guard::reserve(bytes.checked_mul(2).ok_or_else(||AudioError::ResourceLimit("audio allocation overflow".into()))?);
- let raw=crate::color::process::decode_capture(Command::new("ffmpeg").args(["-v","error","-ss",&c.in_point.to_string(),"-t",&(c.duration*c.speed).to_string(),"-i",path,"-vn","-af",&filter_chain(c),"-f","f32le","-ac","2","-ar",&SR.to_string(),"-"]),bytes,crate::color::process::encode_deadline((c.duration*25.).ceil() as usize)).map_err(AudioError::DecodeFailed)?;
- if raw.len()%8!=0{return Err(AudioError::DecodeFailed("partial stereo float sample".into()))}let mut out=Vec::with_capacity(raw.len()/4);for(i,b)in raw.chunks_exact(4).enumerate(){if i%32768==0{crate::guard::check()}let v=f32::from_le_bytes(b.try_into().unwrap());if !v.is_finite(){return Err(AudioError::DecodeFailed("nonfinite decoded sample".into()))}out.push(v)}crate::editorial::process_pcm_checked(&mut out,&c.audio.effects).map_err(AudioError::InvalidInput)?;Ok(out)
+ let remap=remap_decode(c);if remap.as_ref().is_some_and(|(_,s)|!s.is_finite()){return Err(AudioError::InvalidInput("finite time remap required".into()))}
+ let samples=strict_samples(remap.as_ref().map_or(c.duration,|(_,s)|c.duration.max(*s))+c.audio.echo.max(0.)+2.)?;let bytes=samples.checked_mul(4).ok_or_else(||AudioError::ResourceLimit("decode bytes overflow".into()))?;if bytes>strict_audio_cap(){return Err(AudioError::ResourceLimit(format!("audio decode exceeds{}byte cap",strict_audio_cap())))}crate::guard::reserve(bytes.checked_mul(2).ok_or_else(||AudioError::ResourceLimit("audio allocation overflow".into()))?);
+ let raw=crate::color::process::decode_capture(Command::new("ffmpeg").args(["-v","error","-ss",&c.in_point.to_string(),"-t",&remap.as_ref().map_or(c.duration*c.speed,|(_,s)|*s).to_string(),"-i",path,"-vn","-af",&filter_chain(remap.as_ref().map_or(c,|(o,_)|o)),"-f","f32le","-ac","2","-ar",&SR.to_string(),"-"]),bytes,crate::color::process::encode_deadline((c.duration*25.).ceil() as usize)).map_err(AudioError::DecodeFailed)?;
+ if raw.len()%8!=0{return Err(AudioError::DecodeFailed("partial stereo float sample".into()))}let mut out=Vec::with_capacity(raw.len()/4);for(i,b)in raw.chunks_exact(4).enumerate(){if i%32768==0{crate::guard::check()}let v=f32::from_le_bytes(b.try_into().unwrap());if !v.is_finite(){return Err(AudioError::DecodeFailed("nonfinite decoded sample".into()))}out.push(v)}crate::editorial::process_pcm_checked(&mut out,&c.audio.effects).map_err(AudioError::InvalidInput)?;if remap.is_some(){return Ok(remap_pcm(c,&out))}Ok(out)
 }
 /// New strict path for high-bit export only. The legacy mix/decode API is unchanged.
 pub fn mix_strict(p:&Project)->Result<Vec<f32>,AudioError>{

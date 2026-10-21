@@ -329,6 +329,7 @@
 "set_text_style",
 "set_text_weight",
 "set_time_mode",
+"set_time_remap",
 "set_track",
 "set_track_matte",
 "shards_project",

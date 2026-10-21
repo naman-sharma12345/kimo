@@ -174,7 +174,7 @@ fn decode(p: &Project, c: &Clip, path: &str, a: usize, n: usize) -> Result<Frame
       let d=crate::color::interchange::fit(&src,w as usize,h as usize,fit)?;
       return Ok(Frames{still:true,working_linear:true,quantized:Default::default(),linear_buf:Some(d),buf:vec![],fs:w as usize*h as usize*4,first:0})
     } let is_img0 = is_still_path(path); let (a, n) = if is_img0 { (0, 1) } else { (a, n) };
-    let (in_pt, speed, span) = if c.speed_curve.is_some() { (c.in_point, 1.0, (a+n) as f64 / p.fps) } else { (c.in_point, c.speed, (a+n) as f64 / p.fps * c.speed) };
+    let (in_pt, speed, span) = if c.retimed() { (c.in_point, 1.0, (a+n) as f64 / p.fps) } else { (c.in_point, c.speed, (a+n) as f64 / p.fps * c.speed) };
     let fit = c.props.get("fit").map(|q| q.at(0.0)).unwrap_or(0.0);
     let fitf = if fit >= 1.5 { format!("scale={w}:{h}") } else if fit >= 0.5 { format!("scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}") } else { format!("scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0") };
     if p.color_pipeline.enabled&&path.to_lowercase().ends_with(".exr"){crate::color::interchange::validate_exr_source(path)?;}
@@ -219,8 +219,8 @@ fn decode(p: &Project, c: &Clip, path: &str, a: usize, n: usize) -> Result<Frame
     Ok(Frames { still:is_img,working_linear:native_fit,quantized:Default::default(),linear_buf, buf, fs, first: a })
 }
 
-fn media_index(c:&Clip,lt:f64,fps:f64)->usize{if c.speed_curve.is_some(){return c.source_index(lt,fps)}(lt.max(0.)*fps+1e-6).floor() as usize}
-fn media_total(c:&Clip,fps:f64)->usize{let span=if c.speed_curve.is_some(){c.source_time(c.duration)}else{c.duration};((span*fps).ceil() as usize).max(1)}
+fn media_index(c:&Clip,lt:f64,fps:f64)->usize{if let Some((a,_,_))=c.remap_pos(lt.max(0.),fps){return a}if c.speed_curve.is_some(){return c.source_index(lt,fps)}(lt.max(0.)*fps+1e-6).floor() as usize}
+fn media_total(c:&Clip,fps:f64)->usize{let span=if c.time_remap.is_some(){c.remap_span(0.,c.duration).1+1./fps}else if c.speed_curve.is_some(){c.source_time(c.duration)}else{c.duration};((span*fps).ceil() as usize).max(1)}
 fn decode_cache_limit()->usize{(crate::guard::limits().mem_bytes/3).min(256*1024*1024).max(1024*1024)}
 
 pub fn prepare(p: &Project, cache: &mut Cache) -> Result<(), String> { prepare_at(p, cache, None) }
@@ -245,16 +245,17 @@ fn prepare_window(p: &Project, cache: &mut Cache, t0: f64, t1: f64, window:usize
         let Source::Media { asset } = &c.source else { continue };
         if !active.contains(&c.id) || c.props.get("audio_only").map(|q| q.at(0.0)).unwrap_or(0.0) >= 0.5 { continue; }
         let total = media_total(c,p.fps);
-        let (ta, tb) = match c.time_mode { TimeMode::Normal => (t0, t1), TimeMode::Reverse => (c.start + c.duration - (t1 - c.start), c.start + c.duration - (t0 - c.start)), TimeMode::Freeze { at } => (c.start + at, c.start + at) };
+        let (ta, tb) = match c.time_mode { _ if c.time_remap.is_some() => (t0, t1), TimeMode::Normal => (t0, t1), TimeMode::Reverse => (c.start + c.duration - (t1 - c.start), c.start + c.duration - (t0 - c.start)), TimeMode::Freeze { at } => (c.start + at, c.start + at) };
         let (t0, t1) = (ta, tb);
-        let (ia, mut ib) = if all { (0, total - 1) } else if c.speed_curve.is_some(){(media_index(c,(t0-c.start).min(c.duration),p.fps).min(total-1),media_index(c,(t1-c.start).min(c.duration),p.fps).min(total-1))}else { ((((t0 - c.start).max(0.0) * p.fps).floor() as usize).min(total - 1), (((t1 - c.start).max(0.0) * p.fps).ceil() as usize).min(total - 1)) };
+        let (ia, mut ib) = if all { (0, total - 1) } else if let Some(r)=&c.time_remap{let (lo,hi)=c.remap_span((t0-c.start).clamp(0.,c.duration),(t1-c.start).clamp(0.,c.duration));(((lo*p.fps).floor() as usize).min(total-1),((hi*p.fps).ceil() as usize+usize::from(r.blend!=crate::model::FrameBlend::Off)).min(total-1))} else if c.speed_curve.is_some(){(media_index(c,(t0-c.start).min(c.duration),p.fps).min(total-1),media_index(c,(t1-c.start).min(c.duration),p.fps).min(total-1))}else { ((((t0 - c.start).max(0.0) * p.fps).floor() as usize).min(total - 1), (((t1 - c.start).max(0.0) * p.fps).ceil() as usize).min(total - 1)) };
         // Instant normal playback samples floor(index), except flow needs the next frame.
-        if !all&&matches!(c.time_mode,TimeMode::Normal)&&t0==t1{let flow=c.props.get("flow_blur").map(|v|v.at((t0-c.start).max(0.))>0.).unwrap_or(false);ib=if flow{(ia+1).min(total-1)}else{ia};}
+        if !all&&c.time_remap.is_none()&&matches!(c.time_mode,TimeMode::Normal)&&t0==t1{let flow=c.props.get("flow_blur").map(|v|v.at((t0-c.start).max(0.))>0.).unwrap_or(false);ib=if flow{(ia+1).min(total-1)}else{ia};}
         // Vector flow blur also needs the previous frame.
         let ia=if !all&&c.props.get("flow_mode").map(|v|v.base.round()==1.).unwrap_or(false){ia.saturating_sub(1)}else{ia};
         let a = p.assets.get(asset).ok_or(format!("asset {asset} missing"))?;
         let apath=p.resolve(&a.path);let stat=std::fs::metadata(&apath).map_err(|e|format!("media stat: {e}"))?;
         let sig = format!("{asset}|{}|{}|{}|{:?}|{:?}|{:?}|{:?}|{:?}|{}|{}|{:?}", c.in_point, c.duration, c.speed, c.speed_curve.as_ref().map(|p| serde_json::to_string(p).unwrap_or_default()), p.color_pipeline,c.props.get("input_gamut"),c.props.get("input_transfer"),c.props.get("fit"),a.path,stat.len(),stat.modified().ok());
+        let sig = match &c.time_remap { Some(r) => format!("{sig}|remap|{}|{}", serde_json::to_string(&r.curve).unwrap_or_default(), r.offset), None => sig };
         if let Some((s, fr)) = cache.frames.get(&c.id) { if *s == sig && fr.covers(ia, ib) { continue; } }
         let shared=cache.frames.values().find(|(s,fr)|*s==sig&&fr.covers(ia,ib)).map(|(_,fr)|fr.clone());
         if let Some(fr)=shared{cache.frames.insert(c.id.clone(),(sig,fr));continue}
@@ -265,7 +266,7 @@ fn prepare_window(p: &Project, cache: &mut Cache, t0: f64, t1: f64, window:usize
         if !all{let native=p.color_pipeline.enabled&&p.color_pipeline.linear_resample;let pixels=if native{let(dw,dh,_,_)=probe(&apath)?;(dw as usize*dh as usize).max(p.width as usize*p.height as usize)}else{p.width as usize*p.height as usize};let per=pixels*4*if p.color_pipeline.enabled{8}else{1};count=count.min((decode_cache_limit()/media_count/per.max(1)).max(1));if count<ib-ia+1{return Err("active decode range exceeds cache budget".into())}}
         cache.frames.remove(&c.id);
         let fr = decode(p, c, &apath, start, count)?;
-        if c.speed_curve.is_some()&&!fr.covers(ia,ib){return Err(format!("speed ramp overrun for clip '{}': requested source frames {ia}..={ib}, decoded {} frame(s) starting at {}; shorten the ramp/clip or choose media with enough source duration",c.id,fr.len(),fr.first))}
+        if c.retimed()&&!fr.covers(ia,ib){return Err(format!("{} overrun for clip '{}': requested source frames {ia}..={ib}, decoded {} frame(s) starting at {}; shorten the ramp/clip or choose media with enough source duration",if c.time_remap.is_some(){"time remap"}else{"speed ramp"},c.id,fr.len(),fr.first))}
         let bytes=|fr:&Frames|fr.buf.len()+fr.linear_buf.as_ref().map(|b|b.len()*5).unwrap_or(0);
         let mut seen=std::collections::HashSet::new();
         if cache.frames.values().filter(|(_,f)|seen.insert(std::sync::Arc::as_ptr(f))).map(|(_,f)|bytes(f)).sum::<usize>().saturating_add(bytes(&fr))>decode_cache_limit(){return Err("active media cache exceeds memory cap; reduce resolution or active clips".into())}
@@ -358,6 +359,12 @@ fn source_frame_h(p: &Project, c: &Clip, lt_in: f64, cache: &Cache) -> (Frame, O
             source_linear=fr.working_linear;
             let idx = media_index(c,lt,p.fps);
             if let Some(b)=fr.get_float(idx){f.d.copy_from_slice(b)}else if let Some(b) = fr.get(idx) { for (i, v) in b.iter().enumerate() { f.d[i] = *v as f32 / 255.0; } }
+            // Time remap between two source frames: frame mix or optical-flow interpolation, in linear light.
+            if let (Some(r), Some((_, nb, wb))) = (&c.time_remap, c.remap_pos(lt, p.fps)) { if wb > 0.0 && r.blend != crate::model::FrameBlend::Off && fr.len() > 0 && nb < fr.first + fr.len() { let mut g2 = Frame::new(w, h);
+                if let Some(b)=fr.get_float(nb){g2.d.copy_from_slice(b)}else if let Some(b)=fr.get(nb){for (i,v) in b.iter().enumerate(){g2.d[i]=*v as f32/255.;}}
+                if p.color_pipeline.enabled && !source_linear {let a=crate::color::pipeline::input(p,c,&mut f);let b=crate::color::pipeline::input(p,c,&mut g2);source_linear=true;if a.is_err()||b.is_err(){f.d.fill(f32::NAN);}}
+                let srgb = !p.color_pipeline.enabled && !source_linear;
+                if r.blend == crate::model::FrameBlend::OpticalFlow { f = crate::flow::flow_interpolate(&f, &g2, wb as f32, srgb, 3); } else { let a = f.d.clone(); crate::flow::mix_linear(&a, &g2.d, wb, srgb, &mut f.d); } } }
             let fb = prop(c, "flow_blur", lt) as f32;
             if fb > 0.0 && c.props.get("flow_mode").map(|v|v.base.round()==1.).unwrap_or(false) {
                 let load=|i:usize|->Option<Frame>{if !fr.covers(i,i){return None}let mut g=Frame::new(w,h);if let Some(b)=fr.get_float(i){g.d.copy_from_slice(b)}else if let Some(nb)=fr.get(i){for (k,v) in nb.iter().enumerate(){g.d[k]=*v as f32/255.;}}else{return None}Some(g)};
@@ -715,7 +722,7 @@ pub fn frame_buffers(p: &Project) -> usize {
     let mut rich = false;
     for t in &p.tracks { for c in &t.clips {
         match &c.source { Source::Solid { .. } | Source::Gradient { .. } | Source::Shape { .. } => {}, Source::Adjustment | Source::ShardBurst(_) => rich = true, _ => return SAFE }
-        if c.motion_blur != 0.0 || c.corners.is_some() || c.grade_graph.is_some() || c.echo.is_some() || c.motion_path.is_some() || c.transition_in.is_some() || c.text_fx.is_some() { return SAFE; }
+        if c.motion_blur != 0.0 || c.corners.is_some() || c.grade_graph.is_some() || c.echo.is_some() || c.motion_path.is_some() || c.transition_in.is_some() || c.text_fx.is_some() || c.time_remap.is_some() { return SAFE; }
         if c.props.keys().any(|k| ["rot_x", "rot_y", "pos_z", "flow_blur"].contains(&k.as_str())) { return SAFE; }
         if c.mask.is_some() { rich = true; }
         for e in &c.effects { if !["glow", "blur", "bloom", "exposure"].contains(&e.kind.as_str()) { return SAFE; } rich = true; }
