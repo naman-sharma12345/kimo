@@ -49,6 +49,8 @@ audio_speech_intervals 8257897c223ee122
 audio_transients fdd42015ab3821b9
 audit_color_output 58cf03598cf93fb6
 auto_duck 782881168d8430d5
+auto_grade 64db55ba3dd926ff
+auto_rough_cut 0dc325c5f230d88f
 bake_property 389f09faed23fecf
 batch ef0c6c2068bb9798
 bind_beats 2d8bcd8a43d9aad9
@@ -61,6 +63,7 @@ camera_clip_triangle bb5e8ec86c11e72f
 camera_project_points 9925e0b55b1c4af3
 camera_solve_info 68eba83a999378cc
 cancel_job 71597b2319b6d6cf
+caption_from_words 4cd651d6dbd1204e
 check_code_clip_determinism c8a2418c67534879
 checkpoint 4063b9f4243b3a4e
 checkpoint_delete 22a3aee8d04e2bd6
@@ -76,6 +79,7 @@ contour_sdf_graph d53d4b3f16e077ae
 copy_curve 5560581f371d7986
 corner_disagreement 364bb4e3f8409a46
 create_shared_grade_graph 58fa459ac9911fc4
+cut_to_beat 08631deca2c5a949
 decompose_track_homography f43e9c6e1eecb210
 delete_clip f4a1f352f81309a7
 delete_track e83a622c3e4b81fe
@@ -114,6 +118,7 @@ export_vertex_stream_obj e4ee4a2a4c9506e2
 export_with_subtitles 824e8be7e0dd374e
 ext_list 83a5db4765dba269
 find 78641da05597f921
+finish_audio 2e6067faa3bb01ce
 fit_info c3f52f5446f58baa
 fit_track_homography 5ea697fda92d2eaa
 freeze_frame c6a17e82ed026eb3
@@ -158,6 +163,7 @@ join_export 93d05ac7e76da91f
 kimo_info 22a891990956a689
 lift_range 76f97b3850975a47
 light_rig 2d21a8c90d40d65f
+lint_edit 283156133621ecfd
 lint_frame 49ed2d72868ad0f6
 list_camera_solves 492655c34a9e22aa
 list_captions 524db21fe840e247
@@ -196,6 +202,7 @@ pick_key_color a8a3ff81f7ed7011
 pick_white_balance cfba9bbe722278b3
 pin_layer 24c4c1077888dead
 place_at_track e69bc7f50736dc25
+place_broll 56030e7ccb281a98
 preview_material f0654be5429689e8
 preview_range 63d94b1e2cb0c89e
 preview_subject_match 8fbee66dc3095cb4
@@ -229,6 +236,7 @@ remove_shape_modifier 0c0966c1c2c1bbce
 remove_shared_grade_graph 54cee89bce4b911b
 remove_silence_cuts 56793b2e69774680
 remove_track_matte 66605cc59575b1f4
+remove_transition 3e30257f658c5d9a
 render_aces2_reference 1d3eecd4413d9569
 render_display_scope 1164db38c263b227
 render_error_field 4d59e67e956240e5
@@ -256,6 +264,7 @@ render_wgpu_pbr 2be19c04be4cef5f
 reorder_mask b182a28a665330c4
 restore dab5b50df493b4be
 resume_job ddf7317d0c4d5591
+review_export 2981ac9006e24f17
 ripple_delete af7455d513b9e3c9
 ripple_trim 67fb9388eed31127
 roll_edit 0e15462a35d306ee
@@ -359,6 +368,7 @@ template_define c18959a3360d1cb0
 template_delete 6b938f0f0f89fa07
 template_describe 6840c663f33496bf
 template_list 0757d10d640959f3
+timeline_summary 9fdf3526f8d0c28b
 track_beats 5e81daa55991da9c
 track_feature_residuals cf04ce2022372886
 track_features 5c13c25653d6f2ca
