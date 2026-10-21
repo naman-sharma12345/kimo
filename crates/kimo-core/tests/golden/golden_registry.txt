@@ -50,6 +50,7 @@ audio_effect_describe 07a0a16b3052585b
 audio_filter_response 4cae8e36278fcc87
 audio_probe 6d7f39ef67b65cb5
 audio_speech_intervals 8257897c223ee122
+audio_to_keyframes 4190ab7dd0c34307
 audio_transients fdd42015ab3821b9
 audit_color_output 58cf03598cf93fb6
 auto_duck 782881168d8430d5

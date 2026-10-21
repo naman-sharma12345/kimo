@@ -18,6 +18,7 @@ pub mod trackmath;
 pub mod shapemods;
 pub mod pathops;
 pub mod pushwipe;
+pub mod audiokeys;
 pub mod paths;
 pub mod layerstyles;
 pub mod lighting;

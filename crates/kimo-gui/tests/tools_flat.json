@@ -51,6 +51,7 @@
 "audio_filter_response",
 "audio_probe",
 "audio_speech_intervals",
+"audio_to_keyframes",
 "audio_transients",
 "audit_color_output",
 "auto_duck",
