@@ -6,6 +6,7 @@ add_box_expand 757e74b37aa0ba37
 add_camera_shake 8c2ecf01560cbb92
 add_captions 59f096446c4d0d66
 add_clip b851a4076e91b8c2
+add_code_clip 79e8cbe027cdbd62
 add_counter 2cfd3406e38575f3
 add_detection_box e740cc0690940b44
 add_effect ae2e4a00a10c4da2
@@ -283,6 +284,7 @@ set_camera d916f0fec16525a1
 set_camera_keyframe 11674e720d5c77f9
 set_caption_style 7f737a7675810610
 set_clip_input_color 35d16a2902039e00
+set_code_clip_param 0d041b433f0c68ab
 set_color_curve 8460ae79f970be75
 set_color_pipeline 24df4408488e6b0b
 set_color_wheels b592ec8e1088b5b2

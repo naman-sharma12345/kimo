@@ -20,8 +20,9 @@ import { fix2Pre, fix2Post } from './fix2.js';   /* GUI-FIX-2 */
 export const FAMILIES = [
   ['pipeline', COV_C.pipeline], ['project', COV_C.project], ['qa', COV_C.qa],   /* project_ops.js: colour pipeline rows, m02 history / diff / batch / media, QA + cache in the HUD toast + rail row */
   ['edit', COV_A],   /* markers, cut / beat detection, beat binding, silence cuts, time mode, sync, multicam, burn-in, raw transition, event matching: cov_a.js */
-  ['ingest', /^(import|ingest|add_media|relink|load_media|add_clip|add_track|insert)/],
+  ['ingest', /^(import|ingest|add_media|relink|load_media|add_clip|add_track|insert)|^add_code_clip$/],   /* add_code_clip: a web-page clip lands on the timeline like an import */
   ['edit', /^(cut|split|blade|razor|trim|extend|ripple|slip|slide|move_clip|delete_clip|lift|roll)|^(duplicate_clip|swap_clips|loop_clip|freeze_frame|delete_track|set_speed|rate_stretch|set_speed_ramp|set_time_remap|group_clips|ungroup_clip|distribute_clips|set_blend|set_echo|set_flow_blur|add_camera_shake|remove_audio_effect|set_track|project_set|set_split_edit)$/],
+  ['edit', /^set_code_clip_param$/],   /* a code clip's param (constant or key): the clip flashes, the Inspector shows name = value @ t */
   ['effects', /^(add_effect|apply_effect|set_effect|add_transition|remove_effect|add_speed|set_posterize|add_adjustment|add_managed_linear_effect$)/],
   ['transform', /^(set_property|set_clip_property|set_props?$|transform|set_transform|keyframe|set_keyframe|add_keyframe|scale|rotate|position|set_motion|add_null|set_parent|set_expression)/],
   ['color', /^(grade|color|colour|lut|apply_lut|set_lut|ocio|render_scope|analyze_exposure|wheel|curve|node_|hdr|render_ocio|render_exposure|render_gamut|set_grade_node|set_grade_graph|pick_white_balance|pick_key_color|match_grade|match_color|set_white_balance|set_grade_output|remove_grade_node|generate_lut_node|add_acescct_primaries|create_shared_grade_graph|bind_shared_grade_graphs|remove_shared_grade_graph|set_node_param|set_node_mask|apply_asc_cdl|set_color_curve|set_color_wheels|set_grade_scopes|add_node$|connect_nodes|disconnect_nodes)/],
@@ -682,6 +683,7 @@ function timelineOps(state, MODES, ev, fam) {
       if (numOf(A.amount) != null) add('Amount', fmtVal(numOf(A.amount)));
       if (ev.tool_name === 'add_camera_shake') { if (numOf(A.amplitude) != null) add('Amplitude', fmtVal(numOf(A.amplitude))); if (numOf(A.duration) != null) add('Duration', s(A.duration)); }
       if (ev.tool_name === 'set_track' && typeof A.name === 'string') add('Name', A.name);
+      if (ev.tool_name === 'set_code_clip_param' && typeof A.name === 'string' && numOf(A.value) != null) add('Param', `${A.name} = ${fmtVal(numOf(A.value))}${numOf(A.time) != null ? ` @ ${fmtVal(numOf(A.time))} s` : ''}`);
       if (ev.tool_name === 'project_set') { if (numOf(A.width) && numOf(A.height)) add('Size', `${A.width} x ${A.height}`); if (numOf(A.fps) != null) add('Frame rate', `${fmtVal(numOf(A.fps))} fps`); }
       if (rows.length) { kv.blocks.push({ sec: String(ev.tool_name), _live: true }); for (const [k, v] of rows.slice(0, 6)) kv.blocks.push({ k, v, _live: true, _flash: now() }); }
     }

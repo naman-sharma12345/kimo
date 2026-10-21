@@ -9,6 +9,7 @@ pub mod caption_validate;
 pub mod transcript_captions;
 pub mod transcript_coverage;
 pub mod errors;
+pub mod codeclip;
 pub mod telemetry;
 pub mod toolgroups;
 pub mod trackmath;

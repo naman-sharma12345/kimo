@@ -30,6 +30,8 @@ pub enum Source {
     /// Vector shape: rect | ellipse | polygon (sides) | line. Sizes in pixels, centered on canvas (offset with x/y props).
     Shape { shape: String, width: f64, height: f64, fill: [f64; 3], stroke_width: f64, stroke_color: [f64; 3], sides: u32, corner_radius: f64 },
     Text { text: String, font: String, size: f64, color: [f64; 3], letter_spacing: f64, stroke_width: f64, stroke_color: [f64; 3], shadow: f64, align: String },
+    /// Code clip: a web project (index.html + JS, e.g. three.js) drawing each frame through window.renderFrame(t, params) in a sandboxed headless browser (see codeclip.rs).
+    Code(crate::codeclip::CodeClip),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

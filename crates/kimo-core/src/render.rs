@@ -16,10 +16,13 @@ impl Frames {
     pub fn get(&self, g: usize) -> Option<&[u8]> { let n = self.len(); if n == 0 { return None; } let i = g.saturating_sub(self.first).min(n - 1); let buf=if let Some(f)=&self.linear_buf{self.quantized.get_or_init(||f.iter().map(|v|(v.clamp(0.,1.)*255.+0.5) as u8).collect())}else{&self.buf};Some(&buf[i * self.fs..(i + 1) * self.fs]) }
 }
 impl std::ops::Index<usize> for Frames { type Output = [u8]; fn index(&self, i: usize) -> &[u8] { self.get(self.first+i).expect("no decoded frame") } }
-pub struct Cache { frames: HashMap<String, (String, std::sync::Arc<Frames>)>, pub size: (u32, u32, f64), /// Export-only static layer cache (project is immutable for the cache's lifetime).
+pub struct Cache { frames: HashMap<String, (String, std::sync::Arc<Frames>)>, /// Code clip frames per clip id: (signature, last slot asked for, slot -> canvas-size RGBA8). See codeclip.rs.
+    code: HashMap<String, CodeSlots>, pub size: (u32, u32, f64), /// Export-only static layer cache (project is immutable for the cache's lifetime).
     pub export_mode: bool, statics: std::sync::RwLock<HashMap<String, std::sync::Arc<StaticCrop>>> }
+/// Rendered frames of one code clip: (signature, last slot prepared, slot -> canvas-size straight-alpha RGBA8).
+type CodeSlots = (String, usize, std::collections::BTreeMap<usize, std::sync::Arc<Vec<u8>>>);
 pub struct StaticCrop { x0: usize, y0: usize, x1: usize, y1: usize, d: Vec<f32> }
-impl Cache { pub fn new() -> Self { Cache { frames: HashMap::new(), size: (0, 0, 0.0), export_mode: false, statics: std::sync::RwLock::new(HashMap::new()) } } pub fn new_export() -> Self { let mut c = Cache::new(); c.export_mode = true; c } pub fn frames_of(&self, id: &str) -> Option<&Frames> { self.frames.get(id).map(|x| x.1.as_ref()) } }
+impl Cache { pub fn new() -> Self { Cache { frames: HashMap::new(), code: HashMap::new(), size: (0, 0, 0.0), export_mode: false, statics: std::sync::RwLock::new(HashMap::new()) } } pub fn new_export() -> Self { let mut c = Cache::new(); c.export_mode = true; c } pub fn frames_of(&self, id: &str) -> Option<&Frames> { self.frames.get(id).map(|x| x.1.as_ref()) } }
 
 /// Still-image extensions the decoder holds as one looped frame (ffmpeg `-loop 1`). One list, read by
 /// `decode` and by `import_media`'s check, so the two cannot drift apart.
@@ -234,11 +237,11 @@ pub fn prepare_range(p: &Project, cache: &mut Cache, t0: f64, t1: f64) -> Result
 pub fn prepare_export_range(p:&Project,cache:&mut Cache,t0:f64,t1:f64)->Result<(),String>{prepare_window(p,cache,t0,t1,256)}
 fn prepare_window(p: &Project, cache: &mut Cache, t0: f64, t1: f64, window:usize) -> Result<(), String> {
     if !t0.is_finite()||!t1.is_finite()||t1<t0{return Err("decode range requires finite ordered times".into())}
-    if cache.size != (p.width, p.height, p.fps) { cache.frames.clear(); cache.size = (p.width, p.height, p.fps); }
+    if cache.size != (p.width, p.height, p.fps) { cache.frames.clear(); cache.code.clear(); cache.size = (p.width, p.height, p.fps); }
     let all = t0 == f64::MIN;
     let flat = flat_clips(&p.tracks, 0.0);
     let active: std::collections::HashSet<String> = flat.iter().filter(|c| all || (c.start <= t1 + 1e-9 && c.start + c.duration > t0 + 1e-9)).map(|c| c.id.clone()).collect();
-    if !all { cache.frames.retain(|k, _| active.contains(k)); }
+    if !all { cache.frames.retain(|k, _| active.contains(k)); cache.code.retain(|k, _| active.contains(k)); }
     let media_count=flat.iter().filter(|c|active.contains(&c.id)&&matches!(c.source,Source::Media{..})&&c.props.get("audio_only").map(|q|q.at(0.)).unwrap_or(0.)<0.5).count().max(1);
     if !all{let budget=decode_cache_limit()/media_count;cache.frames.retain(|_,(_,fr)|fr.buf.len()+fr.linear_buf.as_ref().map(|b|b.len()*5).unwrap_or(0)<=budget);}
     for c in &flat {
@@ -273,6 +276,30 @@ fn prepare_window(p: &Project, cache: &mut Cache, t0: f64, t1: f64, window:usize
         let mut seen=std::collections::HashSet::new();
         if cache.frames.values().filter(|(_,f)|seen.insert(std::sync::Arc::as_ptr(f))).map(|(_,f)|bytes(f)).sum::<usize>().saturating_add(bytes(&fr))>decode_cache_limit(){return Err("active media cache exceeds memory cap; reduce resolution or active clips".into())}
         cache.frames.insert(c.id.clone(), (sig, std::sync::Arc::new(fr)));
+    }
+    // Code clips (codeclip.rs): the frame slots this range shows come from RAM, the disk cache or ONE headless-browser batch.
+    // Sequential access (playback, export, frame loops) renders ahead in play order; random access renders exactly what is asked.
+    for c in &flat {
+        let Source::Code(cc) = &c.source else { continue };
+        if !active.contains(&c.id) { continue; }
+        let n = crate::codeclip::slot_count(c, p.fps);
+        let (ka, kb) = if all { (0, n - 1) } else {
+            let (a, b) = (c.display_time((t0 - c.start).clamp(0.0, c.duration)), c.display_time((t1 - c.start).clamp(0.0, c.duration)));
+            (crate::codeclip::slot_of(a.min(b), p.fps).min(n - 1), crate::codeclip::slot_of(a.max(b), p.fps).min(n - 1)) };
+        let cap = (decode_cache_limit() / 2 / (p.width as usize * p.height as usize * 4).max(1)).max(1);
+        if kb - ka + 1 > cap { return Err(format!("limit_exceeded: code clip '{}' needs {} frames at once for this range, over its {cap}-frame memory budget; render a shorter range", c.id, kb - ka + 1)); }
+        let dir = crate::codeclip::resolve_dir(p, cc);
+        let tree = crate::codeclip::tree_hash(&dir)?;
+        let sig = format!("{tree:032x}|{}|{}|{}|{}|{:?}|{:?}|{:?}", serde_json::to_string(cc).unwrap_or_default(), c.in_point, c.duration, c.speed,
+            c.speed_curve.as_ref().map(|q| serde_json::to_string(q).unwrap_or_default()), c.time_remap.as_ref().map(|r| (serde_json::to_string(&r.curve).unwrap_or_default(), r.offset)), c.time_mode);
+        let (last, mut have) = match cache.code.remove(&c.id) { Some((s, l, m)) if s == sig => (Some(l), m), _ => (None, Default::default()) };
+        let forward = matches!(c.time_mode, TimeMode::Normal) && c.time_remap.is_none();
+        let sequential = window > WINDOW || last.map(|l| ka == l + 1).unwrap_or(false);
+        let kb2 = if !all && forward && sequential { (ka + window.min(cap) - 1).max(kb).min(n - 1) } else { kb };
+        have.retain(|k, _| all || (*k >= ka && *k <= kb2));
+        let want: Vec<usize> = (ka..=kb2).filter(|k| !have.contains_key(k)).collect();
+        if !want.is_empty() { let (got, _) = crate::codeclip::frames_for(p, c, cc, &want)?; for (k, f) in got { have.insert(k, std::sync::Arc::new(f)); } }
+        cache.code.insert(c.id.clone(), (sig, kb, have));
     }
     Ok(())
 }
@@ -357,6 +384,10 @@ fn source_frame_h(p: &Project, c: &Clip, lt_in: f64, cache: &Cache) -> (Frame, O
             let text = &dyn_text(text, c.start + lt, p.fps);
             let _ = crate::text::render_text(&mut f, text, font, *size, *color, *letter_spacing, *stroke_width, *stroke_color, *shadow, align, prop(c, "reveal", lt), c.text_fx.as_ref(), lt);
         }
+        Source::Code(_) => if let Some((_, _, m)) = cache.code.get(&c.id) { // straight-alpha sRGB RGBA8 at canvas size, like decoded media
+            let k = crate::codeclip::slot_of(lt, p.fps).min(crate::codeclip::slot_count(c, p.fps) - 1);
+            if let Some(b) = m.get(&k) { for (i, v) in b.iter().enumerate() { f.d[i] = *v as f32 / 255.0; } }
+        },
         Source::Media { .. } => if let Some(fr) = cache.frames_of(&c.id) {
             source_linear=fr.working_linear;
             let idx = media_index(c,lt,p.fps);
