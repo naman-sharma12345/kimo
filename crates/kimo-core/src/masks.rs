@@ -36,7 +36,7 @@ pub struct MaskLayer {
 fn d_mode() -> String { "add".into() } fn d_true() -> bool { true }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Matte { pub source: String, #[serde(default = "d_mm")] pub mode: String, #[serde(default)] pub hide_source: bool }
+pub struct Matte { pub source: String, #[serde(default = "d_mm")] pub mode: String, #[serde(default)] pub hide_source: bool, #[serde(default, skip_serializing_if = "Option::is_none")] pub luma_space: Option<String> }
 fn d_mm() -> String { "alpha".into() }
 
 pub const KINDS: &[&str] = &["rect", "ellipse", "path", "linear", "radial", "luma", "color", "hsl", "difference", "wand", "scribble", "edge", "alpha", "noise", "matte"];
@@ -454,10 +454,14 @@ pub fn apply_stack(f: &mut Frame, layers: &[MaskLayer], t: f64, ctx: &Ctx) {
     for i in 0..w * h { f.d[i * 4 + 3] *= c[i]; }
 }
 
-/// Track matte coverage from a rendered matte source frame.
-pub fn matte_coverage(m: &Matte, src: &Frame) -> Vec<f32> {
-    (0..src.w * src.h).map(|i| { let a = src.d[i * 4 + 3]; let l = 0.2126 * src.d[i * 4] + 0.7152 * src.d[i * 4 + 1] + 0.0722 * src.d[i * 4 + 2];
-        match m.mode.as_str() { "luma" => l * a, "inv_luma" => 1.0 - l * a, "inv_alpha" => 1.0 - a, _ => a } }).collect()
+/// Track matte coverage from a rendered (premultiplied) matte source frame; luma is read on the unpremultiplied colour.
+/// Luma space: linear light Rec.709 by default (physically correct, Naman's spec); "display" = After Effects' default non-linear workspace look.
+pub fn matte_coverage(m: &Matte, src: &Frame, q: &crate::color::pipeline::Pipeline) -> Vec<f32> {
+    let display = m.luma_space.as_deref() == Some("display"); let wts = if q.enabled && !display { crate::color::managed::luma_weights(q.working_gamut) } else { [0.2126, 0.7152, 0.0722] };
+    let dec = |c: f64| if q.enabled || display { c } else if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+    (0..src.w * src.h).map(|i| { let a = src.d[i * 4 + 3];
+        let l = || if a > 0.0 { let a = a as f64; ((0..3).map(|j| wts[j] * dec(src.d[i * 4 + j] as f64 / a)).sum::<f64>().clamp(0.0, 1.0) * a) as f32 } else { 0.0 };
+        match m.mode.as_str() { "luma" => l(), "inv_luma" => 1.0 - l(), "inv_alpha" => 1.0 - a, _ => a } }).collect()
 }
 
 #[cfg(test)]

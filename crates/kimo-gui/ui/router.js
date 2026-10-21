@@ -637,7 +637,7 @@ function maskOps(state, MODES, ev) {
   if (tn === 'set_track_matte' && KK) {   // the matte holds for the whole clip: a span over the clip's range (from the edit timeline), else over the lanes' current range
     const tl = state.liveTL, [ct, ci] = tl && A.clip_id != null ? findClip(tl, { clip_id: A.clip_id }) : [null, -1], c = ct ? ct.clips[ci] : null;
     const lo = c ? fr(c.s) : KK.ruler ? KK.ruler.t0 + (KK.ruler.t1 - KK.ruler.t0) * .06 : null, hi = c ? fr(c.e) : KK.ruler ? KK.ruler.t1 - (KK.ruler.t1 - KK.ruler.t0) * .06 : null;
-    lane(`track matte${A.mode ? ' ' + String(A.mode) : ''}`, null, lo != null && hi != null && hi > lo ? { area: [[lo, 1], [hi, 1]], color: '#6f6c66', stroke: '#e8e0cc' } : {});
+    lane(`track matte${A.mode ? ' ' + String(A.mode) : ''}${A.luma_space ? ' ' + String(A.luma_space) : ''}`, null, lo != null && hi != null && hi > lo ? { area: [[lo, 1], [hi, 1]], color: '#6f6c66', stroke: '#e8e0cc' } : {});
     if (lo != null && hi != null) { const L = KK.lanes.find(l => l.label.startsWith('track matte')); if (L && L.keys.length === 0 && KK.ruler && (lo < KK.ruler.t0 || hi > KK.ruler.t1)) lane(L.label, null); }   // refit the ruler to include the span
   }
   if (tn === 'remove_track_matte') { const cnt = () => ((K && K.blocks) || []).length + ((KK && KK.lanes) || []).length, n0 = cnt(); if (K) K.blocks = (K.blocks || []).filter(b => b.sec !== 'Key' && b._sec !== 'Key'); if (KK) KK.lanes = (KK.lanes || []).filter(l => !l.label.startsWith('track matte')); hit = cnt() !== n0; }   /* nothing drawn to take away: the Inspector says it (router callSection) */

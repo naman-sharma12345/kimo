@@ -710,7 +710,7 @@ pub fn render_frame_opts(p: &Project, t: f64, cache: &Cache, transparent: bool) 
         // transform_bb's rect, so the blend scans the whole frame and the buffer is not handed back to the pool
         let mut f = f; if !moving && matches!(c.source, Source::Media { .. }) && prop(c, "stab_fill", lt) >= 1.0 && ["stab_ss", "stab_sr", "stab_sx", "stab_sy"].iter().all(|k| c.props.contains_key(*k)) {
             synth_edges(p, c, &mut f, lt, (sc, xprop(p, c, "rotation", lt) + rot_extra, dx, dy), cache); from_tb = false; }
-        let mut f = f; if let Some(mt) = c.mask.as_ref().and_then(|m| m.matte.as_ref()) { if let Some(src) = render_clip_alone(p, &mt.source, t, cache) { let cov = crate::masks::matte_coverage(mt, &src); for i in 0..w * h { f.d[i * 4 + 3] *= cov[i]; } } }
+        let mut f = f; if let Some(mt) = c.mask.as_ref().and_then(|m| m.matte.as_ref()) { if let Some(src) = render_clip_alone(p, &mt.source, t, cache) { let cov = crate::masks::matte_coverage(mt, &src, &p.color_pipeline); for i in 0..w * h { f.d[i * 4 + 3] *= cov[i]; } } }
         // frosted_glass runs here, after the layer transform, so it frosts what is really under the pane
         if c.effects.iter().any(|e| crate::effects2::is_post(&e.kind)) { BACKDROP.with(|b| *b.borrow_mut() = Some(std::rc::Rc::new(Frame { w, h, d: out.d.clone() }))); crate::frosted::set_post(true);
             let r: Result<(), String> = (|| { for e in c.effects.iter().filter(|e| crate::effects2::is_post(&e.kind)) { effects::apply(&e.kind, &e.params, &e.strings, &mut f, lt, seed)?; } Ok(()) })();
