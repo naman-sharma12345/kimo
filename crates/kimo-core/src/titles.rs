@@ -14,11 +14,26 @@ fn fade(c: &mut Clip, fin: f64, fout: f64) { let d = c.duration; let o = c.props
 
 pub const STYLES: &[&str] = &["cinematic", "impact", "lower_third", "kinetic", "elegant", "neon"];
 
+fn peak(p: &Prop) -> f64 { p.keys.iter().map(|k| k.v).fold(p.base, f64::max) }
+/// A title line wider than the canvas (a long word on 9:16) is scaled down to 90% of the width: type size, letter spacing and
+/// animated tracking together, measured at the widest pose (largest tracking and scale keys). A title that fits is untouched.
+fn fit_width(c: &mut Clip, cw: f64) -> Result<(), String> {
+    let Source::Text { text, font, size, letter_spacing, align, .. } = &mut c.source else { return Ok(()) };
+    let track = c.text_fx.as_ref().map(|fx| fx.animators.iter().filter(|a| a.unit == "char").map(|a| peak(&a.tracking)).fold(0.0, f64::max)).unwrap_or(0.0);
+    let m = crate::text::measure_text(text, font, *size, *letter_spacing + track, c.text_fx.as_ref().map(|f| f.weight).unwrap_or(0.0), align, cw, 0.0, c.text_fx.as_ref())?;
+    let wide = m.width * peak(&c.props["scale"]).max(1.0); // xform-lint: ok (clip setup: the new title's own scale keys, before any parenting)
+    if wide <= cw * 0.96 { return Ok(()); }
+    let r = cw * 0.9 / wide; *size *= r; *letter_spacing *= r;
+    if let Some(fx) = c.text_fx.as_mut() { for a in fx.animators.iter_mut() { a.tracking.base *= r; for k in a.tracking.keys.iter_mut() { k.v *= r; } } }
+    Ok(())
+}
 pub fn add_title(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let tid = a.get("track_id").and_then(|v| v.as_str()).ok_or("missing track_id")?.to_string(); let style = a.get("style").and_then(|v| v.as_str()).ok_or("missing style")?.to_string();
     let text = a.get("text").and_then(|v| v.as_str()).ok_or("missing text")?.replace("\\n", "\n"); let sub = a.get("subtitle").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let (start, dur) = (num(a, "start", 0.0), num(a, "duration", 4.0)); let k = ss.project.height as f64 / 1080.0; let wpx = ss.project.width as f64;
+    let (start, dur) = (num(a, "start", 0.0), num(a, "duration", 4.0)); let k = ss.project.height.min(ss.project.width) as f64 / 1080.0; /* the short side: a 9:16 frame sizes like 16:9 turned on end */ let wpx = ss.project.width as f64;
     let accent = rgb(a, "accent", [0.95, 0.72, 0.35]); let color = rgb(a, "color", [1.0; 3]); let font_o = a.get("font").and_then(|v| v.as_str());
+    // a reveal paced for the 4 s default ends by mid-title on a short one, so a 1 s title is on screen for its second half
+    let intro = |t0: f64, natural_end: f64| -> f64 { natural_end.min((dur * 0.5).max(t0 + 0.05)) };
     let mut clips: Vec<Clip> = vec![];
     match style.as_str() {
         "cinematic" => {
@@ -33,8 +48,8 @@ pub fn add_title(ss: &mut Session, a: &Value) -> Result<Value, String> {
         "impact" => {
             let mut c = clip(ss, txt(&text, font_o.unwrap_or("Anton"), 300.0 * k, color, 0.0, "center"), start, dur);
             let mut fx = TextFx { uppercase: true, line_mask: true, line_spacing: 0.98, shadow_blur: 24.0 * k, shadow_opacity: 0.5, shadow_angle: 90.0, shadow_color: [0.0; 3], ..Default::default() };
-            let mut r = an("line", "square", 0.0); r.id = "an1".into(); r.y.base = 330.0 * k; sweep(&mut r, 0.1, 0.1 + 0.8 * (text.matches('\n').count() as f64 + 1.0), 0.45, Ease::InOut); r.smoothness.base = 0.45;
-            fx.animators = vec![r]; c.text_fx = Some(fx); let o = c.props.get_mut("opacity").unwrap(); o.base = 1.0; o.set_key(dur - 0.35, 1.0, Ease::In); o.set_key(dur, 0.0, Ease::In); clips.push(c);
+            let mut r = an("line", "square", 0.0); r.id = "an1".into(); r.y.base = 330.0 * k; sweep(&mut r, 0.1, intro(0.1, 0.1 + 0.8 * (text.matches('\n').count() as f64 + 1.0)), 0.45, Ease::InOut); r.smoothness.base = 0.45;
+            fx.animators = vec![r]; c.text_fx = Some(fx); let o = c.props.get_mut("opacity").unwrap(); o.base = 1.0; o.set_key(dur - 0.35f64.min(dur * 0.25), 1.0, Ease::In); o.set_key(dur, 0.0, Ease::In); clips.push(c);
             if !sub.is_empty() { let mut s = clip(ss, txt(&sub, font_o.unwrap_or("Montserrat"), 34.0 * k, accent, 0.0, "center"), start, dur); let mut fx = TextFx { weight: 600.0, uppercase: true, ..Default::default() }; let mut t = an("char", "square", 0.0); t.id = "an1".into(); t.tracking.base = 12.0 * k; fx.animators = vec![t]; s.text_fx = Some(fx); s.props.get_mut("y").unwrap().base = 190.0 * k * (text.matches('\n').count() as f64 + 1.0); fade(&mut s, 0.8, 0.4); clips.push(s); }
         }
         "lower_third" => {
@@ -49,25 +64,26 @@ pub fn add_title(ss: &mut Session, a: &Value) -> Result<Value, String> {
         "kinetic" => {
             let mut c = clip(ss, txt(&text, font_o.unwrap_or("BebasNeue"), 300.0 * k, color, 0.0, "center"), start, dur);
             let mut fx = TextFx { uppercase: true, line_spacing: 0.95, ..Default::default() };
-            let mut p = an("word", "square", 0.0); p.id = "an1".into(); p.scale.base = 0.0; p.opacity.base = 0.0; p.y.base = 40.0 * k; p.rotation.base = -6.0; sweep(&mut p, 0.1, 0.1 + 0.45 * (text.split_whitespace().count() as f64), 0.2, Ease::InOut); p.smoothness.base = 0.2;
+            let mut p = an("word", "square", 0.0); p.id = "an1".into(); p.scale.base = 0.0; p.opacity.base = 0.0; p.y.base = 40.0 * k; p.rotation.base = -6.0; sweep(&mut p, 0.1, intro(0.1, 0.1 + 0.45 * (text.split_whitespace().count() as f64)), 0.2, Ease::InOut); p.smoothness.base = 0.2;
             let mut hl = an("word", "square", 0.0); hl.id = "an2".into(); hl.start.base = 0.0; hl.end.base = 0.2; // accent word highlight is handled by color override below
-            fx.animators = vec![p]; fx.glow = 0.0; c.text_fx = Some(fx); let o = c.props.get_mut("opacity").unwrap(); o.base = 1.0; o.set_key(dur - 0.3, 1.0, Ease::In); o.set_key(dur, 0.0, Ease::In); let sc = c.props.get_mut("scale").unwrap(); sc.base = 1.0; sc.set_key(0.0, 0.94, Ease::Out); sc.set_key(dur, 1.04, Ease::Out); clips.push(c);
+            fx.animators = vec![p]; fx.glow = 0.0; c.text_fx = Some(fx); let o = c.props.get_mut("opacity").unwrap(); o.base = 1.0; o.set_key(dur - 0.3f64.min(dur * 0.25), 1.0, Ease::In); o.set_key(dur, 0.0, Ease::In); let sc = c.props.get_mut("scale").unwrap(); sc.base = 1.0; sc.set_key(0.0, 0.94, Ease::Out); sc.set_key(dur, 1.04, Ease::Out); clips.push(c);
         }
         "elegant" => {
             let mut c = clip(ss, txt(&text, font_o.unwrap_or("PlayfairDisplay-Italic"), 104.0 * k, color, 0.0, "center"), start, dur);
             let mut fx = TextFx { weight: 500.0, line_spacing: 1.22, shadow_blur: 14.0 * k, shadow_opacity: 0.5, shadow_angle: 90.0, shadow_color: [0.0; 3], ..Default::default() };
-            let mut w = an("word", "square", 0.0); w.id = "an1".into(); w.opacity.base = 0.0; w.y.base = 34.0 * k; w.blur.base = 12.0; sweep(&mut w, 0.2, 0.9 + 0.4 * (text.split_whitespace().count() as f64), 0.5, Ease::InOut); w.smoothness.base = 0.5;
-            fx.animators = vec![w]; c.text_fx = Some(fx); let o = c.props.get_mut("opacity").unwrap(); o.base = 1.0; o.set_key(dur - 0.8, 1.0, Ease::In); o.set_key(dur, 0.0, Ease::In); clips.push(c);
+            let mut w = an("word", "square", 0.0); w.id = "an1".into(); w.opacity.base = 0.0; w.y.base = 34.0 * k; w.blur.base = 12.0; sweep(&mut w, 0.2, intro(0.2, 0.9 + 0.4 * (text.split_whitespace().count() as f64)), 0.5, Ease::InOut); w.smoothness.base = 0.5;
+            fx.animators = vec![w]; c.text_fx = Some(fx); let o = c.props.get_mut("opacity").unwrap(); o.base = 1.0; o.set_key(dur - 0.8f64.min(dur * 0.25), 1.0, Ease::In); o.set_key(dur, 0.0, Ease::In); clips.push(c);
             if !sub.is_empty() { let mut s = clip(ss, txt(&sub, font_o.unwrap_or("Montserrat"), 26.0 * k, accent, 0.0, "center"), start, dur); let mut fx = TextFx { weight: 500.0, uppercase: true, ..Default::default() }; let mut t = an("char", "square", 0.0); t.id = "an1".into(); t.tracking.base = 10.0 * k; fx.animators = vec![t]; s.text_fx = Some(fx); s.props.get_mut("y").unwrap().base = 130.0 * k * (text.matches('\n').count() as f64 + 1.0); fade(&mut s, 1.6, 0.8); clips.push(s); }
         }
         "neon" => {
             let mut c = clip(ss, txt(&text, font_o.unwrap_or("Syne"), 150.0 * k, [1.0, 0.95, 0.98], 0.0, "center"), start, dur);
             let mut fx = TextFx { weight: 800.0, uppercase: true, glow: 22.0 * k, glow_color: accent, ..Default::default() };
             let mut f = an("char", "square", 0.0); f.id = "an1".into(); f.opacity.base = 0.0; f.shape = "square".into(); let mut offs = 0.0; for i in 0..7 { f.offset.set_key(i as f64 * 0.07, if i % 2 == 0 { 0.0 } else { 1.0 }, Ease::Hold); offs += 1.0; } let _ = offs; f.offset.set_key(0.5, 1.5, Ease::Hold); f.smoothness.base = 0.0; f.start.base = 0.0; f.end.base = 1.0;
-            fx.animators = vec![f]; c.text_fx = Some(fx); let o = c.props.get_mut("opacity").unwrap(); o.base = 1.0; o.set_key(dur - 0.3, 1.0, Ease::In); o.set_key(dur, 0.0, Ease::In); clips.push(c);
+            fx.animators = vec![f]; c.text_fx = Some(fx); let o = c.props.get_mut("opacity").unwrap(); o.base = 1.0; o.set_key(dur - 0.3f64.min(dur * 0.25), 1.0, Ease::In); o.set_key(dur, 0.0, Ease::In); clips.push(c);
         }
         o => return Err(format!("unknown style {o}; styles: {:?}", STYLES)),
     }
+    for c in clips.iter_mut() { fit_width(c, wpx)?; }
     let ids: Vec<String> = clips.iter().map(|c| c.id.clone()).collect(); let t = ss.project.tracks.iter_mut().find(|t| t.id == tid).ok_or("no such track")?; t.clips.extend(clips.into_iter().map(std::sync::Arc::new));
     Ok(json!({"clip_ids": ids, "style": style}))
 }

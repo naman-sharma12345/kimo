@@ -47,15 +47,20 @@ fn get<'a>(ss: &'a mut Session, a: &Value) -> Result<&'a mut Clip, String> {
     }
     ss.project.find_clip_mut(id).ok_or("no such clip".into())
 }
-fn style(c: &mut Clip, name: &str, a: &Value, h: f64) -> Result<(), String> {
+/// `w`, `h`: canvas size. The wrap width is 1.65 x the height (a 16:9 frame's lower third); on a canvas narrower than that
+/// (9:16, 1:1, 4:3) it is 90% of the width, so a long cue wraps inside the frame instead of running off both edges.
+fn style(c: &mut Clip, name: &str, a: &Value, w: f64, h: f64) -> Result<(), String> {
+    // type scales with the short side (on 16:9 that is the height, as before); on a tall canvas the cue sits a quarter of
+    // the height below centre, clear of the bottom band phone apps cover with their own buttons and text
+    let s = h.min(w);
     let (size, col, stroke, bg) = match name {
-        "subtitle" => (h / 15., [1.; 3], 2., None),
-        "boxed" => (h / 15., [1.; 3], 0., Some([0., 0., 0., 0.75])),
-        "yellow" => (h / 13., [1., 0.9, 0.1], 3., None),
+        "subtitle" => (s / 15., [1.; 3], 2., None),
+        "boxed" => (s / 15., [1.; 3], 0., Some([0., 0., 0., 0.75])),
+        "yellow" => (s / 13., [1., 0.9, 0.1], 3., None),
         _ => return Err("style must be subtitle|boxed|yellow".into()),
     };
     let size = finite(a, "size", size, 1., 1000.)?;
-    let y = finite(a, "y", h * 0.35, -h, h)?;
+    let y = finite(a, "y", if h > w { h * 0.25 } else { h * 0.35 }, -h, h)?;
     if let Source::Text {
         size: s,
         color,
@@ -72,7 +77,7 @@ fn style(c: &mut Clip, name: &str, a: &Value, h: f64) -> Result<(), String> {
     c.props.insert("y".into(), Prop::new(y));
     let fx = c.text_fx.get_or_insert_with(Default::default);
     fx.bg = bg;
-    fx.box_width = h * 1.65;
+    fx.box_width = if h * 1.65 > w { w * 0.9 } else { h * 1.65 };
     Ok(())
 }
 fn add_captions_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {
@@ -129,9 +134,9 @@ fn add_captions_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {
         .map(|v| v.as_str().unwrap().into())
         .collect();
     let name = a["style"].as_str().unwrap_or("subtitle");
-    let h = ss.project.height as f64;
+    let (w, h) = (ss.project.width as f64, ss.project.height as f64);
     for id in &clips {
-        style(ss.project.find_clip_mut(id).unwrap(), name, a, h)?;
+        style(ss.project.find_clip_mut(id).unwrap(), name, a, w, h)?;
     }
     let id = ss.project.gen_id("captions");
     ss.project.editorial.captions.insert(
@@ -171,13 +176,13 @@ fn set_caption_style_inner(ss: &mut Session, a: &Value) -> Result<Value, String>
         .ok_or("no caption group")?
         .clone();
     let name = str_arg(a, "style")?;
-    let h = ss.project.height as f64;
+    let (w, h) = (ss.project.width as f64, ss.project.height as f64);
     for cid in g.clips {
         let c = ss
             .project
             .find_clip_mut(&cid)
             .ok_or("caption clip was deleted")?;
-        style(c, name, a, h)?;
+        style(c, name, a, w, h)?;
     }
     ss.project.editorial.captions.get_mut(id).unwrap().style = name.into();
     Ok(json!({"ok":true}))
