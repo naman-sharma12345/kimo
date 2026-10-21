@@ -1063,7 +1063,7 @@ export function route(ev, state, MODES) {
     if (!err) {
       const v = views(state); if (v.viewer && v.viewer.wipe != null) v.viewer.wipe = 1;
       if (/false_?colou?r/.test(String(ev.tool_name).toLowerCase())) { v.viewer = v.viewer || {}; v.viewer.falsecolor = { split: P.split ?? .5 }; }
-      if (ev.tool_name === 'add_captions') covASee(state, ev);
+      if (ev.tool_name === 'add_captions' || ev.tool_name === 'add_caption_cues') covASee(state, ev);   /* add_caption_cues: inline cues, same caption group result */
       const tnA = String(ev.tool_name), isA = COV_A.test(tnA), hitA = covAHistory(state, MODES, ev, COV_H, () => isA && covAOps(state, MODES, ev, COV_H));   /* COV-A's own visual + its undo / redo snapshots (cov_a.js) */
       if (hitA && isA) ev._kvDone = true;   /* timelineOps leaves these alone */
       const restoredA = hitA && (tnA === 'undo' || tnA === 'redo');   /* the snapshot is the whole timeline: the step's engine clip list is not applied on top of it */

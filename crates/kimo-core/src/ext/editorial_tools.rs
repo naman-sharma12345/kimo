@@ -151,6 +151,32 @@ fn add_captions_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {
     );
     Ok(json!({"caption_id":id,"clip_ids":clips,"count":count}))
 }
+/// add_caption_cues: the cues written inline ([{start, end, text}], seconds), for an agent that has words but no file tools.
+/// Each cue is checked (finite, end after start, text, no overlap with the cue before), then the cues go through the same SRT
+/// validation, importer and style presets as add_captions; nothing is kept on disk.
+fn add_caption_cues_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {
+    let cues = a.get("cues").and_then(|v| v.as_array()).ok_or("cues: an array of {start, end, text} (seconds) is required")?;
+    if cues.is_empty() { return Err("cues is empty: give at least one {start, end, text}".into()); }
+    let stamp = |t: f64| { let ms = (t * 1000.0).round() as u64; format!("{:02}:{:02}:{:02},{:03}", ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60, ms % 1000) };
+    let (mut srt, mut prev_end) = (String::new(), f64::NEG_INFINITY);
+    for (i, q) in cues.iter().enumerate() {
+        let num = |k: &str| q.get(k).and_then(|v| v.as_f64()).filter(|v| v.is_finite()).ok_or(format!("cue {i}: '{k}' must be a number of seconds"));
+        let (st, en) = (num("start")?, num("end")?);
+        let text = q.get("text").and_then(|v| v.as_str()).map(|t| t.replace("\\n", "\n")).unwrap_or_default();
+        if st < 0.0 { return Err(format!("cue {i}: start {st} is before 0")); }
+        if en <= st { return Err(format!("cue {i}: end {en} must be after start {st}")); }
+        if text.trim().is_empty() { return Err(format!("cue {i}: text is empty")); }
+        if st < prev_end - 1e-6 { return Err(format!("cue {i}: starts at {st} s, before cue {} ends at {prev_end} s; cues must be in time order and not overlap", i - 1)); }
+        let body: Vec<&str> = text.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+        srt.push_str(&format!("{}\n{} --> {}\n{}\n\n", i + 1, stamp(st), stamp(en), body.join("\n")));
+        prev_end = en;
+    }
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let path = std::env::temp_dir().join(format!("kimo_cues_{}_{}.srt", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+    std::fs::write(&path, &srt).map_err(|e| format!("could not stage the cues: {e}"))?;
+    let mut args = a.clone(); if let Some(o) = args.as_object_mut() { o.remove("cues"); o.insert("source".into(), json!("srt")); o.insert("path".into(), json!(path.to_string_lossy())); }
+    let r = add_captions_inner(ss, &args); let _ = std::fs::remove_file(&path); r
+}
 fn parse_time(v: &str) -> Result<f64, String> {
     let t = v.trim().replace(',', ".");
     let p: Vec<_> = t.split(':').collect();
@@ -758,6 +784,7 @@ fn list_multicam(ss: &mut Session, _: &Value) -> Result<Value, String> {
 pub fn commands() -> Vec<Command> {
     vec![
  Command{name:"add_captions",description:"Create editable timed caption group using existing SRT importer/transcriber. Presets subtitle|boxed|yellow. Burn-in on by default.",mutates:true,schema:obj(vec![("track_id",s("unlocked track")),("source",json!({"type":"string","enum":["srt","transcribe"]})),("path",s("SRT or media path")),("out_srt",s("required for transcribe")),("model",s("Whisper model")),("style",s("subtitle|boxed|yellow")),("font",s("TTF path")),("size",n("pixel size")),("y",n("vertical offset pixels"))],&["track_id","source","path"]),run:add_captions},
+ Command{name:"add_caption_cues",description:"Captions from cues written inline, no file: cues [{start,end,text}] in timeline seconds. Same presets, checks and editing as add_captions.",mutates:true,schema:obj(vec![("track_id",s("unlocked track")),("cues",json!({"type":"array","description":"in time order, not overlapping; text may hold \\n line breaks","items":{"type":"object","properties":{"start":{"type":"number","description":"timeline seconds"},"end":{"type":"number","description":"timeline seconds"},"text":{"type":"string"}},"required":["start","end","text"]}})),("style",s("subtitle|boxed|yellow")),("font",s("TTF path")),("size",n("pixel size")),("y",n("vertical offset pixels from centre, + is down"))],&["track_id","cues"]),run:add_caption_cues},
  Command{name:"list_captions",description:"List editable caption groups and cue clip IDs.",mutates:false,schema:obj(vec![],&[]),run:list_captions},
  Command{name:"set_caption_style",description:"Apply caption preset to every cue; optional size/y overrides.",mutates:true,schema:obj(vec![("caption_id",s("group")),("style",s("subtitle|boxed|yellow")),("size",n("px")),("y",n("px"))],&["caption_id","style"]),run:set_caption_style},
  Command{name:"edit_caption",description:"Edit caption text, timeline start, or duration.",mutates:true,schema:obj(vec![("clip_id",s("cue")),("text",s("caption text")),("start",n("timeline seconds")),("duration",n("seconds"))],&["clip_id"]),run:edit_caption},
@@ -778,6 +805,17 @@ pub fn commands() -> Vec<Command> {
 fn add_captions(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let before = ss.project.clone();
     match add_captions_inner(ss, a) {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            ss.project = before;
+            Err(e)
+        }
+    }
+}
+
+fn add_caption_cues(ss: &mut Session, a: &Value) -> Result<Value, String> {
+    let before = ss.project.clone();
+    match add_caption_cues_inner(ss, a) {
         Ok(v) => Ok(v),
         Err(e) => {
             ss.project = before;

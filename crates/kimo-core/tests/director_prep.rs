@@ -61,6 +61,26 @@ fn bright_box(ss: &Session, t: f64) -> (usize, usize, usize, usize, usize) {
     }
 }
 
+/// An agent with no file tools could not caption at all: every caption path took a file. add_caption_cues takes the cues inline.
+#[test] fn add_caption_cues_builds_an_editable_group_from_inline_cues() {
+    let (mut ss, t) = portrait(360, 640);
+    let r = dispatch(&mut ss, "add_caption_cues", &json!({"track_id": t, "style": "boxed", "cues": [
+        {"start": 0.2, "end": 1.4, "text": "Hey!"}, {"start": 1.5, "end": 3.0, "text": "This is Kimo Director."}]}));
+    let r = r.unwrap_or_else(|e| panic!("add_caption_cues: {e}"));
+    assert_eq!(r["count"], json!(2), "{r}");
+    let ids: Vec<String> = r["clip_ids"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
+    let c = ss.project.find_clip(&ids[1]).unwrap(); assert!((c.start - 1.5).abs() < 1e-6 && (c.duration - 1.5).abs() < 1e-6, "cue 2 at {} for {}", c.start, c.duration);
+    match &c.source { kimo_core::model::Source::Text { text, .. } => assert_eq!(text, "This is Kimo Director."), _ => panic!("not text") }
+    let g = call(&mut ss, "list_captions", json!({})); assert!(g.get(r["caption_id"].as_str().unwrap()).is_some(), "{g}");
+    let (_, _, n) = bright_cols(&ss, 2.0); assert!(n > 100, "cue 2 not drawn");
+    // bad cues fail loud with the cue's index, and change nothing
+    let before = serde_json::to_string(&ss.project).unwrap();
+    for (bad, want) in [(json!([{"start": 1.0, "end": 0.5, "text": "x"}]), "cue 0"), (json!([{"start": 0.0, "end": 1.0, "text": "a"}, {"start": 0.5, "end": 2.0, "text": "b"}]), "cue 1"), (json!([{"start": 0.0, "end": 1.0, "text": " "}]), "cue 0")] {
+        let e = dispatch(&mut ss, "add_caption_cues", &json!({"track_id": t, "cues": bad})).expect_err("bad cue accepted"); assert!(e.contains(want), "{e}");
+    }
+    assert_eq!(before, serde_json::to_string(&ss.project).unwrap(), "a refused call changed the project");
+}
+
 /// add_title sized its type from the canvas height, so on 9:16 "impact" set 355 px Anton on a 720 px wide frame.
 #[test] fn titles_fit_a_portrait_canvas() {
     for style in ["impact", "cinematic", "kinetic", "elegant", "neon"] {

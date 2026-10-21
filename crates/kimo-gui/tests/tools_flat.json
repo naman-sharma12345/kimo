@@ -5,6 +5,7 @@
 "add_audio_effect",
 "add_box_expand",
 "add_camera_shake",
+"add_caption_cues",
 "add_captions",
 "add_clip",
 "add_code_clip",

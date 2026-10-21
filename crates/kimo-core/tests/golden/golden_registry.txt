@@ -4,6 +4,7 @@ add_audio_clip 7b3d9ad166896234
 add_audio_effect c7ddf7d2fdfd146f
 add_box_expand 757e74b37aa0ba37
 add_camera_shake 8c2ecf01560cbb92
+add_caption_cues 4df6d3d9f16aa500
 add_captions 59f096446c4d0d66
 add_clip b851a4076e91b8c2
 add_code_clip 79e8cbe027cdbd62

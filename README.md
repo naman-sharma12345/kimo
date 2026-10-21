@@ -15,7 +15,7 @@
   <a href="https://github.com/naman-sharma12345/kimo/actions/workflows/release.yml"><img alt="release build" src="https://github.com/naman-sharma12345/kimo/actions/workflows/release.yml/badge.svg"></a>
   <a href="https://github.com/naman-sharma12345/kimo/releases"><img alt="release" src="https://img.shields.io/github/v/release/naman-sharma12345/kimo?include_prereleases&label=release&labelColor=0E0E12&color=FF5C28"></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/github/license/naman-sharma12345/kimo?labelColor=0E0E12&color=F4F0E8"></a>
-  <img alt="MCP tools" src="https://img.shields.io/badge/MCP%20tools-378%2F394%20live%20%2B%2016%20gated-F4F0E8?labelColor=0E0E12">
+  <img alt="MCP tools" src="https://img.shields.io/badge/MCP%20tools-379%2F395%20live%20%2B%2016%20gated-F4F0E8?labelColor=0E0E12">
 </p>
 
 <p align="center">
@@ -83,13 +83,13 @@ More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/EXTENDING.md](docs/EXT
 
 ## The MCP tool ecosystem
 
-**378/394 live in the default build + 16 feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah).**
+**379/395 live in the default build + 16 feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah).**
 
-A default `tools/list` shows 17 grouped entries; set `KIMO_TOOLS=flat` to list all 394 (see [Tool list profiles](#tool-list-profiles)).
+A default `tools/list` shows 17 grouped entries; set `KIMO_TOOLS=flat` to list all 395 (see [Tool list profiles](#tool-list-profiles)).
 
-How the numbers fit: `kimo_info` and the golden registry (`crates/kimo-core/tests/golden/golden_registry.txt`) count 392 tools in 14 groups. A flat `tools/list` (`KIMO_TOOLS=flat`) lists 394: those 392 plus the two meta tools `search_tools` and `kimo_describe`. Of the 394, 378 are live in the default build and 16 are feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah); the gated ones stay in the list and answer with a clear refusal until their feature is built in.
+How the numbers fit: `kimo_info` and the golden registry (`crates/kimo-core/tests/golden/golden_registry.txt`) count 393 tools in 14 groups. A flat `tools/list` (`KIMO_TOOLS=flat`) lists 395: those 393 plus the two meta tools `search_tools` and `kimo_describe`. Of the 395, 379 are live in the default build and 16 are feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah); the gated ones stay in the list and answer with a clear refusal until their feature is built in.
 
-392 registered tools sit in 14 groups (full list [below](#tool-listing-392-tools)):
+393 registered tools sit in 14 groups (full list [below](#tool-listing-393-tools)):
 
 | Area | Groups | Examples |
 |---|---|
@@ -117,7 +117,7 @@ How the numbers fit: `kimo_info` and the golden registry (`crates/kimo-core/test
 |---|---|---|
 | `grouped` (default) | 17 | 4,432 bytes | small context windows. Call a group with `action` and `args`; find tools with `search_tools`. |
 | `core` | 29 | 20,368 bytes | the most used tools with full schemas, plus `search_tools`, `kimo_describe`, `kimo_enable_group`. |
-| `flat` | 394 | 286,762 bytes | clients with large context or their own tool search. Every tool listed with its schema. |
+| `flat` | 395 | 286,762 bytes | clients with large context or their own tool search. Every tool listed with its schema. |
 | group names, e.g. `audio,color_grade` | varies | varies | those groups listed flat, the rest grouped. |
 
 Measured on a default-feature `kimo-mcp` built from commit `af615ca` (`initialize`, then `tools/list`; size is the compact JSON of the `result`). `kimo_enable_group` is listed in `grouped` and `core` but not in `flat`. `search_tools(query, limit=8, group?)` returns ranked tools, effects and transitions with the required args and a `call_as` hint.
@@ -457,9 +457,9 @@ and carry no reason. Details: `crates/kimo-mcp/src/preview.rs` ("Headless skips"
 
 Call a group with `{"action": "<tool name>", "args": {...}}`, for example `{"name": "vfx3d", "action": "add_scene3d", "args": {...}}`. Calling a tool by its own name also works.
 
-## Tool listing (392 tools)
+## Tool listing (393 tools)
 
-This is the list the v3 build registers (read from `tools/list` of the grouped server plus `kimo_describe group=<name>`, 392 tools in 14 groups; the grouped `tools/list` itself shows 14 group tools plus `search_tools`, `kimo_describe`, `kimo_enable_group`). `kimo --version` and `kimo_info` report the workspace version, which is 5.0.0 from this release. Get any tool's arguments with `kimo tools describe <name>` or `kimo_describe`, and find tools by words with `search_tools`.
+This is the list the v3 build registers (read from `tools/list` of the grouped server plus `kimo_describe group=<name>`, 393 tools in 14 groups; the grouped `tools/list` itself shows 14 group tools plus `search_tools`, `kimo_describe`, `kimo_enable_group`). `kimo --version` and `kimo_info` report the workspace version, which is 5.0.0 from this release. Get any tool's arguments with `kimo tools describe <name>` or `kimo_describe`, and find tools by words with `search_tools`.
 
 | Group | Tools |
 |---|---|
@@ -468,7 +468,7 @@ This is the list the v3 build registers (read from `tools/list` of the grouped s
 | `animate` (32) | `set_expression`, `set_keyframe_bezier`, `add_camera_shake`, `set_motion_blur`, `set_camera`, `set_camera_keyframe`, `set_corner_pin`, `set_property`, `set_keyframe`, `set_blend`, `set_motion_path`, `remove_motion_path`, `set_flow_blur`, `render_flow`, `get_curve`, `move_key`, `remove_key`, `copy_curve`, `simplify_curve`, `smooth_curve`, `track_beats`, `bind_beats`, `set_mesh_pin`, `apply_motion_preset`, `motion_extract`, `motion_diff`, `set_keyframes`, `sample_property`, `bake_property`, `add_null`, `set_parent`, `get_transform` |
 | `effects` (19) | `sample_field`, `sample_noise`, `list_transitions`, `add_adjustment_layer`, `add_speed_lines`, `add_glitch_confetti`, `set_echo`, `set_posterize_time`, `list_effects`, `add_effect`, `set_effect_param`, `remove_effect`, `add_transition`, `set_effect_mask`, `add_managed_linear_effect`, `set_effect_encoding`, `effect_describe`, `effect_uv_sample`, `transition_render_raw` |
 | `masks` (18) | `set_mask`, `set_mask_keyframe`, `remove_mask`, `add_mask`, `update_mask`, `remove_mask_layer`, `reorder_mask`, `list_masks`, `set_mask_prop_key`, `set_mask_motion_blur`, `set_mask_path_key`, `roto_propagate`, `track_mask`, `set_track_matte`, `remove_track_matte`, `render_mask`, `track_matte`, `refine_matte` |
-| `text` (23) | `add_text`, `set_text`, `import_srt`, `transcribe`, `set_text_style`, `add_text_animator`, `set_animator_keyframe`, `add_title`, `list_fonts`, `set_text_weight`, `set_text_path`, `add_captions`, `list_captions`, `set_caption_style`, `edit_caption`, `transcript_import`, `transcript_get`, `transcript_edit_word`, `transcript_set_take`, `transcript_coverage`, `transcript_to_captions`, `validate_captions`, `transcript_edit_preview` |
+| `text` (24) | `add_text`, `set_text`, `import_srt`, `transcribe`, `set_text_style`, `add_text_animator`, `set_animator_keyframe`, `add_title`, `list_fonts`, `set_text_weight`, `set_text_path`, `add_captions`, `add_caption_cues`, `list_captions`, `set_caption_style`, `edit_caption`, `transcript_import`, `transcript_get`, `transcript_edit_word`, `transcript_set_take`, `transcript_coverage`, `transcript_to_captions`, `validate_captions`, `transcript_edit_preview` |
 | `graphics` (20) | `add_box_expand`, `add_shape`, `add_detection_box`, `add_hud_frame`, `add_counter`, `add_prompt_box`, `add_modifier`, `list_modifiers`, `remove_modifier`, `list_shape_modifiers`, `add_shape_modifier`, `remove_shape_modifier`, `list_layer_styles`, `set_layer_style`, `remove_layer_style`, `add_path_shape`, `set_path`, `path_info`, `add_path_key`, `clear_path_keys` |
 | `vfx3d` (65) | `add_code_clip`, `set_code_clip_param`, `check_code_clip_determinism`, `add_particles`, `add_emitter`, `add_particles3d`, `set_particles3d`, `add_shard_burst`, `add_scene3d`, `simulate_physics`, `shards_project`, `set_light`, `light_rig`, `remove_light`, `list_lights`, `set_material`, `list_materials`, `remove_material`, `set_relight`, `preview_material`, `particle_simulate_raw`, `inspect_threed_backend`, `inspect_mesh_buffers`, `inspect_scene_matrices`, `raycast_mesh_raw`, `sample_sdf_raw`, `sample_pbr_raw`, `sample_diffuse_sh_raw`, `render_mesh_cpu_reference`, `import_mesh_raw`, `generate_mesh_primitive`, `inspect_mesh_primitive`, `render_mesh_camera_pass`, `ingest_vertex_stream`, `inspect_vertex_stream`, `derive_vertex_tangents`, `export_vertex_stream_obj`, `export_vertex_stream_gltf`, `compile_scene3d_descriptor`, `render_scene3d_cpu`, `render_scene3d_wgpu`, `sample_scene3d_animation`, `render_scene3d_sequence`, `sample_direct_lighting`, `render_vertex_stream_pbr`, `query_flat_sah`, `inspect_sdf_graph`, `sample_sdf_graph`, `contour_sdf_graph`, `transform_vertex_stream`, `instantiate_gltf_scene`, `render_offscreen_mesh_normal`, `sample_texture_material`, `import_gltf_surface`, `render_textured_bvh`, `render_wgpu_pbr`, `sample_advection_field`, `render_particle_flow`, `render_particle_flow_motion`, `mesh_lathe`, `mesh_extrude_path`, `mesh_subdivide`, `mesh_boolean`, `set_3d_compositor`, `set_3d_layer_shadows` |
 | `tracking` (30) | `camera_project_points`, `camera_clip_triangle`, `set_ground_plane`, `place_at_track`, `export_st_map`, `track_long_gap`, `track_point`, `stabilize`, `track_planar`, `pin_layer`, `track_mesh`, `solve_camera`, `list_camera_solves`, `camera_solve_info`, `apply_camera_solve`, `grade_node_tracking`, `track_planar_anchored`, `track_features`, `track_set_info`, `fit_track_homography`, `fit_info`, `decompose_track_homography`, `track_jitter_metrics`, `corner_disagreement`, `track_feature_residuals`, `lk_residual_audit`, `ecc_refine_track`, `render_error_field`, `validate_planar_track`, `undistort_clip` |
@@ -480,7 +480,7 @@ This is the list the v3 build registers (read from `tools/list` of the grouped s
 
 ## Verification status
 
-- Registry: 392 tools (`crates/kimo-core/tests/golden/golden_registry.txt`, 392 lines). A default-feature `kimo-mcp` lists 394 entries in `flat` mode: those 392 plus `search_tools` and `kimo_describe`. Of the 394, 378/394 live in the default build + 16 feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah).
+- Registry: 393 tools (`crates/kimo-core/tests/golden/golden_registry.txt`, 393 lines). A default-feature `kimo-mcp` lists 395 entries in `flat` mode: those 393 plus `search_tools` and `kimo_describe`. Of the 395, 379/395 live in the default build + 16 feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah).
 - Fuzz: 6497 calls, 0 failures, as recorded in the v3 notes at 327 tools. Not re-run for this README.
 - Linux spectator installers (`.deb`, `.AppImage`): built on CI runners (dry run at `ca0334f`, then version `0.1.0`; the `5.0.0` files come from the same steps in the `v5.0.0` tag build), downloaded and smoke-tested on Debian 12 x86_64 on 2026-10-17: sha256 matches, the `.deb` installs (`Depends: libwebkit2gtk-4.1-0, libgtk-3-0`) and uninstalls cleanly, and both the `.deb` and the AppImage (`--appimage-extract-and-run`) launch under Xvfb, listen on 127.0.0.1:7421 and draw the `frame_rendered` frames a real `kimo-mcp` (commit `af615ca`) sends after `project_set`, `add_track`, `add_text`. Unsigned draft; other distributions not tested.
 - Windows spectator installer (`Kimo-Spectator_5.0.0_x64_en-US.msi`): **unsigned draft, built on CI runners.** CI installs, launches and uninstalls it on a GitHub Windows runner (the `v5.0.0` tag build); not installed on a real Windows PC yet.
