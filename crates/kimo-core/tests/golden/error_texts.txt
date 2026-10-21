@@ -40,7 +40,7 @@
 39 save_project {}	missing string 'path'
 40 load_project {"path":"/nonexistent/x.kimo"}	cannot read '/nonexistent/x.kimo': No such file or directory (os error 2)
 41 set_property {"clip_id":"clip3","property":"x","time":0.0,"value":1.0}	set_property sets the static value and has no time; use set_keyframe with time to animate
-42 delete_clip {"clipid":"x"}	missing string 'clip_id'
+42 delete_clip {"clipid":"x"}	missing string 'clip_id'; ignored unknown argument 'clipid' (did you mean 'clip_id'?) (valid: clip_id)
 43 cache_set_budget {}	missing number 'megabytes'
 44 cache_set_budget {"megabytes":-1.0}	megabytes must be >= 0, got -1
 45 collect_project {}	missing string 'dest_dir'

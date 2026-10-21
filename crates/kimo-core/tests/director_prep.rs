@@ -100,3 +100,46 @@ fn bright_box(ss: &Session, t: f64) -> (usize, usize, usize, usize, usize) {
         assert!(full > 100 && short * 2 > full, "{style}: at 0.55 s of a 1 s title {short} px of text are drawn; fully revealed it is {full}");
     }
 }
+
+/// add_text has no y; the warning said "(did you mean 'x'?)", which sends a model the wrong way.
+#[test] fn unknown_property_argument_points_at_set_property() {
+    let (mut ss, t) = portrait(360, 640);
+    let r = call(&mut ss, "add_text", json!({"track_id": t, "text": "hi", "start": 0, "duration": 1, "y": 200}));
+    let w = r["warnings"].to_string(); assert!(w.contains("set_property") && !w.contains("did you mean 'x'"), "{w}");
+}
+
+/// add_audio_effect: an unknown parameter named no valid ones, so the agent guessed compressor names one by one.
+#[test] fn audio_effect_parameter_errors_list_the_parameters() {
+    let mut ss = Session::new(); call(&mut ss, "project_set", json!({"width": 180, "height": 320, "fps": 30}));
+    let a = call(&mut ss, "import_media", json!({"path": shaky_plate()}));
+    let wav = dir().join("tone.wav"); ffmpeg(&["-f", "lavfi", "-i", "sine=f=440:d=2:r=48000", "-ac", "2", wav.to_str().unwrap()]);
+    let au = call(&mut ss, "import_media", json!({"path": wav}))["asset_id"].as_str().unwrap().to_string(); let _ = a;
+    let t = call(&mut ss, "add_track", json!({}))["track_id"].as_str().unwrap().to_string();
+    let c = call(&mut ss, "add_audio_clip", json!({"track_id": t, "asset_id": au, "start": 0, "duration": 2}))["clip_id"].as_str().unwrap().to_string();
+    let e = dispatch(&mut ss, "add_audio_effect", &json!({"clip_id": c, "kind": "compressor", "params": {"thresh": -20}})).expect_err("unknown param accepted");
+    for p in ["threshold_db", "ratio", "attack_ms", "release_ms", "makeup_db"] { assert!(e.contains(p), "error does not name {p}: {e}"); }
+}
+
+/// normalize_loudness refused with "lower target or compress first" and no numbers, so the agent could not tell how far off it was.
+#[test] fn loudness_refusal_says_the_loudest_target_that_fits() {
+    let mut ss = Session::new(); call(&mut ss, "project_set", json!({"width": 180, "height": 320, "fps": 30}));
+    // a peaky signal: quiet tone with loud clicks, so -14 LUFS cannot fit under -1 dBFS
+    let wav = dir().join("peaky.wav"); ffmpeg(&["-f", "lavfi", "-i", "sine=f=440:d=3:r=48000", "-f", "lavfi", "-i", "aevalsrc='if(lt(mod(t,0.5),0.002),0.9,0)':d=3:s=48000", "-filter_complex", "[0]volume=0.02[a];[a][1]amix=inputs=2:normalize=0,pan=stereo|c0=c0|c1=c0", wav.to_str().unwrap()]);
+    let au = call(&mut ss, "import_media", json!({"path": wav}))["asset_id"].as_str().unwrap().to_string();
+    let t = call(&mut ss, "add_track", json!({}))["track_id"].as_str().unwrap().to_string();
+    let c = call(&mut ss, "add_audio_clip", json!({"track_id": t, "asset_id": au, "start": 0, "duration": 3}))["clip_id"].as_str().unwrap().to_string();
+    let e = dispatch(&mut ss, "normalize_loudness", &json!({"clip_id": c, "target_lufs": -14})).expect_err("peaky clip normalized to -14");
+    assert!(e.contains("LUFS") && e.contains("dBFS") && e.contains("compressor"), "{e}");
+    // the number it names is a target that works
+    let max: f64 = e.split("loudest target that fits is ").nth(1).and_then(|s| s.split(' ').next()).and_then(|s| s.parse().ok()).unwrap_or_else(|| panic!("no loudest target in: {e}"));
+    call(&mut ss, "normalize_loudness", json!({"clip_id": c, "target_lufs": max - 0.05}));
+}
+
+/// A small model called move_clip with 'at' for 'start': the error said "missing number 'start'" and the warning that
+/// 'at' was dropped never reached it, because a failed call returned only the error.
+#[test] fn a_failed_call_names_the_arguments_it_dropped() {
+    let (mut ss, t) = portrait(360, 640);
+    let c = call(&mut ss, "add_text", json!({"track_id": t, "text": "hi", "start": 0, "duration": 1}))["clip_id"].as_str().unwrap().to_string();
+    let e = dispatch(&mut ss, "move_clip", &json!({"clip_id": c, "at": 2.0})).expect_err("move_clip without start accepted");
+    assert!(e.contains("'at'") && e.contains("start"), "{e}");
+}

@@ -263,12 +263,19 @@ fn add_audio_effect_inner(ss: &mut Session, a: &Value) -> Result<Value, String> 
         "deesser" => &["intensity", "max", "frequency"],
         "reverb" => &["decay", "delay_ms"],
         "denoise" => &["reduction_db", "floor_db"],
-        _ => return Err("unknown audio effect".into()),
+        _ => return Err(format!("unknown audio effect '{kind}'; kinds: eq, compressor, deesser, reverb, denoise, biquad, fir, mix_matrix")),
     };
-    let map = p.as_object().ok_or("params object required")?;
+    // valid names with their range and default, so a wrong name is fixed in one retry
+    let spec = |k: &str| -> &str { match (kind, k) {
+        ("eq", "frequency") => "20..20000 Hz, default 1000", ("eq", "width") => "Q 0.1..20, default 1", ("eq", "gain_db") => "-24..24, default 0",
+        ("compressor", "threshold_db") => "-60..0, default -18", ("compressor", "ratio") => "1..20, default 3", ("compressor", "attack_ms") => "0.01..2000, default 10",
+        ("compressor", "release_ms") => "0.01..9000, default 200", ("compressor", "makeup_db") => "0..36, default 0",
+        ("deesser", _) => "0..1, default 0.5", ("reverb", "decay") => "default 0.3", ("reverb", "delay_ms") => "6..240, default 60",
+        ("denoise", "reduction_db") => "default 12", ("denoise", "floor_db") => "default -50", _ => "" } };
+    let map = p.as_object().ok_or_else(|| format!("params must be an object; {kind} takes: {}", allowed.iter().map(|k| format!("{k} ({})", spec(k))).collect::<Vec<_>>().join(", ")))?;
     for k in map.keys() {
         if !allowed.contains(&k.as_str()) {
-            return Err(format!("unknown {kind} parameter {k}"));
+            return Err(format!("unknown {kind} parameter {k}; {kind} takes: {}", allowed.iter().map(|k| format!("{k} ({})", spec(k))).collect::<Vec<_>>().join(", ")));
         }
     }
     let f = |k, d, lo, hi| finite(&p, k, d, lo, hi);
@@ -363,7 +370,10 @@ fn normalize_loudness_inner(ss: &mut Session, a: &Value) -> Result<Value, String
     let gain = 10f64.powf(delta / 20.);
     let peak = pcm.iter().map(|v| v.abs() as f64).fold(0., f64::max) * gain;
     if peak > 10f64.powf(-1. / 20.) {
-        return Err("target exceeds -1dBFS sample headroom; lower target or compress first".into());
+        // name the numbers: how far the peaks go over, and the loudest target that still fits under -1 dBFS
+        let peak_db = 20. * (peak / gain).log10();
+        let fits = before + (-1. - peak_db);
+        return Err(format!("target {target:.1} LUFS needs {delta:+.1} dB, which takes the clip's sample peak from {peak_db:.1} dBFS to {:.1} dBFS, over the -1 dBFS headroom. The loudest target that fits is {:.1} LUFS (clip now {before:.1} LUFS). For a louder clip, tame the peaks first with add_audio_effect {{clip_id, kind: \"compressor\", params: {{threshold_db: -24, ratio: 4}}}} (normalize measures the clip after its effects; a compressor with a short attack_ms catches fast peaks), then normalize again.", peak_db + delta, (fits * 10.).floor() / 10.));
     }
     let c = get(ss, a)?;
     c.audio.volume = Prop::new(gain);

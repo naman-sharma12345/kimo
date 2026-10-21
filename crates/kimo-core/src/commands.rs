@@ -175,7 +175,11 @@ fn dispatch_core(ss: &mut Session, name: &str, args: &Value) -> Result<Value, St
     // RV-22: these inputs used to fall back silently on a bad value (the renderer's default arm). Rejected at tool input only; project load and render keep the old fallback.
     let named; let args = match resolve_names(ss, name, args)? { Some(a) => { named = a; &named } None => args };
     let normalized; let args = match guard_enums(name, args)? { Some(a) => { normalized = a; &normalized } None => args };
-    let mut r = dispatch_inner(ss, name, args).map_err(|m| polish_error(ss, args, m))?;
+    // a failed call also names the arguments it dropped: a misspelt or guessed name ('at' for 'start') is the usual cause,
+    // and the success-only warning never reached the caller
+    let mut r = dispatch_inner(ss, name, args).map_err(|m| polish_error(ss, args, m)).map_err(|m| {
+        let dropped: Vec<String> = unknown.iter().filter(|k| !m.split(|ch: char| !ch.is_alphanumeric() && ch != '_').any(|w| w == k.as_str())).map(|k| unknown_arg_text(name, k)).collect();
+        if dropped.is_empty() { m } else { format!("{m}; ignored {}", dropped.join("; ")) } })?;
     if !unknown.is_empty() { if let Some(o) = r.as_object_mut() { o.insert("warnings".into(), json!(unknown.iter().map(|k| format!("ignored {}", unknown_arg_text(name, k))).collect::<Vec<_>>())); } }
     Ok(r)
 }
@@ -206,7 +210,12 @@ fn unknown_arg_text(name: &str, key: &str) -> String {
     let valid: Vec<String> = registry_ref().iter().find(|c| c.name == name).and_then(|c| c.schema.get("properties").and_then(|p| p.as_object()).map(|p| p.keys().cloned().collect())).unwrap_or_default();
     let near = crate::errors::nearest(key, &valid, 1);
     let mut t = format!("unknown argument '{key}'");
-    if let Some(n) = near.first() { if crate::errors::lev_pub(key, n) <= 3 { t.push_str(&format!(" (did you mean '{n}'?)")); } }
+    // A clip property given as a call argument (y on add_text): name the call that sets it, not a near-miss spelling ('y' is not 'x').
+    const PROPS: &[&str] = &["opacity", "x", "y", "scale", "rotation", "rot_x", "rot_y", "pos_z"];
+    if PROPS.contains(&key) && name != "set_property" {
+        let hint = if key == "y" { " (pixels from the canvas centre, + is down)" } else { "" };
+        t.push_str(&format!(": '{key}' is a clip property, not an argument of {name}; set it after with set_property {{clip_id, property: \"{key}\", value}}{hint}"));
+    } else if let Some(n) = near.first() { if crate::errors::lev_pub(key, n) <= 3 { t.push_str(&format!(" (did you mean '{n}'?)")); } }
     let shown: Vec<&str> = valid.iter().take(12).map(|x| x.as_str()).collect();
     t.push_str(&format!(" (valid: {}{})", if shown.is_empty() { "none".to_string() } else { shown.join(", ") }, if valid.len() > 12 { ", ..." } else { "" }));
     t
