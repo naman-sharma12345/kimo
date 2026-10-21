@@ -1,6 +1,6 @@
 //! Structure-from-motion camera solve: feature tracks -> 2-view init -> incremental PnP -> sparse bundle adjustment.
 //! Standard CV convention: x right, y down, z forward; pose is world->camera (X_c = R X_w + t). Pure Rust, no dependencies.
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 pub type V3 = [f64; 3];
 pub type M3 = [[f64; 3]; 3];
@@ -75,11 +75,28 @@ impl Pose {
     pub fn apply(&self, x: &V3) -> V3 { let v = mv(&self.r, x); [v[0] + self.t[0], v[1] + self.t[1], v[2] + self.t[2]] }
     pub fn center(&self) -> V3 { let v = mv(&tp(&self.r), &self.t); [-v[0], -v[1], -v[2]] }
 }
+/// Pinhole + Brown-Conrady lens: radial k1, k2 and tangential p1, p2 (OpenCV convention, see `distort_norm`). p1 = p2 = 0 is the radial-only model.
 #[derive(Clone, Copy, Debug)]
-pub struct Intr { pub f: f64, pub cx: f64, pub cy: f64, pub k1: f64, pub k2: f64 }
+pub struct Intr { pub f: f64, pub cx: f64, pub cy: f64, pub k1: f64, pub k2: f64, pub p1: f64, pub p2: f64 }
+impl Intr {
+    /// True when the tangential terms are in use; every radial-only path skips them so its arithmetic stays bit-identical.
+    #[inline] pub fn has_tan(&self) -> bool { self.p1 != 0.0 || self.p2 != 0.0 }
+}
+/// Global parameters refined by bundle adjustment. tan: tangential p1, p2.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct Flags { pub focal: bool, pub dist: bool, pub pp: bool, pub rot_only: bool }
-fn proj(p: &Pose, x: &V3, k: &Intr) -> Option<(f64, f64)> { let c = p.apply(x); if c[2] < 1e-9 { return None; } let (a, b) = (c[0] / c[2], c[1] / c[2]); let r2 = a * a + b * b; let sc = 1.0 + k.k1 * r2 + k.k2 * r2 * r2; Some((k.f * a * sc + k.cx, k.f * b * sc + k.cy)) }
+pub struct Flags { pub focal: bool, pub dist: bool, pub pp: bool, pub rot_only: bool, pub tan: bool }
+/// Tangential (decentering) terms on normalised coordinates: (2 p1 x y + p2 (r2 + 2 x^2), p1 (r2 + 2 y^2) + 2 p2 x y).
+#[inline] fn tan_d(x: f64, y: f64, r2: f64, k: &Intr) -> (f64, f64) { (2.0 * k.p1 * x * y + k.p2 * (r2 + 2.0 * x * x), k.p1 * (r2 + 2.0 * y * y) + 2.0 * k.p2 * x * y) }
+/// Jacobian of the tangential terms w.r.t. (x, y).
+#[inline] fn tan_j(x: f64, y: f64, k: &Intr) -> [[f64; 2]; 2] { [[2.0 * k.p1 * y + 6.0 * k.p2 * x, 2.0 * k.p1 * x + 2.0 * k.p2 * y], [2.0 * k.p1 * x + 2.0 * k.p2 * y, 6.0 * k.p1 * y + 2.0 * k.p2 * x]] }
+/// Ideal -> distorted normalised coordinates, Brown-Conrady as documented by OpenCV (calib3d): r2 = x^2 + y^2,
+/// x_d = x (1 + k1 r2 + k2 r2^2) + 2 p1 x y + p2 (r2 + 2 x^2), y_d = y (1 + k1 r2 + k2 r2^2) + p1 (r2 + 2 y^2) + 2 p2 x y.
+pub fn distort_norm(x: f64, y: f64, k: &Intr) -> (f64, f64) { let r2 = x * x + y * y; let sc = 1.0 + k.k1 * r2 + k.k2 * r2 * r2; if !k.has_tan() { return (x * sc, y * sc); } let (dx, dy) = tan_d(x, y, r2, k); (x * sc + dx, y * sc + dy) }
+/// Ideal (undistorted pinhole) pixel -> distorted pixel: normalise by (cx, cy, f), `distort_norm`, back to pixels.
+pub fn distort_px(o: (f64, f64), k: &Intr) -> (f64, f64) { let d = distort_norm((o.0 - k.cx) / k.f, (o.1 - k.cy) / k.f, k); (d.0 * k.f + k.cx, d.1 * k.f + k.cy) }
+/// World point -> distorted pixel through a solved camera (None behind the camera): the model the solver minimises.
+pub fn project(p: &Pose, x: &V3, k: &Intr) -> Option<(f64, f64)> { proj(p, x, k) }
+fn proj(p: &Pose, x: &V3, k: &Intr) -> Option<(f64, f64)> { let c = p.apply(x); if c[2] < 1e-9 { return None; } let (a, b) = (c[0] / c[2], c[1] / c[2]); let r2 = a * a + b * b; let sc = 1.0 + k.k1 * r2 + k.k2 * r2 * r2; if k.has_tan() { let (dx, dy) = tan_d(a, b, r2, k); return Some((k.f * (a * sc + dx) + k.cx, k.f * (b * sc + dy) + k.cy)); } Some((k.f * a * sc + k.cx, k.f * b * sc + k.cy)) }
 fn reproj_err(p: &Pose, x: &V3, k: &Intr, o: (f64, f64)) -> f64 { match proj(p, x, k) { Some((u, v)) => ((u - o.0).powi(2) + (v - o.1).powi(2)).sqrt(), None => 1e9 } }
 
 /// Linear triangulation from calibrated-normalised observations (x,y) = ((u-cx)/f, (v-cy)/f).
@@ -95,7 +112,21 @@ pub fn triangulate(views: &[(&Pose, (f64, f64))]) -> Option<V3> {
 /// (tests/undistort_roundtrip.rs) LLVM 1.99.0 at opt-level 2/3 does not finish optimising that loop (compile hung >15 min). Kept
 /// out of line, the same caller compiles in well under a second; the call is not inlined into any loop by design.
 #[inline(never)]
-pub fn norm_obs(o: (f64, f64), k: &Intr) -> (f64, f64) { let xd = ((o.0 - k.cx) / k.f, (o.1 - k.cy) / k.f); let mut xn = xd; for _ in 0..12 { let r2 = xn.0 * xn.0 + xn.1 * xn.1; let sc = 1.0 + k.k1 * r2 + k.k2 * r2 * r2; xn = (xd.0 / sc, xd.1 / sc); } xn }
+pub fn norm_obs(o: (f64, f64), k: &Intr) -> (f64, f64) { let xd = ((o.0 - k.cx) / k.f, (o.1 - k.cy) / k.f); if k.has_tan() { return undistort_norm_tan(xd, k); } let mut xn = xd; for _ in 0..12 { let r2 = xn.0 * xn.0 + xn.1 * xn.1; let sc = 1.0 + k.k1 * r2 + k.k2 * r2 * r2; xn = (xd.0 / sc, xd.1 / sc); } xn }
+/// Inverse of the full Brown-Conrady model (tangential on): fixed-point iteration x = (x_d - tangential(x)) / radial(x), then Newton steps on
+/// distort_norm(x) - x_d with the analytic 2x2 Jacobian. Out of line for the same reason as `norm_obs`.
+#[inline(never)]
+fn undistort_norm_tan(xd: (f64, f64), k: &Intr) -> (f64, f64) {
+    let mut xn = xd;
+    for _ in 0..20 { let r2 = xn.0 * xn.0 + xn.1 * xn.1; let sc = 1.0 + k.k1 * r2 + k.k2 * r2 * r2; let (dx, dy) = tan_d(xn.0, xn.1, r2, k); xn = ((xd.0 - dx) / sc, (xd.1 - dy) / sc); }
+    for _ in 0..4 {
+        let r2 = xn.0 * xn.0 + xn.1 * xn.1; let sc = 1.0 + k.k1 * r2 + k.k2 * r2 * r2; let dsc = 2.0 * k.k1 + 4.0 * k.k2 * r2; let (dx, dy) = tan_d(xn.0, xn.1, r2, k);
+        let (ex, ey) = (xn.0 * sc + dx - xd.0, xn.1 * sc + dy - xd.1); let tj = tan_j(xn.0, xn.1, k);
+        let j = [[sc + xn.0 * dsc * xn.0 + tj[0][0], xn.0 * dsc * xn.1 + tj[0][1]], [xn.1 * dsc * xn.0 + tj[1][0], sc + xn.1 * dsc * xn.1 + tj[1][1]]]; let det = j[0][0] * j[1][1] - j[0][1] * j[1][0];
+        if !(det.abs() > 1e-12) { break; } xn = (xn.0 - (j[1][1] * ex - j[0][1] * ey) / det, xn.1 - (-j[1][0] * ex + j[0][0] * ey) / det);
+    }
+    xn
+}
 /// Pixel position with lens distortion removed (as if shot with an ideal pinhole of the same focal and principal point).
 pub fn undistort_px(o: (f64, f64), k: &Intr) -> (f64, f64) { let n = norm_obs(o, k); (n.0 * k.f + k.cx, n.1 * k.f + k.cy) }
 
@@ -166,6 +197,7 @@ pub fn refine_pose(mut pose: Pose, xs: &[V3], obs: &[(f64, f64)], k: &Intr) -> P
         for (x, o) in xs.iter().zip(obs) {
             let c = pose.apply(x); if c[2] < 1e-9 { continue; } let Some((u, v)) = proj(&pose, x, k) else { continue }; let r = [u - o.0, v - o.1]; let rn = (r[0] * r[0] + r[1] * r[1]).sqrt(); let w = if rn < 2.0 { 1.0 } else { 2.0 / rn };
             let iz = 1.0 / c[2]; let (xa, xb) = (c[0] * iz, c[1] * iz); let r2_ = xa * xa + xb * xb; let sc_ = 1.0 + k.k1 * r2_ + k.k2 * r2_ * r2_; let dsc = 2.0 * k.k1 + 4.0 * k.k2 * r2_; let jd = [[sc_ + xa * dsc * xa, xa * dsc * xb], [xb * dsc * xa, sc_ + xb * dsc * xb]];
+            let jd = if k.has_tan() { let tj = tan_j(xa, xb, k); [[jd[0][0] + tj[0][0], jd[0][1] + tj[0][1]], [jd[1][0] + tj[1][0], jd[1][1] + tj[1][1]]] } else { jd };
             let dxn = [[iz, 0.0, -c[0] * iz * iz], [0.0, iz, -c[1] * iz * iz]]; let mut du = [0.0; 3]; let mut dv = [0.0; 3]; for j in 0..3 { du[j] = k.f * (jd[0][0] * dxn[0][j] + jd[0][1] * dxn[1][j]); dv[j] = k.f * (jd[1][0] * dxn[0][j] + jd[1][1] * dxn[1][j]); }
             // d c / d (omega, t): [-[c]x, I]
             let cx = [[0.0, -c[2], c[1]], [c[2], 0.0, -c[0]], [-c[1], c[0], 0.0]]; // [c]x ; dc/dw = -[c]x applied to omega as left-perturbation of R: c' = c + w x c = c - [c]x w
@@ -194,30 +226,32 @@ pub fn pnp_ransac(xs: &[V3], obs: &[(f64, f64)], k: &Intr, thresh: f64, iters: u
 pub struct BaObs { pub cam: usize, pub pt: usize, pub u: f64, pub v: f64 }
 fn res_fn(r: &M3, t: &V3, x: &V3, k: &Intr, o: &BaObs) -> [f64; 2] {
     let c = mv(r, x); let (a, b, z) = (c[0] + t[0], c[1] + t[1], (c[2] + t[2]).max(1e-9)); let (xa, xb) = (a / z, b / z); let r2 = xa * xa + xb * xb; let sc = 1.0 + k.k1 * r2 + k.k2 * r2 * r2;
+    if k.has_tan() { let (dx, dy) = tan_d(xa, xb, r2, k); return [k.f * (xa * sc + dx) + k.cx - o.u, k.f * (xb * sc + dy) + k.cy - o.v]; }
     [k.f * xa * sc + k.cx - o.u, k.f * xb * sc + k.cy - o.v]
 }
-/// Sparse BA with Schur complement. Camera 0 is held fixed (gauge). Global parameters per Flags: focal, radial k1/k2, principal point.
+/// Sparse BA with Schur complement. Camera 0 is held fixed (gauge). Global parameters per Flags: focal, radial k1/k2, principal point, tangential p1/p2.
 /// rot_only: translations stay zero (pure-rotation cameras; points act as directions). Returns (initial rms, final rms).
 pub fn bundle_adjust(poses: &mut [Pose], pts: &mut [V3], obs: &[BaObs], k: &mut Intr, fl: Flags, iters: usize) -> (f64, f64) {
     let nc = poses.len(); let np = pts.len(); let nfree = nc.saturating_sub(1);
-    let mut gl: Vec<u8> = vec![]; if fl.focal { gl.push(0); } if fl.dist { gl.push(1); gl.push(2); } if fl.pp { gl.push(3); gl.push(4); }
+    let mut gl: Vec<u8> = vec![]; if fl.focal { gl.push(0); } if fl.dist { gl.push(1); gl.push(2); } if fl.pp { gl.push(3); gl.push(4); } if fl.tan { gl.push(5); gl.push(6); }
     let d = 6 * nfree + gl.len(); let fo = 6 * nfree;
     let rms = |poses: &[Pose], pts: &[V3], k: &Intr| -> f64 { let mut s = 0.0; for o in obs { let r = res_fn(&poses[o.cam].r, &poses[o.cam].t, &pts[o.pt], k, o); s += r[0] * r[0] + r[1] * r[1]; } (s / obs.len().max(1) as f64).sqrt() };
     let cost = |poses: &[Pose], pts: &[V3], k: &Intr| -> f64 { let mut s = 0.0; for o in obs { let r = res_fn(&poses[o.cam].r, &poses[o.cam].t, &pts[o.pt], k, o); let n = (r[0] * r[0] + r[1] * r[1]).sqrt(); s += if n < 2.0 { n * n } else { 4.0 * n - 4.0 }; } s };
     let r0 = rms(poses, pts, k); let mut lambda = 1e-3; let mut cur = cost(poses, pts, k);
     for _ in 0..iters {
-        let mut hcc = vec![0.0f64; d * d]; let mut bc = vec![0.0f64; d]; let mut hpp = vec![[[0.0f64; 3]; 3]; np]; let mut bp = vec![[0.0f64; 3]; np]; let mut hcp: Vec<HashMap<usize, [f64; 3]>> = vec![HashMap::new(); np];
+        let mut hcc = vec![0.0f64; d * d]; let mut bc = vec![0.0f64; d]; let mut hpp = vec![[[0.0f64; 3]; 3]; np]; let mut bp = vec![[0.0f64; 3]; np]; let mut hcp: Vec<BTreeMap<usize, [f64; 3]>> = vec![BTreeMap::new(); np];
         for o in obs {
             let p = &poses[o.cam]; let x = pts[o.pt]; let r = res_fn(&p.r, &p.t, &x, k, o); let rn = (r[0] * r[0] + r[1] * r[1]).sqrt(); let w = if rn < 2.0 { 1.0 } else { 2.0 / rn };
             let c = p.apply(&x); let z = c[2].max(1e-9); let iz = 1.0 / z; let (xa, xb) = (c[0] * iz, c[1] * iz); let r2 = xa * xa + xb * xb; let sc = 1.0 + k.k1 * r2 + k.k2 * r2 * r2; let dsc = 2.0 * k.k1 + 4.0 * k.k2 * r2;
             let jd = [[sc + xa * dsc * xa, xa * dsc * xb], [xb * dsc * xa, sc + xb * dsc * xb]]; let dxn = [[iz, 0.0, -c[0] * iz * iz], [0.0, iz, -c[1] * iz * iz]];
+            let jd = if k.has_tan() { let tj = tan_j(xa, xb, k); [[jd[0][0] + tj[0][0], jd[0][1] + tj[0][1]], [jd[1][0] + tj[1][0], jd[1][1] + tj[1][1]]] } else { jd };
             let mut du = [0.0; 3]; let mut dv = [0.0; 3]; for j in 0..3 { du[j] = k.f * (jd[0][0] * dxn[0][j] + jd[0][1] * dxn[1][j]); dv[j] = k.f * (jd[1][0] * dxn[0][j] + jd[1][1] * dxn[1][j]); }
             let mut jp = [[0.0; 3]; 2]; for j in 0..3 { let dc = [p.r[0][j], p.r[1][j], p.r[2][j]]; jp[0][j] = dot(&du, &dc); jp[1][j] = dot(&dv, &dc); }
             let mut cols: Vec<(usize, [f64; 2])> = vec![];
             if o.cam > 0 { let base = 6 * (o.cam - 1); let cx_ = [[0.0, -c[2], c[1]], [c[2], 0.0, -c[0]], [-c[1], c[0], 0.0]];
                 for j in 0..3 { let dcj = [-cx_[0][j], -cx_[1][j], -cx_[2][j]]; cols.push((base + j, [dot(&du, &dcj), dot(&dv, &dcj)])); }
                 if !fl.rot_only { for j in 0..3 { cols.push((base + 3 + j, [du[j], dv[j]])); } } }
-            for (gi, g) in gl.iter().enumerate() { let col = match g { 0 => [xa * sc, xb * sc], 1 => [k.f * xa * r2, k.f * xb * r2], 2 => [k.f * xa * r2 * r2, k.f * xb * r2 * r2], 3 => [1.0, 0.0], _ => [0.0, 1.0] }; cols.push((fo + gi, col)); }
+            for (gi, g) in gl.iter().enumerate() { let col = match g { 0 => if k.has_tan() { let (dx, dy) = tan_d(xa, xb, r2, k); [xa * sc + dx, xb * sc + dy] } else { [xa * sc, xb * sc] }, 1 => [k.f * xa * r2, k.f * xb * r2], 2 => [k.f * xa * r2 * r2, k.f * xb * r2 * r2], 3 => [1.0, 0.0], 4 => [0.0, 1.0], 5 => [k.f * 2.0 * xa * xb, k.f * (r2 + 2.0 * xb * xb)], _ => [k.f * (r2 + 2.0 * xa * xa), k.f * 2.0 * xa * xb] }; cols.push((fo + gi, col)); }
             for (ra, ja) in &cols { bc[*ra] -= w * (ja[0] * r[0] + ja[1] * r[1]); for (rb, jb) in &cols { hcc[ra * d + rb] += w * (ja[0] * jb[0] + ja[1] * jb[1]); }
                 let e = hcp[o.pt].entry(*ra).or_insert([0.0; 3]); for j in 0..3 { e[j] += w * (ja[0] * jp[0][j] + ja[1] * jp[1][j]); } }
             for a in 0..3 { bp[o.pt][a] -= w * (jp[0][a] * r[0] + jp[1][a] * r[1]); for b in 0..3 { hpp[o.pt][a][b] += w * (jp[0][a] * jp[0][b] + jp[1][a] * jp[1][b]); } }
@@ -234,7 +268,7 @@ pub fn bundle_adjust(poses: &mut [Pose], pts: &mut [V3], obs: &[BaObs], k: &mut 
             if d > 0 && !solve_spd(&mut s, &mut g, d) { lambda *= 10.0; continue; }
             let mut np_ = poses.to_vec(); let mut pp = pts.to_vec();
             for c in 1..nc { let b = 6 * (c - 1); let dr = exp_so3(&[g[b], g[b + 1], g[b + 2]]); np_[c].r = mm(&dr, &poses[c].r); if fl.rot_only { np_[c].t = [0.0; 3]; } else { np_[c].t = [poses[c].t[0] + g[b + 3], poses[c].t[1] + g[b + 4], poses[c].t[2] + g[b + 5]]; } }
-            let mut k2 = *k; for (gi, gg) in gl.iter().enumerate() { let dv = g[fo + gi]; match gg { 0 => k2.f = (k.f + dv).clamp(k.f * 0.5, k.f * 2.0), 1 => k2.k1 = (k.k1 + dv).clamp(-1.0, 1.0), 2 => k2.k2 = (k.k2 + dv).clamp(-1.0, 1.0), 3 => k2.cx = (k.cx + dv).clamp(k.cx * 0.8, k.cx * 1.2), _ => k2.cy = (k.cy + dv).clamp(k.cy * 0.8, k.cy * 1.2) } }
+            let mut k2 = *k; for (gi, gg) in gl.iter().enumerate() { let dv = g[fo + gi]; match gg { 0 => k2.f = (k.f + dv).clamp(k.f * 0.5, k.f * 2.0), 1 => k2.k1 = (k.k1 + dv).clamp(-1.0, 1.0), 2 => k2.k2 = (k.k2 + dv).clamp(-1.0, 1.0), 3 => k2.cx = (k.cx + dv).clamp(k.cx * 0.8, k.cx * 1.2), 4 => k2.cy = (k.cy + dv).clamp(k.cy * 0.8, k.cy * 1.2), 5 => k2.p1 = (k.p1 + dv).clamp(-0.2, 0.2), _ => k2.p2 = (k.p2 + dv).clamp(-0.2, 0.2) } }
             for j in 0..np { if let Some(hi) = &pinv[j] { let mut rhs = bp[j]; for (ra, ea) in &hcp[j] { for a in 0..3 { rhs[a] -= ea[a] * g[*ra]; } } let dx = mv(hi, &rhs); pp[j] = [pts[j][0] + dx[0], pts[j][1] + dx[1], pts[j][2] + dx[2]]; } }
             let nc2 = cost(&np_, &pp, &k2);
             if nc2 < cur { let rel = (cur - nc2) / cur.max(1e-12); poses.copy_from_slice(&np_); pts.copy_from_slice(&pp); *k = k2; cur = nc2; lambda = (lambda / 3.0).max(1e-9); improved = true; if rel < 1e-7 { return (r0, rms(poses, pts, k)); } break; }
@@ -248,8 +282,10 @@ pub fn bundle_adjust(poses: &mut [Pose], pts: &mut [V3], obs: &[BaObs], k: &mut 
 // ---------- solve pipeline ----------
 #[derive(Clone, Debug)]
 pub struct Track { pub obs: Vec<(usize, f64, f64)> } // (frame index, x, y) pixels
-pub struct SolveOpts { pub focal_px: Option<f64>, pub refine_focal: bool, pub refine_dist: bool, pub refine_pp: bool, pub max_keyframes: usize, pub reproj_thresh: f64, pub seed: u64 }
-impl Default for SolveOpts { fn default() -> Self { SolveOpts { focal_px: None, refine_focal: true, refine_dist: false, refine_pp: false, max_keyframes: 30, reproj_thresh: 2.0, seed: 7 } } }
+/// tangential: also solve the Brown-Conrady tangential terms p1, p2 in the final adjustments (default false: radial only, results unchanged).
+pub struct SolveOpts { pub focal_px: Option<f64>, pub refine_focal: bool, pub refine_dist: bool, pub refine_pp: bool, pub max_keyframes: usize, pub reproj_thresh: f64, pub seed: u64, pub tangential: bool }
+impl Default for SolveOpts { fn default() -> Self { SolveOpts { focal_px: None, refine_focal: true, refine_dist: false, refine_pp: false, max_keyframes: 30, reproj_thresh: 2.0, seed: 7, tangential: false } } }
+#[derive(Clone)]
 pub struct Solution { pub mode: &'static str, pub k1k2: [f64; 2], pub poses: Vec<Option<Pose>>, pub intr: Intr, pub points: Vec<V3>, pub point_track: Vec<usize>, pub rms: f64, pub frame_rms: Vec<f64>, pub registered: usize, pub notes: Vec<String> }
 
 fn obs_at(tr: &Track, frame: usize) -> Option<(f64, f64)> { let i = tr.obs.partition_point(|o| o.0 < frame); tr.obs.get(i).filter(|o| o.0 == frame).map(|o| (o.1, o.2)) }
@@ -258,7 +294,7 @@ fn parallax_angle(c1: &V3, c2: &V3, x: &V3) -> f64 { let a = [x[0] - c1[0], x[1]
 pub fn solve(tracks: &[Track], nframes: usize, w: f64, h: f64, o: &SolveOpts) -> Result<Solution, String> {
     if nframes < 3 { return Err("need at least 3 frames".into()); }
     let mut notes = vec![]; let mut rng = Rng(o.seed | 1);
-    let mut k = Intr { f: o.focal_px.unwrap_or(w.max(h) * 0.9), cx: w / 2.0, cy: h / 2.0, k1: 0.0, k2: 0.0 };
+    let mut k = Intr { f: o.focal_px.unwrap_or(w.max(h) * 0.9), cx: w / 2.0, cy: h / 2.0, k1: 0.0, k2: 0.0, p1: 0.0, p2: 0.0 };
     let nk = o.max_keyframes.clamp(3, nframes); let kf: Vec<usize> = (0..nk).map(|i| (i * (nframes - 1)) / (nk - 1)).collect::<Vec<_>>(); let mut kf = kf; kf.dedup();
     // ---- init pair: first keyframe vs the candidate with best inliers x parallax
     let pair_data = |a: usize, b: usize| -> Vec<(usize, (f64, f64), (f64, f64))> { tracks.iter().enumerate().filter_map(|(i, t)| Some((i, obs_at(t, a)?, obs_at(t, b)?))).collect() };
@@ -283,17 +319,17 @@ pub fn solve(tracks: &[Track], nframes: usize, w: f64, h: f64, o: &SolveOpts) ->
     let (_, ia, ib, ki, tv, ids) = init.ok_or("no usable initial pair: not enough parallax or tracks (camera must translate, pure rotation cannot be solved in 3D)")?;
     k = ki; notes.push(format!("init pair frames {ia}-{ib}, {} inliers, focal {:.1}px", ids.len(), k.f));
     // ---- state
-    let mut kposes: HashMap<usize, Pose> = HashMap::new(); kposes.insert(ia, Pose { r: ID3, t: [0.0; 3] }); kposes.insert(ib, tv.pose);
-    let mut p3: HashMap<usize, V3> = HashMap::new(); for (i, x) in ids.iter().zip(&tv.pts) { p3.insert(*i, *x); }
+    let mut kposes: BTreeMap<usize, Pose> = BTreeMap::new(); kposes.insert(ia, Pose { r: ID3, t: [0.0; 3] }); kposes.insert(ib, tv.pose);
+    let mut p3: BTreeMap<usize, V3> = BTreeMap::new(); for (i, x) in ids.iter().zip(&tv.pts) { p3.insert(*i, *x); }
     // normalise scale: baseline = 1
     let bl = norm(&tv.pose.center()).max(1e-12); for x in p3.values_mut() { *x = [x[0] / bl, x[1] / bl, x[2] / bl]; } { let p = kposes.get_mut(&ib).unwrap(); p.t = [p.t[0] / bl, p.t[1] / bl, p.t[2] / bl]; }
     let ia_pos = kf.iter().position(|&f| f == ia).unwrap(); let ib_pos = kf.iter().position(|&f| f == ib).unwrap();
     let mut order: Vec<usize> = vec![]; { let (mut lo, mut hi) = (ib_pos.min(ia_pos) as isize - 1, ib_pos.max(ia_pos) + 1); let mut up = true; loop { let mut pushed = false; if up && hi < kf.len() { order.push(kf[hi]); hi += 1; pushed = true; } else if !up && lo >= 0 { order.push(kf[lo as usize]); lo -= 1; pushed = true; } up = !up; if !pushed && hi >= kf.len() && lo < 0 { break; } } }
     for &b in kf.iter() { if !kposes.contains_key(&b) && !order.contains(&b) { order.push(b); } }
     let mut since_ba = 0;
-    let run_ba = |kposes: &mut HashMap<usize, Pose>, p3: &mut HashMap<usize, V3>, k: &mut Intr, rf: Flags, it: usize, thr: f64, cut: f64| -> (f64, f64) {
-        let mut frames: Vec<usize> = kposes.keys().cloned().collect(); frames.sort(); let fidx: HashMap<usize, usize> = frames.iter().enumerate().map(|(i, f)| (*f, i)).collect();
-        let mut tids: Vec<usize> = p3.keys().cloned().collect(); tids.sort(); let tidx: HashMap<usize, usize> = tids.iter().enumerate().map(|(i, t)| (*t, i)).collect();
+    let run_ba = |kposes: &mut BTreeMap<usize, Pose>, p3: &mut BTreeMap<usize, V3>, k: &mut Intr, rf: Flags, it: usize, thr: f64, cut: f64| -> (f64, f64) {
+        let mut frames: Vec<usize> = kposes.keys().cloned().collect(); frames.sort(); let fidx: BTreeMap<usize, usize> = frames.iter().enumerate().map(|(i, f)| (*f, i)).collect();
+        let mut tids: Vec<usize> = p3.keys().cloned().collect(); tids.sort(); let tidx: BTreeMap<usize, usize> = tids.iter().enumerate().map(|(i, t)| (*t, i)).collect();
         let mut bo = vec![]; for &t in &tids { for &(f, x, y) in &tracks[t].obs { if let Some(&c) = fidx.get(&f) { if cut > 0.0 && reproj_err(&kposes[&f], &p3[&t], k, (x, y)) > cut { continue; } bo.push(BaObs { cam: c, pt: tidx[&t], u: x, v: y }); } } }
         let mut ps: Vec<Pose> = frames.iter().map(|f| kposes[f]).collect(); let mut xs: Vec<V3> = tids.iter().map(|t| p3[t]).collect();
         let res = bundle_adjust(&mut ps, &mut xs, &bo, k, rf, it);
@@ -316,14 +352,20 @@ pub fn solve(tracks: &[Track], nframes: usize, w: f64, h: f64, o: &SolveOpts) ->
                 let maxang = views.iter().map(|(r, _)| parallax_angle(&c_f, &kposes[r].center(), &x)).fold(0.0, f64::max); if ok && maxang > 1.0 { p3.insert(ti, x); } } }
         if since_ba >= 4 { run_ba(&mut kposes, &mut p3, &mut k, Flags::default(), 8, o.reproj_thresh, 0.0); since_ba = 0; }
     }
-    let fl_final = Flags { focal: o.refine_focal, dist: o.refine_dist, pp: o.refine_pp, rot_only: false };
+    let fl_final = Flags { focal: o.refine_focal, dist: o.refine_dist, pp: o.refine_pp, rot_only: false, tan: o.tangential };
     run_ba(&mut kposes, &mut p3, &mut k, Flags { focal: o.refine_focal, ..Default::default() }, 15, o.reproj_thresh, o.reproj_thresh * 4.0);
-    if o.refine_dist { let base = (kposes.clone(), p3.clone(), k); let mut best: Option<(f64, HashMap<usize, Pose>, HashMap<usize, V3>, Intr)> = None;
-        for k1 in [0.0, -0.15, 0.15, -0.3, 0.3] { let (mut kp, mut pp, mut kk) = (base.0.clone(), base.1.clone(), base.2); kk.k1 = k1; kk.k2 = 0.0; let (_, r1) = run_ba(&mut kp, &mut pp, &mut kk, fl_final, 50, o.reproj_thresh, 0.0);
+    // Tangential on: the radial multi-start runs without p1, p2 (they join in the final adjustments from 0 on a geometry the radial model
+    // has settled), and after every frame is registered one more BA runs over ALL frames (see below). The lens valley k1/k2/p1/p2 is shallow:
+    // on the K5 test plate the keyframe-only BA stopped at p2 -0.0055 (truth -0.0008) at the noise-floor rms. With tangential off,
+    // fl_ms == fl_final and neither step runs, so radial-only solves are unchanged.
+    let fl_ms = Flags { tan: false, ..fl_final };
+    if o.refine_dist { let base = (kposes.clone(), p3.clone(), k); let mut best: Option<(f64, BTreeMap<usize, Pose>, BTreeMap<usize, V3>, Intr)> = None;
+        for k1 in [0.0, -0.15, 0.15, -0.3, 0.3] { let (mut kp, mut pp, mut kk) = (base.0.clone(), base.1.clone(), base.2); kk.k1 = k1; kk.k2 = 0.0; let (_, r1) = run_ba(&mut kp, &mut pp, &mut kk, fl_ms, 50, o.reproj_thresh, 0.0);
             if r1.is_finite() && best.as_ref().map(|b| r1 < b.0).unwrap_or(true) { best = Some((r1, kp, pp, kk)); } }
         if let Some((r1, kp, pp, kk)) = best { notes.push(format!("distortion multi-start picked k1={:.3} (rms {r1:.3}px incl. outliers)", kk.k1)); kposes = kp; p3 = pp; k = kk; } }
     let (r0, r1) = run_ba(&mut kposes, &mut p3, &mut k, fl_final, 80, o.reproj_thresh, o.reproj_thresh * 3.0); notes.push(format!("final BA rms {r0:.3}px -> {r1:.3}px over {} keyframes, {} points, focal {:.1}px", kposes.len(), p3.len(), k.f));
     run_ba(&mut kposes, &mut p3, &mut k, fl_final, 25, o.reproj_thresh, o.reproj_thresh * 3.0);
+    if o.tangential { notes.push(format!("tangential lens terms solved: p1 {:.5} p2 {:.5}", k.p1, k.p2)); }
     // re-scale: baseline between first two registered keyframes to 1
     { let mut fr: Vec<usize> = kposes.keys().cloned().collect(); fr.sort(); if fr.len() >= 2 { let bl = norm(&{ let a = kposes[&fr[0]].center(); let b = kposes[&fr[1]].center(); [a[0] - b[0], a[1] - b[1], a[2] - b[2]] }).max(1e-12); for x in p3.values_mut() { *x = [x[0] / bl, x[1] / bl, x[2] / bl]; } for p in kposes.values_mut() { p.t = [p.t[0] / bl, p.t[1] / bl, p.t[2] / bl]; } } }
     // ---- all frames: PnP against solved points
@@ -335,6 +377,16 @@ pub fn solve(tracks: &[Track], nframes: usize, w: f64, h: f64, o: &SolveOpts) ->
         let guess = { let near = kposes.keys().min_by_key(|&&kf_| (kf_ as isize - f as isize).abs()).cloned().unwrap(); kposes[&near] };
         let g = refine_pose(guess, &xs, &ob, &k); let inl = (0..xs.len()).filter(|&i| reproj_err(&g, &xs[i], &k, ob[i]) < o.reproj_thresh * 2.0).count();
         if inl as f64 >= 0.6 * xs.len() as f64 { poses[f] = Some(g); } else if let Some((p, inl)) = pnp_ransac(&xs, &ob, &k, o.reproj_thresh * 2.0, 200, &mut rng) { let (xi, oi): (Vec<_>, Vec<_>) = inl.iter().map(|&i| (xs[i], ob[i])).unzip(); poses[f] = Some(refine_pose(p, &xi, &oi, &k)); } }
+    if o.tangential {
+        // global BA over every registered frame (keyframes and PnP frames), then the same baseline normalisation as above
+        let mut allp: BTreeMap<usize, Pose> = BTreeMap::new(); for (f, p) in poses.iter().enumerate() { if let Some(p) = p { allp.insert(f, *p); } }
+        let (r0, r1) = run_ba(&mut allp, &mut p3, &mut k, fl_final, 400, o.reproj_thresh, o.reproj_thresh * 3.0);
+        let fr: Vec<usize> = kposes.keys().cloned().collect();
+        if fr.len() >= 2 { let bl = norm(&{ let a = allp[&fr[0]].center(); let b = allp[&fr[1]].center(); [a[0] - b[0], a[1] - b[1], a[2] - b[2]] }).max(1e-12);
+            for x in p3.values_mut() { *x = [x[0] / bl, x[1] / bl, x[2] / bl]; } for p in allp.values_mut() { p.t = [p.t[0] / bl, p.t[1] / bl, p.t[2] / bl]; } }
+        for (&f, &p) in &allp { poses[f] = Some(p); }
+        notes.push(format!("tangential: all-frame BA over {} frames, rms {r0:.3}px -> {r1:.3}px, p1 {:.5} p2 {:.5}", allp.len(), k.p1, k.p2));
+    }
     let ids_sorted: Vec<usize> = { let mut v: Vec<usize> = p3.keys().cloned().collect(); v.sort(); v };
     let points: Vec<V3> = ids_sorted.iter().map(|t| p3[t]).collect();
     let mut frame_rms = vec![f64::NAN; nframes]; let (mut tot, mut cnt) = (0.0, 0usize); let mut out_obs = 0usize;
@@ -347,6 +399,47 @@ pub fn solve(tracks: &[Track], nframes: usize, w: f64, h: f64, o: &SolveOpts) ->
 pub fn to_kimo(p: &Pose, f: f64, scale_px: f64, h: f64) -> ([f64; 3], [f64; 3], f64) {
     let rc = tp(&p.r); let c = p.center(); let tilt = -rc[1][2].clamp(-1.0, 1.0).asin(); let roll = rc[1][0].atan2(rc[1][1]); let pan = rc[0][2].atan2(rc[2][2]);
     ([c[0] * scale_px, c[1] * scale_px, c[2] * scale_px], [pan.to_degrees(), tilt.to_degrees(), roll.to_degrees()], 2.0 * (h / 2.0 / f).atan().to_degrees())
+}
+
+// ---------- scene orientation (ground plane) ----------
+/// Least-squares plane through `pts`: (centroid, unit normal, rms point-to-plane distance, scatter eigenvalues ascending). The normal is the right
+/// singular vector of the centred point matrix with the smallest singular value, taken as the eigenvector of its 3x3 scatter matrix (same vector).
+pub fn fit_plane(pts: &[V3]) -> Option<(V3, V3, f64, [f64; 3])> {
+    if pts.len() < 3 { return None; } let n = pts.len() as f64;
+    let c = [0, 1, 2].map(|k| pts.iter().map(|p| p[k]).sum::<f64>() / n);
+    let mut s = vec![vec![0.0; 3]; 3]; for p in pts { let d = [p[0] - c[0], p[1] - c[1], p[2] - c[2]]; for i in 0..3 { for j in 0..3 { s[i][j] += d[i] * d[j]; } } }
+    let (vals, vecs) = eig_sym(&s); let nv = [vecs[0][0], vecs[0][1], vecs[0][2]]; let l = norm(&nv); if !(l > 1e-12) { return None; }
+    let nrm = [nv[0] / l, nv[1] / l, nv[2] / l]; let rms = (pts.iter().map(|p| dot(&[p[0] - c[0], p[1] - c[1], p[2] - c[2]], &nrm).powi(2)).sum::<f64>() / n).sqrt();
+    Some((c, nrm, rms, [vals[0], vals[1], vals[2]]))
+}
+/// Rotation taking unit vector a onto unit vector b (smallest angle; a half turn about an axis perpendicular to a when they are opposite).
+pub fn rot_between(a: &V3, b: &V3) -> M3 {
+    let v = cross(a, b); let c = dot(a, b);
+    if c < -1.0 + 1e-12 { let e = if a[0].abs() < 0.9 { [1.0, 0.0, 0.0] } else { [0.0, 1.0, 0.0] }; let ax = cross(a, &e); let l = norm(&ax); return exp_so3(&[ax[0] / l * std::f64::consts::PI, ax[1] / l * std::f64::consts::PI, ax[2] / l * std::f64::consts::PI]); }
+    let vx: M3 = [[0.0, -v[2], v[1]], [v[2], 0.0, -v[0]], [-v[1], v[0], 0.0]]; let vx2 = mm(&vx, &vx); let k = 1.0 / (1.0 + c);
+    let mut r = ID3; for i in 0..3 { for j in 0..3 { r[i][j] += vx[i][j] + vx2[i][j] * k; } } r
+}
+/// Similarity X' = s R X + t applied to a solution. Points move; each camera becomes R_c' = R_c R^T, t_c' = s t_c - R_c' t, so that
+/// x_cam' = R_c' X' + t_c' = s x_cam: the camera centre moves with the scene (C' = s R C + t) and every reprojection is unchanged.
+pub fn apply_similarity(sol: &mut Solution, s: f64, r: &M3, t: &V3) {
+    for x in sol.points.iter_mut() { let v = mv(r, x); *x = [s * v[0] + t[0], s * v[1] + t[1], s * v[2] + t[2]]; }
+    let rt = tp(r); for p in sol.poses.iter_mut().flatten() { let rc = mm(&p.r, &rt); let v = mv(&rc, t); p.t = [s * p.t[0] - v[0], s * p.t[1] - v[1], s * p.t[2] - v[2]]; p.r = rc; }
+}
+/// Result of `ground_plane`: the similarity (s, r, t) plus the fit it came from (in the frame before the transform).
+#[derive(Clone, Debug)]
+pub struct GroundPlane { pub s: f64, pub r: M3, pub t: V3, pub normal_before: V3, pub centroid_before: V3, pub residual_rms: f64, pub origin_before: V3 }
+/// Ground-plane similarity: fit a plane through `pts` (>= 3, not collinear), orient its normal toward the mean of the camera centres `cams`
+/// (cameras above the ground), rotate that normal onto `up`, put `origin` (projected onto the plane) at the world origin and scale by `scale`.
+/// Kimo/solver convention is y down, so world up is (0, -1, 0).
+pub fn ground_plane(pts: &[V3], cams: &[V3], origin: &V3, scale: f64, up: &V3) -> Result<GroundPlane, String> {
+    if pts.len() < 3 { return Err(format!("need at least 3 points for a ground plane, got {}", pts.len())); }
+    if !(scale.is_finite() && scale > 0.0) { return Err("scale must be a positive finite number".into()); }
+    let (c, mut n, rms, ev) = fit_plane(pts).ok_or("ground plane fit failed")?;
+    if !(ev[2] > 1e-18) || ev[1] < 1e-4 * ev[2] { return Err("ground points are collinear (or coincide): pick points that span an area on the plane".into()); }
+    if !cams.is_empty() { let m = [0, 1, 2].map(|k| cams.iter().map(|p| p[k]).sum::<f64>() / cams.len() as f64); if dot(&[m[0] - c[0], m[1] - c[1], m[2] - c[2]], &n) < 0.0 { n = [-n[0], -n[1], -n[2]]; } }
+    let r = rot_between(&n, up); let d = dot(&[origin[0] - c[0], origin[1] - c[1], origin[2] - c[2]], &n); let o = [origin[0] - d * n[0], origin[1] - d * n[1], origin[2] - d * n[2]];
+    let ro = mv(&r, &o); let t = [-scale * ro[0], -scale * ro[1], -scale * ro[2]];
+    Ok(GroundPlane { s: scale, r, t, normal_before: n, centroid_before: c, residual_rms: rms, origin_before: *origin })
 }
 
 // ---------- feature tracking (KLT) ----------
@@ -429,7 +522,7 @@ fn rot_ransac(pairs: &[((f64, f64), (f64, f64))], k: &Intr, thr: f64, rng: &mut 
 pub fn solve_rotation(tracks: &[Track], nframes: usize, w: f64, h: f64, o: &SolveOpts) -> Result<Solution, String> {
     if nframes < 2 { return Err("need at least 2 frames".into()); } let mut rng = Rng(o.seed | 5); let mut notes = vec!["rotation-only solve: orientation per frame and focal length; no translation or depth exists in a nodal pan".to_string()];
     let nk = o.max_keyframes.clamp(3, nframes); let mut kf: Vec<usize> = (0..nk).map(|i| (i * (nframes - 1)) / (nk - 1)).collect(); kf.dedup();
-    let mut k = Intr { f: o.focal_px.unwrap_or(w.max(h) * 0.9), cx: w / 2.0, cy: h / 2.0, k1: 0.0, k2: 0.0 };
+    let mut k = Intr { f: o.focal_px.unwrap_or(w.max(h) * 0.9), cx: w / 2.0, cy: h / 2.0, k1: 0.0, k2: 0.0, p1: 0.0, p2: 0.0 };
     let chain = |k: &Intr, rng: &mut Rng| -> Option<(Vec<M3>, f64)> { let mut rs = vec![ID3]; let mut tot = 0.0; let mut cnt = 0;
         for wnd in kf.windows(2) { let pairs: Vec<_> = tracks.iter().filter_map(|t| Some((obs_at(t, wnd[0])?, obs_at(t, wnd[1])?))).collect(); let (r, inl) = rot_ransac(&pairs, k, o.reproj_thresh, rng)?; rs.push(mm(&r, rs.last().unwrap()));
             let pose = Pose { r, t: [0.0; 3] }; for &i in &inl { let b = bearing(pairs[i].0, k); tot += reproj_err(&pose, &b, k, pairs[i].1); cnt += 1; } }
@@ -438,16 +531,17 @@ pub fn solve_rotation(tracks: &[Track], nframes: usize, w: f64, h: f64, o: &Solv
         if let Some((_, f)) = best { let mut b2 = (f64::MAX, f); for i in 0..21 { let ff = f * (0.92 + 0.008 * i as f64); let ki = Intr { f: ff, ..k }; let mut r2 = Rng(11); if let Some((_, e)) = chain(&ki, &mut r2) { if e < b2.0 { b2 = (e, ff); } } } k.f = b2.1; } }
     let (rs, e0) = chain(&k, &mut rng).ok_or("rotation chain failed: too few matching tracks between keyframes")?; notes.push(format!("initial chain mean error {e0:.2}px at focal {:.1}px", k.f));
     // directions for tracks seen in >=2 keyframes
-    let mut dirs: HashMap<usize, V3> = HashMap::new(); for (ti, t) in tracks.iter().enumerate() { let mut acc = [0.0; 3]; let mut n = 0; for (j, &f) in kf.iter().enumerate() { if let Some(p) = obs_at(t, f) { let b = mv(&tp(&rs[j]), &bearing(p, &k)); for q in 0..3 { acc[q] += b[q]; } n += 1; } } if n >= 2 { let l = norm(&acc); if l > 1e-9 { dirs.insert(ti, [acc[0] / l * 10.0, acc[1] / l * 10.0, acc[2] / l * 10.0]); } } }
-    let mut tids: Vec<usize> = dirs.keys().cloned().collect(); tids.sort(); let tidx: HashMap<usize, usize> = tids.iter().enumerate().map(|(i, t)| (*t, i)).collect();
+    let mut dirs: BTreeMap<usize, V3> = BTreeMap::new(); for (ti, t) in tracks.iter().enumerate() { let mut acc = [0.0; 3]; let mut n = 0; for (j, &f) in kf.iter().enumerate() { if let Some(p) = obs_at(t, f) { let b = mv(&tp(&rs[j]), &bearing(p, &k)); for q in 0..3 { acc[q] += b[q]; } n += 1; } } if n >= 2 { let l = norm(&acc); if l > 1e-9 { dirs.insert(ti, [acc[0] / l * 10.0, acc[1] / l * 10.0, acc[2] / l * 10.0]); } } }
+    let mut tids: Vec<usize> = dirs.keys().cloned().collect(); tids.sort(); let tidx: BTreeMap<usize, usize> = tids.iter().enumerate().map(|(i, t)| (*t, i)).collect();
     let mut ps: Vec<Pose> = rs.iter().map(|r| Pose { r: *r, t: [0.0; 3] }).collect(); let mut xs: Vec<V3> = tids.iter().map(|t| dirs[t]).collect();
-    let fidx: HashMap<usize, usize> = kf.iter().enumerate().map(|(i, f)| (*f, i)).collect(); let mut bo = vec![]; for &t in &tids { for &(f, x, y) in &tracks[t].obs { if let Some(&c) = fidx.get(&f) { bo.push(BaObs { cam: c, pt: tidx[&t], u: x, v: y }); } } }
-    let fl = Flags { focal: o.refine_focal, dist: o.refine_dist, pp: o.refine_pp, rot_only: true };
-    bundle_adjust(&mut ps, &mut xs, &bo, &mut k, Flags { dist: false, pp: false, ..fl }, 15);
+    let fidx: BTreeMap<usize, usize> = kf.iter().enumerate().map(|(i, f)| (*f, i)).collect(); let mut bo = vec![]; for &t in &tids { for &(f, x, y) in &tracks[t].obs { if let Some(&c) = fidx.get(&f) { bo.push(BaObs { cam: c, pt: tidx[&t], u: x, v: y }); } } }
+    let fl = Flags { focal: o.refine_focal, dist: o.refine_dist, pp: o.refine_pp, rot_only: true, tan: o.tangential };
+    bundle_adjust(&mut ps, &mut xs, &bo, &mut k, Flags { dist: false, pp: false, tan: false, ..fl }, 15);
     let cut = o.reproj_thresh * 3.0; let bo2: Vec<BaObs> = bo.into_iter().filter(|b| reproj_err(&ps[b.cam], &xs[b.pt], &k, (b.u, b.v)) < cut).collect();
     let (r0, r1) = bundle_adjust(&mut ps, &mut xs, &bo2, &mut k, fl, 60); notes.push(format!("rotation BA rms {r0:.3}px -> {r1:.3}px over {} keyframes, {} track directions, focal {:.1}px, k1 {:.4} k2 {:.4}", ps.len(), xs.len(), k.f, k.k1, k.k2));
+    if o.tangential { notes.push(format!("tangential lens terms solved: p1 {:.5} p2 {:.5}", k.p1, k.p2)); }
     // all frames: orientation from the solved directions (Kabsch, iteratively dropping outliers)
-    let dirv: HashMap<usize, V3> = tids.iter().zip(&xs).map(|(t, x)| { let l = norm(x); (*t, [x[0] / l, x[1] / l, x[2] / l]) }).collect();
+    let dirv: BTreeMap<usize, V3> = tids.iter().zip(&xs).map(|(t, x)| { let l = norm(x); (*t, [x[0] / l, x[1] / l, x[2] / l]) }).collect();
     let mut poses: Vec<Option<Pose>> = vec![None; nframes]; for (j, &f) in kf.iter().enumerate() { poses[f] = Some(ps[j]); }
     for f in 0..nframes { if poses[f].is_some() { continue; } let mut d1: Vec<V3> = vec![]; let mut b2: Vec<V3> = vec![]; let mut ob = vec![]; for (&t, d) in &dirv { if let Some(p) = obs_at(&tracks[t], f) { d1.push(*d); b2.push(bearing(p, &k)); ob.push(p); } }
         if d1.len() < 8 { continue; } let mut keep: Vec<usize> = (0..d1.len()).collect(); let mut r = ID3;

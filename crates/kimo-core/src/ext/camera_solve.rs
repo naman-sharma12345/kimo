@@ -4,11 +4,15 @@ use crate::sfm;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-struct Rec { clip_id: String, f0: usize, fps: f64, clip_start: f64, w: usize, h: usize, sol: sfm::Solution, ntracks: usize, seconds: f64 }
-static STORE: Mutex<BTreeMap<String, Rec>> = Mutex::new(BTreeMap::new());
+/// tangential: the solve was asked for p1/p2 (reported as lens.p1/p2). applied: (scale_px, fov) of the last apply_camera_solve, so set_ground_plane
+/// can re-apply. placed: (clip_id, point index, scale_px, depth-sized) of layers place_at_track created, moved (and for solids/text re-sized) along when the solve is re-oriented.
+pub(crate) struct Rec { pub(crate) clip_id: String, pub(crate) f0: usize, pub(crate) fps: f64, pub(crate) clip_start: f64, pub(crate) w: usize, pub(crate) h: usize, pub(crate) sol: sfm::Solution, pub(crate) ntracks: usize, pub(crate) seconds: f64,
+    pub(crate) tangential: bool, pub(crate) applied: Option<(f64, bool)>, pub(crate) placed: Vec<(String, usize, f64, bool)> }
+pub(crate) static STORE: Mutex<BTreeMap<String, Rec>> = Mutex::new(BTreeMap::new());
 
 fn fov_of(f: f64, h: f64) -> f64 { 2.0 * (h / 2.0 / f).atan().to_degrees() }
-fn summary(id: &str, r: &Rec) -> Value {
+fn summary(id: &str, r: &Rec) -> Value { let mut j = summary_base(id, r); if r.tangential { j["lens"]["p1"] = json!(r.sol.intr.p1); j["lens"]["p2"] = json!(r.sol.intr.p2); } j }
+fn summary_base(id: &str, r: &Rec) -> Value {
     let rms: Vec<f64> = r.sol.frame_rms.iter().cloned().filter(|v| v.is_finite()).collect(); let worst = r.sol.frame_rms.iter().enumerate().filter(|(_, v)| v.is_finite()).max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).map(|(i, v)| json!({"frame": r.f0 + i, "rms_px": v}));
     json!({"solve_id": id, "clip_id": r.clip_id, "first_frame": r.f0, "frames": r.sol.poses.len(), "registered": r.sol.registered, "unregistered_frames": r.sol.poses.iter().enumerate().filter(|(_, p)| p.is_none()).map(|(i, _)| r.f0 + i).collect::<Vec<_>>(),
         "points": r.sol.points.len(), "tracks": r.ntracks, "rms_px": r.sol.rms, "mean_frame_rms_px": if rms.is_empty() { f64::NAN } else { rms.iter().sum::<f64>() / rms.len() as f64 }, "worst_frame": worst,
@@ -17,16 +21,40 @@ fn summary(id: &str, r: &Rec) -> Value {
         "scale": "unit = distance between the first two solved keyframe camera centres; pass scale_px to apply_camera_solve to set pixels per unit"})
 }
 fn frame_json(r: &Rec, i: usize, scale_px: f64) -> Value { match &r.sol.poses[i] { None => Value::Null, Some(p) => { let (pos, rot, fov) = sfm::to_kimo(p, r.sol.intr.f, scale_px, r.h as f64); json!({"frame": r.f0 + i, "cam_x": pos[0], "cam_y": pos[1], "cam_z": pos[2], "cam_pan": rot[0], "cam_tilt": rot[1], "cam_roll": rot[2], "cam_fov": fov, "rms_px": r.sol.frame_rms[i]}) } } }
-fn getrec<'a>(m: &'a BTreeMap<String, Rec>, a: &Value) -> Result<(String, &'a Rec), String> {
+pub(crate) fn getrec<'a>(m: &'a BTreeMap<String, Rec>, a: &Value) -> Result<(String, &'a Rec), String> {
     let id = match a.get("solve_id").and_then(|v| v.as_str()) { Some(s) => s.to_string(), None => m.keys().last().cloned().ok_or("no camera solves yet; run solve_camera")? };
     m.get(&id).map(|r| (id.clone(), r)).ok_or(format!("no solve '{id}'"))
 }
 
 /// Lens parameters (f, cx, cy, k1, k2, first_frame) of a stored solve; latest when id is None.
 pub fn solve_lens(id: Option<&str>) -> Option<(String, f64, f64, f64, f64, f64)> { let m = STORE.lock().unwrap(); let (k, r) = match id { Some(i) => (i.to_string(), m.get(i)?), None => { let k = m.keys().last()?.clone(); let r = m.get(&k)?; (k, r) } }; let i = &r.sol.intr; Some((k, i.f, i.cx, i.cy, i.k1, i.k2)) }
+/// Full lens model (focal, principal point, k1, k2, p1, p2) of a stored solve with the frame size it was solved at; latest when id is None.
+pub fn solve_intr(id: Option<&str>) -> Option<(String, sfm::Intr, usize, usize)> { let m = STORE.lock().unwrap(); let k = match id { Some(i) => i.to_string(), None => m.keys().last()?.clone() }; let r = m.get(&k)?; Some((k, r.sol.intr, r.w, r.h)) }
+/// A copy of a stored solution (after any set_ground_plane), or None.
+pub fn solution(id: &str) -> Option<sfm::Solution> { STORE.lock().unwrap().get(id).map(|r| r.sol.clone()) }
+/// Store a solution computed outside solve_camera (importers, synthetic tests) exactly as solve_camera stores its own: frame i of the solve sits
+/// at timeline time clip_start + i / fps. Returns the new solve_id.
+#[allow(clippy::too_many_arguments)]
+pub fn store_solution(clip_id: &str, first_frame: usize, fps: f64, clip_start: f64, w: usize, h: usize, sol: sfm::Solution, ntracks: usize, tangential: bool) -> String {
+    let mut m = STORE.lock().unwrap(); let id = format!("solve{}", m.len() + 1);
+    m.insert(id.clone(), Rec { clip_id: clip_id.to_string(), f0: first_frame, fps, clip_start, w, h, sol, ntracks, seconds: 0.0, tangential, applied: None, placed: vec![] }); id
+}
+/// apply_camera_solve: writes the cam_* keys and remembers the scale / fov used (set_ground_plane re-applies with them).
+pub(crate) fn apply_keys(ss: &mut Session, a: &Value) -> Result<Value, String> {
+    let (rec_json, keys, id, sc): (Value, Vec<(f64, Value)>, String, f64) = { let m = STORE.lock().unwrap(); let (id, r) = getrec(&m, a)?; let sc = opt_num(a, "scale_px", 1000.0); let mut ks = vec![]; for i in 0..r.sol.poses.len() { if r.sol.poses[i].is_some() { ks.push((r.clip_start + i as f64 / r.fps, frame_json(r, i, sc))); } } (json!({"solve_id": id.clone(), "keys": ks.len(), "span": [ks.first().map(|k| k.0), ks.last().map(|k| k.0)]}), ks, id, sc) };
+    if keys.is_empty() { return Err("solve has no registered frames".into()); }
+    let withfov = a.get("fov").and_then(|v| v.as_bool()).unwrap_or(true); let (t0, t1) = (keys.first().unwrap().0, keys.last().unwrap().0);
+    let props: Vec<&str> = if withfov { vec!["cam_x", "cam_y", "cam_z", "cam_pan", "cam_tilt", "cam_roll", "cam_fov"] } else { vec!["cam_x", "cam_y", "cam_z", "cam_pan", "cam_tilt", "cam_roll"] };
+    for p in &props { let pr = ss.project.camera.entry(p.to_string()).or_insert(crate::keyframe::Prop::new(0.0)); pr.keys.retain(|k| k.t < t0 - 1e-9 || k.t > t1 + 1e-9); }
+    let mut prev: BTreeMap<&str, f64> = BTreeMap::new();
+    for (t, j) in &keys { for p in &props { let mut v = j[*p].as_f64().unwrap_or(0.0); if p.ends_with("pan") || p.ends_with("tilt") || p.ends_with("roll") { if let Some(q) = prev.get(p) { while v - q > 180.0 { v -= 360.0; } while v - q < -180.0 { v += 360.0; } } prev.insert(*p, v); }
+        ss.project.camera.get_mut(*p).unwrap().set_key(*t, v, crate::keyframe::Ease::Linear); } }
+    if let Some(r) = STORE.lock().unwrap().get_mut(&id) { r.applied = Some((sc, withfov)); }
+    Ok(rec_json)
+}
 pub fn commands() -> Vec<Command> { vec![
     Command { name: "solve_camera", description: "Full 3D camera solve (match-move) from a media clip: tracks Shi-Tomasi features with pyramidal KLT (forward-backward checked), initialises from an essential-matrix pair, registers frames with PnP-RANSAC, triangulates points, then sparse bundle adjustment (robust Huber, optional focal-length self-calibration). Returns a solve_id plus quality: registered frames, reprojection RMS in px (inliers only), focal/FOV, worst frame. The camera must translate (parallax); a pure pan/tilt/zoom cannot be solved in 3D and returns an error saying so. Principal point = frame centre, no lens distortion model (undistort first). Does not change the project; use apply_camera_solve to write cam_* keyframes. Rolling shutter and moving objects are handled only as outlier rejection.", mutates: false,
-        schema: obj(vec![("clip_id", s("media clip to solve")), ("start", n("first frame index in clip, default 0")), ("end", n("last frame index, default end")), ("step", n("use every Nth frame, default 1")), ("max_features", n("active features per frame, 100..1500, default 500")), ("focal_px", n("known focal length in pixels; omit to self-calibrate")), ("fov_deg", n("known vertical FOV in degrees (alternative to focal_px)")), ("refine_focal", json!({"type":"boolean","description":"refine focal in bundle adjustment (default true when focal is not given, false when focal_px/fov_deg is given)"})), ("max_keyframes", n("keyframes in the global adjustment, 5..80, default 30; other frames are resolved by pose refinement")), ("reproj_thresh", n("inlier threshold px, default 2")), ("lens_distortion", json!({"type":"boolean","description":"solve radial lens distortion k1,k2 (Brown model) jointly with the geometry; reported as lens.k1/k2. Default: on when focal_px/fov_deg is given, off when focal is also unknown (focal and distortion are partly ambiguous on mild-distortion footage; in a synthetic test enabling both on undistorted data left focal 7% off). Set true explicitly for wide-angle/action-cam footage"})), ("refine_principal_point", json!({"type":"boolean","description":"also solve the principal point (default false: frame centre)"})), ("mode", json!({"type":"string","enum":["auto","full","rotation"],"description":"auto = 3D solve, falling back to rotation-only when the camera does not translate; full = 3D only (errors on a pan); rotation = orientation + focal only"}))], &["clip_id"]),
+        schema: obj(vec![("clip_id", s("media clip to solve")), ("start", n("first frame index in clip, default 0")), ("end", n("last frame index, default end")), ("step", n("use every Nth frame, default 1")), ("max_features", n("active features per frame, 100..1500, default 500")), ("focal_px", n("known focal length in pixels; omit to self-calibrate")), ("fov_deg", n("known vertical FOV in degrees (alternative to focal_px)")), ("refine_focal", json!({"type":"boolean","description":"refine focal in bundle adjustment (default true when focal is not given, false when focal_px/fov_deg is given)"})), ("max_keyframes", n("keyframes in the global adjustment, 5..80, default 30; other frames are resolved by pose refinement")), ("reproj_thresh", n("inlier threshold px, default 2")), ("lens_distortion", json!({"type":"boolean","description":"solve radial lens distortion k1,k2 (Brown model) jointly with the geometry; reported as lens.k1/k2. Default: on when focal_px/fov_deg is given, off when focal is also unknown (focal and distortion are partly ambiguous on mild-distortion footage; in a synthetic test enabling both on undistorted data left focal 7% off). Set true explicitly for wide-angle/action-cam footage"})), ("refine_principal_point", json!({"type":"boolean","description":"also solve the principal point (default false: frame centre)"})), ("mode", json!({"type":"string","enum":["auto","full","rotation"],"description":"auto = 3D solve, falling back to rotation-only when the camera does not translate; full = 3D only (errors on a pan); rotation = orientation + focal only"})), ("tangential", json!({"type":"boolean","description":"also solve tangential p1,p2 (Brown-Conrady, OpenCV order); reported as lens.p1/p2. Default false"}))], &["clip_id"]),
         run: |ss, a| { let t0 = std::time::Instant::now(); let cid = str_arg(a, "clip_id")?.to_string(); let c = ss.project.find_clip(&cid).ok_or("no such clip")?.clone();
             if !matches!(c.source, crate::model::Source::Media { .. }) { return Err("clip must be a media clip".into()); }
             let nf = ((c.duration * ss.project.fps).ceil() as usize).max(1); let f0 = (opt_num(a, "start", 0.0) as usize).min(nf - 1); let f1 = (opt_num(a, "end", (nf - 1) as f64) as usize).min(nf - 1); let step = opt_num(a, "step", 1.0).clamp(1.0, 30.0) as usize;
@@ -37,10 +65,10 @@ pub fn commands() -> Vec<Command> { vec![
             let Session { project, cache, .. } = ss;
             let tracks = sfm::build_tracks(&mut |i| crate::tracking::clip_gray_pub(project, cache, &c, idx[i]), idx.len(), w, h, maxf)?;
             if tracks.len() < 30 { return Err(format!("only {} usable feature tracks; footage too flat, blurry or short", tracks.len())); }
-            let o = sfm::SolveOpts { focal_px: focal, refine_dist: a.get("lens_distortion").and_then(|v| v.as_bool()).unwrap_or(focal.is_some()), refine_pp: a.get("refine_principal_point").and_then(|v| v.as_bool()).unwrap_or(false), refine_focal: a.get("refine_focal").and_then(|v| v.as_bool()).unwrap_or(focal.is_none()), max_keyframes: opt_num(a, "max_keyframes", 30.0).clamp(5.0, 80.0) as usize, reproj_thresh: opt_num(a, "reproj_thresh", 2.0).clamp(0.5, 8.0), seed: 7 };
+            let o = sfm::SolveOpts { focal_px: focal, refine_dist: a.get("lens_distortion").and_then(|v| v.as_bool()).unwrap_or(focal.is_some()), refine_pp: a.get("refine_principal_point").and_then(|v| v.as_bool()).unwrap_or(false), refine_focal: a.get("refine_focal").and_then(|v| v.as_bool()).unwrap_or(focal.is_none()), max_keyframes: opt_num(a, "max_keyframes", 30.0).clamp(5.0, 80.0) as usize, reproj_thresh: opt_num(a, "reproj_thresh", 2.0).clamp(0.5, 8.0), seed: 7, tangential: a.get("tangential").and_then(|v| v.as_bool()).unwrap_or(false) };
             let mode = a.get("mode").and_then(|v| v.as_str()).unwrap_or("auto"); if !matches!(mode, "auto" | "full" | "rotation") { return Err("mode must be auto, full or rotation".into()); }
             let sol = sfm::solve_auto(&tracks, idx.len(), w as f64, h as f64, &o, mode)?;
-            let rec = Rec { clip_id: cid, f0, fps: ss.project.fps / step as f64, clip_start: c.start + f0 as f64 / ss.project.fps, w, h, ntracks: tracks.len(), seconds: t0.elapsed().as_secs_f64(), sol };
+            let rec = Rec { clip_id: cid, f0, fps: ss.project.fps / step as f64, clip_start: c.start + f0 as f64 / ss.project.fps, w, h, ntracks: tracks.len(), seconds: t0.elapsed().as_secs_f64(), sol, tangential: o.tangential, applied: None, placed: vec![] };
             let mut m = STORE.lock().unwrap(); let id = format!("solve{}", m.len() + 1); let j = summary(&id, &rec); m.insert(id, rec); Ok(j) } },
     Command { name: "list_camera_solves", description: "List camera solves made this session with their quality summaries.", mutates: false, schema: obj(vec![], &[]),
         run: |_, _| { let m = STORE.lock().unwrap(); Ok(json!({"solves": m.iter().map(|(k, r)| summary(k, r)).collect::<Vec<_>>()})) } },
@@ -51,15 +79,7 @@ pub fn commands() -> Vec<Command> { vec![
             let mut j = summary(&id, r); j["frames_data"] = json!(sel.iter().map(|&i| frame_json(r, i, sc)).collect::<Vec<_>>()); Ok(j) } },
     Command { name: "apply_camera_solve", description: "Write the solved camera into the project camera as linear cam_x/cam_y/cam_z/cam_pan/cam_tilt/cam_roll/cam_fov keyframes at timeline times (clip start + frame time), so scene3d/3D layers and shard bursts track the footage. World units: frame 0 sits at the default camera; scene point at solver depth d lies at z = d*scale_px - focal_px... (see export_camera_solve points_kimo). scale_px sets pixels per solver unit. Replaces existing keys for those camera properties in the solved time span. Undoable.", mutates: true,
         schema: obj(vec![("solve_id", s("default: latest")), ("scale_px", n("pixels per solver unit, default 1000")), ("fov", json!({"type":"boolean","description":"also key cam_fov (default true)"}))], &[]),
-        run: |ss, a| { let (rec_json, keys): (Value, Vec<(f64, Value)>) = { let m = STORE.lock().unwrap(); let (id, r) = getrec(&m, a)?; let sc = opt_num(a, "scale_px", 1000.0); let mut ks = vec![]; for i in 0..r.sol.poses.len() { if r.sol.poses[i].is_some() { ks.push((r.clip_start + i as f64 / r.fps, frame_json(r, i, sc))); } } (json!({"solve_id": id, "keys": ks.len(), "span": [ks.first().map(|k| k.0), ks.last().map(|k| k.0)]}), ks) };
-            if keys.is_empty() { return Err("solve has no registered frames".into()); }
-            let withfov = a.get("fov").and_then(|v| v.as_bool()).unwrap_or(true); let (t0, t1) = (keys.first().unwrap().0, keys.last().unwrap().0);
-            let props: Vec<&str> = if withfov { vec!["cam_x", "cam_y", "cam_z", "cam_pan", "cam_tilt", "cam_roll", "cam_fov"] } else { vec!["cam_x", "cam_y", "cam_z", "cam_pan", "cam_tilt", "cam_roll"] };
-            for p in &props { let pr = ss.project.camera.entry(p.to_string()).or_insert(crate::keyframe::Prop::new(0.0)); pr.keys.retain(|k| k.t < t0 - 1e-9 || k.t > t1 + 1e-9); }
-            let mut prev: BTreeMap<&str, f64> = BTreeMap::new();
-            for (t, j) in &keys { for p in &props { let mut v = j[*p].as_f64().unwrap_or(0.0); if p.ends_with("pan") || p.ends_with("tilt") || p.ends_with("roll") { if let Some(q) = prev.get(p) { while v - q > 180.0 { v -= 360.0; } while v - q < -180.0 { v += 360.0; } } prev.insert(*p, v); }
-                ss.project.camera.get_mut(*p).unwrap().set_key(*t, v, crate::keyframe::Ease::Linear); } }
-            Ok(rec_json) } },
+        run: apply_keys },
     Command { name: "export_camera_solve", description: "Export a solve as JSON to a file: intrinsics, per-frame world->camera poses (R row-major, t, centre), per-frame cam_* values, and the sparse point cloud both in solver units and in Kimo world coordinates (points_kimo, pixels).", mutates: false,
         schema: obj(vec![("solve_id", s("default: latest")), ("path", s("output .json path")), ("scale_px", n("pixels per solver unit, default 1000"))], &["path"]),
         run: |ss, a| { let path = str_arg(a, "path")?; let m = STORE.lock().unwrap(); let (id, r) = getrec(&m, a)?; let sc = opt_num(a, "scale_px", 1000.0);
