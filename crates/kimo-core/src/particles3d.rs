@@ -254,15 +254,17 @@ fn accumulate(p: &Project, c: &Clip, e: &Particles3D, t: f64, t_frame: f64, path
 
 /// Render a Particles3D clip at clip-local time `lt` into `f` (straight alpha, like every source frame). Motion blur: `samples` instants
 /// at the midpoints of equal sub-intervals of a shutter of shutter_angle/360 frame centred on t (camera re-posed per instant), averaged.
+/// The instants come from the shared shutter sampler (crate::shutter::midpoints), the same one layer and mask motion blur use.
 pub fn render_layer(p: &Project, c: &Clip, e: &Particles3D, lt: f64, f: &mut Frame, cache: &crate::render::Cache) {
     let (w, h) = (f.w, f.h); let t = c.start + lt; let path = EmitPath::new(e, &p.lights, w, h, c.start);
     let mut texs: Vec<(i64, Option<Tex>)> = Vec::new(); let mut splats: Vec<Splat> = Vec::with_capacity((e.emitter.rate * e.emitter.lifetime).clamp(0.0, MAX_LIVE) as usize + 2);
     let (n, sh) = match &e.motion_blur { Some(m) if m.samples > 1 && m.shutter_angle > 0.0 => (m.samples.min(64) as usize, m.shutter_angle.min(720.0) / 360.0 / p.fps.max(1.0)), _ => (1, 0.0) };
     let mut acc = vec![0f32; w * h * 4]; let mut tmp = if n > 1 { vec![0f32; w * h * 4] } else { Vec::new() };
-    for k in 0..n {
+    let offs = if n > 1 { crate::shutter::midpoints(-0.5 * sh, sh, n) } else { vec![0.0] };
+    for &off in &offs {
         crate::guard::check();
         if n == 1 { accumulate(p, c, e, t, t, &path, &mut texs, &mut splats, &mut acc, w, h, cache); break; }
-        tmp.iter_mut().for_each(|v| *v = 0.0); let off = sh * ((k as f64 + 0.5) / n as f64 - 0.5);
+        tmp.iter_mut().for_each(|v| *v = 0.0);
         accumulate(p, c, e, t + off, t, &path, &mut texs, &mut splats, &mut tmp, w, h, cache); for (a, b) in acc.iter_mut().zip(tmp.iter()) { *a += *b; }
     }
     if n > 1 { let inv = 1.0 / n as f32; for v in acc.iter_mut() { *v *= inv; } }

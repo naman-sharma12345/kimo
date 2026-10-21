@@ -144,3 +144,19 @@ fn oracle(x0: [f64; 3], v0: [f64; 3], g: [f64; 3], k: f64, tau: f64) -> [f64; 3]
     println!("g_2d_identity base={ha:016x?} after_add_remove={hb:016x?} add_remove_first={hd:016x?} p3d_outside_range={he:016x?} json_roundtrip={hr:016x?} with_p3d_live={mid:016x?}");
     assert_eq!(ha, hb); assert_eq!(ha, hd); assert_eq!(ha, he); assert_eq!(ha, hr); assert_ne!(ha, mid, "the live 3D layer does draw");
 }
+
+/// h) motion blur = the mean of the unblurred frames at the shutter midpoints (crate::shutter::midpoints, centred), composited over black.
+#[test] fn h_motion_blur_samples_the_shared_shutter_midpoints() {
+    let scene = |mb: Value| { let mut ss = session(160, 90); c(&mut ss, "set_camera", json!({"cam_pan": 6.0, "cam_z": 20.0}));
+        let mut a = json!({"emitter": {"kind": "point", "rate": 40, "lifetime": 1.5, "speed": 120, "spread_deg": 30, "seed": 5}, "physics": {"gravity": [0, 150, 0], "drag": 0.3}, "sprite": {"size": 3, "color": [1, 0.6, 0.2]}, "blend": "normal"});
+        if !mb.is_null() { a["motion_blur"] = mb; } p3d(&mut ss, a); ss };
+    let (t, n, angle) = (1.3, 5usize, 270.0); let sh = angle / 360.0 / 25.0;
+    let blur = render::render_frame(&scene(json!({"samples": n, "shutter_angle": angle})).project, t, &render::Cache::new()).unwrap();
+    let still = scene(Value::Null); let mut mean = vec![0f64; blur.d.len()];
+    for k in 0..n { let tk = t + sh * ((k as f64 + 0.5) / n as f64 - 0.5); let f = render::render_frame(&still.project, tk, &render::Cache::new()).unwrap(); for (m, v) in mean.iter_mut().zip(&f.d) { *m += *v as f64 / n as f64; } }
+    let wrong = { let mut m = vec![0f64; blur.d.len()]; for k in 0..n { let tk = t + sh * (k as f64 / (n - 1) as f64 - 0.5); let f = render::render_frame(&still.project, tk, &render::Cache::new()).unwrap(); for (a, v) in m.iter_mut().zip(&f.d) { *a += *v as f64 / n as f64; } } m };
+    let err = |m: &[f64]| blur.d.iter().zip(m).map(|(a, b)| (*a as f64 - b).abs()).fold(0.0, f64::max);
+    let lit = blur.d.chunks(4).filter(|p| p[0] > 0.0).count(); let (e_mid, e_end) = (err(&mean), err(&wrong));
+    println!("h_motion_blur lit_pixels={lit} max_err_vs_midpoints={e_mid:.3e} (gate 1e-5) max_err_vs_endpoint_sampler={e_end:.3e} (must be > 1e-3)");
+    assert!(lit > 0, "the blur scene draws particles"); assert!(e_mid <= 1e-5, "blurred frame is not the mean of the shutter midpoints: {e_mid:e}"); assert!(e_end > 1e-3, "the check cannot tell midpoints from endpoints: {e_end:e}");
+}
