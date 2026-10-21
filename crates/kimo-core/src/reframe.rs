@@ -16,6 +16,8 @@ pub const PROPS: [&str; 2] = ["reframe_x", "reframe_y"];
 const AW: usize = 256; // analysis long side, px
 
 /// True when the clip carries a reframe window.
+/// Props keyed in source seconds (left alone when an edit moves the clip's own clock).
+pub fn source_keyed(k: &str) -> bool { PROPS.contains(&k) }
 pub fn active(c: &Clip) -> bool { PROPS.iter().any(|k| c.props.contains_key(*k)) }
 
 /// Source seconds of the media clock position `m` (seconds of decoded frames from the clip's in point): decode runs at speed 1

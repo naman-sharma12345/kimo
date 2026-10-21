@@ -26,7 +26,7 @@ fn new_marker_id(p: &mut Project) -> String { p.gen_id("marker") }
 
 /// Split `c` at timeline time `at`; returns right half.
 fn cut(c: &mut Clip, at: f64, id: String) -> Clip {
-    let mut r = c.clone(); r.id = id; r.start = at; r.duration = c.start + c.duration - at; r.in_point = c.in_point + (at - c.start) * c.speed; r.transition_in = None; r.audio.lead = 0.0;
+    let mut r = c.clone(); r.id = id; r.start = at; r.duration = c.start + c.duration - at; r.in_point = c.in_point + c.source_time(at - c.start); r.transition_in = None; r.audio.lead = 0.0; if let Some(m) = r.time_remap.as_mut() { m.offset += at - c.start; r.in_point = c.in_point; } crate::keyframe::shift_clip_clock(&mut r, at - c.start);
     c.duration = at - c.start; c.audio.tail = 0.0; r
 }
 
@@ -47,7 +47,7 @@ pub fn commands() -> Vec<Command> { vec![
         run: |ss, a| { let d = na(a, "delta")?; let (t1, i1) = loc(&ss.project, sa(a, "left_clip_id")?)?; let (t2, i2) = loc(&ss.project, sa(a, "right_clip_id")?)?; if t1 != t2 { return Err("clips must be on the same track".into()); } unlocked(&ss.project, t1)?;
             let tr = &mut ss.project.tracks[t1]; if (tr.clips[i1].start + tr.clips[i1].duration - tr.clips[i2].start).abs() > 0.02 { return Err("clips are not adjacent".into()); }
             if tr.clips[i1].duration + d < 0.04 || tr.clips[i2].duration - d < 0.04 { return Err("roll too large".into()); }
-            tr.cm(i1).duration += d; let r = tr.cm(i2); r.start += d; r.duration -= d; r.in_point = (r.in_point + d * r.speed).max(0.0); Ok(json!({"ok":true})) } },
+            tr.cm(i1).duration += d; let r = tr.cm(i2); r.start += d; r.duration -= d; r.in_point = (r.in_point + d * r.speed).max(0.0); crate::keyframe::shift_clip_clock(r, d); Ok(json!({"ok":true})) } },
     Command { name: "slip_clip", description: "Slip: shift which part of the source shows inside the clip (in-point += delta) without moving or resizing it.", mutates: true,
         schema: obj(vec![("clip_id", s("clip")), ("delta", n("source seconds"))], &["clip_id","delta"]),
         run: |ss, a| { let (ti, ci) = loc(&ss.project, sa(a, "clip_id")?)?; unlocked(&ss.project, ti)?; let c = ss.project.tracks[ti].cm(ci); c.in_point = (c.in_point + na(a, "delta")?).max(0.0); Ok(json!({"in_point":c.in_point})) } },
@@ -81,7 +81,7 @@ pub fn commands() -> Vec<Command> { vec![
             let tr = &mut ss.project.tracks[ti]; let (st, en) = (tr.clips[ci].start, tr.clips[ci].start + tr.clips[ci].duration);
             let prev = tr.clips.iter().position(|c| (c.start + c.duration - st).abs() < 0.02 && c.id != tr.clips[ci].id); let next = tr.clips.iter().position(|c| (c.start - en).abs() < 0.02 && c.id != tr.clips[ci].id);
             if let Some(p) = prev { if tr.clips[p].duration + d < 0.04 { return Err("previous clip too short".into()); } tr.cm(p).duration += d; }
-            if let Some(x) = next { if tr.clips[x].duration - d < 0.04 { return Err("next clip too short".into()); } let r = tr.cm(x); r.start += d; r.duration -= d; r.in_point = (r.in_point + d * r.speed).max(0.0); }
+            if let Some(x) = next { if tr.clips[x].duration - d < 0.04 { return Err("next clip too short".into()); } let r = tr.cm(x); r.start += d; r.duration -= d; r.in_point = (r.in_point + d * r.speed).max(0.0); crate::keyframe::shift_clip_clock(r, d); }
             tr.cm(ci).start += d; Ok(json!({"ok":true})) } },
     Command { name: "insert_gap", description: "Insert empty time on a track at `at`: clips starting at/after it shift later by `duration` (a clip spanning `at` is split).", mutates: true,
         schema: obj(vec![("track_id", s("track")), ("at", n("seconds")), ("duration", n("seconds"))], &["track_id","at","duration"]),
