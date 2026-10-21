@@ -14,6 +14,7 @@ add_effect ae2e4a00a10c4da2
 add_emitter 940e20f3bb9b947f
 add_glitch_confetti ea3c9845ccf22d20
 add_hud_frame 4518e23cbffd7cd9
+add_lens_blur 711bec6e07275b44
 add_managed_linear_effect 15e7663749141579
 add_marker 13b9c5a2e2022d94
 add_mask 128b6203f759a55c

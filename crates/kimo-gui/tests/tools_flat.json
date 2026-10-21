@@ -15,6 +15,7 @@
 "add_emitter",
 "add_glitch_confetti",
 "add_hud_frame",
+"add_lens_blur",
 "add_managed_linear_effect",
 "add_marker",
 "add_mask",

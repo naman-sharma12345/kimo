@@ -137,6 +137,7 @@ pub fn apply2(kind: &str, pr: &Params, f: &mut Frame, t: f64, seed: u64) -> Resu
         "cast_shadow" => return if crate::frosted::in_post() { crate::castshadow::apply(pr, f, t) } else { Ok(()) },
         "light_wrap" => return if crate::frosted::in_post() { crate::lightwrap::apply(pr, f, t) } else { Ok(()) },
         "frosted_glass" => return if crate::frosted::in_post() { crate::frosted::apply(pr, f, t) } else { Ok(()) },
+        "lens_blur" => crate::lens::apply_params(pr, f, t),
         other => return crate::color::apply3(other, pr, f, t, seed),
     }
     Ok(())

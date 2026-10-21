@@ -11,6 +11,7 @@ pub mod transcript_coverage;
 pub mod errors;
 pub mod codeclip;
 pub mod reframe;
+pub mod lens;
 pub mod telemetry;
 pub mod toolgroups;
 pub mod trackmath;
