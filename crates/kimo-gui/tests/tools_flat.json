@@ -19,6 +19,7 @@
 "add_marker",
 "add_mask",
 "add_modifier",
+"add_morph_cut",
 "add_multicam",
 "add_node",
 "add_null",

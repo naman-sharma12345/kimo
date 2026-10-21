@@ -245,7 +245,11 @@ fn prepare_window(p: &Project, cache: &mut Cache, t0: f64, t1: f64, window:usize
     if cache.size != (p.width, p.height, p.fps) { cache.frames.clear(); cache.code.clear(); cache.size = (p.width, p.height, p.fps); }
     let all = t0 == f64::MIN;
     let flat = flat_clips(&p.tracks, 0.0);
-    let active: std::collections::HashSet<String> = flat.iter().filter(|c| all || (c.start <= t1 + 1e-9 && c.start + c.duration > t0 + 1e-9)).map(|c| c.id.clone()).collect();
+    let mut active: std::collections::HashSet<String> = flat.iter().filter(|c| all || (c.start <= t1 + 1e-9 && c.start + c.duration > t0 + 1e-9)).map(|c| c.id.clone()).collect();
+    // morph_cut: a clip inside its morph needs the outgoing clip's last frame even when the window does not reach it
+    let mut morph_t: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    if !all { for c in flat.iter().filter(|c| active.contains(&c.id)) { if let Some(tr) = c.transition_in.as_ref().filter(|tr| tr.kind == "morph_cut") { if t0 < c.start + tr.duration { if let Some(a) = crate::transitions::morph_prev(p, c) { if !active.contains(&a.id) { morph_t.insert(a.id.clone(), a.start + a.duration - 0.5 / p.fps); } } } } } }
+    for k in morph_t.keys() { active.insert(k.clone()); }
     if !all { cache.frames.retain(|k, _| active.contains(k)); cache.code.retain(|k, _| active.contains(k)); }
     let media_count=flat.iter().filter(|c|active.contains(&c.id)&&matches!(c.source,Source::Media{..})&&c.props.get("audio_only").map(|q|q.at(0.)).unwrap_or(0.)<0.5).count().max(1);
     if !all{let budget=decode_cache_limit()/media_count;cache.frames.retain(|_,(_,fr)|fr.buf.len()+fr.linear_buf.as_ref().map(|b|b.len()*5).unwrap_or(0)<=budget);}
@@ -253,6 +257,7 @@ fn prepare_window(p: &Project, cache: &mut Cache, t0: f64, t1: f64, window:usize
         let Source::Media { asset } = &c.source else { continue };
         if !active.contains(&c.id) || c.props.get("audio_only").map(|q| q.at(0.0)).unwrap_or(0.0) >= 0.5 { continue; }
         let total = media_total(c,p.fps);
+        let (t0, t1) = match morph_t.get(&c.id) { Some(tm) => (*tm, *tm), None => (t0, t1) };
         let (ta, tb) = match c.time_mode { _ if c.time_remap.is_some() => (t0, t1), TimeMode::Normal => (t0, t1), TimeMode::Reverse => (c.start + c.duration - (t1 - c.start), c.start + c.duration - (t0 - c.start)), TimeMode::Freeze { at } => (c.start + at, c.start + at) };
         let (t0, t1) = (ta, tb);
         let (ia, mut ib) = if all { (0, total - 1) } else if let Some(r)=&c.time_remap{let (lo,hi)=c.remap_span((t0-c.start).clamp(0.,c.duration),(t1-c.start).clamp(0.,c.duration));(((lo*p.fps).floor() as usize).min(total-1),((hi*p.fps).ceil() as usize+usize::from(r.blend!=crate::model::FrameBlend::Off)).min(total-1))} else if c.speed_curve.is_some(){(media_index(c,(t0-c.start).min(c.duration),p.fps).min(total-1),media_index(c,(t1-c.start).min(c.duration),p.fps).min(total-1))}else { ((((t0 - c.start).max(0.0) * p.fps).floor() as usize).min(total - 1), (((t1 - c.start).max(0.0) * p.fps).ceil() as usize).min(total - 1)) };
@@ -755,6 +760,8 @@ pub fn render_frame_opts(p: &Project, t: f64, cache: &Cache, transparent: bool) 
         if c.effects.iter().any(|e| crate::effects2::is_post(&e.kind)) { BACKDROP.with(|b| *b.borrow_mut() = Some(std::rc::Rc::new(Frame { w, h, d: out.d.clone() }))); crate::frosted::set_post(true);
             let r: Result<(), String> = (|| { for e in c.effects.iter().filter(|e| crate::effects2::is_post(&e.kind)) { effects::apply(&e.kind, &e.params, &e.strings, &mut f, lt, seed)?; } Ok(()) })();
             crate::frosted::set_post(false); BACKDROP.with(|b| *b.borrow_mut() = None); r?; }
+        // morph_cut: dense optical flow from the outgoing clip's last frame into this frame (both directions, linear-light mix)
+        let mut f = f; if let Some(k) = tplan.as_ref().and_then(|pl| pl.morph) { if let Some(a) = crate::transitions::morph_prev(p, c) { if let Some(af) = render_clip_alone(p, &a.id, a.start + a.duration - 0.5 / p.fps, cache) { f = crate::flow::flow_interpolate(&af, &f, k, !p.color_pipeline.enabled, 2); from_tb = false; } } }
         if let Some(cf) = tplan.as_ref().and_then(|pl| pl.compose.as_ref()) { out = cf(&out, &f); continue; }
         if let Source::ShardBurst(sb) = &c.source { if let Some(d) = crate::shards::take_disp() { crate::shards::refract_canvas(&mut out, &d, &f, sb.refract_dispersion.clamp(0.0, 1.0)); } }
         if let Some(acc) = eacc.as_mut() { let wgt = op / (ne + 1) as f32; for i in 0..w * h { let a = f.d[i * 4 + 3] * wgt; if a > 0.0 { for j in 0..3 { acc.d[i * 4 + j] += f.d[i * 4 + j] * a; } acc.d[i * 4 + 3] += a; } } continue; }

@@ -29,7 +29,9 @@ fn voro(x: f32, y: f32, cs: f32, seed: u32) -> (f32, f32, f32, f32, f32) { // (c
     (hash(best.0, best.1, seed ^ 0x51ed), d1, d2, bc.0, bc.1) }
 pub type Mask = Box<dyn Fn(usize, usize) -> f32>;
 pub struct Plan { pub op: f32, pub mask: Option<Mask>, pub dx: f64, pub dy: f64, pub scale: f64, pub rot: f64,
-    pub dip: Option<([f32; 3], f32)>, pub post: Option<Box<dyn Fn(&mut Frame)>>, pub overlay: Option<Box<dyn Fn(&mut Frame)>>, pub compose: Option<Box<dyn Fn(&Frame, &Frame) -> Frame>> }
+    pub dip: Option<([f32; 3], f32)>, pub post: Option<Box<dyn Fn(&mut Frame)>>, pub overlay: Option<Box<dyn Fn(&mut Frame)>>, pub compose: Option<Box<dyn Fn(&Frame, &Frame) -> Frame>>,
+    /// morph_cut: optical-flow weight from the previous abutting clip's last frame (0) to this clip (1).
+    pub morph: Option<f32> }
 
 fn dir_blur(f: &mut Frame, dx: f32, dy: f32, n: usize) { if dx.abs() + dy.abs() < 0.5 { return; } let (w, h) = (f.w, f.h); let src = f.d.clone();
     for y in 0..h { for x in 0..w { let mut acc = [0f32; 4]; for k in 0..n { let o = k as f32 / (n - 1) as f32 - 0.5; let sx = ((x as f32 + dx * o).round() as i32).clamp(0, w as i32 - 1) as usize; let sy = ((y as f32 + dy * o).round() as i32).clamp(0, h as i32 - 1) as usize; let i = (sy * w + sx) * 4; let a = src[i + 3]; for j in 0..3 { acc[j] += src[i + j] * a; } acc[3] += a; }
@@ -40,11 +42,12 @@ fn radial_blur(f: &mut Frame, amount: f32, n: usize) { if amount < 0.002 { retur
 
 pub fn plan(tr: &Transition, lt: f64, w: usize, h: usize) -> Plan {
     let kr = (lt / tr.duration).clamp(0.0, 1.0); let k = ease(&tr.ease, kr) as f32; let (wf, hf) = (w as f32, h as f32); let soft = tr.softness.max(0.0) as f32; let seed = tr.seed;
-    let mut p = Plan { op: 1.0, mask: None, dx: 0.0, dy: 0.0, scale: 1.0, rot: 0.0, dip: None, post: None, overlay: None, compose: None };
+    let mut p = Plan { op: 1.0, mask: None, dx: 0.0, dy: 0.0, scale: 1.0, rot: 0.0, dip: None, post: None, overlay: None, compose: None, morph: None };
     let wipe = |ang_deg: f32, k: f32| -> Mask { let (c, s) = (ang_deg.to_radians().cos(), ang_deg.to_radians().sin()); let half = (wf * c.abs() + hf * s.abs()) / 2.0; let sw = (soft * half * 2.0).max(1.0); let edge = -half + k * (2.0 * half + sw);
         Box::new(move |x, y| { let pr = (x as f32 - wf / 2.0) * c + (y as f32 - hf / 2.0) * s; sstep((edge - pr) / sw) }) };
     match tr.kind.as_str() {
         "crossfade" | "dissolve" => p.op = k,
+        "morph_cut" => p.morph = Some(k),
         "wipe" => p.mask = Some(wipe(tr.angle as f32, k)), "wipe_left" => p.mask = Some(wipe(0.0, k)), "wipe_right" => p.mask = Some(wipe(180.0, k)), "wipe_up" => p.mask = Some(wipe(90.0, k)), "wipe_down" => p.mask = Some(wipe(270.0, k)),
         "diagonal" => p.mask = Some(wipe(if tr.angle != 0.0 { tr.angle as f32 } else { 45.0 }, k)),
         "iris" => { let r = k * (wf * wf + hf * hf).sqrt() * 0.5 * (1.0 + soft); let sw = (soft * wf * 0.5).max(1.5); p.mask = Some(Box::new(move |x, y| { let d = ((x as f32 - wf / 2.0).powi(2) + (y as f32 - hf / 2.0).powi(2)).sqrt(); sstep((r - d) / sw) })); }
@@ -83,4 +86,12 @@ pub fn plan(tr: &Transition, lt: f64, w: usize, h: usize) -> Plan {
         _ => p.op = k,
     }
     p
+}
+
+/// morph_cut's outgoing shot: the media clip on `c`'s track that ends where `c` starts (within 1.5 frames, no overlap).
+pub fn morph_prev<'a>(p: &'a crate::model::Project, c: &crate::model::Clip) -> Option<&'a crate::model::Clip> {
+    let tol = 1.5 / p.fps.max(1.0);
+    p.tracks.iter().find(|t| t.clips.iter().any(|x| x.id == c.id))?.clips.iter().map(|x| &**x)
+        .filter(|x| x.id != c.id && matches!(x.source, crate::model::Source::Media { .. }) && x.start + x.duration <= c.start + 1e-6 && c.start - (x.start + x.duration) < tol)
+        .max_by(|a, b| (a.start + a.duration).total_cmp(&(b.start + b.duration)))
 }
