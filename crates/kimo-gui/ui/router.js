@@ -24,6 +24,7 @@ export const FAMILIES = [
   ['edit', /^(cut|split|blade|razor|trim|extend|ripple|slip|slide|move_clip|delete_clip|lift|roll)|^(duplicate_clip|swap_clips|loop_clip|freeze_frame|delete_track|set_speed|rate_stretch|set_speed_ramp|set_time_remap|group_clips|ungroup_clip|distribute_clips|set_blend|set_echo|set_flow_blur|add_camera_shake|remove_audio_effect|set_track|project_set|set_split_edit)$/],
   ['edit', /^set_code_clip_param$/],   /* a code clip's param (constant or key): the clip flashes, the Inspector shows name = value @ t */
   ['edit', /^auto_reframe$/],   /* auto reframe: the clip flashes on the timeline, the Inspector shows its new crop window (axis, pan range) */
+  ['edit', /^paste_attributes$/],   /* paste attributes: each target clip flashes, the Inspector shows what was pasted from the source */
   ['effects', /^add_morph_cut$/],   /* morph cut: the clip after the jump cut flashes, the Inspector shows its morph_cut transition and duration */
   ['effects', /^add_lens_blur$/],   /* lens blur: the clip flashes, the Inspector shows its lens_blur effect (radius, blades, focus) */
   ['effects', /^(add_effect|apply_effect|set_effect|add_transition|remove_effect|add_speed|set_posterize|add_adjustment|add_managed_linear_effect$)/],

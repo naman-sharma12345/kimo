@@ -196,6 +196,7 @@
 "move_key",
 "normalize_loudness",
 "particle_simulate_raw",
+"paste_attributes",
 "path_info",
 "pick_key_color",
 "pick_white_balance",
