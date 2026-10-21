@@ -248,8 +248,13 @@ const LOAD_TIMEOUT_MS: u64 = 60_000;
 /// Render steps through the sandboxed headless browser. Returns raw straight-alpha RGBA8 frames at (cc.width, cc.height),
 /// one per Frame step, in order. Every page load and every frame has a timeout; past the whole-job deadline the sidecar's
 /// process group (python, the driver and Chromium) is killed by pid.
+/// How many browser runs (render_steps calls that got past validation) this process has started.
+static BROWSER_RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub fn browser_runs() -> u64 { BROWSER_RUNS.load(std::sync::atomic::Ordering::Relaxed) }
+
 pub fn render_steps(dir: &Path, cc: &CodeClip, steps: &[Step]) -> Result<(Vec<Vec<u8>>, RunInfo), String> {
     validate_dir(dir, &cc.entry)?;
+    BROWSER_RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let nframes = steps.iter().filter(|s| matches!(s, Step::Frame(_))).count();
     let nreload = steps.len() - nframes;
     let fms = frame_timeout_ms();

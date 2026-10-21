@@ -297,7 +297,10 @@ fn prepare_window(p: &Project, cache: &mut Cache, t0: f64, t1: f64, window:usize
         let sequential = window > WINDOW || last.map(|l| ka == l + 1).unwrap_or(false);
         let kb2 = if !all && forward && sequential { (ka + window.min(cap) - 1).max(kb).min(n - 1) } else { kb };
         have.retain(|k, _| all || (*k >= ka && *k <= kb2));
-        let want: Vec<usize> = (ka..=kb2).filter(|k| !have.contains_key(k)).collect();
+        // Refill only when the range itself is not held, and then fill the whole window in one run: topping the window up by
+        // one slot per frame would start a browser for every frame.
+        let held = (ka..=kb).all(|k| have.contains_key(&k));
+        let want: Vec<usize> = if held { vec![] } else { (ka..=kb2).filter(|k| !have.contains_key(k)).collect() };
         if !want.is_empty() { let (got, _) = crate::codeclip::frames_for(p, c, cc, &want)?; for (k, f) in got { have.insert(k, std::sync::Arc::new(f)); } }
         cache.code.insert(c.id.clone(), (sig, kb, have));
     }

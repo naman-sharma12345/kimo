@@ -36,7 +36,10 @@ window.__ready = true;                                                      // o
 - Time: clip-local time on the project frame grid, mapped through in-point, speed, speed ramp, time remap, reverse and
   freeze, exactly like media.
 - Frames are rendered in one headless-browser batch per range (Chromium with SwiftShader WebGL through Playwright for
-  Python; `KIMO_CHROMIUM`, `KIMO_PYTHON` override). Sequential access (playback, export, frame loops) renders ahead.
+  Python; `KIMO_CHROMIUM`, `KIMO_PYTHON` override). Sequential access (playback, export, frame loops) renders ahead in
+  whole windows (24 frames in playback, up to the memory budget in export) and goes back to the browser only when the
+  frame asked for is not already held. Measured on a 4-core box, three.js example at 1280x720: about 0.1 s per drawn
+  frame in the page, 0.2 s per frame cold end to end, 0.05 s warm from the cache.
 - Each frame is keyed by the content of every file in the folder, the param values at that frame, `t`, and the sizes.
   Keys go to an in-memory window and a disk cache of compressed TIFFs: `<project dir>/.kimo_cache/codeclip` (or
   `KIMO_CODECLIP_CACHE`; `off` disables it), capped at `KIMO_CODECLIP_CACHE_MAX_MB` (default 256), least recently used
@@ -51,5 +54,5 @@ window.__ready = true;                                                      // o
 ## Not yet
 
 - Software WebGL: speed depends on the scene (the example renders at about the rate measured in the change log).
-- A new browser starts for each batch; a persistent renderer and a render-path determinism check are the next step.
+- A new browser starts for each batch (about a second); a persistent renderer is the next step.
 - Motion blur on a code clip moves the layer, not the content inside the page (sub-frame times are not rendered).
