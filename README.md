@@ -79,7 +79,7 @@ flowchart LR
 - **Edits only through MCP tool calls.** Add a tool to the registry and it appears in the MCP server, the CLI, the fuzz test and the schema. There is no side door.
 - **The GUI is a pure telemetry spectator.** `crates/kimo-gui` (a Tauri app, its own Cargo workspace) registers zero IPC commands and only listens on loopback. It shows each call, the timeline and the preview frames the engine pushes. It never calls `render_frame` and has no code path back to the engine. Close it and the engine carries on; open it mid-session and it catches up.
 
-More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/EXTENDING.md](docs/EXTENDING.md), [crates/kimo-gui/README.md](crates/kimo-gui/README.md).
+More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/EXTENDING.md](docs/EXTENDING.md), [crates/kimo-gui/README.md](crates/kimo-gui/README.md). An agent editing phone footage into a 9:16 short, call by call: [docs/DIRECTOR_QUICKSTART.md](docs/DIRECTOR_QUICKSTART.md).
 
 ## The MCP tool ecosystem
 
