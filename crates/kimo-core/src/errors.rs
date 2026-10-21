@@ -9,7 +9,7 @@ fn quoted(s: &str) -> Option<String> { let a = s.find('\'')?; let b = s[a + 1..]
 
 /// Classify an error text by prefix/pattern. Returns (code, param).
 pub fn classify(m: &str) -> (&'static str, Option<String>) {
-    for code in ["disk_full","encoder_failed","join_contract","join_unverified","job_locked","invalid_check","no_audio","range_empty","insufficient_data","decode_failed","invalid_source","size_mismatch","invalid_metric","invalid_method","out_of_range","too_many_frames","invalid_event","invalid_samples","invalid_filter","limit_exceeded","calc_error","invalid_foreach","batch_expansion_too_large","invalid_profile","invalid_constraint","not_text_clip","name_not_found","ambiguous_name","invalid_name","name_taken","renderer_failed"] { if m.starts_with(&format!("{code}:")) { return (code,None); } }
+    for code in ["disk_full","encoder_failed","join_contract","join_unverified","job_locked","invalid_check","no_audio","range_empty","insufficient_data","decode_failed","invalid_source","size_mismatch","invalid_metric","invalid_method","out_of_range","too_many_frames","invalid_event","invalid_samples","invalid_filter","limit_exceeded","calc_error","invalid_foreach","batch_expansion_too_large","invalid_profile","invalid_constraint","not_text_clip","name_not_found","ambiguous_name","invalid_name","name_taken","renderer_failed","nondeterministic"] { if m.starts_with(&format!("{code}:")) { return (code,None); } }
     if m.starts_with("expr_timeout_ms exceeded"){return ("timeout",Some("expr_timeout_ms".into()))}
     if m.contains("has no time; use set_keyframe") { return ("invalid_argument_combo", Some("time".to_string())); }
     if m.starts_with("time must be >= 0") { return ("out_of_range", Some("time".to_string())); }

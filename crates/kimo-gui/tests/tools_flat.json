@@ -61,6 +61,7 @@
 "camera_project_points",
 "camera_solve_info",
 "cancel_job",
+"check_code_clip_determinism",
 "checkpoint",
 "checkpoint_delete",
 "clear_path_keys",

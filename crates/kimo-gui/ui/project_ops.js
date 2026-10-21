@@ -6,15 +6,15 @@
 //     (project_diff, template_define / template_delete), the Batch table (batch, recipe_apply,
 //     template_apply), the Media list + its footer (load_project dependencies, save_project);
 //     set_meta renames the clip / track on the timeline and writes Name / Role / Tags in the Inspector (m16);
-//   qa: diff_frames, lint_frame and the frame cache answer in the HUD status toast and keep the result on their
-//     own rail row (Naman 7:24), no mode hop, nothing on the canvas.
+//   qa: diff_frames, lint_frame, check_code_clip_determinism and the frame cache answer in the HUD status toast and keep
+//     the result on their own rail row (Naman 7:24), no mode hop, nothing on the canvas.
 // Never a raw id: clips read as their timeline names, checkpoints and templates by the names the call gave.
 import { _now as now, RAW_ID, findClip, findTrack, timelineView, numOf, fitRuler } from './router.js';
 
 export const COV_C = {
   pipeline: /^(set_color_pipeline|set_clip_input_color|set_hdr_mastering|set_ocio_view_delivery)$/,
   project: /^(set_meta|load_project|save_project|project_diff|checkpoint|checkpoint_delete|restore|undo|redo|batch|recipe_apply|template_apply|template_define|template_delete)$/,
-  qa: /^(diff_frames|lint_frame|cache_clear|cache_set_budget)$/,
+  qa: /^(diff_frames|lint_frame|cache_clear|cache_set_budget|check_code_clip_determinism)$/,
 };
 
 // Kimo colour IDs (kimo-core color: gamut 0..7, transfer 0..8)
@@ -350,6 +350,10 @@ export function qaOps(state, MODES, ev) {
     const prev = state._cacheCap; state._cacheCap = cap;
     const cv = cap === 0 ? 'off' : bytes(cap), pv = prev != null && prev !== cap ? (prev === 0 ? 'off' : bytes(prev)) + ' → ' : '';
     rail = { budget: pv + cv }; toast = `frame cache ${pv}${cv}, ${bytes(R.bytes ?? 0)} used`;
+  } else if (tn === 'check_code_clip_determinism') {   /* a mismatch is an error event (the rail row turns red); complete = all renders matched */
+    if (R.deterministic !== true) return false;
+    const t = sec(R.t ?? A.time).trim(), what = `deterministic, ${pl(n(R.frames_rendered), 'render')}, hash ${String(R.hash ?? '').slice(0, 8)}`;
+    rail = { [t || 'frame']: what }; toast = `${tn}${t ? ' ' + t : ''} · ${what}`;
   } else if (tn === 'cache_clear') {
     rail = { freed: `${bytes(R.freed_bytes ?? 0)}, ${pl(n(R.cleared_entries), 'frame')}` }; toast = `frame cache cleared · ${pl(n(R.cleared_entries), 'frame')}, ${bytes(R.freed_bytes ?? 0)} freed`;
   } else return false;
@@ -357,6 +361,7 @@ export function qaOps(state, MODES, ev) {
   // GUI-FIX-1: the same answer stays on the current screen's info panel (router.js readCard), not only in the toast
   if (tn === 'diff_frames') ev._readRows = [['Compared', `${side(state, MODES, R.a || A.a)} vs ${side(state, MODES, R.b || A.b)}`], ['Changed', rail.changed]];
   else if (tn === 'lint_frame') ev._readRows = [['Frame', Object.keys(rail)[0]], ['Findings', Object.values(rail)[0]]];
+  else if (tn === 'check_code_clip_determinism') ev._readRows = [['Frame', Object.keys(rail)[0]], ['Result', Object.values(rail)[0]]];
   else if (tn === 'cache_set_budget') ev._readRows = [['Frame cache', rail.budget], ['Used', bytes(R.bytes ?? 0)]];
   else ev._readRows = [['Freed', bytes(R.freed_bytes ?? 0)], ['Frames', String(n(R.cleared_entries))]];
   return true;

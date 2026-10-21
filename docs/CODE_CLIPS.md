@@ -14,6 +14,7 @@ window.__ready = true;                                                      // o
 
 - Draw only from `t` and `params`. No `Date.now` / `performance.now` timing, no unseeded randomness, no state carried
   from one frame to the next: Kimo renders frames in any order, in separate batches and on fresh pages.
+  `check_code_clip_determinism` proves it for a frame.
 - Keep every file inside the folder (vendor three.js next to your code). The page cannot reach the network or files
   outside its folder.
 - A transparent background composites over the tracks below (three.js: `alpha: true`, `setClearColor(0x000000, 0)`).
@@ -28,6 +29,7 @@ window.__ready = true;                                                      // o
 | --- | --- |
 | `add_code_clip` | `track_id`, `path` (the folder), `duration`, optional `start`, `width`/`height` (the page's viewport; scaled to fit the canvas when it differs), `params` (initial values). |
 | `set_code_clip_param` | A declared param: constant, or a keyframe at code time `time` with an `ease`. Keys live on the clip's own clock (the `t` the page gets), so splits, trims and speed changes keep the animation seamless. |
+| `check_code_clip_determinism` | Draws frame `t`, then `before` earlier frames, then `t` again, then `t` on a reloaded page, and errors (`nondeterministic`) unless all three match byte for byte. |
 
 ## How it renders
 

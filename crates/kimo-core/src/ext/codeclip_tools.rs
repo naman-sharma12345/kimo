@@ -1,4 +1,5 @@
-//! Code clip tools (Source::Code, see codeclip.rs): add a web project as a clip and keyframe its declared params.
+//! Code clip tools (Source::Code, see codeclip.rs): add a web project as a clip, keyframe its declared params, and check that it
+//! draws the same pixels for the same t no matter what was drawn before.
 use super::kit::*;
 use crate::codeclip::{self, CodeClip};
 use crate::keyframe::{Ease, Prop};
@@ -56,4 +57,11 @@ pub fn commands() -> Vec<Command> { vec![
             match t { None => { *p = Prop::new(v); } Some(t) => p.set_key(t, v, e) }
             let keys = p.keys.len();
             Ok(json!({"clip_id": id, "name": name, "value": v, "time": t, "keys": keys})) } },
+    Command { name: "check_code_clip_determinism", description: "Render a code clip frame, then earlier frames, then it again and on a fresh page; errors unless all match (renderFrame must use only t, params).", mutates: false,
+        schema: obj(vec![("clip_id", s("code clip")), ("time", n("clip-local seconds (default 0)")), ("before", n("earlier frames drawn in between (default 10, max 120)"))], &["clip_id"]),
+        run: |ss, a| { let id = str_arg(a, "clip_id")?.to_string(); let (c, cc) = code_of(&ss.project, &id)?;
+            let t = opt_num(a, "time", 0.0); if !t.is_finite() || t < 0.0 || t >= c.duration { return Err(format!("time must be >= 0 and < the clip duration {} (clip-local seconds), got {t}", c.duration)); }
+            let before = opt_num(a, "before", 10.0); if !(0.0..=120.0).contains(&before) || before.fract() != 0.0 { return Err(format!("before must be between 0 and 120 (whole frames), got {before}")); }
+            let k = codeclip::slot_of(c.display_time(t), ss.project.fps).min(codeclip::slot_count(c, ss.project.fps) - 1);
+            codeclip::check_determinism(&ss.project, c, cc, k, before as usize) } },
 ] }

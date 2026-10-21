@@ -336,3 +336,29 @@ pub fn frames_for(p: &Project, c: &Clip, cc: &CodeClip, ks: &[usize]) -> Result<
     got.sort_by_key(|x| x.0);
     Ok((got, rendered))
 }
+
+/// FNV-64 of a frame, as hex (what the determinism check compares and reports).
+pub fn frame_hash(b: &[u8]) -> String { let mut h: u64 = 0xcbf29ce484222325; for x in b { h ^= *x as u64; h = h.wrapping_mul(0x100000001b3); } format!("{h:016x}") }
+
+/// Determinism check: draw slot k fresh, then `before` earlier slots in order, then k again, then k after a page reload. All three
+/// renders of k must be byte-identical; anything else is an error naming the hashes. Never reads or writes the cache.
+pub fn check_determinism(p: &Project, c: &Clip, cc: &CodeClip, k: usize, before: usize) -> Result<serde_json::Value, String> {
+    let dir = resolve_dir(p, cc);
+    let s = sample(c, cc, k, p.fps);
+    let lo = k.saturating_sub(before);
+    let mut steps = vec![Step::Frame(s.clone())];
+    for j in lo..k { steps.push(Step::Frame(sample(c, cc, j, p.fps))); }
+    steps.push(Step::Frame(s.clone())); steps.push(Step::Reload); steps.push(Step::Frame(s.clone()));
+    let (frames, info) = render_steps(&dir, cc, &steps)?;
+    let n = frames.len();
+    let (h0, h1, h2) = (frame_hash(&frames[0]), frame_hash(&frames[n - 2]), frame_hash(&frames[n - 1]));
+    let transparent = frames[0].chunks_exact(4).all(|px| px[3] == 0);
+    if h0 != h1 || h0 != h2 {
+        let diff = |a: &[u8], b: &[u8]| a.iter().zip(b).filter(|(x, y)| x != y).count();
+        return Err(format!("nondeterministic: code clip {} draws different pixels for the same frame (t={} s): first render {h0}, after {} earlier frames {h1} ({} bytes differ), after a page reload {h2} ({} bytes differ). renderFrame(t, params) must depend only on t and params: no Date.now/performance.now timing, no unseeded randomness, no state carried from earlier frames.",
+            c.id, s.t, k - lo, diff(&frames[0], &frames[n - 2]), diff(&frames[0], &frames[n - 1])));
+    }
+    let ms = &info.frame_ms; let mean = if ms.is_empty() { 0.0 } else { ms.iter().sum::<f64>() / ms.len() as f64 };
+    Ok(serde_json::json!({"deterministic": true, "clip_id": c.id, "t": s.t, "params": s.params, "hash": h0, "frames_rendered": n, "earlier_frames": k - lo,
+        "fresh_page": true, "blank": transparent, "ms_per_frame": (mean * 10.0).round() / 10.0, "wall_s": (info.wall_s * 100.0).round() / 100.0, "blocked_requests": info.blocked, "gl": info.gl}))
+}

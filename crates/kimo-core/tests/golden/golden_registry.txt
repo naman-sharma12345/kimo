@@ -60,6 +60,7 @@ camera_clip_triangle bb5e8ec86c11e72f
 camera_project_points 9925e0b55b1c4af3
 camera_solve_info 68eba83a999378cc
 cancel_job 71597b2319b6d6cf
+check_code_clip_determinism c8a2418c67534879
 checkpoint 4063b9f4243b3a4e
 checkpoint_delete 22a3aee8d04e2bd6
 clear_path_keys f99ff5da3693043a
