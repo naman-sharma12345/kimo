@@ -87,6 +87,22 @@ fn the_map_lines_up_with_a_scaled_moved_or_rotated_clip() {
     assert!(dispatch(&mut s, "add_displacement_map", &json!({"clip_id": a, "map_clip_id": m, "map_space": "world"})).unwrap_err().contains("must be one of"));
 }
 
+/// A clip moved by its own transition (a push sliding it in) is placed with that move too: the map stays put on screen while
+/// the clip slides under it (KP5; before, the transition's offset was left out and the map rode along with the clip).
+#[test]
+fn the_map_stays_on_screen_while_a_push_slides_the_clip_in() {
+    let (mut s, a, t2) = scene();
+    let pm = png("band", |x, _| if x >= 120 { [255, 128, 128] } else { [128, 128, 128] }); let am = id(&c(&mut s, "import_media", json!({"path": pm})), "asset_id");
+    let m = id(&c(&mut s, "add_clip", json!({"track_id": t2, "source_type": "media", "asset_id": am, "start": 0, "duration": 2.0})), "clip_id");
+    c(&mut s, "add_displacement_map", json!({"clip_id": a, "map_clip_id": m, "max_horizontal": 20}));
+    c(&mut s, "add_push_wipe", json!({"clip_id": a, "kind": "push", "direction": "left", "duration": 1.0, "ease": "linear"}));
+    // half way through the push the clip is 80 px right of its place: canvas column X shows clip column X - 80
+    let f = frame(&s, 0.5);
+    near(col(&f, 140), 80.0, "push half way (clip 80 px right): canvas x 140 is under the map's red band, so it shows clip column 60 + 20");
+    near(col(&f, 100), 20.0, "push half way: canvas x 100 (clip column 20) is under the neutral part of the map");
+    let f = frame(&s, 1.5); near(col(&f, 125), 145.0, "after the push the clip is in place: canvas x 125 under the band shows column 125 + 20"); near(col(&f, 100), 100.0, "after the push: canvas x 100 unshifted");
+}
+
 #[test]
 fn set_matte_takes_the_alpha_from_another_clips_channel() {
     let (mut s, a, t2) = scene();

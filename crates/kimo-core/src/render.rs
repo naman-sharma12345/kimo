@@ -998,11 +998,13 @@ fn keyer_aux(p: &Project, c: &Clip, e: &crate::model::Effect, before: &Frame, lt
         Ok(Some(crate::masks::layer_coverage(l, before, lt, ctx))) };
     Ok(crate::keying::KeyerAuxOwned { clean_plate, garbage: layer("garbage_mask", e.strings.get("garbage_mask"))?, core: layer("core_mask", e.strings.get("core_mask"))? })
 }
-/// Where clip `c` lands on the canvas at `lt` (its composed x/y/scale/rotation plus its motion path), for effects that read
-/// another clip in screen space (layerfx.rs Displacement Map). Transition offsets are not included.
+/// Where clip `c` lands on the canvas at `lt` (its composed x/y/scale/rotation, its motion path and the move, zoom or turn of
+/// its own transition in, e.g. a push or slide), for effects that read another clip in screen space (layerfx.rs Displacement Map).
 fn layer_place(p: &Project, c: &Clip, lt: f64, w: usize, h: usize) -> crate::layerfx::Place {
     let (mx, my, ma) = match &c.motion_path { Some(mp) => { let (x, y, a) = crate::motion::sample(mp, prop(c, "path", lt), w, h); (x, y, if mp.auto_orient { a + mp.orient_offset } else { 0.0 }) } None => (0.0, 0.0, 0.0) };
-    crate::layerfx::Place { scale: xprop(p, c, "scale", lt), rot_deg: xprop(p, c, "rotation", lt) + ma, dx: xprop(p, c, "x", lt) + mx, dy: xprop(p, c, "y", lt) + my }
+    let mut pl = crate::layerfx::Place { scale: xprop(p, c, "scale", lt), rot_deg: xprop(p, c, "rotation", lt) + ma, dx: xprop(p, c, "x", lt) + mx, dy: xprop(p, c, "y", lt) + my };
+    if let Some(tr) = c.transition_in.as_ref().filter(|tr| lt < tr.duration) { let tp = crate::transitions::plan(tr, lt, w, h); pl.dx += tp.dx; pl.dy += tp.dy; pl.scale *= tp.scale; pl.rot_deg += tp.rot; } // as the draw composes it
+    pl
 }
 fn apply_effects_masked(p: &Project, c: &Clip, f: &mut Frame, lt: f64, seed: u64, t: f64, cache: &Cache) -> Result<(), String> {
     let special = |e: &crate::model::Effect| e.strings.contains_key("mask_layer") || keyer_aux_fx(e) || crate::layerfx::source_key(&e.kind).is_some();

@@ -2,9 +2,11 @@
 //! alone at the same time (as a track-matte source is) and read in this clip's frame, stretched to fit when the sizes differ.
 //! Both run in render.rs apply_effects_masked, where the project is at hand; reached without one (no source) they do nothing.
 //! Displacement Map reads its map where the clip lands on screen by default (map_space "screen"): each pixel of the clip is
-//! carried through the clip's transform (x, y, scale, rotation, motion path, parent) to the canvas, the map is read there,
+//! carried through the clip's transform (x, y, scale, rotation, motion path, parent, and the move, zoom or turn of its own
+//! transition in, such as a push sliding it in) to the canvas, the map is read there,
 //! and max px are screen px along the screen axes, so a map placed over a scaled, moved or rotated clip warps what is seen
 //! under it. map_space "clip" reads the map in the clip's own frame before its transform (it then scales and turns with it).
+//! A clip drawn alone (the outgoing picture of a push, a matte source) has no map clip at hand and is drawn unwarped.
 use crate::effects::Frame;
 use crate::model::Effect;
 
