@@ -63,7 +63,7 @@ pub const CATALOG: &[(&str, &str, &[(&str, f64, &str)])] = &[
     ("mirror", "Mirror half of frame", &[("axis", 0.0, "0=horizontal(left->right), 1=vertical(top->bottom)")]),
     ("scanlines", "CRT scanlines", &[("amount", 0.3, "0..1"), ("spacing", 3.0, "px")]),
     ("wave", "Sine wave distortion", &[("amplitude", 10.0, "px"), ("wavelength", 80.0, "px"), ("speed", 3.0, "cycles/s")]),
-    ("light_leak", "Warm animated light leak", &[("amount", 0.6, "0..1"), ("speed", 0.5, "cycles/s")]),
+    ("light_leak", "Animated light leak, warm by default: colour, place, size and sway are editable", &[("amount", 0.6, "0..1"), ("speed", 0.5, "cycles/s"), ("x", 0.5, "centre 0..1 of width"), ("y", 0.1, "centre 0..1 of height"), ("size", 1.0, "reach, 1 = default"), ("travel", 0.5, "sideways sway 0..1 of width"), ("color_r", 1.0, "0..1"), ("color_g", 0.45, "0..1"), ("color_b", 0.12, "0..1")]),
     ("zoom_blur", "Radial zoom blur", &[("amount", 0.06, "0..0.3")]),
     ("luma_key", "Key out by brightness (keep=0 removes darks, keep=1 removes brights)", &[("threshold", 0.2, "0..1"), ("softness", 0.1, "0..1"), ("keep_bright", 1.0, "1 keeps brights, 0 keeps darks")]),
     ("ripple", "Concentric water ripple displacement", &[("amplitude", 8.0, "px"), ("wavelength", 60.0, "px"), ("speed", 2.0, "cycles/s"), ("cx", 0.5, "0..1"), ("cy", 0.5, "0..1")]),
@@ -245,8 +245,10 @@ pub fn apply(kind: &str, params: &Params, strings: &BTreeMap<String, String>, f:
         "wave" => { let (a, wl, sp) = (p(params, "amplitude", 10.0, t), p(params, "wavelength", 80.0, t), p(params, "speed", 3.0, t)); let src = f.d.clone();
             for y in 0..f.h { let off = (a * ((y as f32 / wl + t as f32 * sp) * 6.2831853).sin()) as isize; for x in 0..f.w { let sx = (x as isize + off).clamp(0, f.w as isize - 1) as usize; for j in 0..4 { f.d[(y*f.w+x)*4+j] = src[(y*f.w+sx)*4+j]; } } } }
         "light_leak" => { let (a, sp) = (p(params, "amount", 0.6, t), p(params, "speed", 0.5, t)); let ph = t as f32 * sp * 6.2831853; let (w, h) = (f.w as f32, f.h as f32);
-            for y in 0..f.h { for x in 0..f.w { let (u, v) = (x as f32 / w, y as f32 / h); let cx = 0.5 + 0.5 * ph.sin(); let d = ((u - cx).powi(2) * 2.0 + (v - 0.1).powi(2)).sqrt(); let k = (1.0 - d * 1.8).max(0.0).powi(2) * a * (0.7 + 0.3 * (ph * 2.0).sin());
-                let i = (y*f.w+x)*4; f.d[i] += k * 1.0; f.d[i+1] += k * 0.45; f.d[i+2] += k * 0.12; } } }
+            // editable: centre (x, y, 0..1), sideways travel (sway amplitude), size (reach), light colour; the defaults are the original warm leak, bit for bit
+            let (x0, y0, sz, tv) = (p(params, "x", 0.5, t), p(params, "y", 0.1, t), p(params, "size", 1.0, t).max(0.01), p(params, "travel", 0.5, t)); let col = [p(params, "color_r", 1.0, t), p(params, "color_g", 0.45, t), p(params, "color_b", 0.12, t)];
+            for y in 0..f.h { for x in 0..f.w { let (u, v) = (x as f32 / w, y as f32 / h); let cx = x0 + tv * ph.sin(); let d = ((u - cx).powi(2) * 2.0 + (v - y0).powi(2)).sqrt(); let k = (1.0 - d * 1.8 / sz).max(0.0).powi(2) * a * (0.7 + 0.3 * (ph * 2.0).sin());
+                let i = (y*f.w+x)*4; f.d[i] += k * col[0]; f.d[i+1] += k * col[1]; f.d[i+2] += k * col[2]; } } }
         "zoom_blur" => { let a = p(params, "amount", 0.06, t); let src = f.d.clone(); let (w, h) = (f.w as f32, f.h as f32); let n = 8;
             for y in 0..f.h { for x in 0..f.w { let mut acc = [0f32; 4]; for k in 0..n { let s = 1.0 - a * k as f32 / n as f32; let sx = ((x as f32 - w/2.0) * s + w/2.0).clamp(0.0, w-1.0) as usize; let sy = ((y as f32 - h/2.0) * s + h/2.0).clamp(0.0, h-1.0) as usize; for j in 0..4 { acc[j] += src[(sy*f.w+sx)*4+j]; } }
                 for j in 0..4 { f.d[(y*f.w+x)*4+j] = acc[j] / n as f32; } } } }

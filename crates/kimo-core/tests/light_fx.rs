@@ -1,4 +1,4 @@
-//! light_sweep (After Effects CC Light Sweep), read off flat synthetic frames (160x90 @ 10 fps):
+//! light_sweep (After Effects CC Light Sweep) and the editable light_leak, read off flat synthetic frames (160x90 @ 10 fps):
 //! a light band's gain is the frame's change from its plain value, so where the band sits, how wide it is, its colour and how
 //! it treats a layer's transparent part are read directly.
 use kimo_core::commands::{dispatch, Session};
@@ -79,4 +79,23 @@ fn light_reception_add_composite_cutout_and_edge_light_on_a_layer() {
     let (mut s, t) = session(); let a = half_layer(&mut s, &t); sweep(&mut s, &a, with(json!({"intensity": 0.0, "edge_intensity": 1.0, "edge_width": 3.0})));
     let f = frame(&s, 0.5); assert!(px(&f, 78, 45)[0] > 0.9, "edge pixel inside the band lights up: {:?}", px(&f, 78, 45)); near(px(&f, 70, 45)[0], 0.502, 0.01, "the layer's inside is untouched with intensity 0");
     assert!(dispatch(&mut s, "add_effect", &json!({"clip_id": a, "kind": "light_sweep", "params": {"glare": 1.0}})).unwrap_err().contains("unknown param"));
+}
+
+#[test]
+fn light_leak_takes_a_colour_place_size_and_travel() {
+    let leak = |params: Value| { let (mut s, t) = session(); let a = solid(&mut s, &t, [0.0, 0.0, 0.0]); c(&mut s, "add_effect", json!({"clip_id": a, "kind": "light_leak", "params": params})); frame(&s, 0.0) };
+    let r = { let (mut s, t) = session(); let a = solid(&mut s, &t, [0.0, 0.0, 0.0]); dispatch(&mut s, "add_effect", &json!({"clip_id": a, "kind": "light_leak", "params": {"color_b": 1.0}})) };
+    assert!(r.is_ok(), "light_leak must take a colour: {}", r.unwrap_err());
+    // defaults spelled out are the same leak as before, bit for bit
+    let d = leak(json!({"amount": 0.6})); let d2 = leak(json!({"amount": 0.6, "x": 0.5, "y": 0.1, "size": 1.0, "travel": 0.5, "color_r": 1.0, "color_g": 0.45, "color_b": 0.12}));
+    assert!(d.d == d2.d, "default params must reproduce the old leak exactly");
+    // placed at (0.2, 0.5), no travel: lit there, dark on the far side
+    let f = leak(json!({"amount": 0.6, "x": 0.2, "y": 0.5, "travel": 0.0}));
+    assert!(px(&f, 32, 45)[0] > 0.3, "centre of the leak at x 0.2 y 0.5: {:?}", px(&f, 32, 45)); near(px(&f, 128, 45)[0], 0.0, 0.002, "far side unlit");
+    // colour: a blue leak adds no red or green
+    let f = leak(json!({"amount": 0.6, "x": 0.2, "y": 0.5, "travel": 0.0, "color_r": 0.0, "color_g": 0.0, "color_b": 1.0}));
+    let p = px(&f, 32, 45); assert!(p[2] > 0.3 && p[0] < 0.002 && p[1] < 0.002, "blue leak: {p:?}");
+    // size 2 reaches twice as far: 0.3 of the width from the centre it is several times brighter
+    let small = px(&leak(json!({"amount": 0.6, "x": 0.2, "y": 0.5, "travel": 0.0})), 80, 45)[0]; let big = px(&leak(json!({"amount": 0.6, "x": 0.2, "y": 0.5, "travel": 0.0, "size": 2.0})), 80, 45)[0];
+    assert!(big > 3.0 * small && big > 0.1, "size 2 at x 80: {big} vs size 1: {small}");
 }
