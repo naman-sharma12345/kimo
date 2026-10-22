@@ -46,7 +46,10 @@ pub const CATALOG: &[(&str, &str, &[(&str, f64, &str)])] = &[
         ("mode", 0.0, "0 classic, 1 deep glow"), ("falloff", 0.0, "mode 1: 0 sum of Gaussians, 1 exponential exp(-r/radius)"), ("iterations", 5.0, "mode 1 falloff 0: 1..8 Gaussians, sigma_k = radius*2^k/2^(n-1)"), ("exposure", 0.0, "mode 1: -8..8 stops"), ("knee", 0.2, "mode 1: 0..1 soft knee (as bloom)"),
         ("color_a_r", 1.0, "mode 1: core tint R"), ("color_a_g", 1.0, "mode 1: core tint G"), ("color_a_b", 1.0, "mode 1: core tint B"), ("color_b_r", 1.0, "mode 1: outer tint R"), ("color_b_g", 1.0, "mode 1: outer tint G"), ("color_b_b", 1.0, "mode 1: outer tint B"), ("linear", 1.0, "mode 1: 1 = glow in linear light (sRGB decode/encode)")]),
     ("bloom", "Light-intensity bloom: soft-knee bright-pass, multi-scale blur, energy-conserving by default", &[("amount", 0.6, "0..1 (conserve) or more"), ("threshold", 0.8, "luma where bloom starts"), ("knee", 0.2, "0..1 soft knee"), ("radius", 8.0, "base px, levels double it"), ("levels", 5.0, "1..7 scales"), ("conserve", 1.0, "1 = frame energy preserved, 0 = additive"), ("tint_r", 1.0, "bloom tint R"), ("tint_g", 1.0, "bloom tint G"), ("tint_b", 1.0, "bloom tint B")]),
-    ("grain", "Film grain", &[("amount", 0.08, "0..0.5")]),
+    ("grain", "Film grain: size, softness, colour, per-channel strength, shadows/mids/highlights response (Film Look Creator style)", &[("amount", 0.08, "0..0.5"),
+        ("size", 1.0, "grain size in px, 1..32 (1 = per pixel)"), ("softness", 0.0, "0..1 rounds the grains off"), ("color", 0.0, "0 mono .. 1 independent per channel"),
+        ("shadows", 1.0, "grain in shadows, 0..2"), ("mids", 1.0, "grain in midtones, 0..2"), ("highlights", 1.0, "grain in highlights, 0..2"),
+        ("red", 1.0, "red channel strength, 0..2"), ("green", 1.0, "green channel strength, 0..2"), ("blue", 1.0, "blue channel strength, 0..2")]),
     ("rgb_split", "Formula: channel(x,y)=src(x+offset_channel*cos(angle),y+offset_channel*sin(angle)); offset truncated toward zero before adding integer position, clamp edges", &[("amount",6.,"legacy +/- red/blue px"),("r_offset",6.,"red px"),("g_offset",0.,"green px"),("b_offset",-6.,"blue px"),("angle",0.,"degrees")]),
     ("invert", "Invert colors", &[]),
     ("chroma_key", "Remove a key color to alpha (space 1: YCbCr chroma distance)", &[("r",0.0,"key R"),("g",1.0,"key G"),("b",0.0,"key B"),("tolerance",0.35,"0..1"),("softness",0.1,"0..1"),("space",0.0,"0 RGB distance (default), 1 YCbCr chroma distance (ignores screen shading)")]),
@@ -172,7 +175,14 @@ pub fn apply(kind: &str, params: &Params, strings: &BTreeMap<String, String>, f:
                     if an > 1e-6 { for j in 0..3 { let p = (f.d[i*4+j] - extra[j]) * a0 + k * extra[j]; f.d[i*4+j] = p / an; } f.d[i*4+3] = an; } } }
         }
         "grain" => {
-            let a = p(params, "amount", 0.08, t); let mut s = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let a = p(params, "amount", 0.08, t);
+            // Film Look Creator-style shaping; with every shaping param at its default the legacy per-pixel mono grain below runs unchanged.
+            let q = |k: &str, d: f64| params.get(k).map(|x| x.at(t)).unwrap_or(d);
+            let sh = [("size", 1.0, 1.0, 32.0), ("softness", 0.0, 0.0, 1.0), ("color", 0.0, 0.0, 1.0), ("shadows", 1.0, 0.0, 2.0), ("mids", 1.0, 0.0, 2.0), ("highlights", 1.0, 0.0, 2.0), ("red", 1.0, 0.0, 2.0), ("green", 1.0, 0.0, 2.0), ("blue", 1.0, 0.0, 2.0)];
+            let mut v = [0.0f64; 9];
+            for (i, (k, d, lo, hi)) in sh.iter().enumerate() { v[i] = q(k, *d); if !v[i].is_finite() || v[i] < *lo || v[i] > *hi { return Err(format!("grain: {k} must be in {lo}..{hi}, got {}", v[i])); } }
+            if sh.iter().zip(&v).any(|(s, x)| *x != s.1) { crate::color::grain_look::apply(a as f64, v[0], v[1], v[2], [v[3], v[4], v[5]], [v[6], v[7], v[8]], f, seed); return Ok(()); }
+            let mut s = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
             for i in 0..f.w*f.h { s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
                 let n = ((s >> 40) as f32 / 16777216.0 - 0.5) * a; for j in 0..3 { f.d[i*4+j] += n; } }
         }

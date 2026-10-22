@@ -47,6 +47,7 @@ pub mod boost_detail;
 pub mod dehaze;
 pub mod skin_smooth;
 pub mod hdr_zones;
+pub mod grain_look;
 pub mod ocio;
 
 type C = (&'static str, f64, &'static str);
