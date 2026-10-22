@@ -25,7 +25,7 @@ pub(super) fn box_pass(src: &[f64], dst: &mut [f64], w: usize, h: usize, r: usiz
 }
 
 /// Gaussian-like blur of a plane via three box passes per axis (box widths from the standard boxes-for-gauss fit).
-fn blur(y: &[f64], w: usize, h: usize, sigma: f64) -> Vec<f64> {
+pub(super) fn blur(y: &[f64], w: usize, h: usize, sigma: f64) -> Vec<f64> {
     let n = 3.0; let wi = ((12.0 * sigma * sigma / n) + 1.0).sqrt().floor(); let wl = if (wi as i64) % 2 == 0 { wi - 1.0 } else { wi }; let wu = wl + 2.0;
     let m = ((12.0 * sigma * sigma - n * wl * wl - 4.0 * n * wl - 3.0 * n) / (-4.0 * wl - 4.0)).round();
     let radii: Vec<usize> = (0..3).map(|i| ((if (i as f64) < m { wl } else { wu }).max(1.0) as usize - 1) / 2).collect();

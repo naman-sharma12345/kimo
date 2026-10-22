@@ -45,6 +45,7 @@ pub mod gamut_ray;
 pub mod auto_balance;
 pub mod boost_detail;
 pub mod dehaze;
+pub mod skin_smooth;
 pub mod ocio;
 
 type C = (&'static str, f64, &'static str);
@@ -104,6 +105,7 @@ pub fn catalog3() -> &'static [Entry] {
         v.extend(gamut_ray::catalog());
         v.extend(boost_detail::catalog());
         v.extend(dehaze::catalog());
+        v.extend(skin_smooth::catalog());
         v.extend(crate::keying::catalog4());
         v
     })
@@ -163,6 +165,7 @@ pub fn apply3(kind: &str, pr: &Params, f: &mut Frame, t: f64, _seed: u64) -> Res
         "soft_gamut_ray" => return gamut_ray::apply(pr,f,t),
         "color_boost" | "midtone_detail" => return boost_detail::apply(kind, pr, f, t),
         "dehaze" => return dehaze::apply(pr, f, t),
+        "skin_smooth" => return skin_smooth::apply(pr, f, t),
         "cdl" => return cdl::apply(pr, f, t),
         "lab_match" => return matching::apply(pr, f, t),
         "camera_idt" => return idt::apply(pr, f, t),
