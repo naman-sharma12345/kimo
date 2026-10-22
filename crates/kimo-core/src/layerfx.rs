@@ -10,12 +10,13 @@
 //! held to the map's own span (so a map laid over the outgoing shot of a push stays on it through the push), and the push's move
 //! of the outgoing picture is part of its place, so its map stays on screen like the incoming clip's.
 //! Camera Lens Blur takes a depth (blur) map the same way when add_lens_blur names depth_clip_id (lens_depth below; lens.rs apply_map).
+//! add_depth_parallax (a 2.5D "3D photo" camera move) reads its depth map clip the same way (depth_parallax below).
 use crate::effects::Frame;
 use crate::model::Effect;
 
 pub const CHANNELS: &[&str] = &["red", "green", "blue", "alpha", "luma", "hue", "saturation", "lightness"];
 pub const EDGES: &[&str] = &["clamp", "wrap", "transparent"];
-pub const KINDS: &[&str] = &["displacement_map", "set_matte", "lens_blur"];
+pub const KINDS: &[&str] = &["displacement_map", "set_matte", "lens_blur", "depth_parallax"];
 pub const MAP_SPACES: &[&str] = &["screen", "clip"];
 
 /// Where the clip lands on the canvas: f = c + (dx, dy) + R(rot) * scale * (q - c), c the canvas centre, y down (render.rs transform_bb).
@@ -24,7 +25,7 @@ impl Place { pub fn identity(&self) -> bool { (self.scale - 1.0).abs() < 1e-9 &&
 
 /// The string key holding the driving clip's id.
 /// lens_blur carries one only when add_lens_blur was given a depth map (depth_clip); without it the lens blur is an ordinary effect.
-pub fn source_key(kind: &str) -> Option<&'static str> { match kind { "displacement_map" => Some("map_clip"), "set_matte" => Some("matte_clip"), "lens_blur" => Some("depth_clip"), _ => None } }
+pub fn source_key(kind: &str) -> Option<&'static str> { match kind { "displacement_map" => Some("map_clip"), "set_matte" => Some("matte_clip"), "lens_blur" | "depth_parallax" => Some("depth_clip"), _ => None } }
 /// True when the effect is driven by another clip right now (its source key is set).
 pub fn driven(e: &Effect) -> bool { source_key(&e.kind).is_some_and(|k| e.strings.contains_key(k)) }
 
@@ -80,4 +81,46 @@ pub fn lens_depth(e: &Effect, f: &mut Frame, map: &Frame, lt: f64) {
     for y in 0..f.h { for x in 0..f.w { let v = channel(at(map, f, x, y), ch, 0.0); let v = if inv { 1.0 - v } else { v }; dm[y * f.w + x] = ((v - focal).abs() / span).clamp(0.0, 1.0); } }
     crate::lens::apply_map(f, &crate::lens::from_params(&e.params, lt), Some(&dm));
 }
-pub fn apply(e: &Effect, f: &mut Frame, src: &Frame, lt: f64, place: Option<Place>) { match e.kind.as_str() { "displacement_map" => displace(e, f, src, lt, place), "set_matte" => set_matte(e, f, src), "lens_blur" => lens_depth(e, f, src, lt), _ => {} } }
+/// 2.5D depth parallax (a "3D photo" camera move): the map's channel (depth_channel, default luma, read over black, invert 1 flips
+/// it) is depth, 1 = near, 0 = far. A point at depth d moves by pan * (d - focal_depth) (pan_x of the width, pan_y of the height)
+/// and scales about the canvas centre by 1 + dolly * (d - focal_depth); zoom then scales the whole picture (overscan). Each output
+/// pixel marches its ray from near to far through the inverse of that move, reading the depth map (nearest pixel) until the map
+/// is at or in front of the ray: near layers hide far ones. Where the ray meets a cliff (the map jumps more than 0.12 past the ray,
+/// the side of a near object) the pixel is background the camera has just uncovered and takes the colour 1 px beyond the cliff
+/// on the far side, so it is filled from the background, not smeared from the object. No move (pan 0, dolly 0, zoom 1) is bit-exact.
+pub fn depth_parallax(e: &Effect, f: &mut Frame, map: &Frame, lt: f64) {
+    if map.w == 0 || map.h == 0 || f.w == 0 || f.h == 0 { return; }
+    let (pxf, pyf, dolly, zoom) = (num(e, "pan_x", lt, 0.0) as f64, num(e, "pan_y", lt, 0.0) as f64, (num(e, "dolly", lt, 0.0) as f64).clamp(-0.9, 0.9), (num(e, "zoom", lt, 1.0) as f64).max(0.01));
+    if pxf == 0.0 && pyf == 0.0 && dolly == 0.0 && zoom == 1.0 { return; }
+    let (ch, inv) = (word(e, "depth_channel", "luma"), num(e, "invert", lt, 0.0) >= 0.5); let focal = (num(e, "focal_depth", lt, 0.5) as f64).clamp(0.0, 1.0);
+    let (w, h) = (f.w, f.h); let (wf, hf) = (w as f64, h as f64); let (cx, cy) = (wf / 2.0, hf / 2.0); let (pxx, pyy) = (pxf * wf, pyf * hf);
+    let mut dm = vec![0f32; w * h];
+    for y in 0..h { for x in 0..w { let v = channel(at(map, f, x, y), ch, 0.0); dm[y * w + x] = if inv { 1.0 - v } else { v }; } }
+    let depth = |px: f64, py: f64| -> f64 { let (xi, yi) = ((px.floor() as i64).clamp(0, w as i64 - 1) as usize, (py.floor() as i64).clamp(0, h as i64 - 1) as usize); dm[yi * w + xi] as f64 };
+    let src = f.d.clone();
+    // premultiplied bilinear read (clamped at the frame edge); an exact pixel centre returns that pixel untouched
+    let read = |px: f64, py: f64| -> [f32; 4] { let (x, y) = ((px - 0.5).clamp(0.0, wf - 1.0), (py - 0.5).clamp(0.0, hf - 1.0)); let (x0, y0) = (x.floor() as usize, y.floor() as usize); let (fx, fy) = ((x - x0 as f64) as f32, (y - y0 as f64) as f32);
+        if fx == 0.0 && fy == 0.0 { let i = (y0 * w + x0) * 4; return [src[i], src[i + 1], src[i + 2], src[i + 3]]; }
+        let (x1, y1) = ((x0 + 1).min(w - 1), (y0 + 1).min(h - 1)); let mut o = [0f32; 4];
+        for (xx, yy, k) in [(x0, y0, (1.0 - fx) * (1.0 - fy)), (x1, y0, fx * (1.0 - fy)), (x0, y1, (1.0 - fx) * fy), (x1, y1, fx * fy)] { let i = (yy * w + xx) * 4; let a = src[i + 3]; for j in 0..3 { o[j] += src[i + j] * a * k; } o[3] += a * k; }
+        if o[3] > 1e-6 { for j in 0..3 { o[j] /= o[3]; } } o };
+    let span = focal.max(1.0 - focal); let reach = ((pxx.abs() + pyy.abs()) + dolly.abs() * (cx.hypot(cy))) * span;
+    let steps = ((reach * 1.5).ceil() as usize).clamp(8, 160);
+    for y in 0..h { for x in 0..w {
+        let (qx, qy) = (cx + (x as f64 + 0.5 - cx) / zoom, cy + (y as f64 + 0.5 - cy) / zoom);
+        let pos = |d: f64| -> (f64, f64) { let k = 1.0 + dolly * (d - focal); (cx + (qx - cx - pxx * (d - focal)) / k, cy + (qy - cy - pyy * (d - focal)) / k) };
+        let hit = |d: f64| { let (a, b) = pos(d); depth(a, b) >= d };
+        let mut prev = None; let mut found = 0.0;
+        for i in 0..=steps { let d = 1.0 - i as f64 / steps as f64; if hit(d) { found = d; break; } prev = Some(d); }
+        let out = match prev {
+            None => { let (a, b) = pos(found); read(a, b) }
+            Some(lo0) => { let (mut lo, mut hi) = (lo0, found); for _ in 0..10 { let m = 0.5 * (lo + hi); if hit(m) { hi = m; } else { lo = m; } }
+                let (ha, hb) = pos(hi);
+                if depth(ha, hb) - hi > 0.12 { let (la, lb) = pos(lo); let (mut vx, mut vy) = (la - ha, lb - hb); let mut n = vx.hypot(vy);
+                    if n < 1e-9 { let (a2, b2) = pos((lo + 1.0 / steps as f64).min(1.0)); vx = a2 - ha; vy = b2 - hb; n = vx.hypot(vy); }
+                    if n > 1e-9 { read(la + vx / n, lb + vy / n) } else { read(la, lb) } }
+                else { read(ha, hb) } } };
+        let i = (y * w + x) * 4; f.d[i..i + 4].copy_from_slice(&out);
+    } }
+}
+pub fn apply(e: &Effect, f: &mut Frame, src: &Frame, lt: f64, place: Option<Place>) { match e.kind.as_str() { "displacement_map" => displace(e, f, src, lt, place), "set_matte" => set_matte(e, f, src), "lens_blur" => lens_depth(e, f, src, lt), "depth_parallax" => depth_parallax(e, f, src, lt), _ => {} } }

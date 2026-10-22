@@ -10,6 +10,7 @@
 "add_clip",
 "add_code_clip",
 "add_counter",
+"add_depth_parallax",
 "add_detection_box",
 "add_displacement_map",
 "add_blur_fill",

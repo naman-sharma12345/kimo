@@ -139,7 +139,7 @@ pub fn apply2(kind: &str, pr: &Params, f: &mut Frame, t: f64, seed: u64) -> Resu
         "light_wrap" => return if crate::frosted::in_post() { crate::lightwrap::apply(pr, f, t) } else { Ok(()) },
         "frosted_glass" => return if crate::frosted::in_post() { crate::frosted::apply(pr, f, t) } else { Ok(()) },
         "lens_blur" => crate::lens::apply_params(pr, f, t),
-        "displacement_map" | "set_matte" => {} // need another clip: applied in render.rs apply_effects_masked (layerfx.rs)
+        "displacement_map" | "set_matte" | "depth_parallax" => {} // need another clip: applied in render.rs apply_effects_masked (layerfx.rs)
         "light_sweep" => light_sweep(pr, f, t),
         other => return crate::color::apply3(other, pr, f, t, seed),
     }
