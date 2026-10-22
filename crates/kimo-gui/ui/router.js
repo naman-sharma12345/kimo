@@ -30,6 +30,7 @@ export const FAMILIES = [
   ['transform', /^audio_to_keyframes$/],   /* audio to keyframes: the keyed clip flashes, the Inspector shows the property and its new per-frame curve */
   ['transform', /^add_punch_ins$/],   /* punch-ins: the punched clips flash, the Inspector shows their new scale / x / y (and the ease keys) */
   ['effects', /^add_displacement_map$/],   /* displacement map: the warped clip flashes, the Inspector shows its displacement_map effect (map clip, max px, channels) */
+  ['effects', /^add_blur_fill$/],   /* blur fill: the framed clip and its new fill clip flash, the Inspector shows the fill's blur and exposure */
   ['roto', /^set_matte$/],   /* set matte: the matted clip flashes, the Inspector shows its set_matte effect (matte clip, channel, invert) */
   ['effects', /^add_push_wipe$/],   /* push / gradient wipe: the incoming clip flashes, the Inspector shows its transition (kind, direction or gradient, duration) */
   ['effects', /^(add_effect|apply_effect|set_effect|add_transition|remove_effect|add_speed|set_posterize|add_adjustment|add_managed_linear_effect$)/],

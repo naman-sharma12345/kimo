@@ -12,6 +12,7 @@
 "add_counter",
 "add_detection_box",
 "add_displacement_map",
+"add_blur_fill",
 "add_effect",
 "add_emitter",
 "add_glitch_confetti",
