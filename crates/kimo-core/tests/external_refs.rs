@@ -159,7 +159,7 @@ fn open_sites_are_classified() {
         ("colortools.rs", 5, "caller path (tool argument / output / temp file / test), not stored in the project"),
         ("commands/tools_0.rs", 1, "caller path (tool argument / output / temp file / test), not stored in the project"),
         ("commands/tools_1.rs", 1, "caller path (tool argument / output / temp file / test), not stored in the project"),
-        ("commands/tools_4.rs", 3, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),
+        ("commands/tools_4.rs", 4, "3 PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site; 1 caller path: export reads the size of the output file it just wrote"),
         ("deps.rs", 3, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),
         ("editorial.rs", 1, "caller path (tool argument / output / temp file / test), not stored in the project"),
         ("ext/cdl_files.rs", 1, "caller path (tool argument / output / temp file / test), not stored in the project"),

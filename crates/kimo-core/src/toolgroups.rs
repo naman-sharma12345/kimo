@@ -114,7 +114,7 @@ pub const DIRECTOR: &[(&str, &str)] = &[
     ("set_audio", "A clip's sound: mute, volume (1 = unchanged), fade_in, fade_out."),
     ("render_frame", "Render the edit at one time to a .png and look at it."),
     ("contact_sheet", "Several times of the edit in one .png grid you can look at."),
-    ("export", "Render the edit to an .mp4 at path (H.264, AAC)."),
+    ("export", "Render the edit to an .mp4 at path (H.264, AAC). Returns duration and bytes (check bytes against a size cap)."),
     ("review_export", "Look at any video file, your export or a source clip: a grid of its frames, duration, size, loudness."),
     ("save_project", "Save the project JSON to path."),
     ("undo", "Undo the last change. A recipe call (auto_*, place_broll, finish_audio) is one step."),

@@ -56,8 +56,8 @@ op over a list (`{"foreach": {"var": "k", "in": ["clip30", "clip31"]}, "ops": [{
   `linear, in, out, in_out, hold, out_quart, out_expo, out_back, in_out_quint, ...` (not `ease_out`).
 - **Audio effect params** are named per kind: compressor `threshold_db, ratio, attack_ms, release_ms, makeup_db`;
   eq `frequency, width, gain_db`; reverb `decay, delay_ms`; denoise `reduction_db, floor_db`. A wrong name lists them.
-- **`export` returns no file size.** `list_dependencies` after importing the file shows its size, or check the
-  bitrate budget: 16 MB over 60 s is about 2 Mb/s.
+- **`export` returns `bytes` and `duration`.** Check `bytes` against the delivery cap (16 MB = 16,000,000) before you
+  deliver; over it, export again with a higher `crf` (16 MB over 60 s is about 2 Mb/s).
 - **Speech-to-text needs the `whisper` CLI** (`pip install openai-whisper`). Without it, write the cues yourself
   from the script and time them to `audio_speech_intervals`.
 - **Durations**: any decimal is fine (1.266667 s and 1.3334 s are 38 and 40 frames at 30 fps).
