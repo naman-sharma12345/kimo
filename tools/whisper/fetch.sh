@@ -2,7 +2,7 @@
 # Fetches the local speech recognizer used by auto_captions: builds whisper.cpp's whisper-cli (MIT) at a pinned commit and
 # downloads one ggml Whisper model (OpenAI Whisper weights, MIT), checking its sha256. Nothing is committed to the repo.
 #   bash tools/whisper/fetch.sh            # multilingual small, q5_1, 181 MiB (default)
-#   MODEL=turbo bash tools/whisper/fetch.sh  # large-v3-turbo, q5_0, 547 MiB: much better on Hindi / Hinglish
+#   MODEL=turbo bash tools/whisper/fetch.sh  # large-v3-turbo, q5_0, 547 MiB: about 6x slower; on Hinglish it ties small on words
 #   MODEL=base  bash tools/whisper/fetch.sh  # base, q5_1, 57 MiB: fastest, weakest
 # Destination: $KIMO_MODELS (default ~/.cache/kimo_models): bin/whisper-cli and ggml-<model>.bin. Needs git, cmake, a C++ compiler.
 set -euo pipefail

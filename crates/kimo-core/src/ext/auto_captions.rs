@@ -138,14 +138,18 @@ fn recognize(src: &Src, a: &Value, mode: &mut String, lang_seen: &mut Option<Str
     let hp = format!("{HINGLISH_PROMPT} {hint}");
     // beam search by default (Hinglish WER 45.8% vs 52.3% greedy on Naman's clips); fast = greedy, about 3x quicker
     let fast: &[&str] = if bool_arg(a, "fast")?.unwrap_or(false) { &["-bs", "1", "-bo", "1"] } else { &[] };
+    // large-v3-turbo asked for -l en (with or without the Roman prompt) translates Hindi speech into English (62.7% WER on Naman's
+    // clips); asked for -l hi it writes what was said, in Devanagari, romanized below (49.7% strict / 37.9% ignoring spelling).
+    let turbo = model.file_name().map_or(false, |n| n.to_string_lossy().to_lowercase().contains("turbo"));
+    let hinglish_pass = || if turbo { run_whisper(&bin, &model, &wav, "hi", Some(hint.as_str()), secs, fast) } else { run_whisper(&bin, &model, &wav, "en", Some(hp.as_str()), secs, fast) };
     let r = (|| -> Result<Asr, String> {
         match lang.as_str() {
-            "hinglish" => { *mode = "hinglish".into(); run_whisper(&bin, &model, &wav, "en", Some(hp.as_str()), secs, fast) }
-            "hi" | "ur" if roman => { *mode = "hinglish".into(); run_whisper(&bin, &model, &wav, "en", Some(hp.as_str()), secs, fast) }
+            "hinglish" => { *mode = "hinglish".into(); hinglish_pass() }
+            "hi" | "ur" if roman => { *mode = "hinglish".into(); hinglish_pass() }
             "auto" => {
                 // language id only (one encoder pass, seconds), then one full pass in the right mode
                 let det = run_whisper(&bin, &model, &wav, "auto", None, secs, &["-dl"])?.language;
-                if roman && matches!(det.as_deref(), Some("hi") | Some("ur") | Some("pa") | Some("mr")) { *mode = "hinglish".into(); let mut r = run_whisper(&bin, &model, &wav, "en", Some(hp.as_str()), secs, fast)?; r.language = det; Ok(r) }
+                if roman && matches!(det.as_deref(), Some("hi") | Some("ur") | Some("pa") | Some("mr")) { *mode = "hinglish".into(); let mut r = hinglish_pass()?; r.language = det; Ok(r) }
                 else { let l = det.clone().unwrap_or_else(|| "auto".into()); *mode = l.clone(); let mut r = run_whisper(&bin, &model, &wav, &l, Some(hint.as_str()), secs, fast)?; if r.language.is_none() { r.language = det; } Ok(r) }
             }
             l => { *mode = l.to_string(); run_whisper(&bin, &model, &wav, l, Some(hint.as_str()), secs, fast) }

@@ -87,8 +87,10 @@ fn ink(ss: &Session, t: f64) -> Ink {
 
 /// A stub whisper-cli: records its arguments, then writes whisper.cpp JSON for three words with DTW times shaped like real
 /// whisper.cpp output (about 250 ms late). `-l auto` reports `lang_auto` as the language.
-fn stub(lang_auto: &str) -> (PathBuf, PathBuf) {
-    let d = dir(); let log = d.join(format!("args_{lang_auto}.txt")); let bin = d.join(format!("whisper_stub_{lang_auto}.sh"));
+fn stub(lang_auto: &str) -> (PathBuf, PathBuf) { stub_as(lang_auto, lang_auto) }
+/// The same stub under its own file names (`tag`), so tests running in parallel keep separate argument logs.
+fn stub_as(lang_auto: &str, tag: &str) -> (PathBuf, PathBuf) {
+    let d = dir(); let log = d.join(format!("args_{tag}.txt")); let bin = d.join(format!("whisper_stub_{tag}.sh"));
     let tok = |t: &str, ms: u32, dtw: u32| format!("{{\"text\":\"{t}\",\"offsets\":{{\"from\":{ms},\"to\":{}}},\"p\":0.93,\"t_dtw\":{dtw}}}", ms + 200);
     // two tokens per word, like real output: the first token's DTW time is the onset + 0.25 s, the last one's is the next onset - 0.04 s
     let body = format!("[{{\"text\":\"[_BEG_]\",\"offsets\":{{\"from\":0,\"to\":0}},\"p\":0.9,\"t_dtw\":-1}},{},{},{},{},{},{},{}]",
@@ -128,6 +130,24 @@ fn with_clip(start: f64) -> Session {
     assert_eq!(r["mode"], "hinglish", "{r}"); assert_eq!(r["language"], "hi");
     let args = std::fs::read_to_string(&log).unwrap(); let lines: Vec<&str> = args.lines().collect();
     assert_eq!(lines.len(), 2, "detect, then a Roman-script pass: {args}"); assert!(lines[0].contains("-l auto") && lines[0].contains("-dl"), "language id only: {args}"); assert!(lines[1].contains("-l en") && lines[1].contains("Haan toh") && lines[1].contains("Kimo"), "{args}");
+}
+
+#[test] fn a_turbo_model_writes_hinglish_from_a_hindi_pass_not_an_english_one() {
+    // large-v3-turbo given -l en (plus the Roman prompt) on Hindi speech translates it into English (Naman's clips: 62.7% WER);
+    // -l hi then romanize keeps the words that were said (49.7% strict / 37.9% ignoring spelling).
+    let (bin, log) = stub_as("hi", "hi_turbo"); let model = dir().join("ggml-large-v3-turbo-q5_0.bin"); std::fs::write(&model, b"stub").unwrap();
+    for (lang, passes) in [("auto", 2usize), ("hinglish", 1), ("hi", 1)] {
+        let _ = std::fs::remove_file(&log); let mut ss = with_clip(0.0);
+        let r = call(&mut ss, "auto_captions", json!({"whisper_bin": bin.to_str().unwrap(), "model": model.to_str().unwrap(), "language": lang}));
+        assert_eq!(r["mode"], "hinglish", "{lang}: {r}");
+        let args = std::fs::read_to_string(&log).unwrap(); let lines: Vec<&str> = args.lines().collect(); assert_eq!(lines.len(), passes, "{lang}: {args}");
+        let rec = lines[passes - 1];
+        assert!(rec.contains("-l hi") && rec.contains("-dtw large.v3.turbo"), "{lang}: turbo must recognize Hindi as Hindi: {rec}");
+        assert!(!rec.contains("-l en") && !rec.contains("Haan toh"), "{lang}: no English pass or Roman prompt on turbo: {rec}");
+    }
+    let (bin, log) = stub_as("hi", "hi_small"); let small = dir().join("ggml-small-q5_1.bin"); std::fs::write(&small, b"stub").unwrap();
+    let mut ss = with_clip(0.0); call(&mut ss, "auto_captions", json!({"whisper_bin": bin.to_str().unwrap(), "model": small.to_str().unwrap(), "language": "hinglish"}));
+    let args = std::fs::read_to_string(&log).unwrap(); assert!(args.contains("-l en") && args.contains("Haan toh"), "small keeps its Roman-prompt pass: {args}");
 }
 
 #[test] fn devanagari_is_romanized_the_way_hinglish_is_written() {
