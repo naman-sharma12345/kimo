@@ -70,6 +70,8 @@ pub struct Clip {
     pub speed_curve: Option<Prop>,
     /// Optional time remap (source time vs clip time); overrides speed, speed ramp, reverse and freeze for video and audio.
     #[serde(default, skip_serializing_if = "Option::is_none")] pub time_remap: Option<TimeRemap>,
+    /// Premiere Time Interpolation for a speed ramp: how source times between frames are shown (off = nearest frame). Unused without speed_curve.
+    #[serde(default, skip_serializing_if = "FrameBlend::is_off")] pub speed_blend: FrameBlend,
     pub props: BTreeMap<String, Prop>, // opacity, x, y, scale, rotation
     pub effects: Vec<Effect>,
     #[serde(default)] pub grade_graph: Option<crate::color::node_graph::Graph>,
@@ -120,6 +122,7 @@ pub enum TimeMode { #[default] Normal, Reverse, /// hold the frame at clip-local
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum FrameBlend { #[default] Off, FrameMix, OpticalFlow }
+impl FrameBlend { pub fn is_off(&self) -> bool { *self == FrameBlend::Off } }
 /// AE-style time remap: `curve` gives source seconds after in_point as a function of clip-local seconds (+ `offset`, set by split_clip so the right half continues the curve).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TimeRemap { pub curve: Prop, #[serde(default)] pub offset: f64, #[serde(default)] pub blend: FrameBlend }
@@ -215,6 +218,13 @@ impl Clip {
         let x = self.remap_source(lt)? * fps; let r = x.round();
         if (x - r).abs() < 1e-6 { return Some((r as usize, r as usize, 0.0)); }
         let a = x.floor(); Some((a as usize, a as usize + 1, x - a))
+    }
+    /// Speed-ramp source position at clip time `lt` when the ramp blends frames (speed_curve + speed_blend, no time remap): (frame a, frame b, weight of b),
+    /// with frame a = source_index (same 1e-6 snap), so frame sampling and blending agree on the frame shown.
+    pub fn ramp_pos(&self, lt: f64, fps: f64) -> Option<(usize, usize, f64)> {
+        if self.time_remap.is_some() || self.speed_curve.is_none() || self.speed_blend.is_off() { return None; }
+        let x = self.source_time(lt.max(0.0)) * fps; let a = (x + 1e-6).floor(); let w = x - a;
+        if w < 1e-6 { return Some((a as usize, a as usize, 0.0)); } Some((a as usize, a as usize + 1, w))
     }
     /// Min/max remapped source seconds over clip time [lt0, lt1] (curves may reverse or overshoot): both ends, every key inside and a <= 1/240 s grid (<= 4096 steps).
     pub fn remap_span(&self, lt0: f64, lt1: f64) -> (f64, f64) {

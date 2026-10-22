@@ -575,12 +575,14 @@ function editOps2(state, MODES, tl, ev, A) {
     for (const k of c._kids) insertClip(tl, ensureTrack(tl, k.track), { ...k.clip, _flash: now() }); return true;
   }
   if (n === 'freeze_frame') { badge(c, A.at != null ? `freeze ${fmtVal(N(A.at))}s` : 'freeze', /^freeze/); return true; }
-  if (n === 'set_speed') { const v = N(A.speed); if (v == null) return false; badge(c, `${fmtVal(v)}×`, /^[\d.]+×$|^ramp$/); return true; }
+  if (n === 'set_speed') { const v = N(A.speed); if (v == null) return false; badge(c, `${fmtVal(v)}×`, /^[\d.]+×$|^ramp( · (frame mix|flow))?$/); return true; }
   if (n === 'rate_stretch') { const d = N(A.duration); if (d == null) return false; c.e = c.s + d; c._flash = now(); return true; }
   if (n === 'set_speed_ramp') {
     const keys = Array.isArray(A.keys) ? A.keys.map(k => N(Array.isArray(k) ? k[0] : k && typeof k === 'object' ? k.t : null)).filter(x => x != null) : [];
-    if (!keys.length) { c.fx = (c.fx || []).filter(x => x !== 'ramp'); c.keys = (c.keys || []).filter(k => !k._ramp); c._flash = now(); return true; }
-    badge(c, 'ramp', /^[\d.]+×$/); c.keys = [...(c.keys || []).filter(k => !k._ramp), ...keys.map(x => ({ t: c.s + x, _ramp: true }))]; return true;
+    if (!keys.length) { c.fx = (c.fx || []).filter(x => !/^ramp( · (frame mix|flow))?$/.test(x)); c.keys = (c.keys || []).filter(k => !k._ramp); c._flash = now(); return true; }
+    // Time Interpolation (frame_blend) shows on the badge; a re-key without it keeps the clip's current one
+    const fb = A.frame_blend ?? (c.fx || []).map(x => /^ramp · (frame mix|flow)$/.exec(x)).filter(Boolean).map(m => m[1] === 'flow' ? 'optical_flow' : 'frame_mix')[0];
+    badge(c, fb === 'frame_mix' ? 'ramp · frame mix' : fb === 'optical_flow' ? 'ramp · flow' : 'ramp', /^[\d.]+×$|^ramp( · (frame mix|flow))?$/); c.keys = [...(c.keys || []).filter(k => !k._ramp), ...keys.map(x => ({ t: c.s + x, _ramp: true }))]; return true;
   }
   if (n === 'set_time_remap') {
     const given = Array.isArray(A.keys); const keys = given ? A.keys.map(k => N(Array.isArray(k) ? k[0] : null)).filter(x => x != null) : [];

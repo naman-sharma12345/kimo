@@ -53,7 +53,7 @@ pub fn commands() -> Vec<Command> { vec![
                         if append { c.effects.append(&mut fx); } else { c.effects = fx; } c.echo = src.echo.clone(); c.posterize_fps = src.posterize_fps; }
                     "mask" => { c.mask = src.mask.clone(); }
                     "grade" => { c.grade_graph = src.grade_graph.clone(); }
-                    "speed" => { c.speed = src.speed; c.speed_curve = src.speed_curve.as_ref().map(|p| scaled(p, k)); c.time_remap = src.time_remap.clone(); c.time_mode = src.time_mode.clone(); }
+                    "speed" => { c.speed = src.speed; c.speed_curve = src.speed_curve.as_ref().map(|p| scaled(p, k)); c.speed_blend = src.speed_blend; c.time_remap = src.time_remap.clone(); c.time_mode = src.time_mode.clone(); }
                     "audio" => { let (lead, tail, duck) = (c.audio.lead, c.audio.tail, c.audio.duck_gain.clone()); c.audio = src.audio.clone(); c.audio.duck_gain = duck; c.audio.lead = lead; c.audio.tail = tail; c.audio.volume = scaled(&src.audio.volume, k); }
                     _ => {} } }
                 pasted.push(id.clone());

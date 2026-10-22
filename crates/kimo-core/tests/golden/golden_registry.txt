@@ -340,7 +340,7 @@ set_posterize_time 03737fb4f2ea4cab
 set_property 1123a56f6fa267dd
 set_relight 99922396faa38f30
 set_speed 0e5aa672ac57bbd2
-set_speed_ramp 668f3a8a6b665d74
+set_speed_ramp c98ee12bfb32f92d
 set_split_edit af640587669e23fa
 set_text ba3bc84f3bce516b
 set_text_path 85287b0a5760e681

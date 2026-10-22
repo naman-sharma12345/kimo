@@ -31,8 +31,8 @@ fn find_fill(p: &Project, fg: &Clip) -> Option<(usize, usize)> {
 }
 fn fx(p: &mut Project, kind: &str, k: &str, v: f64, of: &str) -> Effect { let mut e = Effect { id: p.gen_id("fx"), kind: kind.into(), params: Default::default(), strings: Default::default() }; e.params.insert(k.into(), Prop::new(v)); e.strings.insert("fill".into(), "1".into()); e.strings.insert("fill_of".into(), of.into()); e }
 /// The timing a fill copies from its clip.
-fn timing(c: &Clip) -> Value { json!([c.start, c.duration, c.in_point, c.speed, c.speed_curve, c.time_remap, c.time_mode, c.source, c.posterize_fps]) }
-fn take_timing(f: &mut Clip, fg: &Clip) { f.start = fg.start; f.duration = fg.duration; f.in_point = fg.in_point; f.speed = fg.speed; f.speed_curve = fg.speed_curve.clone(); f.time_remap = fg.time_remap.clone(); f.time_mode = fg.time_mode.clone(); f.source = fg.source.clone(); f.posterize_fps = fg.posterize_fps; }
+fn timing(c: &Clip) -> Value { json!([c.start, c.duration, c.in_point, c.speed, c.speed_curve, c.time_remap, c.time_mode, c.source, c.posterize_fps, c.speed_blend]) }
+fn take_timing(f: &mut Clip, fg: &Clip) { f.start = fg.start; f.duration = fg.duration; f.in_point = fg.in_point; f.speed = fg.speed; f.speed_curve = fg.speed_curve.clone(); f.speed_blend = fg.speed_blend; f.time_remap = fg.time_remap.clone(); f.time_mode = fg.time_mode.clone(); f.source = fg.source.clone(); f.posterize_fps = fg.posterize_fps; }
 /// Drop track `ti` when it is an emptied fill track.
 fn drop_if_empty(p: &mut Project, ti: usize) { if ti < p.tracks.len() && p.tracks[ti].clips.is_empty() && p.tracks[ti].name == "blur fill" && !p.tracks[ti].locked { p.tracks.remove(ti); } }
 

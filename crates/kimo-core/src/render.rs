@@ -266,9 +266,9 @@ fn prepare_window(p: &Project, cache: &mut Cache, t0: f64, t1: f64, window:usize
         let (t0, t1) = match morph_t.get(&c.id) { Some(tm) => (*tm, *tm), None => (t0, t1) };
         let (ta, tb) = match c.time_mode { _ if c.time_remap.is_some() => (t0, t1), TimeMode::Normal => (t0, t1), TimeMode::Reverse => (c.start + c.duration - (t1 - c.start), c.start + c.duration - (t0 - c.start)), TimeMode::Freeze { at } => (c.start + at, c.start + at) };
         let (t0, t1) = (ta, tb);
-        let (ia, mut ib) = if all { (0, total - 1) } else if let Some(r)=&c.time_remap{let (lo,hi)=c.remap_span((t0-c.start).clamp(0.,c.duration),(t1-c.start).clamp(0.,c.duration));(((lo*p.fps).floor() as usize).min(total-1),((hi*p.fps).ceil() as usize+usize::from(r.blend!=crate::model::FrameBlend::Off)).min(total-1))} else if c.speed_curve.is_some(){(media_index(c,(t0-c.start).min(c.duration),p.fps).min(total-1),media_index(c,(t1-c.start).min(c.duration),p.fps).min(total-1))}else { ((((t0 - c.start).max(0.0) * p.fps).floor() as usize).min(total - 1), (((t1 - c.start).max(0.0) * p.fps).ceil() as usize).min(total - 1)) };
+        let (ia, mut ib) = if all { (0, total - 1) } else if let Some(r)=&c.time_remap{let (lo,hi)=c.remap_span((t0-c.start).clamp(0.,c.duration),(t1-c.start).clamp(0.,c.duration));(((lo*p.fps).floor() as usize).min(total-1),((hi*p.fps).ceil() as usize+usize::from(r.blend!=crate::model::FrameBlend::Off)).min(total-1))} else if c.speed_curve.is_some(){(media_index(c,(t0-c.start).min(c.duration),p.fps).min(total-1),(media_index(c,(t1-c.start).min(c.duration),p.fps)+usize::from(!c.speed_blend.is_off())).min(total-1))}else { ((((t0 - c.start).max(0.0) * p.fps).floor() as usize).min(total - 1), (((t1 - c.start).max(0.0) * p.fps).ceil() as usize).min(total - 1)) };
         // Instant normal playback samples floor(index), except flow needs the next frame.
-        if !all&&c.time_remap.is_none()&&matches!(c.time_mode,TimeMode::Normal)&&t0==t1{let flow=c.props.get("flow_blur").map(|v|v.at((t0-c.start).max(0.))>0.).unwrap_or(false);ib=if flow{(ia+1).min(total-1)}else{ia};}
+        if !all&&c.time_remap.is_none()&&matches!(c.time_mode,TimeMode::Normal)&&t0==t1{let flow=c.props.get("flow_blur").map(|v|v.at((t0-c.start).max(0.))>0.).unwrap_or(false)||c.ramp_pos((t0-c.start).max(0.),p.fps).is_some_and(|q|q.2>0.);ib=if flow{(ia+1).min(total-1)}else{ia};}
         // Vector flow blur also needs the previous frame.
         let mut ia=if !all&&c.props.get("flow_mode").map(|v|v.base.round()==1.).unwrap_or(false){ia.saturating_sub(1)}else{ia};
         // Stabilize, Synthesize Edges (stab_fill, see synth_edges) reads up to stab_fill frames before and after; other clips decode as before.
@@ -416,11 +416,13 @@ fn source_frame_h(p: &Project, c: &Clip, lt_in: f64, cache: &Cache) -> (Frame, O
             let idx = media_index(c,lt,p.fps);
             if let Some(b)=fr.get_float(idx){f.d.copy_from_slice(b)}else if let Some(b) = fr.get(idx) { for (i, v) in b.iter().enumerate() { f.d[i] = *v as f32 / 255.0; } }
             // Time remap between two source frames: frame mix or optical-flow interpolation, in linear light.
-            if let (Some(r), Some((_, nb, wb))) = (&c.time_remap, c.remap_pos(lt, p.fps)) { if wb > 0.0 && r.blend != crate::model::FrameBlend::Off && fr.len() > 0 && nb < fr.first + fr.len() { let mut g2 = Frame::new(w, h);
+            // A speed ramp with Time Interpolation (speed_blend) blends the same way between the two source frames around its source time.
+            let tween = match (&c.time_remap, c.remap_pos(lt, p.fps)) { (Some(r), Some((_, nb, wb))) => Some((nb, wb, r.blend)), _ => c.ramp_pos(lt, p.fps).map(|(_, nb, wb)| (nb, wb, c.speed_blend)) };
+            if let Some((nb, wb, blend)) = tween { if wb > 0.0 && blend != crate::model::FrameBlend::Off && fr.len() > 0 && nb < fr.first + fr.len() { let mut g2 = Frame::new(w, h);
                 if let Some(b)=fr.get_float(nb){g2.d.copy_from_slice(b)}else if let Some(b)=fr.get(nb){for (i,v) in b.iter().enumerate(){g2.d[i]=*v as f32/255.;}}
                 if p.color_pipeline.enabled && !source_linear {let a=crate::color::pipeline::input(p,c,&mut f);let b=crate::color::pipeline::input(p,c,&mut g2);source_linear=true;if a.is_err()||b.is_err(){f.d.fill(f32::NAN);}}
                 let srgb = !p.color_pipeline.enabled && !source_linear;
-                if r.blend == crate::model::FrameBlend::OpticalFlow { f = crate::flow::flow_interpolate(&f, &g2, wb as f32, srgb, 3); } else { let a = f.d.clone(); crate::flow::mix_linear(&a, &g2.d, wb, srgb, &mut f.d); } } }
+                if blend == crate::model::FrameBlend::OpticalFlow { f = crate::flow::flow_interpolate(&f, &g2, wb as f32, srgb, 3); } else { let a = f.d.clone(); crate::flow::mix_linear(&a, &g2.d, wb, srgb, &mut f.d); } } }
             let fb = prop(c, "flow_blur", lt) as f32;
             if fb > 0.0 && c.props.get("flow_mode").map(|v|v.base.round()==1.).unwrap_or(false) {
                 let load=|i:usize|->Option<Frame>{if !fr.covers(i,i){return None}let mut g=Frame::new(w,h);if let Some(b)=fr.get_float(i){g.d.copy_from_slice(b)}else if let Some(nb)=fr.get(i){for (k,v) in nb.iter().enumerate(){g.d[k]=*v as f32/255.;}}else{return None}Some(g)};
