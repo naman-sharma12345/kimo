@@ -62,3 +62,23 @@ fn apply_fix(ss: &mut Session, f: &Value) { let fx = &f["fix"]; call(ss, fx["too
     let v = call(&mut l, "validate_captions", json!({"group_id": lc}));
     assert!(v["skipped"].as_array().unwrap().iter().any(|s| s["code"] == "OFF_SAFE_AREA"), "{v}");
 }
+
+/// SMALL_MODEL_PREP: the order of set_color_wheels' gain and gamma was undocumented, and a small model guessed. The tool's own
+/// schema must state the order the renderer uses, and the renderer must follow what it states: gain (with lift and offset)
+/// first, gamma last as a power, so gain 2 + gamma 2 on 0.25 is (2*0.25)^(1/2) = 0.7071, not 2*0.25^(1/2) = 1.0.
+#[test] fn color_wheels_document_the_gain_gamma_order() {
+    let reg = kimo_core::commands::registry_ref(); let c = reg.iter().find(|c| c.name == "set_color_wheels").unwrap();
+    let gamma = c.schema["properties"]["gamma"]["description"].as_str().unwrap();
+    let gain = c.schema["properties"]["gain"]["description"].as_str().unwrap();
+    assert!(gamma.contains("out = ((gain - lift) * x + lift + offset) ^ (1/gamma)"), "gamma must document the order: {gamma}");
+    assert!(gain.contains("before gamma"), "gain must say it applies before gamma: {gain}");
+    let mut ss = Session::new(); call(&mut ss, "project_set", json!({"width": 16, "height": 16, "fps": 30}));
+    let t = sid(&call(&mut ss, "add_track", json!({})), "track_id");
+    let cl = sid(&call(&mut ss, "add_clip", json!({"track_id": t, "source_type": "solid", "color": [0.25, 0.25, 0.25], "start": 0, "duration": 1})), "clip_id");
+    call(&mut ss, "set_color_wheels", json!({"clip_id": cl, "gain": [2.0, 2.0, 2.0, 1.0], "gamma": [2.0, 2.0, 2.0, 1.0]}));
+    let f = kimo_core::render::render_frame(&ss.project, 0.5, &ss.cache).unwrap();
+    let base = { let mut s2 = Session::new(); call(&mut s2, "project_set", json!({"width": 16, "height": 16, "fps": 30})); let t2 = sid(&call(&mut s2, "add_track", json!({})), "track_id");
+        call(&mut s2, "add_clip", json!({"track_id": t2, "source_type": "solid", "color": [0.25, 0.25, 0.25], "start": 0, "duration": 1})); kimo_core::render::render_frame(&s2.project, 0.5, &s2.cache).unwrap().d[0] as f64 };
+    let want = (2.0 * base).powf(0.5); let got = f.d[0] as f64;
+    assert!((got - want).abs() < 1e-4, "documented order: base {base}, want {want}, got {got} (gamma-first would give {})", 2.0 * base.powf(0.5));
+}

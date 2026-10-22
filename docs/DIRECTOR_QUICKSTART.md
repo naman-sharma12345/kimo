@@ -65,6 +65,8 @@ op over a list (`{"foreach": {"var": "k", "in": ["clip30", "clip31"]}, "ops": [{
   warning, and when the call then fails the error names the ignored argument and the right one. A small model guessed all three.
 - **`set_color_wheels` gain** is a multiplier per channel plus master, `[r, g, b, master]`, 1 = unchanged. `[0.15, 0.15, 0.05, 0.15]`
   is not "a little warmer", it is nearly black (a small model did exactly this and then cut the shot as "too dark").
+  The order, per channel: `out = ((gain - lift) * x + lift + offset) ^ (1/gamma)`: lift, gain and offset first, gamma
+  last as a power (gamma > 1 lifts the mids), then master on luma, then contrast around pivot, then saturation.
   Re-measure with `get_scopes` after every grade.
 - **Captions are a track of their own.** Put `add_caption_cues` on a new track above the picture, not on the talking-head track.
 - **`session_stats`** counts calls made inside other tools (`remove_silence_cuts` calls `lift_range`).

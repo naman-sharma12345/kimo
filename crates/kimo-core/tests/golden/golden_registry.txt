@@ -298,7 +298,7 @@ set_clip_input_color 35d16a2902039e00
 set_code_clip_param 0d041b433f0c68ab
 set_color_curve 8460ae79f970be75
 set_color_pipeline 24df4408488e6b0b
-set_color_wheels b592ec8e1088b5b2
+set_color_wheels 087b7d365215bbc0
 set_corner_pin 07dc397461d52ca0
 set_echo c3655eedbd0435d0
 set_effect_encoding d7d3a7c80cc154d9
