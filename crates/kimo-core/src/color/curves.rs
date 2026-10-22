@@ -1,4 +1,5 @@
 //! Free-position shape-preserving cubic curves. Endpoints extrapolate linearly. Periodic Fritsch-Carlson hue curves.
+//! Resolve's seven: custom (m/r/g/b), hue_hue, hue_sat, hue_lum, lum_sat, sat_sat, sat_lum.
 use crate::effects::{p,Frame,Params};
 #[derive(Clone,Debug)]pub struct Curve {x:Vec<f32>,y:Vec<f32>,m:Vec<f32>,ident:bool,flat:bool}
 /// Fritsch-Carlson tangents; periodic wraps the point after the last to first+360.
@@ -62,8 +63,14 @@ impl HueCurve {
 pub fn hue_sat(pts:&[[f32;2]])->Result<HueCurve,String>{if pts.iter().any(|v|!(0. ..=4.).contains(&v[1])){return Err("hue_sat y must be in 0..4".into())}HueCurve::new(pts,1.)}
 pub fn hue_hue(pts:&[[f32;2]])->Result<HueCurve,String>{if pts.iter().any(|v|!(-180. ..=180.).contains(&v[1])){return Err("hue_hue y must be in -180..180 degrees".into())}HueCurve::new(pts,0.)}
 pub fn lum_sat(pts:&[[f32;2]])->Result<Curve,String>{if pts.iter().any(|v|!(-1. ..=2.).contains(&v[0])||!(0. ..=4.).contains(&v[1])){return Err("lum_sat x must be in -1..2 and y in 0..4".into())}Curve::new_fc(pts)}
-/// Validate hue/lum curve points for param prefix hs/hh/ls.
-pub fn validate_extra(prefix:&str,pts:&[[f32;2]])->Result<(),String>{match prefix{"hs"=>hue_sat(pts).map(|_|()),"hh"=>hue_hue(pts).map(|_|()),"ls"=>lum_sat(pts).map(|_|()),_=>Err("invalid curve prefix".into())}}
+/// Hue-vs-lum: luma multiplier (0..4) against hue, weighted by min(1, 2S) so greys keep their level.
+pub fn hue_lum(pts:&[[f32;2]])->Result<HueCurve,String>{if pts.iter().any(|v|!(0. ..=4.).contains(&v[1])){return Err("hue_lum y must be in 0..4".into())}HueCurve::new(pts,1.)}
+/// Sat-vs-sat: chroma multiplier (0..4) against saturation S = 2*|(Cb,Cr)| (about 1 at the Rec.709 primaries), flat past the end points.
+pub fn sat_sat(pts:&[[f32;2]])->Result<Curve,String>{if pts.iter().any(|v|!(0. ..=2.).contains(&v[0])||!(0. ..=4.).contains(&v[1])){return Err("sat_sat x must be in 0..2 and y in 0..4".into())}Curve::new_fc(pts)}
+/// Sat-vs-lum: luma multiplier (0..4) against saturation S, flat past the end points.
+pub fn sat_lum(pts:&[[f32;2]])->Result<Curve,String>{if pts.iter().any(|v|!(0. ..=2.).contains(&v[0])||!(0. ..=4.).contains(&v[1])){return Err("sat_lum x must be in 0..2 and y in 0..4".into())}Curve::new_fc(pts)}
+/// Validate hue/lum/sat curve points for param prefix hs/hh/ls/hl/ss/sl.
+pub fn validate_extra(prefix:&str,pts:&[[f32;2]])->Result<(),String>{match prefix{"hs"=>hue_sat(pts).map(|_|()),"hh"=>hue_hue(pts).map(|_|()),"ls"=>lum_sat(pts).map(|_|()),"hl"=>hue_lum(pts).map(|_|()),"ss"=>sat_sat(pts).map(|_|()),"sl"=>sat_lum(pts).map(|_|()),_=>Err("invalid curve prefix".into())}}
 pub fn apply(pr:&Params,f:&mut Frame,t:f64)->Result<(),String>{super::frame::validate(f)?;
     let mut curves=Vec::new();
     for ch in ["m","r","g","b"]{let count=p(pr,&format!("{ch}_count"),2.,t);if !count.is_finite()||count.fract()!=0.||!(2. ..=32.).contains(&count){return Err("invalid curve count".into())}
@@ -74,16 +81,23 @@ pub fn apply(pr:&Params,f:&mut Frame,t:f64)->Result<(),String>{super::frame::val
     let hs=match extra("hs",true,1.)?{Some(v)=>Some(hue_sat(&v)?).filter(|c|!c.ident),None=>None};
     let hh=match extra("hh",true,0.)?{Some(v)=>Some(hue_hue(&v)?).filter(|c|!c.ident),None=>None};
     let ls=match extra("ls",false,1.)?{Some(v)=>Some(lum_sat(&v)?).filter(|c|!c.ident),None=>None};
-    let hue_on=hs.is_some()||hh.is_some()||ls.is_some();
+    let hl=match extra("hl",true,1.)?{Some(v)=>Some(hue_lum(&v)?).filter(|c|!c.ident),None=>None};
+    let ss=match extra("ss",false,1.)?{Some(v)=>Some(sat_sat(&v)?).filter(|c|!c.ident),None=>None};
+    let sl=match extra("sl",false,1.)?{Some(v)=>Some(sat_lum(&v)?).filter(|c|!c.ident),None=>None};
+    let luma_on=hl.is_some()||sl.is_some();
+    let hue_on=hs.is_some()||hh.is_some()||ls.is_some()||ss.is_some()||luma_on;
     for(i,px) in f.d.chunks_exact_mut(4).enumerate(){if i%65536==0{crate::guard::check()}
         for j in 0..3{let mut v=px[j];if !curves[0].ident{v=curves[0].at(v)}if !curves[j+1].ident{v=curves[j+1].at(v)}if !v.is_finite(){return Err("curve overflow".into())}px[j]=v}
         if hue_on{let(r,g,b)=(px[0] as f64,px[1] as f64,px[2] as f64);let y=0.2126*r+0.7152*g+0.0722*b;let cb=(b-y)/1.8556;let cr=(r-y)/1.5748;let rho=(cb*cb+cr*cr).sqrt();
-            if rho!=0.{let mut h=cr.atan2(cb).to_degrees();if h<0.{h+=360.}if h>=360.{h-=360.}
-                let k=(hs.as_ref().map_or(1.,|c|c.at(h))*ls.as_ref().map_or(1.,|c|c.at(y as f32) as f64)).max(0.);let dh=hh.as_ref().map_or(0.,|c|c.at(h));
+            if rho!=0.{let mut h=cr.atan2(cb).to_degrees();if h<0.{h+=360.}if h>=360.{h-=360.}let sat=2.*rho;
+                let k=(hs.as_ref().map_or(1.,|c|c.at(h))*ls.as_ref().map_or(1.,|c|c.at(y as f32) as f64)*ss.as_ref().map_or(1.,|c|c.at(sat as f32) as f64)).max(0.);let dh=hh.as_ref().map_or(0.,|c|c.at(h));
                 let(cb2,cr2)=if dh==0.{(cb*k,cr*k)}else{let a=(h+dh).to_radians();(rho*k*a.cos(),rho*k*a.sin())};
+                // hue_lum is weighted by min(1, 2S) so near-greys keep their level; both luma curves keep (Cb, Cr)
+                let y=if luma_on{y*((1.+(hl.as_ref().map_or(1.,|c|c.at(h))-1.)*(2.*sat).min(1.))*sl.as_ref().map_or(1.,|c|c.at(sat as f32) as f64)).max(0.)}else{y};
                 let r2=y+1.5748*cr2;let b2=y+1.8556*cb2;let g2=(y-0.2126*r2-0.0722*b2)/0.7152;
-                for(j,v) in [r2,g2,b2].into_iter().enumerate(){let v=v as f32;if !v.is_finite(){return Err("curve overflow".into())}px[j]=v}}}
+                for(j,v) in [r2,g2,b2].into_iter().enumerate(){let v=v as f32;if !v.is_finite(){return Err("curve overflow".into())}px[j]=v}}
+            else if let Some(c)=&sl{let gy=(c.at(0.) as f64).max(0.);if gy!=1.{let v=(y*gy) as f32;if !v.is_finite(){return Err("curve overflow".into())}for j in 0..3{px[j]=v}}}}
     }
     Ok(())
 }
-pub fn catalog()->Vec<super::Entry>{vec![("point_curves","Free-position PCHIP master/RGB curves (2..32 pts, linear extrapolation, no clipping) plus Fritsch-Carlson hue_sat/hue_hue/lum_sat (Rec709 chroma, luma kept). Use set_color_curve.",&[("m_count",2.,"2..32"),("r_count",2.,"2..32"),("g_count",2.,"2..32"),("b_count",2.,"2..32"),("hs_count",0.,"hue-vs-sat points, 0 = off"),("hh_count",0.,"hue-vs-hue points, 0 = off"),("ls_count",0.,"lum-vs-sat points, 0 = off")])]}
+pub fn catalog()->Vec<super::Entry>{vec![("point_curves","Free-position PCHIP master/RGB curves (2..32 pts, linear extrapolation, no clipping) plus Fritsch-Carlson hue_sat/hue_hue/lum_sat/sat_sat (Rec709 chroma, luma kept) and hue_lum/sat_lum (luma, chroma kept). Use set_color_curve.",&[("m_count",2.,"2..32"),("r_count",2.,"2..32"),("g_count",2.,"2..32"),("b_count",2.,"2..32"),("hs_count",0.,"hue-vs-sat points, 0 = off"),("hh_count",0.,"hue-vs-hue points, 0 = off"),("ls_count",0.,"lum-vs-sat points, 0 = off"),("hl_count",0.,"hue-vs-lum points, 0 = off"),("ss_count",0.,"sat-vs-sat points (x = saturation 2|CbCr| 0..2), 0 = off"),("sl_count",0.,"sat-vs-lum points, 0 = off")])]}
