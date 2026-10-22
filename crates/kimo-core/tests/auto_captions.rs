@@ -150,6 +150,40 @@ fn with_clip(start: f64) -> Session {
     let args = std::fs::read_to_string(&log).unwrap(); assert!(args.contains("-l en") && args.contains("Haan toh"), "small keeps its Roman-prompt pass: {args}");
 }
 
+/// A stub whisper-cli that "hears" `said` (one token per word, 300 ms apart from 0.3 s), whatever the language asked for.
+fn stub_said(tag: &str, said: &[&str]) -> PathBuf {
+    let d = dir(); let bin = d.join(format!("whisper_said_{tag}.sh"));
+    let toks: Vec<String> = said.iter().enumerate().map(|(i, w)| { let ms = 300 + 300 * i as u32; format!("{{\"text\":\" {w}\",\"offsets\":{{\"from\":{ms},\"to\":{}}},\"p\":0.93,\"t_dtw\":{}}}", ms + 250, ms / 10 + 25) }).collect();
+    let script = format!("#!/bin/sh\nOF=''\nL=''\nwhile [ $# -gt 0 ]; do case \"$1\" in -of) OF=\"$2\"; shift;; -l) L=\"$2\"; shift;; esac; shift; done\nif [ \"$L\" = auto ]; then LG=hi; else LG=$L; fi\ncat > \"$OF.json\" <<EOF\n{{\"result\":{{\"language\":\"$LG\"}},\"transcription\":[{{\"offsets\":{{\"from\":0,\"to\":2000}},\"text\":\" {}\",\"tokens\":[{}]}}]}}\nEOF\n", said.join(" "), toks.join(","));
+    std::fs::write(&bin, script).unwrap(); Command::new("chmod").arg("+x").arg(&bin).status().unwrap(); bin
+}
+
+#[test] fn hinglish_variants_are_written_one_way_and_english_is_left_alone() {
+    // the recognizer spells the same Hinglish word several ways (bahut / bohat / bohot, pani / paani, ek dum / ekdum);
+    // Hinglish captions get one spelling, keeping the speaker's capitals and punctuation; English mode is untouched
+    let said = ["Bahut", "pani,", "ek", "dum", "YEH", "nahin."];
+    let bin = stub_said("variants", &said); let model = dir().join("ggml-small-q5_1.bin"); std::fs::write(&model, b"stub").unwrap();
+    let run = |a: Value| { let mut ss = with_clip(0.0); let mut a = a; a["whisper_bin"] = json!(bin.to_str().unwrap()); a["model"] = json!(model.to_str().unwrap());
+        let r = call(&mut ss, "auto_captions", a); let tr = ss.project.editorial.transcripts.values().next().unwrap();
+        let w: Vec<(String, f64, f64)> = tr.words.iter().map(|w| (w.display.replace('\u{a0}', " "), w.start, w.end)).collect(); (r, w) };
+    for lang in ["hinglish", "auto", "hi"] {
+        let (r, w) = run(json!({"language": lang}));
+        assert_eq!(r["mode"], "hinglish", "{lang}: {r}");
+        let text: Vec<&str> = w.iter().map(|x| x.0.as_str()).collect();
+        assert_eq!(text, ["Bohot", "paani,", "ekdum", "YE", "nahi."], "{lang}: Hinglish spelling must be normalised: {r}");
+        assert_eq!(r["words"], 5, "{lang}: 'ek dum' is one word: {r}");
+        let (_, w0) = run(json!({"language": lang, "normalize_spelling": false}));
+        assert!((w[2].1 - w0[2].1).abs() < 1e-9 && (w[2].2 - w0[3].2).abs() < 1e-9, "{lang}: ekdum spans 'ek' start to 'dum' end: {w:?} vs {w0:?}");
+    }
+    let (r, w) = run(json!({"language": "hinglish", "normalize_spelling": false}));
+    assert_eq!(w.iter().map(|x| x.0.as_str()).collect::<Vec<_>>(), said, "normalize_spelling false keeps what was heard: {r}");
+    let (r, w) = run(json!({"language": "en"}));
+    assert_eq!(w.iter().map(|x| x.0.as_str()).collect::<Vec<_>>(), said, "English mode is never respelled: {r}");
+    let mut ss = with_clip(0.0);
+    let e = dispatch(&mut ss, "auto_captions", &json!({"whisper_bin": bin.to_str().unwrap(), "model": model.to_str().unwrap(), "language": "hinglish", "normalize_spelling": "yes"})).unwrap_err();
+    assert!(e.contains("normalize_spelling"), "{e}");
+}
+
 #[test] fn devanagari_is_romanized_the_way_hinglish_is_written() {
     use kimo_core::speech_words::romanize;
     assert_eq!(romanize("पानी बहुत ठंडा रहता है।"), "pani bahut thanda rahta hai.");

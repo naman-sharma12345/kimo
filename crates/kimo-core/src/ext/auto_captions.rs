@@ -138,6 +138,7 @@ fn recognize(src: &Src, a: &Value, mode: &mut String, lang_seen: &mut Option<Str
     let hp = format!("{HINGLISH_PROMPT} {hint}");
     // beam search by default (Hinglish WER 45.8% vs 52.3% greedy on Naman's clips); fast = greedy, about 3x quicker
     let fast: &[&str] = if bool_arg(a, "fast")?.unwrap_or(false) { &["-bs", "1", "-bo", "1"] } else { &[] };
+    let respell = bool_arg(a, "normalize_spelling")?.unwrap_or(true);
     // large-v3-turbo asked for -l en (with or without the Roman prompt) translates Hindi speech into English (62.7% WER on Naman's
     // clips); asked for -l hi it writes what was said, in Devanagari, romanized below (49.7% strict / 37.9% ignoring spelling).
     let turbo = model.file_name().map_or(false, |n| n.to_string_lossy().to_lowercase().contains("turbo"));
@@ -159,6 +160,8 @@ fn recognize(src: &Src, a: &Value, mode: &mut String, lang_seen: &mut Option<Str
     if lang_seen.is_none() { *lang_seen = r.language.clone(); }
     let o = sw::onsets(&x, 16000); let mut words = sw::refine(&r.words, &o);
     if roman { for w in &mut words { if sw::has_devanagari(&w.text) { w.text = sw::romanize(&w.text); } } }
+    // one spelling per Hinglish word (bahut / bohat -> bohot): 47.1% -> 39.2% WER strict on Naman's clips; English output is never respelled
+    if roman && respell && mode.as_str() == "hinglish" { words = sw::normalize_hinglish(&words).0; }
     Ok((words, x))
 }
 
@@ -401,7 +404,7 @@ pub fn commands() -> Vec<Command> {
                 ("position", json!({"type":"string","enum":["auto","bottom","middle","top"],"description":"default auto: lower band, or top when a face is low"})),
                 ("max_words_per_line", n("1..8, default by style (pop 3)")), ("lines", n("1 or 2, default by style")),
                 ("language", s("auto (default), hinglish, or a code like en, hi, es")), ("script", json!({"type":"string","enum":["roman","native"],"description":"Hindi output script, default roman"})),
-                ("hint", s("names or terms the speaker says, to help recognition")), ("fast", json!({"type":"boolean","description":"greedy decoding: about 3x faster, less accurate (default false)"})), ("highlight", json!({"type":"boolean","description":"colour + pop the word being spoken (default by style)"})),
+                ("hint", s("names or terms the speaker says, to help recognition")), ("fast", json!({"type":"boolean","description":"greedy decoding: about 3x faster, less accurate (default false)"})), ("normalize_spelling", json!({"type":"boolean","description":"Hinglish only: one spelling for common variants (bahut/bohat -> bohot, pani -> paani); default true"})), ("highlight", json!({"type":"boolean","description":"colour + pop the word being spoken (default by style)"})),
                 ("keywords", json!({"type":"boolean","description":"colour 1-2 stress words per page (default by style)"})),
                 ("font", s("font name or .ttf path (default by style)")), ("size", n("type size px (default by style, shrunk to fit)")), ("color", colr("text colour")), ("active_color", colr("spoken-word colour")), ("keyword_color", colr("keyword colour")),
                 ("words", json!({"type":"array","items":{"type":"object"},"description":"skip recognition: [{text,start,end}] timeline seconds"})),

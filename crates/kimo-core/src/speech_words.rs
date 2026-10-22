@@ -247,6 +247,60 @@ fn rom_word(w: &str) -> String {
     out
 }
 
+/// Hinglish has no fixed spelling and the recognizer writes one word several ways (bahut / bohat / bohot). One spelling per word,
+/// the one the Roman reference for Naman's clips uses, whole words only. Measured on those six clips (153 words, small model, full
+/// tool path): 47.1% -> 39.2% WER strict, 38.6% -> 35.3% ignoring spelling. The table was written after reading those clips'
+/// output and scored on the same words, so expect less on new speech. Left out on purpose: pita (also "father", पिता) and nai
+/// (also "new", नई).
+const HINGLISH_SPELLING: &[(&str, &str)] = &[
+    ("acha", "accha"), ("achcha", "accha"), ("achchi", "acchi"), ("achha", "accha"), ("achhi", "acchi"), ("achi", "acchi"), ("aisey", "aise"), ("badeya", "badhiya"),
+    ("badhia", "badhiya"), ("badiya", "badhiya"), ("bahot", "bohot"), ("bahut", "bohot"), ("barhiya", "badhiya"), ("bohat", "bohot"), ("bohut", "bohot"),
+    ("cheej", "cheez"), ("cheezain", "cheezein"), ("cheeze", "cheezein"), ("cheezen", "cheezein"), ("chij", "cheez"), ("chiz", "cheez"), ("chize", "cheezein"),
+    ("ekdam", "ekdum"), ("ese", "aise"), ("haa", "haan"), ("hamesa", "hamesha"), ("hameshe", "hamesha"), ("han", "haan"), ("hoo", "hoon"), ("hu", "hoon"),
+    ("humesha", "hamesha"), ("hun", "hoon"), ("ismein", "isme"), ("ismen", "isme"), ("jyaada", "zyada"), ("jyada", "zyada"), ("kaisey", "kaise"), ("kese", "kaise"),
+    ("kuchch", "kuch"), ("kuchh", "kuch"), ("kyoki", "kyunki"), ("kyonke", "kyunki"), ("kyonki", "kyunki"), ("kyuke", "kyunki"), ("kyuki", "kyunki"),
+    ("kyunke", "kyunki"), ("lekhin", "lekin"), ("mese", "isme"), ("mise", "isme"), ("nahee", "nahi"), ("nahin", "nahi"), ("pani", "paani"), ("peetay", "peete"),
+    ("pite", "peete"), ("rahta", "rehta"), ("theekh", "theek"), ("thik", "theek"), ("usmein", "usme"), ("usmen", "usme"), ("voh", "woh"), ("waha", "wahan"),
+    ("wahaan", "wahan"), ("wo", "woh"), ("yah", "ye"), ("yaha", "yahan"), ("yahaan", "yahan"), ("yeh", "ye"), ("ziada", "zyada"), ("zyaada", "zyada"),
+];
+/// Two recognized words written as one in Hinglish: (first, second, joined).
+const HINGLISH_JOIN: &[(&str, &str, &str)] = &[("ek", "dum", "ekdum"), ("ek", "dam", "ekdum")];
+
+/// `w` split into leading punctuation, the word itself (letters, digits, apostrophes) and trailing punctuation.
+fn split_word(w: &str) -> (&str, &str, &str) {
+    let inner = |c: char| c.is_alphanumeric() || c == '\'' || c == '\u{2019}';
+    let a = w.find(|c: char| inner(c)).unwrap_or(w.len());
+    let b = w.rfind(|c: char| inner(c)).map_or(a, |i| i + w[i..].chars().next().map_or(0, |c| c.len_utf8()));
+    (&w[..a], &w[a..b.max(a)], &w[b.max(a)..])
+}
+/// `rep` cased like `src`: ALL CAPS stays all caps, a capital first letter stays capital, otherwise lower case.
+fn case_like(src: &str, rep: &str) -> String {
+    let letters: Vec<char> = src.chars().filter(|c| c.is_alphabetic()).collect();
+    if letters.len() > 1 && letters.iter().all(|c| c.is_uppercase()) { return rep.to_uppercase(); }
+    if src.chars().next().map_or(false, |c| c.is_uppercase()) { let mut c = rep.chars(); return c.next().map_or(String::new(), |f| f.to_uppercase().chain(c).collect()); }
+    rep.to_string()
+}
+/// Respells common Hinglish variants to one spelling (whole words, case and punctuation kept) and joins split pairs (ek dum ->
+/// ekdum, spanning both words' times). For Roman Hinglish output only; English text must not go through it. Returns the words
+/// and how many were changed.
+pub fn normalize_hinglish(words: &[TimedWord]) -> (Vec<TimedWord>, usize) {
+    let mut out: Vec<TimedWord> = Vec::with_capacity(words.len()); let mut n = 0;
+    for w in words {
+        let (pre, core, post) = split_word(&w.text); let lc = core.to_lowercase();
+        if pre.is_empty() && !core.is_empty() {
+            if let Some(prev) = out.last_mut() {
+                let (pp, pc, ps) = split_word(&prev.text); let plc = pc.to_lowercase();
+                if ps.is_empty() { if let Some(j) = HINGLISH_JOIN.iter().find(|j| j.0 == plc && j.1 == lc) {
+                    prev.text = format!("{pp}{}{post}", case_like(pc, j.2)); prev.end = prev.end.max(w.end); prev.conf = prev.conf.min(w.conf); n += 1; continue; } }
+            }
+        }
+        let mut t = w.clone();
+        if let Some(&(_, to)) = HINGLISH_SPELLING.iter().find(|p| p.0 == lc) { t.text = format!("{pre}{}{post}", case_like(core, to)); n += 1; }
+        out.push(t);
+    }
+    (out, n)
+}
+
 /// Vertical extent (fractions of the height, top to bottom) of the topmost skin-toned band in the centre 60% of an RGB frame,
 /// or None. Skin is the YCbCr box Cb 77..127, Cr 133..173 with Y > 40; a band is at least 4% of the height of rows that are at
 /// least 12% skin. A cheap face proxy for placing captions; it does not recognize faces.
