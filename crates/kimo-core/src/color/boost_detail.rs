@@ -15,7 +15,7 @@ fn get(pr: &Params, k: &str, d: f64, t: f64) -> f64 { pr.get(k).map(|x| x.at(t))
 fn luma(p: &[f32]) -> f64 { 0.2126 * p[0] as f64 + 0.7152 * p[1] as f64 + 0.0722 * p[2] as f64 }
 
 /// One box-blur pass of half-width r along rows (stride 1) or columns, clamped edges, O(n).
-fn box_pass(src: &[f64], dst: &mut [f64], w: usize, h: usize, r: usize, horiz: bool) {
+pub(super) fn box_pass(src: &[f64], dst: &mut [f64], w: usize, h: usize, r: usize, horiz: bool) {
     let (len, lines) = if horiz { (w, h) } else { (h, w) }; let at = |line: usize, i: usize| if horiz { line * w + i } else { i * w + line };
     let norm = 1.0 / (2 * r + 1) as f64;
     for line in 0..lines { if line % 256 == 0 { crate::guard::check() }
