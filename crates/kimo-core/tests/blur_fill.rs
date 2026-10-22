@@ -1,6 +1,6 @@
 //! add_blur_fill: a landscape red ramp (160x90) on a portrait 90x160 canvas. Without a fill the bars above and below the
 //! letterboxed clip are black; with one they show a blurred, darker, cover-scaled copy of the same picture, while the clip
-//! itself stays sharp in the middle.
+//! itself stays sharp in the middle. The fill follows its clip through later trims, moves, splits and deletes.
 use kimo_core::commands::{dispatch, Session};
 use kimo_core::effects::Frame;
 use kimo_core::render;
@@ -42,6 +42,33 @@ fn the_bars_show_a_blurred_darker_copy_and_the_clip_stays_sharp() {
     let fill = s.project.tracks.iter().flat_map(|t| t.clips.iter()).find(|x| x.id != v).unwrap(); assert!(fill.audio.mute, "the fill is muted (no doubled audio)");
     let r = c(&mut s, "add_blur_fill", json!({"clip_id": v, "remove": true})); assert_eq!(r["removed"], 1, "{r}");
     assert_eq!(s.project.tracks.len(), ntracks, "its empty track goes too"); assert!(px(&frame(&s, 0.5), 45, 10)[0] < 1.0, "black bars again");
+}
+
+/// The fill is linked to its clip: trimming, moving, splitting or deleting the clip carries the fill along (KP5; before, the
+/// fill kept the clip's old place and length and showed on its own in the bars).
+#[test]
+fn the_fill_follows_its_clip_when_trimmed_moved_split_or_deleted() {
+    let (mut s, v) = scene(); let ntracks = s.project.tracks.len();
+    c(&mut s, "add_blur_fill", json!({"clip_id": v, "dim": 0.0, "blur": 6}));
+    let bar = |s: &Session, t: f64| px(&frame(s, t), 45, 10)[0];
+    let fill_of = |s: &Session, fg: &str| -> (f64, f64, f64) { let me = s.project.find_clip(fg).unwrap(); let f = s.project.tracks.iter().flat_map(|t| t.clips.iter())
+        .filter(|x| x.id != me.id && x.audio.mute && x.start == me.start && x.duration == me.duration).count(); assert_eq!(f, 1, "exactly one fill lines up with {fg}"); (me.start, me.duration, me.in_point) };
+    assert!(bar(&s, 1.5) > 60.0, "the fill shows under the clip at 1.5 s");
+    c(&mut s, "trim_clip", json!({"clip_id": v, "duration": 1.0}));
+    let b = bar(&s, 1.5); assert!(b < 1.0, "trimmed to 1 s: at 1.5 s the frame is empty, the fill went with the clip (red {b:.1})");
+    assert!(bar(&s, 0.5) > 60.0, "the trimmed clip still has its fill"); fill_of(&s, &v);
+    c(&mut s, "move_clip", json!({"clip_id": v, "start": 3.0}));
+    assert!(bar(&s, 0.5) < 1.0, "moved away: no fill is left behind at 0.5 s"); assert!(bar(&s, 3.5) > 60.0, "the fill moved with the clip to 3..4 s"); fill_of(&s, &v);
+    c(&mut s, "trim_clip", json!({"clip_id": v, "duration": 2.0}));
+    let r = id(&c(&mut s, "split_clip", json!({"clip_id": v, "at": 4.0})), "right_clip_id");
+    fill_of(&s, &v); fill_of(&s, &r);
+    c(&mut s, "delete_clip", json!({"clip_id": v}));
+    assert!(bar(&s, 3.5) < 1.0, "the deleted left half took its fill along"); assert!(bar(&s, 4.5) > 60.0, "the right half of the split keeps a fill of its own");
+    assert_eq!(s.project.tracks.len(), ntracks + 1, "the right half's fill shares the fill track");
+    c(&mut s, "add_blur_fill", json!({"clip_id": r, "dim": 1.0, "blur": 6})); assert_eq!(s.project.tracks.len(), ntracks + 1, "a call on the right half updates its fill");
+    c(&mut s, "delete_clip", json!({"clip_id": r}));
+    assert_eq!(s.project.tracks.len(), ntracks, "deleting the clip deletes its fill and the emptied fill track");
+    assert_eq!(s.project.tracks.iter().map(|t| t.clips.len()).sum::<usize>(), 0, "nothing is left over");
 }
 
 #[test]
