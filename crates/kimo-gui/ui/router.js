@@ -24,12 +24,25 @@ export const FAMILIES = [
   ['ingest', /^(import|ingest|add_media|relink|load_media|add_clip|add_track|insert)|^add_code_clip$/],   /* add_code_clip: a web-page clip lands on the timeline like an import */
   ['edit', /^(cut|split|blade|razor|trim|extend|ripple|slip|slide|move_clip|delete_clip|lift|roll)|^(duplicate_clip|swap_clips|loop_clip|freeze_frame|delete_track|set_speed|rate_stretch|set_speed_ramp|set_time_remap|group_clips|ungroup_clip|distribute_clips|set_blend|set_echo|set_flow_blur|add_camera_shake|remove_audio_effect|set_track|project_set|set_split_edit)$/],
   ['edit', /^set_code_clip_param$/],   /* a code clip's param (constant or key): the clip flashes, the Inspector shows name = value @ t */
+  ['edit', /^beat_cut$/],   /* cut on the beat: the source clips give way to the new cuts, which flash on the timeline; the Inspector shows the beats used, bpm and bump */
+  ['edit', /^auto_reframe$/],   /* auto reframe: the clip flashes on the timeline, the Inspector shows its new crop window (axis, pan range) */
+  ['edit', /^paste_attributes$/],   /* paste attributes: each target clip flashes, the Inspector shows what was pasted from the source */
+  ['effects', /^add_morph_cut$/],   /* morph cut: the clip after the jump cut flashes, the Inspector shows its morph_cut transition and duration */
+  ['effects', /^add_lens_blur$/],   /* lens blur: the clip flashes, the Inspector shows its lens_blur effect (radius, blades, focus, depth map: focal_depth / invert) */
+  ['transform', /^audio_to_keyframes$/],   /* audio to keyframes: the keyed clip flashes, the Inspector shows the property and its new per-frame curve */
+  ['transform', /^add_punch_ins$/],   /* punch-ins: the punched clips flash, the Inspector shows their scale / x / y with the punch layered on their own animation */
+  ['effects', /^add_depth_parallax$/],   /* depth parallax: the clip flashes, the Inspector shows its depth_parallax effect (depth map clip, pan, dolly, zoom, focal_depth) */
+  ['effects', /^add_displacement_map$/],   /* displacement map: the warped clip flashes, the Inspector shows its displacement_map effect (map clip, max px, channels) */
+  ['effects', /^add_blur_fill$/],   /* blur fill: the framed clip and its new fill clip flash, the Inspector shows the fill's blur and exposure */
+  ['roto', /^set_matte$/],   /* set matte: the matted clip flashes, the Inspector shows its set_matte effect (matte clip, channel, invert) */
+  ['effects', /^add_push_wipe$/],   /* push / gradient wipe: the incoming clip flashes, the Inspector shows its transition (kind, direction or gradient, duration) */
   ['effects', /^(add_effect|apply_effect|set_effect|add_transition|remove_effect|add_speed|set_posterize|add_adjustment|add_managed_linear_effect$)/],
   ['transform', /^(set_property|set_clip_property|set_props?$|transform|set_transform|keyframe|set_keyframe|add_keyframe|scale|rotate|position|set_motion|add_null|set_parent|set_expression)/],
   ['color', /^(grade|color|colour|lut|apply_lut|set_lut|ocio|render_scope|analyze_exposure|wheel|curve|node_|hdr|render_ocio|render_exposure|render_gamut|set_grade_node|set_grade_graph|pick_white_balance|pick_key_color|auto_color|match_shots|match_grade|match_color|set_white_balance|set_grade_output|remove_grade_node|generate_lut_node|add_acescct_primaries|create_shared_grade_graph|bind_shared_grade_graphs|remove_shared_grade_graph|set_node_param|set_node_mask|apply_asc_cdl|set_color_curve|set_color_wheels|set_grade_scopes|add_node$|connect_nodes|disconnect_nodes)/],
   ['audio', /^(set_|add_|apply_|auto_|measure_|normalize_|analyze_)?(mix|audio|gain|fader|mute|solo|pan|compress|eq|limiter|limit|loudness|duck|stem|bus|route_)|^track_beats$/],
   ['text', /^(caption|subtitle|add_caption|add_subtitle|edit_caption|transcript_edit|transcri|add_title|title|text|set_text|add_text|set_caption|validate_captions|auto_captions$|export_captions$)/],
   ['3d', /^(add_mesh|mesh|model|extrude|bevel|light|camera|particle|emit|simulate|scene|render_3d|add_light|set_light|set_3d_compositor$|set_3d_layer_shadows$|solve_camera|track|set_camera|add_scene3d|instantiate_gltf|generate_mesh_primitive|contour_sdf_graph|set_mesh_pin|derive_vertex_tangents|fit_track_homography|ecc_refine_track|decompose_track_homography|corner_disagreement|lk_residual_audit|validate_planar_track|undistort_clip|set_ground_plane$|place_at_track$|export_st_map$|stabilize|apply_camera_solve|pin_layer|set_corner_pin|add_emitter|add_particles|add_shard_burst|set_particles3d$|set_material$|remove_material$|preview_material$|set_relight$|remove_light$)/],
+  ['graphics', /^add_path_operator$/],   /* path operator: the shape clip flashes, the Inspector shows its shape_op_* effect and params */
   ['graphics', /^(add_shape|add_path_shape|set_path|add_path_key|clear_path_keys|add_shape_modifier|remove_shape_modifier|add_modifier|remove_modifier|set_layer_style|remove_layer_style|add_box_expand|add_detection_box|add_hud_frame|add_counter|add_prompt_box|add_glitch_confetti)$/],
   ['roto', /^(add_mask|set_mask|set_mask_keyframe|set_mask_path_key|set_mask_prop_key|set_mask_motion_blur|update_mask|reorder_mask|remove_mask|remove_mask_layer|roto_propagate|track_mask|refine_matte|set_track_matte|remove_track_matte)$/],
   ['export', /^(export|render|queue_render|encode|deliver|join_export$|preview_range$|collect_project$|contact_sheet$|cancel_job$|resume_job$)/],
@@ -143,9 +156,15 @@ const SKIN_ROWS = ['amount', 'radius', 'texture', 'color_even', 'skin_hue', 'ski
 // look (one-tap creator looks, preset 0..7) and color_warper (hue-sat pins): a Grade row per numeric param the call sets
 const LOOK_ROWS = ['preset', 'intensity', 'protect_skin'];
 const WARP_ROWS = ['amount', 'keep_luma', 'show_matte', ...[1, 2, 3, 4].flatMap(k => ['hue', 'sat', 'to_hue', 'to_sat', 'hue_range', 'sat_range'].map(p => `p${k}_${p}`))];
-const FX_ROWS = { glow: ['amount', 'radius', 'threshold', ...GLOW_NEW], lens_flare: ['x', 'y', 'brightness', 'streak', ...FLARE_NEW], light_wrap: ['width', 'intensity', 'blur', 'desaturate', 'linear'], skin_smooth: SKIN_ROWS, hdr_zones: ZONE_ROWS, look: LOOK_ROWS, color_warper: WARP_ROWS,
+// light_sweep (CC Light Sweep) and the editable light_leak: their params; only the names no other effect uses show from set_effect_param
+const SWEEP_ROWS = ['position', 'speed', 'angle', 'width', 'shape', 'intensity', 'edge_intensity', 'edge_width', 'color_r', 'color_g', 'color_b', 'reception'];
+const LEAK_ROWS = ['amount', 'speed', 'x', 'y', 'size', 'travel', 'color_r', 'color_g', 'color_b'];
+// saber (neon light stroke along the alpha outline): its params; the names no other effect uses also show from set_effect_param
+const SABER_NEW = ['core_size', 'core_r', 'core_g', 'core_b', 'glow_r', 'glow_g', 'glow_b', 'glow_intensity', 'glow_spread', 'reveal_angle', 'flicker', 'flicker_speed', 'distortion', 'distortion_speed'];
+const SABER_ROWS = ['mode', ...SABER_NEW, 'start', 'end', 'composite'];
+const FX_ROWS = { glow: ['amount', 'radius', 'threshold', ...GLOW_NEW], lens_flare: ['x', 'y', 'brightness', 'streak', ...FLARE_NEW], light_wrap: ['width', 'intensity', 'blur', 'desaturate', 'linear'], skin_smooth: SKIN_ROWS, hdr_zones: ZONE_ROWS, look: LOOK_ROWS, color_warper: WARP_ROWS, light_sweep: SWEEP_ROWS, light_leak: LEAK_ROWS, saber: SABER_ROWS,
   grain: ['amount', 'size', 'softness', 'color', 'shadows', 'mids', 'highlights', 'red', 'green', 'blue'] };   // grain: Film Look Creator-style shaping
-const FX_NEW = new Set([...GLOW_NEW, ...FLARE_NEW]);
+const FX_NEW = new Set([...GLOW_NEW, ...FLARE_NEW, 'edge_intensity', 'edge_width', 'reception', 'travel', ...SABER_NEW]);
 function gradeOps(state, MODES, ev) {
   if (ev.phase !== 'complete') return false;
   const P = ev.payload || {}, tn = String(ev.tool_name).toLowerCase();
@@ -180,7 +199,7 @@ function gradeOps(state, MODES, ev) {
       const one = numOf(prm.amount ?? prm.value);
       const NAMES = { temperature: 'Temperature', tint: 'Tint', contrast: 'Contrast', saturation: 'Saturation', exposure: 'Exposure' };
       if (NAMES[kind] && one != null) { setRow(NAMES[kind], fmtVal(one)); hit = true; }
-      // glow (mode 1 deep glow), lens_flare (mode 1 v2) and light_wrap (linear): a row per numeric param the call sets, plus the flare's source/occluder ids;
+      // glow (mode 1 deep glow), lens_flare (mode 1 v2), light_wrap (linear), light_sweep, light_leak and saber: a row per numeric param the call sets, plus the flare's source/occluder ids;
       // set_effect_param carries no kind, so only the new param names show from it
       if (FX_ROWS[kind] && /^(add|apply)_effect$/.test(tn)) {
         const pr = A.params && typeof A.params === 'object' ? A.params : {}, st = A.strings && typeof A.strings === 'object' ? A.strings : {};
@@ -573,12 +592,14 @@ function editOps2(state, MODES, tl, ev, A) {
     for (const k of c._kids) insertClip(tl, ensureTrack(tl, k.track), { ...k.clip, _flash: now() }); return true;
   }
   if (n === 'freeze_frame') { badge(c, A.at != null ? `freeze ${fmtVal(N(A.at))}s` : 'freeze', /^freeze/); return true; }
-  if (n === 'set_speed') { const v = N(A.speed); if (v == null) return false; badge(c, `${fmtVal(v)}×`, /^[\d.]+×$|^ramp$/); return true; }
+  if (n === 'set_speed') { const v = N(A.speed); if (v == null) return false; badge(c, `${fmtVal(v)}×`, /^[\d.]+×$|^ramp( · (frame mix|flow))?$/); return true; }
   if (n === 'rate_stretch') { const d = N(A.duration); if (d == null) return false; c.e = c.s + d; c._flash = now(); return true; }
   if (n === 'set_speed_ramp') {
     const keys = Array.isArray(A.keys) ? A.keys.map(k => N(Array.isArray(k) ? k[0] : k && typeof k === 'object' ? k.t : null)).filter(x => x != null) : [];
-    if (!keys.length) { c.fx = (c.fx || []).filter(x => x !== 'ramp'); c.keys = (c.keys || []).filter(k => !k._ramp); c._flash = now(); return true; }
-    badge(c, 'ramp', /^[\d.]+×$/); c.keys = [...(c.keys || []).filter(k => !k._ramp), ...keys.map(x => ({ t: c.s + x, _ramp: true }))]; return true;
+    if (!keys.length) { c.fx = (c.fx || []).filter(x => !/^ramp( · (frame mix|flow))?$/.test(x)); c.keys = (c.keys || []).filter(k => !k._ramp); c._flash = now(); return true; }
+    // Time Interpolation (frame_blend) shows on the badge; a re-key without it keeps the clip's current one
+    const fb = A.frame_blend ?? (c.fx || []).map(x => /^ramp · (frame mix|flow)$/.exec(x)).filter(Boolean).map(m => m[1] === 'flow' ? 'optical_flow' : 'frame_mix')[0];
+    badge(c, fb === 'frame_mix' ? 'ramp · frame mix' : fb === 'optical_flow' ? 'ramp · flow' : 'ramp', /^[\d.]+×$|^ramp( · (frame mix|flow))?$/); c.keys = [...(c.keys || []).filter(k => !k._ramp), ...keys.map(x => ({ t: c.s + x, _ramp: true }))]; return true;
   }
   if (n === 'set_time_remap') {
     const given = Array.isArray(A.keys); const keys = given ? A.keys.map(k => N(Array.isArray(k) ? k[0] : null)).filter(x => x != null) : [];

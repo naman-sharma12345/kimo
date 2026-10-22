@@ -70,6 +70,8 @@ pub struct Clip {
     pub speed_curve: Option<Prop>,
     /// Optional time remap (source time vs clip time); overrides speed, speed ramp, reverse and freeze for video and audio.
     #[serde(default, skip_serializing_if = "Option::is_none")] pub time_remap: Option<TimeRemap>,
+    /// Premiere Time Interpolation for a speed ramp: how source times between frames are shown (off = nearest frame). Unused without speed_curve.
+    #[serde(default, skip_serializing_if = "FrameBlend::is_off")] pub speed_blend: FrameBlend,
     pub props: BTreeMap<String, Prop>, // opacity, x, y, scale, rotation
     pub effects: Vec<Effect>,
     #[serde(default)] pub grade_graph: Option<crate::color::node_graph::Graph>,
@@ -120,6 +122,7 @@ pub enum TimeMode { #[default] Normal, Reverse, /// hold the frame at clip-local
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum FrameBlend { #[default] Off, FrameMix, OpticalFlow }
+impl FrameBlend { pub fn is_off(&self) -> bool { *self == FrameBlend::Off } }
 /// AE-style time remap: `curve` gives source seconds after in_point as a function of clip-local seconds (+ `offset`, set by split_clip so the right half continues the curve).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TimeRemap { pub curve: Prop, #[serde(default)] pub offset: f64, #[serde(default)] pub blend: FrameBlend }
@@ -138,7 +141,14 @@ impl Default for Audio { fn default() -> Self { Audio { lead: 0.0, tail: 0.0, ef
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Transition { pub kind: String, pub duration: f64,
     #[serde(default = "d_ease")] pub ease: String, #[serde(default = "d_soft")] pub softness: f64, #[serde(default)] pub angle: f64,
-    #[serde(default)] pub color: [f64; 3], #[serde(default = "d_one")] pub intensity: f64, #[serde(default = "d_count")] pub count: f64, #[serde(default)] pub seed: u32 }
+    #[serde(default)] pub color: [f64; 3], #[serde(default = "d_one")] pub intensity: f64, #[serde(default = "d_count")] pub count: f64, #[serde(default)] pub seed: u32,
+    /// add_push_wipe's extra settings (push direction; gradient wipe shape, centre, luma clip, invert). None for add_transition kinds.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub spec: Option<TransitionSpec> }
+/// Settings of the push and gradient_wipe transitions (add_push_wipe, pushwipe.rs).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct TransitionSpec { #[serde(default, skip_serializing_if = "String::is_empty")] pub direction: String, #[serde(default, skip_serializing_if = "String::is_empty")] pub gradient: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub luma_clip: Option<String>, #[serde(default = "d_center")] pub center: [f64; 2], #[serde(default)] pub invert: bool }
+fn d_center() -> [f64; 2] { [0.5, 0.5] }
 fn d_ease() -> String { "in_out".into() } fn d_soft() -> f64 { 0.08 } fn d_one() -> f64 { 1.0 } fn d_count() -> f64 { 10.0 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -209,6 +219,13 @@ impl Clip {
         if (x - r).abs() < 1e-6 { return Some((r as usize, r as usize, 0.0)); }
         let a = x.floor(); Some((a as usize, a as usize + 1, x - a))
     }
+    /// Speed-ramp source position at clip time `lt` when the ramp blends frames (speed_curve + speed_blend, no time remap): (frame a, frame b, weight of b),
+    /// with frame a = source_index (same 1e-6 snap), so frame sampling and blending agree on the frame shown.
+    pub fn ramp_pos(&self, lt: f64, fps: f64) -> Option<(usize, usize, f64)> {
+        if self.time_remap.is_some() || self.speed_curve.is_none() || self.speed_blend.is_off() { return None; }
+        let x = self.source_time(lt.max(0.0)) * fps; let a = (x + 1e-6).floor(); let w = x - a;
+        if w < 1e-6 { return Some((a as usize, a as usize, 0.0)); } Some((a as usize, a as usize + 1, w))
+    }
     /// Min/max remapped source seconds over clip time [lt0, lt1] (curves may reverse or overshoot): both ends, every key inside and a <= 1/240 s grid (<= 4096 steps).
     pub fn remap_span(&self, lt0: f64, lt1: f64) -> (f64, f64) {
         let Some(r) = &self.time_remap else { return (0.0, 0.0) }; let (lt0, lt1) = (lt0.min(lt1), lt0.max(lt1));
@@ -263,6 +280,8 @@ pub fn clip_refs(c: &Clip) -> Vec<(String, String)> {
         if let Some(t) = &m.matte { v.push(("mask.matte.source".to_string(), t.source.clone())); }
         for l in &m.layers { if let Some(r) = l.strings.get("ref_clip") { v.push((format!("mask.layers.{}.ref_clip", l.id), r.clone())); } }
     }
+    for e in &c.effects { if let Some(k) = crate::layerfx::source_key(&e.kind) { if let Some(r) = e.strings.get(k) { v.push((format!("effects.{}.strings.{k}", e.id), r.clone())); } } } // displacement_map / set_matte driving clip
+    if let Some(l) = c.transition_in.as_ref().and_then(|t| t.spec.as_ref()).and_then(|s| s.luma_clip.as_ref()) { v.push(("transition_in.spec.luma_clip".to_string(), l.clone())); } // add_push_wipe's luma clip
     match &c.source {
         Source::ShardBurst(e) => { if let Some(t) = e.plane.as_ref().and_then(|p| p.occlusion_target.as_ref()) { v.push(("source.plane.occlusion_target".to_string(), t.clone())); } }
         Source::Emitter(e) => {
@@ -278,7 +297,7 @@ pub fn clip_refs(c: &Clip) -> Vec<(String, String)> {
 fn unknown_string_refs(c: &Clip, ids: &std::collections::HashSet<&str>, max_id: u64) -> Vec<(String, String)> {
     let looks = |s: &str| { let d: String = s.chars().rev().take_while(|x| x.is_ascii_digit()).collect(); s.starts_with("clip") && !d.is_empty() && d.parse::<u64>().map(|n| n < max_id).unwrap_or(false) && !ids.contains(s) };
     let mut v = vec![];
-    for e in &c.effects { for (k, val) in &e.strings { if looks(val) { v.push((format!("unknown:effects.{}.strings.{k}", e.id), val.clone())); } } }
+    for e in &c.effects { for (k, val) in &e.strings { if crate::layerfx::source_key(&e.kind) != Some(k.as_str()) && looks(val) { v.push((format!("unknown:effects.{}.strings.{k}", e.id), val.clone())); } } }
     if let Some(m) = &c.mask { for l in &m.layers { for (k, val) in &l.strings { if k != "ref_clip" && looks(val) { v.push((format!("unknown:mask.layers.{}.strings.{k}", l.id), val.clone())); } } } }
     v
 }
@@ -291,6 +310,8 @@ fn clear_in_tracks(tracks: &mut Vec<Track>, ids: &[String], out: &mut Vec<Cleare
         for (field, rid) in hits {
             if field == "mask.matte.source" { if let Some(m) = c.mask.as_mut() { m.matte = None; } }
             else if field == "source.plane.occlusion_target" { if let Source::ShardBurst(e) = &mut c.source { if let Some(p) = e.plane.as_mut() { p.occlusion_target = None; } } }
+            else if let Some((eid, key)) = field.strip_prefix("effects.").and_then(|x| x.split_once(".strings.")) { for e in c.effects.iter_mut().filter(|e| e.id == eid) { e.strings.remove(key); } } // the effect then does nothing
+            else if field == "transition_in.spec.luma_clip" { if let Some(s) = c.transition_in.as_mut().and_then(|t| t.spec.as_mut()) { s.luma_clip = None; } } // the wipe falls back to its gradient
             else if field == "source.emit_clip" { if let Source::Emitter(e) = &mut c.source { e.emit_clip.clear(); } }
             else if field == "source.sprite.clip_id" { if let Source::Particles3D(e) = &mut c.source { e.sprite.clip_id.clear(); } }
             else if let Some(i) = field.strip_prefix("source.colliders.").and_then(|x| x.strip_suffix(".clip_id")).and_then(|x| x.parse::<usize>().ok()) { if let Source::Emitter(e) = &mut c.source { if i < e.colliders.len() { e.colliders[i].clip_id.clear(); } } }
@@ -374,7 +395,13 @@ pub struct TextAnimator {
     #[serde(default, skip_serializing_if = "Option::is_none")] pub fill_amount: Option<Prop>,
     /// Reshapes the selector amount k -> ease(k) with the shared easing primitive. None = k untouched.
     #[serde(default, skip_serializing_if = "Option::is_none")] pub ease: Option<crate::keyframe::Ease>,
+    /// AE Wiggly Selector: the selector amount is multiplied per unit by smooth noise between min and max (text.rs). None = no wiggle.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub wiggly: Option<Wiggly>,
 }
+/// Wiggly Selector (After Effects): per unit a smooth random value in min..max (each -1..1, keyframable), changing `freq` times a second;
+/// `correlation` 0 = every unit wanders on its own, 1 = all units share one wiggle; stable per `seed`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Wiggly { pub min: Prop, pub max: Prop, pub freq: f64, pub correlation: f64, pub seed: u64 }
 
 /// Echo ghosts: `count` earlier (or later when spacing<0) copies of the layer at `spacing` seconds apart.
 /// mode: composite (ghosts fade by decay^k), add / screen (light trails), average (equal-weight frame blending = temporal smear).

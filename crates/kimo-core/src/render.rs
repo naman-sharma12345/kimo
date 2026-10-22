@@ -167,6 +167,7 @@ fn decode(p: &Project, c: &Clip, path: &str, a: usize, n: usize) -> Result<Frame
     check_decodable(path)?;
     if path.ends_with(".kimopx") {
       let src=crate::pixels::read(path)?;
+      let src=if crate::reframe::active(c){let(rx,ry)=crate::reframe::pos(c,0,p.fps);crate::reframe::crop_frame(&src,w as usize,h as usize,rx,ry)}else{src};
       let d=if src.w==w as usize && src.h==h as usize {src.d} else {crate::color::interchange::fit(&src,w as usize,h as usize,c.props.get("fit").map(|q|q.at(0.)).unwrap_or(0.))?};
       return Ok(Frames{still:true,working_linear:true,quantized:Default::default(),linear_buf:Some(d),buf:vec![],fs:w as usize*h as usize*4,first:0});
     }
@@ -174,12 +175,13 @@ fn decode(p: &Project, c: &Clip, path: &str, a: usize, n: usize) -> Result<Frame
       let mut src=crate::color::interchange::tiff_frame(path,decode_cache_limit())?;
       let fit=c.props.get("fit").map(|q|q.at(0.)).unwrap_or(0.);
       crate::color::pipeline::input(p,c,&mut src)?;
+      let src=if crate::reframe::active(c){let(rx,ry)=crate::reframe::pos(c,0,p.fps);crate::reframe::crop_frame(&src,w as usize,h as usize,rx,ry)}else{src};
       let d=crate::color::interchange::fit(&src,w as usize,h as usize,fit)?;
       return Ok(Frames{still:true,working_linear:true,quantized:Default::default(),linear_buf:Some(d),buf:vec![],fs:w as usize*h as usize*4,first:0})
     } let is_img0 = is_still_path(path); let (a, n) = if is_img0 { (0, 1) } else { (a, n) };
     let (in_pt, speed, span) = if c.retimed() { (c.in_point, 1.0, (a+n) as f64 / p.fps) } else { (c.in_point, c.speed, (a+n) as f64 / p.fps * c.speed) };
     let fit = c.props.get("fit").map(|q| q.at(0.0)).unwrap_or(0.0);
-    let fitf = if fit >= 1.5 { format!("scale={w}:{h}") } else if fit >= 0.5 { format!("scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}") } else { format!("scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0") };
+    let fitf = if crate::reframe::active(c) { crate::reframe::ffmpeg_fit(c, w, h, p.fps, a, n) } else if fit >= 1.5 { format!("scale={w}:{h}") } else if fit >= 0.5 { format!("scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}") } else { format!("scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0") };
     if p.color_pipeline.enabled&&path.to_lowercase().ends_with(".exr"){crate::color::interchange::validate_exr_source(path)?;}
     let float_source=p.color_pipeline.enabled&&[".exr",".pfm"].iter().any(|ext|path.to_lowercase().ends_with(ext));
     let native_fit=float_source||(p.color_pipeline.enabled&&p.color_pipeline.linear_resample);
@@ -206,9 +208,12 @@ fn decode(p: &Project, c: &Clip, path: &str, a: usize, n: usize) -> Result<Frame
         crate::guard::reserve(peak);
         let mut stream=crate::color::process::DecodeStream::new(&mut command,bytes_per_frame,n.max(1),crate::color::process::decode_deadline(n.max(1)))?;
         let mut values:Vec<f32>=Vec::new();values.try_reserve_exact(fs.checked_mul(n.max(1)).ok_or("decode buffer size overflow")?).map_err(|e|format!("cannot allocate the decode buffer for {n} frames ({} MB): {e}",fs.saturating_mul(n.max(1)).saturating_mul(4)>>20))?;
+        let mut fi=0usize;
         while let Some(frame)=stream.next()?{
          let d=if float_source{crate::color::interchange::unpack(&frame,dw,dh)}else{converter.as_ref().ok_or("missing integer input converter")?.decode(&frame)};
-         let fitted=d.and_then(|d|{let mut source=Frame{w:dw,h:dh,d};if float_source{crate::color::pipeline::input(p,c,&mut source)?;}crate::color::interchange::fit(&source,w as usize,h as usize,fit)});values.extend(fitted?);
+         let fitted=d.and_then(|d|{let mut source=Frame{w:dw,h:dh,d};if float_source{crate::color::pipeline::input(p,c,&mut source)?;}
+          if crate::reframe::active(c){let(rx,ry)=crate::reframe::pos(c,a+fi,p.fps);source=crate::reframe::crop_frame(&source,w as usize,h as usize,rx,ry);}
+          crate::color::interchange::fit(&source,w as usize,h as usize,fit)});values.extend(fitted?);fi+=1;
         }
         stream.finish()?;Some(values)
     }else{
@@ -240,19 +245,30 @@ fn prepare_window(p: &Project, cache: &mut Cache, t0: f64, t1: f64, window:usize
     if cache.size != (p.width, p.height, p.fps) { cache.frames.clear(); cache.code.clear(); cache.size = (p.width, p.height, p.fps); }
     let all = t0 == f64::MIN;
     let flat = flat_clips(&p.tracks, 0.0);
-    let active: std::collections::HashSet<String> = flat.iter().filter(|c| all || (c.start <= t1 + 1e-9 && c.start + c.duration > t0 + 1e-9)).map(|c| c.id.clone()).collect();
+    let mut active: std::collections::HashSet<String> = flat.iter().filter(|c| all || (c.start <= t1 + 1e-9 && c.start + c.duration > t0 + 1e-9)).map(|c| c.id.clone()).collect();
+    // morph_cut: a clip inside its morph needs the outgoing clip's last frame even when the window does not reach it
+    let mut morph_t: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    if !all { for c in flat.iter().filter(|c| active.contains(&c.id)) { if let Some(tr) = c.transition_in.as_ref().filter(|tr| tr.kind == "morph_cut") { if t0 < c.start + tr.duration { if let Some(a) = crate::transitions::morph_prev(p, c) { if !active.contains(&a.id) { morph_t.insert(a.id.clone(), a.start + a.duration - 0.5 / p.fps); } } } } } }
+    // push / gradient_wipe (pushwipe.rs): the outgoing abutting clip's last frame and a luma clip are read too
+    if !all { for c in flat.iter().filter(|c| active.contains(&c.id)) { if c.transition_in.as_ref().is_some_and(|tr| crate::pushwipe::KINDS.contains(&tr.kind.as_str()) && t0 < c.start + tr.duration) { for (id, tm) in crate::pushwipe::needs(p, c, t0.max(c.start)) { if !active.contains(&id) { morph_t.insert(id, tm); } } } } }
+    // ... and the outgoing clip is decoded lengthened past its out point (pushwipe::outgoing_clip), a superset of its own frames
+    let mut pw_ext: std::collections::HashMap<String, Clip> = std::collections::HashMap::new();
+    for c in flat.iter().filter(|c| all || active.contains(&c.id)) { if c.transition_in.as_ref().is_some_and(|tr| crate::pushwipe::KINDS.contains(&tr.kind.as_str()) && (all || t0 < c.start + tr.duration)) { if let Some(x) = crate::pushwipe::outgoing_clip(p, c) { if crate::pushwipe::handle_secs(p, c) > 0.0 { pw_ext.insert(x.id.clone(), x); } } } }
+    for k in morph_t.keys() { active.insert(k.clone()); }
     if !all { cache.frames.retain(|k, _| active.contains(k)); cache.code.retain(|k, _| active.contains(k)); }
     let media_count=flat.iter().filter(|c|active.contains(&c.id)&&matches!(c.source,Source::Media{..})&&c.props.get("audio_only").map(|q|q.at(0.)).unwrap_or(0.)<0.5).count().max(1);
     if !all{let budget=decode_cache_limit()/media_count;cache.frames.retain(|_,(_,fr)|fr.buf.len()+fr.linear_buf.as_ref().map(|b|b.len()*5).unwrap_or(0)<=budget);}
     for c in &flat {
+        let c = pw_ext.get(&c.id).unwrap_or(c);
         let Source::Media { asset } = &c.source else { continue };
         if !active.contains(&c.id) || c.props.get("audio_only").map(|q| q.at(0.0)).unwrap_or(0.0) >= 0.5 { continue; }
         let total = media_total(c,p.fps);
+        let (t0, t1) = match morph_t.get(&c.id) { Some(tm) => (*tm, *tm), None => (t0, t1) };
         let (ta, tb) = match c.time_mode { _ if c.time_remap.is_some() => (t0, t1), TimeMode::Normal => (t0, t1), TimeMode::Reverse => (c.start + c.duration - (t1 - c.start), c.start + c.duration - (t0 - c.start)), TimeMode::Freeze { at } => (c.start + at, c.start + at) };
         let (t0, t1) = (ta, tb);
-        let (ia, mut ib) = if all { (0, total - 1) } else if let Some(r)=&c.time_remap{let (lo,hi)=c.remap_span((t0-c.start).clamp(0.,c.duration),(t1-c.start).clamp(0.,c.duration));(((lo*p.fps).floor() as usize).min(total-1),((hi*p.fps).ceil() as usize+usize::from(r.blend!=crate::model::FrameBlend::Off)).min(total-1))} else if c.speed_curve.is_some(){(media_index(c,(t0-c.start).min(c.duration),p.fps).min(total-1),media_index(c,(t1-c.start).min(c.duration),p.fps).min(total-1))}else { ((((t0 - c.start).max(0.0) * p.fps).floor() as usize).min(total - 1), (((t1 - c.start).max(0.0) * p.fps).ceil() as usize).min(total - 1)) };
+        let (ia, mut ib) = if all { (0, total - 1) } else if let Some(r)=&c.time_remap{let (lo,hi)=c.remap_span((t0-c.start).clamp(0.,c.duration),(t1-c.start).clamp(0.,c.duration));(((lo*p.fps).floor() as usize).min(total-1),((hi*p.fps).ceil() as usize+usize::from(r.blend!=crate::model::FrameBlend::Off)).min(total-1))} else if c.speed_curve.is_some(){(media_index(c,(t0-c.start).min(c.duration),p.fps).min(total-1),(media_index(c,(t1-c.start).min(c.duration),p.fps)+usize::from(!c.speed_blend.is_off())).min(total-1))}else { ((((t0 - c.start).max(0.0) * p.fps).floor() as usize).min(total - 1), (((t1 - c.start).max(0.0) * p.fps).ceil() as usize).min(total - 1)) };
         // Instant normal playback samples floor(index), except flow needs the next frame.
-        if !all&&c.time_remap.is_none()&&matches!(c.time_mode,TimeMode::Normal)&&t0==t1{let flow=c.props.get("flow_blur").map(|v|v.at((t0-c.start).max(0.))>0.).unwrap_or(false);ib=if flow{(ia+1).min(total-1)}else{ia};}
+        if !all&&c.time_remap.is_none()&&matches!(c.time_mode,TimeMode::Normal)&&t0==t1{let flow=c.props.get("flow_blur").map(|v|v.at((t0-c.start).max(0.))>0.).unwrap_or(false)||c.ramp_pos((t0-c.start).max(0.),p.fps).is_some_and(|q|q.2>0.);ib=if flow{(ia+1).min(total-1)}else{ia};}
         // Vector flow blur also needs the previous frame.
         let mut ia=if !all&&c.props.get("flow_mode").map(|v|v.base.round()==1.).unwrap_or(false){ia.saturating_sub(1)}else{ia};
         // Stabilize, Synthesize Edges (stab_fill, see synth_edges) reads up to stab_fill frames before and after; other clips decode as before.
@@ -260,6 +276,7 @@ fn prepare_window(p: &Project, cache: &mut Cache, t0: f64, t1: f64, window:usize
         let a = p.assets.get(asset).ok_or(format!("asset {asset} missing"))?;
         let apath=p.resolve(&a.path);let stat=std::fs::metadata(&apath).map_err(|e|format!("media stat: {e}"))?;
         let sig = format!("{asset}|{}|{}|{}|{:?}|{:?}|{:?}|{:?}|{:?}|{}|{}|{:?}", c.in_point, c.duration, c.speed, c.speed_curve.as_ref().map(|p| serde_json::to_string(p).unwrap_or_default()), p.color_pipeline,c.props.get("input_gamut"),c.props.get("input_transfer"),c.props.get("fit"),a.path,stat.len(),stat.modified().ok());
+        let sig = if crate::reframe::active(c) { format!("{sig}|reframe|{}", crate::reframe::sig(c)) } else { sig };
         let sig = match &c.time_remap { Some(r) => format!("{sig}|remap|{}|{}", serde_json::to_string(&r.curve).unwrap_or_default(), r.offset), None => sig };
         if let Some((s, fr)) = cache.frames.get(&c.id) { if *s == sig && fr.covers(ia, ib) { continue; } }
         let shared=cache.frames.values().find(|(s,fr)|*s==sig&&fr.covers(ia,ib)).map(|(_,fr)|fr.clone());
@@ -337,7 +354,10 @@ fn source_frame_h(p: &Project, c: &Clip, lt_in: f64, cache: &Cache) -> (Frame, O
             let (cx, cy) = (w as f64 / 2.0, h as f64 / 2.0); let (hw, hh) = (width / 2.0, height / 2.0);
             // signed distance (negative inside), then shape modifiers (offset/repeater/merge) from shapemods.rs
             let pth = if shape == "path" { crate::shapemods::path_of(&c.effects, lt) } else { None };
-            let base = |x: f64, y: f64| -> f64 { let (px, py) = (x - cx, y - cy); match shape.as_str() {
+            // Round Corners (add_path_operator) acts on the geometry: rect corner radius, exact rounded polygon
+            let rc = c.effects.iter().find(|e| e.kind == "shape_op_round_corners").map_or(0.0, |e| e.params.get("radius").map_or(10.0, |p| p.at(lt)).max(0.0));
+            let corner_radius = &if rc > 0.0 && shape.as_str() == "rect" { (corner_radius + rc).min(hw.min(hh)) } else { *corner_radius };
+            let base = |x: f64, y: f64| -> f64 { let (px, py) = (x - cx, y - cy); if rc > 0.0 && shape.as_str() == "polygon" { return crate::pathops::sd_polygon_rounded(*sides, hw.min(hh), rc, px, py); } match shape.as_str() {
                 "path" => match &pth { Some(p) => p.sd(px, py), None => 1e9 },
                 "ellipse" | "polygon" | "line" => crate::shapemods::sd(shape, *sides, hw, hh, *corner_radius, px, py),
                 _ => { let (qx, qy) = (px.abs() - hw + corner_radius, py.abs() - hh + corner_radius); (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - corner_radius } } };
@@ -396,11 +416,13 @@ fn source_frame_h(p: &Project, c: &Clip, lt_in: f64, cache: &Cache) -> (Frame, O
             let idx = media_index(c,lt,p.fps);
             if let Some(b)=fr.get_float(idx){f.d.copy_from_slice(b)}else if let Some(b) = fr.get(idx) { for (i, v) in b.iter().enumerate() { f.d[i] = *v as f32 / 255.0; } }
             // Time remap between two source frames: frame mix or optical-flow interpolation, in linear light.
-            if let (Some(r), Some((_, nb, wb))) = (&c.time_remap, c.remap_pos(lt, p.fps)) { if wb > 0.0 && r.blend != crate::model::FrameBlend::Off && fr.len() > 0 && nb < fr.first + fr.len() { let mut g2 = Frame::new(w, h);
+            // A speed ramp with Time Interpolation (speed_blend) blends the same way between the two source frames around its source time.
+            let tween = match (&c.time_remap, c.remap_pos(lt, p.fps)) { (Some(r), Some((_, nb, wb))) => Some((nb, wb, r.blend)), _ => c.ramp_pos(lt, p.fps).map(|(_, nb, wb)| (nb, wb, c.speed_blend)) };
+            if let Some((nb, wb, blend)) = tween { if wb > 0.0 && blend != crate::model::FrameBlend::Off && fr.len() > 0 && nb < fr.first + fr.len() { let mut g2 = Frame::new(w, h);
                 if let Some(b)=fr.get_float(nb){g2.d.copy_from_slice(b)}else if let Some(b)=fr.get(nb){for (i,v) in b.iter().enumerate(){g2.d[i]=*v as f32/255.;}}
                 if p.color_pipeline.enabled && !source_linear {let a=crate::color::pipeline::input(p,c,&mut f);let b=crate::color::pipeline::input(p,c,&mut g2);source_linear=true;if a.is_err()||b.is_err(){f.d.fill(f32::NAN);}}
                 let srgb = !p.color_pipeline.enabled && !source_linear;
-                if r.blend == crate::model::FrameBlend::OpticalFlow { f = crate::flow::flow_interpolate(&f, &g2, wb as f32, srgb, 3); } else { let a = f.d.clone(); crate::flow::mix_linear(&a, &g2.d, wb, srgb, &mut f.d); } } }
+                if blend == crate::model::FrameBlend::OpticalFlow { f = crate::flow::flow_interpolate(&f, &g2, wb as f32, srgb, 3); } else { let a = f.d.clone(); crate::flow::mix_linear(&a, &g2.d, wb, srgb, &mut f.d); } } }
             let fb = prop(c, "flow_blur", lt) as f32;
             if fb > 0.0 && c.props.get("flow_mode").map(|v|v.base.round()==1.).unwrap_or(false) {
                 let load=|i:usize|->Option<Frame>{if !fr.covers(i,i){return None}let mut g=Frame::new(w,h);if let Some(b)=fr.get_float(i){g.d.copy_from_slice(b)}else if let Some(nb)=fr.get(i){for (k,v) in nb.iter().enumerate(){g.d[k]=*v as f32/255.;}}else{return None}Some(g)};
@@ -656,12 +678,16 @@ pub fn render_frame_opts(p: &Project, t: f64, cache: &Cache, transparent: bool) 
     let hidden: std::collections::HashSet<&str> = p.tracks.iter().flat_map(|tr| tr.clips.iter()).filter_map(|c| c.mask.as_ref().and_then(|m| m.matte.as_ref()).filter(|m| m.hide_source).map(|m| m.source.as_str()))
         .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).filter_map(|c| match &c.source { Source::Particles3D(e) if e.sprite.kind == "layer" && e.sprite.hide_source && !e.sprite.clip_id.is_empty() => Some(e.sprite.clip_id.as_str()), _ => None })) // a Particles3D layer sprite's source is drawn only as the sprite
         // a keyer's clean-plate clip (strings.ref_clip) is hidden from the composite like a hidden track-matte source
-        .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).flat_map(|c| c.effects.iter()).filter(|e| e.kind == "keyer").filter_map(|e| e.strings.get("ref_clip").map(|s| s.as_str()))).collect();
+        .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).flat_map(|c| c.effects.iter()).filter(|e| e.kind == "keyer").filter_map(|e| e.strings.get("ref_clip").map(|s| s.as_str())))
+        // a displacement map's / set matte's driving clip, unless it was asked to show (layerfx.rs)
+        .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).flat_map(|c| c.effects.iter()).filter(|e| crate::layerfx::KINDS.contains(&e.kind.as_str()) && e.strings.get("hide").map_or(true, |h| h == "1")).filter_map(|e| crate::layerfx::source_key(&e.kind).and_then(|k| e.strings.get(k)).map(|s| s.as_str())))
+        // a gradient wipe's luma clip drives the reveal only (pushwipe.rs)
+        .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).filter_map(|c| c.transition_in.as_ref().and_then(|t| t.spec.as_ref()).and_then(|s| s.luma_clip.as_deref()))).collect();
     // 3D compositor (comp3d.rs, opt-in): consecutive 3D layers wait here and are depth-composited when a 2D draw or the end flushes them
     let c3 = crate::comp3d::active(p); let mut g3: Vec<crate::comp3d::Layer> = Vec::new();
     for tr in &p.tracks { for c in &tr.clips {
         if !crate::editorial::caption_visible(p, &c.id) { continue; }
-        if t < c.start - 1e-9 || t >= c.start + c.duration - 1e-9 || (hidden.contains(c.id.as_str()) && MATTE_DEPTH.with(|d| d.get()) == 0) { continue; }
+        if t < c.start - 1e-9 || t >= c.start + c.duration - 1e-9 || (hidden.contains(c.id.as_str()) && MATTE_DEPTH.with(|d| d.get()) == 0) || tr.id == ALONE_SRC_TRACK { continue; }
         crate::guard::check();
         let lt0 = if c.posterize_fps > 0.0 { (((t - c.start) * c.posterize_fps + 1e-6).floor() / c.posterize_fps).max(0.0) } else { (t - c.start).max(0.0) };
         let (ne, esp) = match &c.echo { Some(e) if !matches!(c.source, Source::Adjustment) => (e.count.min(64) as usize, e.spacing), _ => (0, 0.0) };
@@ -697,7 +723,9 @@ pub fn render_frame_opts(p: &Project, t: f64, cache: &Cache, transparent: bool) 
         let mp_at = |l2: f64| -> (f64, f64, f64) { match &c.motion_path { Some(mp) => { let (x, y, a) = crate::motion::sample(mp, prop(c, "path", l2), w, h); (x, y, if mp.auto_orient { a + mp.orient_offset } else { 0.0 }) } None => (0.0, 0.0, 0.0) } };
         let (mp0x, mp0y, mp0a) = mp_at(lt); dx += mp0x; dy += mp0y; rot_extra += mp0a; let mut tplan: Option<crate::transitions::Plan> = None;
         if let Some(tr_in) = &c.transition_in { if lt < tr_in.duration {
-            let pl = crate::transitions::plan(tr_in, lt, w, h); op *= pl.op; dx += pl.dx; dy += pl.dy; sc *= pl.scale; rot_extra += pl.rot;
+            let mut pl = crate::transitions::plan(tr_in, lt, w, h); op *= pl.op; dx += pl.dx; dy += pl.dy; sc *= pl.scale; rot_extra += pl.rot;
+            if let Some(m) = crate::pushwipe::luma_mask(p, tr_in, lt, t, w, cache) { pl.mask = Some(m); } // gradient_wipe driven by a clip's luma
+            if let Some(u) = pl.under.as_ref() { crate::comp3d::flush(&mut out, &mut g3, p, t); let prev = crate::pushwipe::outgoing(p, c, t, cache); u(&mut out, prev.as_ref()); if !transparent { for i in 0..w * h { out.d[i*4+3] = 1.0; } } } // push / gradient_wipe: the outgoing picture
             if let Some((col, a)) = pl.dip { crate::comp3d::flush(&mut out, &mut g3, p, t); for i in 0..w * h { for j in 0..3 { out.d[i*4+j] = out.d[i*4+j] * (1.0 - a) + col[j] * a; } out.d[i*4+3] = out.d[i*4+3] + a * (1.0 - out.d[i*4+3]); } }
             mask = None; tplan = Some(pl);
         }}
@@ -749,6 +777,8 @@ pub fn render_frame_opts(p: &Project, t: f64, cache: &Cache, transparent: bool) 
         if c.effects.iter().any(|e| crate::effects2::is_post(&e.kind)) { BACKDROP.with(|b| *b.borrow_mut() = Some(std::rc::Rc::new(Frame { w, h, d: out.d.clone() }))); crate::frosted::set_post(true);
             let r: Result<(), String> = (|| { for e in c.effects.iter().filter(|e| crate::effects2::is_post(&e.kind)) { effects::apply(&e.kind, &e.params, &e.strings, &mut f, lt, seed)?; } Ok(()) })();
             crate::frosted::set_post(false); BACKDROP.with(|b| *b.borrow_mut() = None); r?; }
+        // morph_cut: dense optical flow from the outgoing clip's last frame into this frame (both directions, linear-light mix)
+        let mut f = f; if let Some(k) = tplan.as_ref().and_then(|pl| pl.morph) { if let Some(a) = crate::transitions::morph_prev(p, c) { if let Some(af) = render_clip_alone(p, &a.id, a.start + a.duration - 0.5 / p.fps, cache) { f = crate::flow::flow_interpolate(&af, &f, k, !p.color_pipeline.enabled, 2); from_tb = false; } } }
         if let Some(cf) = tplan.as_ref().and_then(|pl| pl.compose.as_ref()) { out = cf(&out, &f); continue; }
         if let Source::ShardBurst(sb) = &c.source { if let Some(d) = crate::shards::take_disp() { crate::shards::refract_canvas(&mut out, &d, &f, sb.refract_dispersion.clamp(0.0, 1.0)); } }
         if let Some(acc) = eacc.as_mut() { let wgt = op / (ne + 1) as f32; for i in 0..w * h { let a = f.d[i * 4 + 3] * wgt; if a > 0.0 { for j in 0..3 { acc.d[i * 4 + j] += f.d[i * 4 + j] * a; } acc.d[i * 4 + 3] += a; } } continue; }
@@ -942,11 +972,23 @@ fn silhouette_alpha(p: &Project, id: &str, tt: f64, cache: &Cache) -> Option<(us
     if let Ok(mut c) = SIL_CACHE.lock() { if c.len() >= 96 { c.pop_front(); } c.push_back((key, rc.clone())); } Some((fr.w, fr.h, rc))
 }
 pub fn render_clip_alone(p: &Project, id: &str, t: f64, cache: &Cache) -> Option<Frame> {
+    let c = p.tracks.iter().flat_map(|tr| tr.clips.iter()).find(|c| c.id == id)?; render_clip_alone_as(p, c, t, cache)
+}
+/// The track of a clip rendered alone that carries the clips its effects read (render_clip_alone_as); never drawn.
+const ALONE_SRC_TRACK: &str = "\u{1}alone_src";
+/// render_clip_alone for a clip given by value (e.g. one lengthened past its out point, pushwipe::outgoing_clip).
+pub fn render_clip_alone_as(p: &Project, c: &Clip, t: f64, cache: &Cache) -> Option<Frame> {
     if MATTE_DEPTH.with(|d| d.get()) >= 3 { return None; }
-    let c = p.tracks.iter().flat_map(|tr| tr.clips.iter()).find(|c| c.id == id).map(|c| (**c).clone())?;
+    let c = c.clone();
     if t < c.start - 1e-9 || t >= c.start + c.duration - 1e-9 { return Some(Frame::new(p.width as usize, p.height as usize)); }
     let mut c = c; if let Some(m) = c.mask.as_mut() { m.matte = None; }
-    let sub = Project { grade_scopes: p.grade_scopes.subset(&[crate::model::Track{id:"matte".into(),clips:vec![std::sync::Arc::new(c.clone())],locked:false,muted:false,name:String::new()}]), lights: p.lights.clone(), materials: p.materials.clone(), editorial: p.editorial.clone(), ocio_view_delivery: None, occluders: p.occluders.clone(), color_pipeline: p.color_pipeline.clone(), tracks: vec![crate::model::Track { id: "matte".into(), clips: vec![std::sync::Arc::new(c)], locked: false, muted: false, name: String::new() }], assets: p.assets.clone(), camera: p.camera.clone(), comp3d: p.comp3d.clone(), markers: vec![], name: String::new(), width: p.width, height: p.height, fps: p.fps, next_id: 0, deps: None, templates: vec![], base_dir: p.base_dir.clone() };
+    // the clips its displacement map / set matte read come along on a hidden track, so those effects run here too (the outgoing
+    // picture of a push, a matte source); each is read at t held to its own span, as a gradient wipe's luma clip is, so a map laid
+    // over the outgoing shot stays on it while a push carries the shot on past its out point
+    let mut srcs: Vec<std::sync::Arc<Clip>> = vec![];
+    for e in c.effects.iter() { let Some(k) = crate::layerfx::source_key(&e.kind) else { continue };
+        if let Some(m) = e.strings.get(k).and_then(|id| p.find_clip(id)).filter(|m| m.id != c.id && !srcs.iter().any(|s| s.id == m.id)) { let mut m = m.clone(); m.start += t - crate::pushwipe::luma_time(p, &m, t); srcs.push(std::sync::Arc::new(m)); } }
+    let sub = Project { grade_scopes: p.grade_scopes.subset(&[crate::model::Track{id:"matte".into(),clips:vec![std::sync::Arc::new(c.clone())],locked:false,muted:false,name:String::new()}]), lights: p.lights.clone(), materials: p.materials.clone(), editorial: p.editorial.clone(), ocio_view_delivery: None, occluders: p.occluders.clone(), color_pipeline: p.color_pipeline.clone(), tracks: std::iter::once(crate::model::Track { id: "matte".into(), clips: vec![std::sync::Arc::new(c)], locked: false, muted: false, name: String::new() }).chain((!srcs.is_empty()).then(|| crate::model::Track { id: ALONE_SRC_TRACK.into(), clips: srcs, locked: false, muted: false, name: String::new() })).collect(), assets: p.assets.clone(), camera: p.camera.clone(), comp3d: p.comp3d.clone(), markers: vec![], name: String::new(), width: p.width, height: p.height, fps: p.fps, next_id: 0, deps: None, templates: vec![], base_dir: p.base_dir.clone() };
     MATTE_DEPTH.with(|d| d.set(d.get() + 1)); let r = render_frame_opts(&sub, t, cache, true).ok(); MATTE_DEPTH.with(|d| d.set(d.get() - 1)); r
 }
 
@@ -977,8 +1019,18 @@ fn keyer_aux(p: &Project, c: &Clip, e: &crate::model::Effect, before: &Frame, lt
         Ok(Some(crate::masks::layer_coverage(l, before, lt, ctx))) };
     Ok(crate::keying::KeyerAuxOwned { clean_plate, garbage: layer("garbage_mask", e.strings.get("garbage_mask"))?, core: layer("core_mask", e.strings.get("core_mask"))? })
 }
+/// Where clip `c` lands on the canvas at `lt` (its composed x/y/scale/rotation, its motion path and the move, zoom or turn of
+/// its own transition in, e.g. a push or slide), for effects that read another clip in screen space (layerfx.rs Displacement Map).
+fn layer_place(p: &Project, c: &Clip, lt: f64, w: usize, h: usize) -> crate::layerfx::Place {
+    let (mx, my, ma) = match &c.motion_path { Some(mp) => { let (x, y, a) = crate::motion::sample(mp, prop(c, "path", lt), w, h); (x, y, if mp.auto_orient { a + mp.orient_offset } else { 0.0 }) } None => (0.0, 0.0, 0.0) };
+    let mut pl = crate::layerfx::Place { scale: xprop(p, c, "scale", lt), rot_deg: xprop(p, c, "rotation", lt) + ma, dx: xprop(p, c, "x", lt) + mx, dy: xprop(p, c, "y", lt) + my };
+    if let Some(tr) = c.transition_in.as_ref().filter(|tr| lt < tr.duration) { let tp = crate::transitions::plan(tr, lt, w, h); pl.dx += tp.dx; pl.dy += tp.dy; pl.scale *= tp.scale; pl.rot_deg += tp.rot; } // as the draw composes it
+    // the outgoing picture of a push is moved out after it is drawn alone (pushwipe::outgoing puts that move on its copy)
+    if let Some(q) = c.props.get(crate::pushwipe::OUT_DX) { pl.dx += q.base; } if let Some(q) = c.props.get(crate::pushwipe::OUT_DY) { pl.dy += q.base; }
+    pl
+}
 fn apply_effects_masked(p: &Project, c: &Clip, f: &mut Frame, lt: f64, seed: u64, t: f64, cache: &Cache) -> Result<(), String> {
-    let special = |e: &crate::model::Effect| e.strings.contains_key("mask_layer") || keyer_aux_fx(e);
+    let special = |e: &crate::model::Effect| e.strings.contains_key("mask_layer") || keyer_aux_fx(e) || crate::layerfx::driven(e);
     if !c.effects.iter().any(special) { apply_effects_local(&c.effects, f, lt, seed)?;if let Some(g)=&c.grade_graph{g.apply(f,lt,seed,p.fps)?;}p.grade_scopes.apply_clip(p,&c.id,f,lt,seed)?;return Ok(()); }
     let mut i = 0;
     while i < c.effects.len() {
@@ -989,6 +1041,7 @@ fn apply_effects_masked(p: &Project, c: &Clip, f: &mut Frame, lt: f64, seed: u64
             if keyer_aux_fx(e) { if e.strings.contains_key("ocio_domain") || e.strings.contains_key("wrapper_working_gamut") { return Err("keyer: a clean plate or garbage/core matte cannot be combined with a colour-domain wrapper (ocio_domain / wrapper_working_gamut)".into()); }
                 // the keyer's per-pixel inputs go straight to keying::apply_keyer (effects::apply carries params and strings only)
                 let aux = keyer_aux(p, c, e, &before, lt, t, cache, &ctx)?; crate::keying::apply_keyer(&e.params, f, lt, &aux.view())?; }
+            else if let Some(k) = crate::layerfx::source_key(&e.kind).filter(|_| crate::layerfx::driven(e)) { if let Some(src) = e.strings.get(k).and_then(|id| render_clip_alone(p, id, t, cache)) { let place = (e.kind == "displacement_map").then(|| layer_place(p, c, lt, f.w, f.h)); crate::layerfx::apply(e, f, &src, lt, place); } } // displacement_map / set_matte: the driving clip rendered alone; the map is read where the clip lands (layer_place)
             else { apply_effects_local(std::slice::from_ref(e), f, lt, seed)?; }
             if let Some(l) = e.strings.get("mask_layer").and_then(|mid| c.mask.as_ref().and_then(|m| m.layers.iter().find(|l| &l.id == mid))) {
                 let cov = crate::masks::layer_coverage(l, &before, lt, &ctx);

@@ -71,7 +71,8 @@ pub struct Prop { pub base: f64, #[serde(default)] pub keys: Vec<Key>, /// Expre
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Op {
     /// Smooth fractal noise added to the value. freq Hz, amp in property units.
-    Wiggle { freq: f64, amp: f64, #[serde(default = "d_oct")] octaves: u32, #[serde(default)] seed: u64 },
+    Wiggle { freq: f64, amp: f64, #[serde(default = "d_oct")] octaves: u32, #[serde(default)] seed: u64, /// seconds added to t (set when a split moves the clip's clock)
+        #[serde(default, skip_serializing_if = "is_zero_shift")] shift: f64 },
     /// After the last key: cycle | pingpong | offset | continue.
     LoopOut { mode: String },
     /// Before the first key: cycle | pingpong | offset | continue.
@@ -81,7 +82,7 @@ pub enum Op {
     /// Overshoot spring after each key (AE inertia): amp scaled by key velocity, freq Hz, decay 1/s.
     Inertia { amp: f64, freq: f64, decay: f64 },
     /// Evaluate at quantized time (posterize time), fps frames/s.
-    PosterizeTime { fps: f64 },
+    PosterizeTime { fps: f64, #[serde(default, skip_serializing_if = "is_zero_shift")] shift: f64 },
     Clamp { min: f64, max: f64 },
     /// Quantize the value to multiples of `step`.
     Round { step: f64 },
@@ -94,7 +95,10 @@ pub enum Op {
     /// amp * exp(-decay * (t - t0)) * fractal noise(freq * (t - t0)); deterministic in (seed, t). Zero before t0. combine: add (default) | set | mul.
     NoiseImpulse { seed: u64, freq: f64, amp: f64, decay: f64, #[serde(default = "d_oct")] octaves: u32, #[serde(default)] t0: f64, #[serde(default)] combine: String },
     /// from + (to - from) * cubic_bezier(x1,y1,x2,y2)((t - t0) / duration), x clamped to [0,1] like CSS. combine: set (default) | add | mul.
-    Bezier { x1: f64, y1: f64, x2: f64, y2: f64, from: f64, to: f64, #[serde(default)] t0: f64, duration: f64, #[serde(default)] combine: String },
+    Bezier { x1: f64, y1: f64, x2: f64, y2: f64, from: f64, to: f64, #[serde(default)] t0: f64, duration: f64, #[serde(default)] combine: String,
+        /// Set by a tool that layers its own op on top of the property (add_punch_ins: "punch"); the tool finds and replaces its ops by
+        /// this tag, and a tagged op runs on the clip's own time (the property's posterize / loop time ops do not move it).
+        #[serde(default, skip_serializing_if = "String::is_empty")] tag: String },
 }
 /// Normalised spring response e(tau) for m x'' + c x' + k x = 0 with x(0)=1, x'(0)=0: x(t) = to + (from - to) * e(t - t0). Underdamped, critically damped and overdamped closed forms.
 pub fn spring_response(stiffness: f64, damping: f64, mass: f64, tau: f64) -> f64 {
@@ -122,7 +126,7 @@ impl Prop {
         if self.expr.is_empty() { return self.raw(t); }
         let (mut tt, mut add) = (t, 0.0);
         for op in &self.expr { match op {
-            Op::PosterizeTime { fps } => { if *fps > 0.0 { tt = (tt * fps + 1e-9).floor() / fps; } }
+            Op::PosterizeTime { fps, shift } => { if *fps > 0.0 { tt = ((tt + shift) * fps + 1e-9).floor() / fps - shift; } }
             Op::LoopOut { mode } if self.keys.len() >= 2 => { let (t0, t1) = (self.keys[0].t, self.keys[self.keys.len() - 1].t); if tt > t1 && t1 > t0 { let d = t1 - t0; let n = ((tt - t0) / d).floor(); let ph = (tt - t0) - n * d;
                 match mode.as_str() { "pingpong" => { tt = if (n as i64) % 2 == 0 { t0 + ph } else { t1 - ph }; } "offset" => { tt = t0 + ph; add += n * (self.raw(t1) - self.raw(t0)); } "continue" => { let v = (self.raw(t1) - self.raw(t1 - 1e-3)) / 1e-3; add += v * (tt - t1); tt = t1; } _ => { tt = t0 + ph; } } } }
             Op::LoopIn { mode } if self.keys.len() >= 2 => { let (t0, t1) = (self.keys[0].t, self.keys[self.keys.len() - 1].t); if tt < t0 && t1 > t0 { let d = t1 - t0; let n = ((t1 - tt) / d).floor(); let ph = (t1 - tt) - n * d;
@@ -130,7 +134,7 @@ impl Prop {
             _ => {} } }
         let mut v = self.raw(tt) + add;
         for op in &self.expr { match op {
-            Op::Wiggle { freq, amp, octaves, seed } => { let mut s = 0.0; for o in 0..(*octaves).clamp(1, 8) { let f = freq * 2f64.powi(o as i32); s += amp * 0.5f64.powi(o as i32) * noise(seed.wrapping_add((o as u64).wrapping_mul(7919)), tt * f); } v += s; }
+            Op::Wiggle { freq, amp, octaves, seed, shift } => { let tt = tt + shift; let mut s = 0.0; for o in 0..(*octaves).clamp(1, 8) { let f = freq * 2f64.powi(o as i32); s += amp * 0.5f64.powi(o as i32) * noise(seed.wrapping_add((o as u64).wrapping_mul(7919)), tt * f); } v += s; }
             Op::Sin { freq, amp, phase } => v += amp * (std::f64::consts::TAU * (freq * tt + phase)).sin(),
             Op::Inertia { amp, freq, decay } => { for w in self.keys.windows(2).map(|w| (w[0].t, w[0].v, w[1].t, w[1].v)).chain(std::iter::empty()) { let (_, _, tb, vb) = w; if tt > tb { let _ = vb; } }
                 // spring after each key based on the velocity of the segment arriving at it
@@ -139,7 +143,7 @@ impl Prop {
             Op::Overshoot { amp, freq, decay } => { for i in 1..self.keys.len() { let (va, tb, vb) = (self.keys[i - 1].v, self.keys[i].t, self.keys[i].v); if tt > tb { let dt = tt - tb; v += (vb - va) * amp * (-decay * dt).exp() * (std::f64::consts::TAU * freq * dt).sin(); } } }
             Op::Spring { stiffness, damping, mass, from, to, t0, combine: cm } => { let g = to + (from - to) * spring_response(*stiffness, *damping, *mass, tt - t0); v = combine(v, g, cm, true); }
             Op::NoiseImpulse { seed, freq, amp, decay, octaves, t0, combine: cm } => { let tau = tt - t0; let g = if tau < 0.0 { 0.0 } else { let mut sm = 0.0; for o in 0..(*octaves).clamp(1, 8) { let f = freq * 2f64.powi(o as i32); sm += 0.5f64.powi(o as i32) * noise(seed.wrapping_add(o as u64 * 7919), tau * f); } amp * (-decay * tau).exp() * sm }; v = combine(v, g, cm, false); }
-            Op::Bezier { x1, y1, x2, y2, from, to, t0, duration, combine: cm } => { let u = if *duration > 0.0 { ((tt - t0) / duration).clamp(0.0, 1.0) } else { 1.0 }; let g = if u <= 0.0 { *from } else if u >= 1.0 { *to } else { from + (to - from) * bezier_ease([*x1, *y1, *x2, *y2], u) }; v = combine(v, g, cm, true); }
+            Op::Bezier { x1, y1, x2, y2, from, to, t0, duration, combine: cm, tag } => { let tq = if tag.is_empty() { tt } else { t }; let u = if *duration > 0.0 { ((tq - t0) / duration).clamp(0.0, 1.0) } else { 1.0 }; let g = if u <= 0.0 { *from } else if u >= 1.0 { *to } else { from + (to - from) * bezier_ease([*x1, *y1, *x2, *y2], u) }; v = combine(v, g, cm, true); }
             Op::Clamp { min, max } => v = v.clamp(*min, *max),
             Op::Round { step } => if *step > 0.0 { v = (v / step).round() * step },
             _ => {} } }
@@ -178,3 +182,47 @@ pub fn handle_segment(a: &Key, b: &Key, u: f64) -> f64 {
 }
 /// The `bez` quad equivalent to a handle pair when the segment value change is not zero (round-trip helper; flat segments have no `bez` form).
 pub fn handles_to_bez(a: &Key, b: &Key) -> Option<[f64; 4]> { let (dt, dv) = (b.t - a.t, b.v - a.v); if dt <= 0.0 || dv == 0.0 { return None; } let o = a.out?; let i = b.inn?; Some([o.dt / dt, o.dv / dv, 1.0 - i.dt / dt, 1.0 - i.dv / dv]) }
+
+fn is_zero_shift(v: &f64) -> bool { *v == 0.0 }
+
+impl Prop {
+    /// The same animation started `d` seconds later on its own clock: `p.shifted(d).at(t) == p.at(t + d)` (keys move by -d and keep
+    /// their handles; keys that fall before 0 stay so the segment crossing 0 interpolates exactly; time-anchored ops shift with them).
+    pub fn shifted(&self, d: f64) -> Prop {
+        let mut p = self.clone(); if d == 0.0 { return p; }
+        for k in p.keys.iter_mut() { k.t -= d; }
+        for op in p.expr.iter_mut() { match op {
+            Op::Sin { freq, phase, .. } => { *phase += *freq * d; }
+            Op::Spring { t0, .. } | Op::NoiseImpulse { t0, .. } | Op::Bezier { t0, .. } => { *t0 -= d; }
+            Op::Wiggle { shift, .. } | Op::PosterizeTime { shift, .. } => { *shift += d; }
+            _ => {} } }
+        p
+    }
+}
+
+/// After an edit that moves a clip's head along its content without changing what plays on the timeline (split, hold from here,
+/// roll, slide), the clip's own clock starts `d` seconds later: every clip-local animation (transform and other props, effect
+/// params, speed ramp, mask paths, audio automation, grade nodes, text animators) shifts by -d so it continues where it was.
+/// The source (its internal clock is the in point), the time remap (its `offset` carries the shift) and the source-seconds reframe
+/// keys are left alone.
+pub fn shift_clip_clock(c: &mut crate::model::Clip, d: f64) {
+    if d == 0.0 || !d.is_finite() { return; }
+    fn walk(x: &mut serde_json::Value, d: f64) {
+        use serde_json::Value;
+        if let Value::Object(o) = x { if o.get("base").is_some_and(|b| b.is_number()) && o.get("keys").is_some_and(|k| k.is_array()) {
+            if let Ok(p) = serde_json::from_value::<Prop>(x.clone()) { if let Ok(v) = serde_json::to_value(p.shifted(d)) { *x = v; } } return; } }
+        match x {
+            Value::Object(o) => { for v in o.values_mut() { walk(v, d); } }
+            Value::Array(a) => {
+                let path_keys = !a.is_empty() && a.iter().all(|e| e.get("t").is_some_and(|t| t.is_number()) && e.get("points").is_some_and(|p| p.is_array()));
+                if path_keys { for e in a.iter_mut() { if let Some(t) = e.get("t").and_then(|t| t.as_f64()) { e["t"] = serde_json::json!(t - d); } } }
+                for v in a.iter_mut() { walk(v, d); } }
+            _ => {} }
+    }
+    let Ok(mut v) = serde_json::to_value(&*c) else { return };
+    if let Some(o) = v.as_object_mut() { for (k, x) in o.iter_mut() { match k.as_str() {
+        "source" | "time_remap" | "id" => {}
+        "props" => { if let Some(po) = x.as_object_mut() { for (pk, pv) in po.iter_mut() { if !crate::reframe::source_keyed(pk) { walk(pv, d); } } } }
+        _ => walk(x, d) } } }
+    if let Ok(n) = serde_json::from_value(v) { *c = n; }
+}

@@ -167,7 +167,7 @@ fn recognize(src: &Src, a: &Value, mode: &mut String, lang_seen: &mut Option<Str
 
 fn anim(id: &str, start: f64, end: f64) -> TextAnimator {
     TextAnimator { id: id.into(), unit: "word".into(), shape: "square".into(), start: Prop::new(start), end: Prop::new(end), offset: Prop::new(0.0), smoothness: Prop::new(0.0),
-        x: Prop::new(0.0), y: Prop::new(0.0), scale: Prop::new(1.0), rotation: Prop::new(0.0), opacity: Prop::new(1.0), tracking: Prop::new(0.0), blur: Prop::new(0.0), random: false, seed: 0, fill: None, fill_amount: None, ease: None }
+        x: Prop::new(0.0), y: Prop::new(0.0), scale: Prop::new(1.0), rotation: Prop::new(0.0), opacity: Prop::new(1.0), tracking: Prop::new(0.0), blur: Prop::new(0.0), random: false, seed: 0, fill: None, fill_amount: None, ease: None, wiggly: None }
 }
 /// Per-word motion for one page. `s`/`e`: word start/end in page-local seconds; `kw`: keyword indices; `dur`: page length.
 fn page_animators(l: &Look, active: [f64; 3], kwc: Option<[f64; 3]>, s: &[f64], e: &[f64], kw: &[usize], highlight: bool, dur: f64) -> Vec<TextAnimator> {
@@ -265,7 +265,7 @@ fn build(ss: &mut Session, a: &Value, l: &Look, takes: Vec<(Take, Vec<sw::TimedW
         if !op.keys.is_empty() { props.insert("opacity".into(), op); } if !sc.keys.is_empty() { props.insert("scale".into(), sc); }
         let id = ss.project.gen_id("clip");
         let src = Source::Text { text, font: font.clone(), size, color, letter_spacing: 0.0, stroke_width: (l.stroke * size).round(), stroke_color: BLACK, shadow: if l.shadow > 0.0 { (size * 0.05).round() } else { 0.0 }, align: "center".into() };
-        let c = Clip { id: id.clone(), source: src, start: pg.start, duration: dur, in_point: 0.0, speed: 1.0, speed_curve: None, time_remap: None, props, grade_graph: None, effects: vec![], blend: "normal".into(), mask: None, time_mode: TimeMode::Normal, corners: None, audio: Audio::default(), motion_blur: 0.0, echo: None, motion_path: None, posterize_fps: 0.0, text_fx: Some(fx), parent: None, inherit: Default::default(), name: Some(format!("caption {}", pi + 1)), role: None, tags: vec!["auto_captions".into()], transition_in: None };
+        let c = Clip { id: id.clone(), source: src, start: pg.start, duration: dur, in_point: 0.0, speed: 1.0, speed_curve: None, speed_blend: Default::default(), time_remap: None, props, grade_graph: None, effects: vec![], blend: "normal".into(), mask: None, time_mode: TimeMode::Normal, corners: None, audio: Audio::default(), motion_blur: 0.0, echo: None, motion_path: None, posterize_fps: 0.0, text_fx: Some(fx), parent: None, inherit: Default::default(), name: Some(format!("caption {}", pi + 1)), role: None, tags: vec!["auto_captions".into()], transition_in: None };
         ss.project.tracks.last_mut().unwrap().clips.push(std::sync::Arc::new(c));
         ss.project.editorial.cue_words.insert(id.clone(), CueBinding { word_ids: idx.iter().map(|&i| tr.words[i].id.clone()).collect(), breaks_after: pg.breaks_after.clone() });
         clip_ids.push(id); prev_end = pg.end;

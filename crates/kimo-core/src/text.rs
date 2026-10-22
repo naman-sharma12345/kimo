@@ -67,14 +67,24 @@ fn shape_amount(shape: &str, x: f32, smooth: f32) -> f32 {
         "triangle" => if (0.0..=1.0).contains(&x) { 1.0 - (2.0 * x - 1.0).abs() } else { 0.0 }, "round" => if (0.0..=1.0).contains(&x) { (1.0 - (2.0 * x - 1.0).powi(2)).max(0.0).sqrt() } else { 0.0 },
         "smooth" => if (0.0..=1.0).contains(&x) { let t = 1.0 - (2.0 * x - 1.0).abs(); t * t * (3.0 - 2.0 * t) } else { 0.0 }, _ => soft(x) }
 }
+/// Wiggly Selector value for unit `unit` at clip time `t`: smooth value noise (smoothstep between hashed knots, one knot per 1/freq s) mixed with
+/// a shared stream by `correlation`, mapped from -1..1 onto min..max. Knots sit in -1..1, so the value never leaves min..max.
+fn wiggle(w: &crate::model::Wiggly, unit: usize, t: f64) -> f32 {
+    let knot = |stream: u64, k: i64| -> f64 { let mut x = (k as u64).wrapping_mul(0x9E3779B97F4A7C15) ^ stream.wrapping_mul(0xD6E8FEB86659FD93) ^ w.seed.wrapping_mul(0xBF58476D1CE4E5B9).wrapping_add(0x632BE59BD9B4E019);
+        x ^= x >> 30; x = x.wrapping_mul(0xBF58476D1CE4E5B9); x ^= x >> 27; x = x.wrapping_mul(0x94D049BB133111EB); x ^= x >> 31; (x >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0 };
+    let noise = |stream: u64| -> f64 { let x = t * w.freq.max(0.0) + (stream as f64) * 0.618_034; let k = x.floor(); let f = x - k; let s = f * f * (3.0 - 2.0 * f); let (a, b) = (knot(stream, k as i64), knot(stream, k as i64 + 1)); a + (b - a) * s };
+    let c = w.correlation.clamp(0.0, 1.0); let v = (noise(0) * c + noise(unit as u64 + 1) * (1.0 - c)).clamp(-1.0, 1.0);
+    let (lo, hi) = (w.min.at(t), w.max.at(t)); (lo + (hi - lo) * (v + 1.0) * 0.5) as f32
+}
 #[derive(Clone, Copy)]
 /// fs / ft: Fill Color animators composed as an affine pair, unit colour = base * fs + ft (identity 1 / 0 when no animator fills).
 struct U { x: f32, y: f32, sc: f32, rot: f32, op: f32, track: f32, blur: f32, fs: f32, ft: [f32; 3] }
 fn animate(an: &[TextAnimator], t: f64, g: &G, nchar: usize, nword: usize, nline: usize, ci: usize) -> U {
     let mut u = U { x: 0.0, y: 0.0, sc: 1.0, rot: 0.0, op: 1.0, track: 0.0, blur: 0.0, fs: 1.0, ft: [0.0; 3] };
-    for a in an { let (n, i) = match a.unit.as_str() { "word" => (nword, g.word), "line" => (nline, g.line), _ => (nchar, ci) }; let i = if a.random { let hh = |k: usize| { let mut x = (k as u64).wrapping_add(a.seed.wrapping_mul(0x9E3779B97F4A7C15)).wrapping_mul(0xBF58476D1CE4E5B9); x ^= x >> 29; x = x.wrapping_mul(0x94D049BB133111EB); x ^ (x >> 32) }; let hi = hh(i); (0..n).filter(|&k| { let h = hh(k); h < hi || (h == hi && k < i) }).count() } else { i }; let pos = (i as f32 + 0.5) / n.max(1) as f32;
+    for a in an { let (n, i) = match a.unit.as_str() { "word" => (nword, g.word), "line" => (nline, g.line), _ => (nchar, ci) }; let unit = i; let i = if a.random { let hh = |k: usize| { let mut x = (k as u64).wrapping_add(a.seed.wrapping_mul(0x9E3779B97F4A7C15)).wrapping_mul(0xBF58476D1CE4E5B9); x ^= x >> 29; x = x.wrapping_mul(0x94D049BB133111EB); x ^ (x >> 32) }; let hi = hh(i); (0..n).filter(|&k| { let h = hh(k); h < hi || (h == hi && k < i) }).count() } else { i }; let pos = (i as f32 + 0.5) / n.max(1) as f32;
         let (s0, e0, off, sm) = (a.start.at(t) as f32, a.end.at(t) as f32, a.offset.at(t) as f32, a.smoothness.at(t) as f32); let (s, e) = (s0 + off, e0 + off); let x = (pos - s) / (e - s).max(1e-4); let mut k = shape_amount(&a.shape, x, sm); if let Some(e) = a.ease { k = e.apply(k as f64) as f32; }
         if k <= 0.0 { continue; }
+        if let Some(wg) = &a.wiggly { k *= wiggle(wg, unit, t); if k == 0.0 { continue; } }
         if let Some(fc) = a.fill { let m = (k * a.fill_amount.as_ref().map_or(1.0, |p| p.at(t)) as f32).clamp(0.0, 1.0); u.fs *= 1.0 - m; for j in 0..3 { u.ft[j] = u.ft[j] * (1.0 - m) + fc[j] as f32 * m; } } u.x += a.x.at(t) as f32 * k; u.y += a.y.at(t) as f32 * k; u.sc *= 1.0 + (a.scale.at(t) as f32 - 1.0) * k; u.rot += a.rotation.at(t) as f32 * k; u.op *= 1.0 + (a.opacity.at(t) as f32 - 1.0) * k; u.track += a.tracking.at(t) as f32 * k; u.blur += a.blur.at(t) as f32 * k; }
     u
 }
