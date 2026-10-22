@@ -23,7 +23,7 @@ fn upsert(ss: &mut Session, cid: &str, kind: &str, params: Vec<(&str, f64)>, str
 }
 fn remove(ss: &mut Session, cid: &str, kind: &str) -> Result<Value, String> { let c = ss.project.find_clip_mut(cid).ok_or_else(|| format!("no such clip {cid}"))?; let n = c.effects.len(); c.effects.retain(|e| e.kind != kind); Ok(json!({"removed": n - c.effects.len()})) }
 
-const DM: &[&str] = &["clip_id", "map_clip_id", "max_horizontal", "max_vertical", "horizontal_channel", "vertical_channel", "edges", "hide_map", "remove"];
+const DM: &[&str] = &["clip_id", "map_clip_id", "max_horizontal", "max_vertical", "horizontal_channel", "vertical_channel", "edges", "map_space", "hide_map", "remove"];
 const SM: &[&str] = &["clip_id", "matte_clip_id", "channel", "invert", "hide_matte", "remove"];
 
 pub fn commands() -> Vec<Command> { vec![
@@ -33,16 +33,17 @@ pub fn commands() -> Vec<Command> { vec![
             ("horizontal_channel", json!({"type":"string","enum":["red","green","blue","alpha","luma","hue","saturation","lightness","off"],"description":"default red"})),
             ("vertical_channel", json!({"type":"string","enum":["red","green","blue","alpha","luma","hue","saturation","lightness","off"],"description":"default green"})),
             ("edges", json!({"type":"string","enum":crate::layerfx::EDGES,"description":"pixels pulled from outside the frame: clamp (default), wrap or transparent"})),
+            ("map_space", json!({"type":"string","enum":crate::layerfx::MAP_SPACES,"description":"screen (default): the map is read where the clip lands, after its scale/move/rotation; clip: in the clip's own frame"})),
             ("hide_map", json!({"type":"boolean","description":"hide the map clip from the composite, default true"})),
             ("remove", json!({"type":"boolean","description":"true removes the clip's displacement map"}))], &["clip_id"]),
         run: |ss, a| { check_args(a, "add_displacement_map", DM)?; let cid = str_arg(a, "clip_id")?.to_string(); ss.project.find_clip(&cid).ok_or_else(|| format!("no such clip {cid}"))?;
             if flag(a, "remove", false)? { return remove(ss, &cid, "displacement_map"); }
             let map = source(ss, a, "map_clip_id", &cid)?; let mut chans: Vec<&str> = crate::layerfx::CHANNELS.to_vec(); chans.push("off");
-            let (hc, vc, edges) = (word(a, "horizontal_channel", "red", &chans)?, word(a, "vertical_channel", "green", &chans)?, word(a, "edges", "clamp", crate::layerfx::EDGES)?);
+            let (hc, vc, edges) = (word(a, "horizontal_channel", "red", &chans)?, word(a, "vertical_channel", "green", &chans)?, word(a, "edges", "clamp", crate::layerfx::EDGES)?); let space = word(a, "map_space", "screen", crate::layerfx::MAP_SPACES)?;
             let px = |k: &str| -> Result<f64, String> { match a.get(k) { None => Ok(20.0), Some(v) => { let x = v.as_f64().filter(|x| x.is_finite()).ok_or_else(|| format!("{k} must be a number of px"))?; if x.abs() > 2000.0 { Err(format!("{k} must be within -2000..2000 px, got {x}")) } else { Ok(x) } } } };
             let (mh, mv) = (px("max_horizontal")?, px("max_vertical")?); let hide = flag(a, "hide_map", true)?;
-            let (id, new) = upsert(ss, &cid, "displacement_map", vec![("max_h", mh), ("max_v", mv)], vec![("map_clip", map.clone()), ("h_channel", hc), ("v_channel", vc), ("edges", edges), ("hide", if hide { "1" } else { "0" }.into())])?;
-            Ok(json!({"effect_id": id, "created": new, "map_clip_id": map, "hidden": hide})) } },
+            let (id, new) = upsert(ss, &cid, "displacement_map", vec![("max_h", mh), ("max_v", mv)], vec![("map_clip", map.clone()), ("h_channel", hc), ("v_channel", vc), ("edges", edges), ("map_space", space.clone()), ("hide", if hide { "1" } else { "0" }.into())])?;
+            Ok(json!({"effect_id": id, "created": new, "map_clip_id": map, "map_space": space, "hidden": hide})) } },
     Command { name: "set_matte", description: "Set Matte: a clip's alpha from another clip's channel (alpha, luma, red, green, blue, hue, saturation, lightness), optional invert.", mutates: true,
         schema: obj(vec![("clip_id", s("the clip to matte")), ("matte_clip_id", s("the clip whose channel becomes the matte (rendered alone at the same time)")),
             ("channel", json!({"type":"string","enum":crate::layerfx::CHANNELS,"description":"default alpha"})),

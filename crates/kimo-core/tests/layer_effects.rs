@@ -56,6 +56,37 @@ fn a_map_clip_shifts_pixels_by_its_channel_values() {
     let f = frame(&s, 0.5); for x in [10, 80, 150] { near(col(&f, x), x as f32, "a 0.5 grey map is neutral"); }
 }
 
+/// The map is read where the clip lands on screen: a map clip covering the left half of the canvas warps exactly the part of a
+/// scaled, moved or rotated clip that is drawn over that half, by max px on screen (KP4: before, the map was read in the clip's
+/// own frame before its transform, so it landed somewhere else on a scaled clip and scaled with it). map_space "clip" keeps that.
+#[test]
+fn the_map_lines_up_with_a_scaled_moved_or_rotated_clip() {
+    let half = |s: &mut Session, t2: &str| { let pm = png("half", |x, _| if x < W / 2 { [255, 128, 128] } else { [128, 128, 128] }); let am = id(&c(s, "import_media", json!({"path": pm})), "asset_id");
+        id(&c(s, "add_clip", json!({"track_id": t2, "source_type": "media", "asset_id": am, "start": 0, "duration": 2.0})), "clip_id") };
+    // scale 0.5 about the centre: canvas column X shows the clip's column 2X - 80
+    let (mut s, a, t2) = scene(); let m = half(&mut s, &t2);
+    c(&mut s, "set_property", json!({"clip_id": a, "property": "scale", "value": 0.5}));
+    c(&mut s, "add_displacement_map", json!({"clip_id": a, "map_clip_id": m, "max_horizontal": 20}));
+    let f = frame(&s, 0.5);
+    near(col(&f, 60), 80.0, "scaled 0.5: canvas x 60 is under the map's left half, 20 screen px = 40 clip px, so it shows clip column 40 + 40");
+    near(col(&f, 100), 120.0, "scaled 0.5: canvas x 100 is under the neutral half: clip column 120 unshifted");
+    c(&mut s, "add_displacement_map", json!({"clip_id": a, "map_clip_id": m, "max_horizontal": 20, "map_space": "clip"}));
+    let f = frame(&s, 0.5); near(col(&f, 60), 60.0, "map_space clip: the map rides in the clip's own frame (clip column 40 + 20)");
+    // moved 60 px right: canvas x 100 shows clip column 40, and the map there is neutral
+    let (mut s, a, t2) = scene(); let m = half(&mut s, &t2);
+    c(&mut s, "set_property", json!({"clip_id": a, "property": "x", "value": 60.0}));
+    c(&mut s, "add_displacement_map", json!({"clip_id": a, "map_clip_id": m, "max_horizontal": 20}));
+    let f = frame(&s, 0.5); near(col(&f, 100), 40.0, "moved +60: canvas x 100 (clip column 40) is under the neutral half");
+    near(col(&f, 70), 30.0, "moved +60: canvas x 70 (clip column 10) is under the left half: +20 px");
+    // rotated 180: canvas x 40 shows clip column 120; a +20 px screen shift is -20 px in the clip's own frame
+    let (mut s, a, t2) = scene(); let m = half(&mut s, &t2);
+    c(&mut s, "set_property", json!({"clip_id": a, "property": "rotation", "value": 180.0}));
+    c(&mut s, "add_displacement_map", json!({"clip_id": a, "map_clip_id": m, "max_horizontal": 20}));
+    let f = frame(&s, 0.5); near(col(&f, 40), 100.0, "rotated 180: canvas x 40 pulls from 20 px to its right on screen = clip column 120 - 20");
+    near(col(&f, 120), 40.0, "rotated 180: canvas x 120 (clip column 40) is under the neutral half");
+    assert!(dispatch(&mut s, "add_displacement_map", &json!({"clip_id": a, "map_clip_id": m, "map_space": "world"})).unwrap_err().contains("must be one of"));
+}
+
 #[test]
 fn set_matte_takes_the_alpha_from_another_clips_channel() {
     let (mut s, a, t2) = scene();

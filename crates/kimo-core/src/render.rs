@@ -990,6 +990,12 @@ fn keyer_aux(p: &Project, c: &Clip, e: &crate::model::Effect, before: &Frame, lt
         Ok(Some(crate::masks::layer_coverage(l, before, lt, ctx))) };
     Ok(crate::keying::KeyerAuxOwned { clean_plate, garbage: layer("garbage_mask", e.strings.get("garbage_mask"))?, core: layer("core_mask", e.strings.get("core_mask"))? })
 }
+/// Where clip `c` lands on the canvas at `lt` (its composed x/y/scale/rotation plus its motion path), for effects that read
+/// another clip in screen space (layerfx.rs Displacement Map). Transition offsets are not included.
+fn layer_place(p: &Project, c: &Clip, lt: f64, w: usize, h: usize) -> crate::layerfx::Place {
+    let (mx, my, ma) = match &c.motion_path { Some(mp) => { let (x, y, a) = crate::motion::sample(mp, prop(c, "path", lt), w, h); (x, y, if mp.auto_orient { a + mp.orient_offset } else { 0.0 }) } None => (0.0, 0.0, 0.0) };
+    crate::layerfx::Place { scale: xprop(p, c, "scale", lt), rot_deg: xprop(p, c, "rotation", lt) + ma, dx: xprop(p, c, "x", lt) + mx, dy: xprop(p, c, "y", lt) + my }
+}
 fn apply_effects_masked(p: &Project, c: &Clip, f: &mut Frame, lt: f64, seed: u64, t: f64, cache: &Cache) -> Result<(), String> {
     let special = |e: &crate::model::Effect| e.strings.contains_key("mask_layer") || keyer_aux_fx(e) || crate::layerfx::source_key(&e.kind).is_some();
     if !c.effects.iter().any(special) { apply_effects_local(&c.effects, f, lt, seed)?;if let Some(g)=&c.grade_graph{g.apply(f,lt,seed,p.fps)?;}p.grade_scopes.apply_clip(p,&c.id,f,lt,seed)?;return Ok(()); }
@@ -1002,7 +1008,7 @@ fn apply_effects_masked(p: &Project, c: &Clip, f: &mut Frame, lt: f64, seed: u64
             if keyer_aux_fx(e) { if e.strings.contains_key("ocio_domain") || e.strings.contains_key("wrapper_working_gamut") { return Err("keyer: a clean plate or garbage/core matte cannot be combined with a colour-domain wrapper (ocio_domain / wrapper_working_gamut)".into()); }
                 // the keyer's per-pixel inputs go straight to keying::apply_keyer (effects::apply carries params and strings only)
                 let aux = keyer_aux(p, c, e, &before, lt, t, cache, &ctx)?; crate::keying::apply_keyer(&e.params, f, lt, &aux.view())?; }
-            else if let Some(k) = crate::layerfx::source_key(&e.kind) { if let Some(src) = e.strings.get(k).and_then(|id| render_clip_alone(p, id, t, cache)) { crate::layerfx::apply(e, f, &src, lt); } } // displacement_map / set_matte: the driving clip rendered alone
+            else if let Some(k) = crate::layerfx::source_key(&e.kind) { if let Some(src) = e.strings.get(k).and_then(|id| render_clip_alone(p, id, t, cache)) { let place = (e.kind == "displacement_map").then(|| layer_place(p, c, lt, f.w, f.h)); crate::layerfx::apply(e, f, &src, lt, place); } } // displacement_map / set_matte: the driving clip rendered alone; the map is read where the clip lands (layer_place)
             else { apply_effects_local(std::slice::from_ref(e), f, lt, seed)?; }
             if let Some(l) = e.strings.get("mask_layer").and_then(|mid| c.mask.as_ref().and_then(|m| m.layers.iter().find(|l| &l.id == mid))) {
                 let cov = crate::masks::layer_coverage(l, &before, lt, &ctx);
