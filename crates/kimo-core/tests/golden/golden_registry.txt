@@ -65,6 +65,7 @@ camera_solve_info 68eba83a999378cc
 cancel_job 71597b2319b6d6cf
 caption_from_words 4cd651d6dbd1204e
 check_code_clip_determinism c8a2418c67534879
+check_environment 9d09b0da6a1d5b9c
 checkpoint 4063b9f4243b3a4e
 checkpoint_delete 22a3aee8d04e2bd6
 clear_path_keys f99ff5da3693043a

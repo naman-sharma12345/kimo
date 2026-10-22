@@ -82,3 +82,36 @@ fn apply_fix(ss: &mut Session, f: &Value) { let fx = &f["fix"]; call(ss, fx["too
     let want = (2.0 * base).powf(0.5); let got = f.d[0] as f64;
     assert!((got - want).abs() < 1e-4, "documented order: base {base}, want {want}, got {got} (gamma-first would give {})", 2.0 * base.powf(0.5));
 }
+
+/// The demo machine (Oct 26): kimo silently fell back to a light sans when the title fonts were missing, and captions need a
+/// whisper binary and model on disk. check_environment reports each piece with the exact command that fixes it, and downloads nothing.
+#[test] fn check_environment_reports_whisper_fonts_and_ffmpeg_with_fixes() {
+    let d = dir().join("env"); let fonts = d.join("fonts"); let models = d.join("models"); std::fs::create_dir_all(&fonts).unwrap(); std::fs::create_dir_all(models.join("bin")).unwrap();
+    let set = |k: &str, v: &std::path::Path| std::env::set_var(k, v);
+    // nothing installed: no whisper binary or model, no preset fonts
+    set("KIMO_FONTS", &fonts); set("KIMO_MODELS", &models); set("KIMO_WHISPER_BIN", &d.join("no_such_whisper_cli")); set("KIMO_WHISPER_MODEL", &d.join("no_such_model.bin"));
+    let old_path = std::env::var_os("PATH"); std::env::set_var("PATH", format!("{}:/usr/bin:/bin", d.join("nopath").display()));
+    let mut ss = Session::new(); let r = call(&mut ss, "check_environment", json!({}));
+    assert_eq!(r["ffmpeg"]["available"], true, "{r}"); assert!(!r["ffmpeg"]["version"].as_str().unwrap_or("").is_empty(), "{r}");
+    assert_eq!(r["ffmpeg"]["libx264"], true, "export needs libx264: {r}");
+    assert_eq!(r["whisper"]["binary"]["present"], false, "{r}"); assert_eq!(r["whisper"]["model"]["present"], false, "{r}"); assert_eq!(r["whisper"]["ready"], false);
+    assert_eq!(r["ok"], false);
+    let fixes: Vec<String> = r["fixes"].as_array().unwrap().iter().map(|f| f.as_str().unwrap().to_string()).collect();
+    assert!(fixes.iter().any(|f| f.contains("tools/whisper/fetch.sh")), "a missing whisper must name its fix: {fixes:?}");
+    let fonts_state = r["fonts"]["presets"].as_array().unwrap();
+    for f in ["Anton", "BebasNeue", "Montserrat"] { let e = fonts_state.iter().find(|x| x["font"] == f).unwrap_or_else(|| panic!("{f} not checked: {r}"));
+        if e["found"] == false { assert!(fixes.iter().any(|x| x.contains("fonts/fetch.sh") && x.contains("KIMO_FONTS")), "missing fonts must name the fix: {fixes:?}"); } }
+    // everything present
+    let bin = models.join("bin/whisper-cli"); std::fs::write(&bin, "#!/bin/sh\nexit 0\n").unwrap();
+    { use std::os::unix::fs::PermissionsExt; std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap(); }
+    std::fs::write(models.join("ggml-small-q5_1.bin"), vec![7u8; 4096]).unwrap();
+    let dejavu = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+    for f in ["Anton-Regular", "BebasNeue-Regular", "CormorantGaramond-Var", "Montserrat-Var", "Syne-Var"] { std::fs::copy(dejavu, fonts.join(format!("{f}.ttf"))).unwrap(); }
+    std::env::remove_var("KIMO_WHISPER_BIN"); std::env::remove_var("KIMO_WHISPER_MODEL");
+    let r = call(&mut ss, "check_environment", json!({}));
+    assert_eq!(r["whisper"]["binary"]["present"], true, "{r}"); assert_eq!(r["whisper"]["model"]["present"], true, "{r}");
+    assert!(r["whisper"]["model"]["path"].as_str().unwrap().ends_with("ggml-small-q5_1.bin"), "{r}"); assert_eq!(r["whisper"]["ready"], true);
+    assert!(r["fonts"]["presets"].as_array().unwrap().iter().all(|x| x["found"] == true), "{r}"); assert_eq!(r["fonts"]["ready"], true);
+    assert_eq!(r["ok"], true, "{r}"); assert!(r["fixes"].as_array().unwrap().is_empty(), "{r}");
+    for k in ["KIMO_FONTS", "KIMO_MODELS"] { std::env::remove_var(k); } if let Some(p) = old_path { std::env::set_var("PATH", p); }
+}

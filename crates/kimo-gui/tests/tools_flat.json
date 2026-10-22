@@ -66,6 +66,7 @@
 "cancel_job",
 "caption_from_words",
 "check_code_clip_determinism",
+"check_environment",
 "checkpoint",
 "checkpoint_delete",
 "clear_path_keys",

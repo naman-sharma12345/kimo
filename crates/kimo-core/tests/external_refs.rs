@@ -164,6 +164,7 @@ fn open_sites_are_classified() {
         ("editorial.rs", 1, "caller path (tool argument / output / temp file / test), not stored in the project"),
         ("ext/cdl_files.rs", 1, "caller path (tool argument / output / temp file / test), not stored in the project"),
         ("ext/delivery.rs", 5, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),
+        ("ext/check_environment.rs", 1, "no project path: the size of the whisper binary / model files check_environment reports (KIMO_WHISPER_BIN, KIMO_WHISPER_MODEL or the models dir); nothing is stored in the project"),
         ("ext/director_tools.rs", 4, "2 PROJECT-DERIVED (asset paths: the shot look of auto_rough_cut, the frame auto_grade measures), resolved through deps::resolve_str at the call site; 2 caller path (review_export's path argument: frame sheet and loudness), not stored in the project"),
         ("ext/editorial_tools.rs", 3, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),
         ("ext/export_job.rs", 9, "caller path under the job directory or fixed OS probes, nothing stored in the project: 2 fsync opens (sync_dir, sync_file of files this module just wrote), 2 /proc reads for the job.lock owner check (hostname, pid start ticks), 1 read_json of index.json / manifest.json / job.lock in the job dir, 2 metadata calls on chunk files (reuse_check size verify, index entry bytes), 2 ffmpeg -i inputs of the join (concat list + optional audio wav, both inside the job dir)"),

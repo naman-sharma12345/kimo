@@ -88,6 +88,10 @@ Run through this before every export. Each item is a mistake a dry-run agent mad
    refuses, use the target it names or the compressor call it gives.
 6. **Frames were looked at.** `contact_sheet` across the cut points, after the last change.
 
+**Demo machine.** `kimo call check_environment` (or the `check_environment` tool) reports the whisper-cli binary and
+model, the title fonts and ffmpeg with libx264, `ok: true` when all are there, and the exact command for each gap in
+`fixes`. It downloads nothing.
+
 **Fonts.** The title presets use OFL Google Fonts (Anton, Bebas Neue, Montserrat, Cormorant Garamond, Playfair Display,
 Syne). The repo does not ship the .ttf files: run `bash fonts/fetch.sh` once. kimo finds `fonts/` when the build target is
 inside the repo; with the target elsewhere, set `KIMO_FONTS=<repo>/fonts` in the MCP server's env.
