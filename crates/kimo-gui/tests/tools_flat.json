@@ -312,6 +312,7 @@
 "sample_sdf_raw",
 "sample_texture_material",
 "save_project",
+"scene_split",
 "search_tools",
 "session_stats",
 "set_3d_compositor",
