@@ -42,6 +42,7 @@ pub mod subject_match;
 pub mod neutral;
 pub mod adaptation;
 pub mod gamut_ray;
+pub mod auto_balance;
 pub mod ocio;
 
 type C = (&'static str, f64, &'static str);
