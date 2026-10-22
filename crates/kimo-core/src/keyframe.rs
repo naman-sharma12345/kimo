@@ -95,7 +95,10 @@ pub enum Op {
     /// amp * exp(-decay * (t - t0)) * fractal noise(freq * (t - t0)); deterministic in (seed, t). Zero before t0. combine: add (default) | set | mul.
     NoiseImpulse { seed: u64, freq: f64, amp: f64, decay: f64, #[serde(default = "d_oct")] octaves: u32, #[serde(default)] t0: f64, #[serde(default)] combine: String },
     /// from + (to - from) * cubic_bezier(x1,y1,x2,y2)((t - t0) / duration), x clamped to [0,1] like CSS. combine: set (default) | add | mul.
-    Bezier { x1: f64, y1: f64, x2: f64, y2: f64, from: f64, to: f64, #[serde(default)] t0: f64, duration: f64, #[serde(default)] combine: String },
+    Bezier { x1: f64, y1: f64, x2: f64, y2: f64, from: f64, to: f64, #[serde(default)] t0: f64, duration: f64, #[serde(default)] combine: String,
+        /// Set by a tool that layers its own op on top of the property (add_punch_ins: "punch"); the tool finds and replaces its ops by
+        /// this tag, and a tagged op runs on the clip's own time (the property's posterize / loop time ops do not move it).
+        #[serde(default, skip_serializing_if = "String::is_empty")] tag: String },
 }
 /// Normalised spring response e(tau) for m x'' + c x' + k x = 0 with x(0)=1, x'(0)=0: x(t) = to + (from - to) * e(t - t0). Underdamped, critically damped and overdamped closed forms.
 pub fn spring_response(stiffness: f64, damping: f64, mass: f64, tau: f64) -> f64 {
@@ -140,7 +143,7 @@ impl Prop {
             Op::Overshoot { amp, freq, decay } => { for i in 1..self.keys.len() { let (va, tb, vb) = (self.keys[i - 1].v, self.keys[i].t, self.keys[i].v); if tt > tb { let dt = tt - tb; v += (vb - va) * amp * (-decay * dt).exp() * (std::f64::consts::TAU * freq * dt).sin(); } } }
             Op::Spring { stiffness, damping, mass, from, to, t0, combine: cm } => { let g = to + (from - to) * spring_response(*stiffness, *damping, *mass, tt - t0); v = combine(v, g, cm, true); }
             Op::NoiseImpulse { seed, freq, amp, decay, octaves, t0, combine: cm } => { let tau = tt - t0; let g = if tau < 0.0 { 0.0 } else { let mut sm = 0.0; for o in 0..(*octaves).clamp(1, 8) { let f = freq * 2f64.powi(o as i32); sm += 0.5f64.powi(o as i32) * noise(seed.wrapping_add(o as u64 * 7919), tau * f); } amp * (-decay * tau).exp() * sm }; v = combine(v, g, cm, false); }
-            Op::Bezier { x1, y1, x2, y2, from, to, t0, duration, combine: cm } => { let u = if *duration > 0.0 { ((tt - t0) / duration).clamp(0.0, 1.0) } else { 1.0 }; let g = if u <= 0.0 { *from } else if u >= 1.0 { *to } else { from + (to - from) * bezier_ease([*x1, *y1, *x2, *y2], u) }; v = combine(v, g, cm, true); }
+            Op::Bezier { x1, y1, x2, y2, from, to, t0, duration, combine: cm, tag } => { let tq = if tag.is_empty() { tt } else { t }; let u = if *duration > 0.0 { ((tq - t0) / duration).clamp(0.0, 1.0) } else { 1.0 }; let g = if u <= 0.0 { *from } else if u >= 1.0 { *to } else { from + (to - from) * bezier_ease([*x1, *y1, *x2, *y2], u) }; v = combine(v, g, cm, true); }
             Op::Clamp { min, max } => v = v.clamp(*min, *max),
             Op::Round { step } => if *step > 0.0 { v = (v / step).round() * step },
             _ => {} } }

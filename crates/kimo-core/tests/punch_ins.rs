@@ -63,10 +63,39 @@ fn ease_turns_the_punch_into_a_quick_push_in() {
     near(col(&frame(&s, 2.5), 40, 45), 40.0, "the next clip is wide again");
 }
 
+/// A clip whose scale / x / y are already animated is punched on top of its own animation: the punch multiplies its scale and
+/// zooms its position about the focus, the animation keeps playing underneath, a repeat call does not stack, and remove gives
+/// the animation back untouched (KP5; before, such a clip was refused).
+#[test]
+fn a_punch_composes_with_the_clips_own_animation() {
+    let (mut s, t, cl) = scene();
+    // clip 2 drifts right: x 0 -> 20 px over its second; its picture at local time u is the ramp moved by 20u
+    c(&mut s, "set_keyframe", json!({"clip_id": cl[1], "property": "x", "time": 0.0, "value": 0.0})); c(&mut s, "set_keyframe", json!({"clip_id": cl[1], "property": "x", "time": 1.0, "value": 20.0}));
+    c(&mut s, "set_keyframe", json!({"clip_id": cl[1], "property": "scale", "time": 0.0, "value": 1.0})); c(&mut s, "set_keyframe", json!({"clip_id": cl[1], "property": "scale", "time": 1.0, "value": 1.2}));
+    let own = serde_json::to_string(&s.project.find_clip(&cl[1]).unwrap().props).unwrap();
+    // without a punch, canvas column X at local time u shows source column 80 + (X - 80 - x(u)) / scale(u)
+    let shown = |x: f32, xo: f32, sc: f32| 80.0 + (x - 80.0 - xo) / sc;
+    let before = col(&frame(&s, 1.5), 40, 45); near(before, shown(40.0, 10.0, 1.1), "the clip's own animation at 1.5 s");
+    let r = c(&mut s, "add_punch_ins", json!({"track_id": t, "scale": 1.25, "focus": [0.25, 0.5]}));
+    assert_eq!(r["punched"], 1, "{r}");
+    // punched by k about focus F on top: the picture P(u) is mapped to F + k (P(u) - F); canvas X shows what P(u) shows at F + (X - F) / k
+    let pz = |x: f32| 40.0 + (x - 40.0) / 1.25;
+    for (tm, xo, sc) in [(1.1, 2.0, 1.02), (1.5, 10.0, 1.1), (1.9, 18.0, 1.18)] {
+        let f = frame(&s, tm); for x in [20.0, 100.0, 150.0] { near(col(&f, x as usize, 45), shown(pz(x), xo, sc), &format!("punched on top of the animation at {tm} s, canvas x {x}")); } }
+    near(col(&frame(&s, 1.5), 40, 45), before, "the focus column shows what it showed before the punch");
+    let once = serde_json::to_string(&s.project).unwrap(); c(&mut s, "add_punch_ins", json!({"track_id": t, "scale": 1.25, "focus": [0.25, 0.5]}));
+    assert_eq!(serde_json::to_string(&s.project).unwrap(), once, "a repeated call does not stack the punch");
+    c(&mut s, "add_punch_ins", json!({"track_id": t, "scale": 1.25, "ease": 0.4}));
+    near(col(&frame(&s, 1.0), 40, 45), shown(40.0, 0.0, 1.0), "ease on an animated clip: at the cut it starts wide");
+    near(col(&frame(&s, 1.6), 40, 45), shown(80.0 + (40.0 - 80.0) / 1.25, 12.0, 1.12), "ease on an animated clip: after the ease the punch holds on top of the animation");
+    c(&mut s, "add_punch_ins", json!({"track_id": t, "remove": true}));
+    assert_eq!(serde_json::to_string(&s.project.find_clip(&cl[1]).unwrap().props).unwrap(), own, "remove gives back the clip's own animation exactly");
+    near(col(&frame(&s, 1.5), 40, 45), before, "and its picture");
+}
+
 #[test]
 fn bad_input_is_refused_without_changing_the_project() {
     let (mut s, t, cl) = scene();
-    c(&mut s, "set_keyframe", json!({"clip_id": cl[1], "property": "scale", "time": 0.3, "value": 1.2})); c(&mut s, "set_keyframe", json!({"clip_id": cl[1], "property": "scale", "time": 0.8, "value": 1.4}));
     let before = pj(&s);
     for (args, want) in [
         (json!({}), "track_id"),
@@ -79,6 +108,5 @@ fn bad_input_is_refused_without_changing_the_project() {
         (json!({"clip_ids": [cl[0]], "focus": [1.5, 0.5]}), "focus"),
         (json!({"clip_ids": [cl[0]], "pattern": "random"}), "must be one of"),
         (json!({"clip_ids": [cl[0]], "zoom": 2}), "unknown argument"),
-        (json!({"track_id": t}), "animated"),
     ] { let e = dispatch(&mut s, "add_punch_ins", &args).expect_err(&format!("{args} must be refused")); assert!(e.contains(want), "{args}: {e}"); assert_eq!(pj(&s), before, "{args} changed the project"); }
 }
