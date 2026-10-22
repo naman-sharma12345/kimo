@@ -226,7 +226,64 @@ pub fn commands() -> Vec<Command> { let mut commands = vec![
         run: |ss, a| {if ss.project.color_pipeline.enabled{return Err("legacy color match requires display-referred project".into())}let strength=on(a,"strength",1.);if !strength.is_finite()||!(0. ..=1.).contains(&strength){return Err("strength0..1 required".into())}let (id, rid) = (sa(a, "clip_id")?, sa(a, "ref_clip_id")?); let fs = clip_frame(&ss.project, id, na(a, "time")?)?; let fr = clip_frame(&ss.project, rid, na(a, "ref_time")?)?; let (sm, sd) = stats(&fs, None)?; let (tm, td) = stats(&fr, None)?;
             let v: Vec<(&str, f64)> = vec![("sr_mean", sm[0] as f64), ("sg_mean", sm[1] as f64), ("sb_mean", sm[2] as f64), ("sr_std", sd[0] as f64), ("sg_std", sd[1] as f64), ("sb_std", sd[2] as f64), ("tr_mean", tm[0] as f64), ("tg_mean", tm[1] as f64), ("tb_mean", tm[2] as f64), ("tr_std", td[0] as f64), ("tg_std", td[1] as f64), ("tb_std", td[2] as f64), ("strength", strength)];
             let fx = add_fx(&mut ss.project, id, "color_transfer", &v)?; Ok(json!({"effect_id": fx, "src_mean": sm, "ref_mean": tm})) } },
+    Command { name: "match_shots", description: "Shot Match a timeline to one hero clip: its neutral cast and tone levels onto every clip (editable primaries), or full Lab (mode lab)", mutates: true,
+        schema: obj(vec![("hero_clip_id",s("the clip every other clip should look like")),("clip_ids",json!({"type":"array","items":{"type":"string"},"description":"clips to match; default every other video clip, timeline order"})),("mode",json!({"type":"string","enum":["balance","lab"],"description":"balance (default): neutral cast + luma 2/50/98% levels; lab: full Lab transport like match_grade"})),("strength",n("0..1 default 1")),("hero_time",n("optional timeline seconds inside the hero; default 5 frames across it"))], &["hero_clip_id"]),
+        run: |ss, a| match_shots(ss, a) },
 ]; commands.extend(crate::color::hdr_validation::commands()); commands }
+
+/// Rec.709 luma percentiles (2, 50, 98 %) of the opaque pixels of `frames`, each channel scaled by `k` first.
+fn luma_levels(frames: &[Frame], k: [f64; 3]) -> Result<[f64; 3], String> {
+    let mut y: Vec<f32> = Vec::new(); for f in frames { for p in f.d.chunks_exact(4) { if !(p[3] > 0.5) || p[..3].iter().any(|v| !v.is_finite()) { continue; } y.push((0.2126 * k[0] * p[0] as f64 + 0.7152 * k[1] * p[1] as f64 + 0.0722 * k[2] * p[2] as f64) as f32); } }
+    if y.len() < 16 { return Err(format!("only {} opaque pixels", y.len())); } y.sort_by(|a, b| a.total_cmp(b)); let q = |f: f64| y[((y.len() - 1) as f64 * f).round() as usize] as f64; Ok([q(0.02), q(0.5), q(0.98)]) }
+/// Lift, slope and gamma (out = (slope*x + lift)^(1/gamma)) taking the target luma levels `t` onto the hero's `h` exactly when possible:
+/// for a gamma the 2 % and 98 % levels fix lift and slope (pre-gamma targets h^gamma); gamma is the root (bisection in 0.5..2) that also lands the median.
+fn tone_fit(t: [f64; 3], h: [f64; 3]) -> (f64, f64, f64) {
+    if !(t[2] - t[0] > 0.02) || !(h[2] - h[0] > 0.0) || h[0] <= 0.0 { return (0.0, 1.0, 1.0); }
+    let at = |g: f64| { let (lo, hi) = (h[0].powf(g), h[2].powf(g)); let slope = (hi - lo) / (t[2] - t[0]); let lift = lo - slope * t[0]; (lift, slope, lift + slope * t[1] - h[1].powf(g)) };
+    let (mut a, mut b) = (0.5f64, 2.0f64); let (fa, fb) = (at(a).2, at(b).2);
+    let g = if fa.signum() == fb.signum() { if fa.abs() < fb.abs() { a } else { b } } else { let mut fa = fa; for _ in 0..50 { let m = 0.5 * (a + b); let fm = at(m).2; if fm.signum() == fa.signum() { a = m; fa = fm; } else { b = m; } } 0.5 * (a + b) };
+    let (lift, slope, _) = at(g); (lift.clamp(-0.5, 0.5), slope.clamp(0.25, 4.0), g) }
+fn match_shots(ss: &mut crate::commands::Session, a: &Value) -> Result<Value, String> {
+    if ss.project.color_pipeline.enabled { return Err("match_shots is display-referred; managed projects use sample_linear_neutral and linear_grade".into()); }
+    let hero = sa(a, "hero_clip_id")?.to_string(); let hc = ss.project.find_clip(&hero).ok_or(format!("match_shots: no clip '{hero}'"))?.clone();
+    let strength = on(a, "strength", 1.0); if !strength.is_finite() || !(0.0..=1.0).contains(&strength) { return Err("match_shots: strength must be in 0..1".into()); }
+    let mode = match a.get("mode") { None | Some(Value::Null) => "balance", Some(v) => match v.as_str() { Some(m @ ("balance" | "lab")) => m, _ => return Err("match_shots: mode must be balance or lab".into()) } };
+    let targets: Vec<String> = match a.get("clip_ids") { None | Some(Value::Null) => {
+            let mut v: Vec<(usize, f64, String)> = Vec::new();
+            for (ti, tr) in ss.project.tracks.iter().enumerate() { for c in &tr.clips { if c.id == hero { continue; } if let Source::Media { asset } = &c.source { if ss.project.assets.get(asset.as_str()).map_or(false, |x| x.width > 0) { v.push((ti, c.start, c.id.clone())); } } } }
+            v.sort_by(|x, y| x.1.total_cmp(&y.1).then(x.0.cmp(&y.0))); if v.is_empty() { return Err("match_shots: no other video clips to match; pass clip_ids".into()); } v.into_iter().map(|x| x.2).collect() }
+        Some(v) => { let arr = v.as_array().ok_or("match_shots: clip_ids must be an array of clip ids")?; if arr.is_empty() { return Err("match_shots: clip_ids is empty".into()); } let mut out: Vec<String> = Vec::new();
+            for x in arr { let id = x.as_str().ok_or("match_shots: clip_ids must be strings")?; if id == hero { return Err(format!("match_shots: the hero '{hero}' cannot be matched to itself")); }
+                if ss.project.find_clip(id).is_none() { return Err(format!("match_shots: no clip '{id}'")); } if out.iter().any(|o| o == id) { return Err(format!("match_shots: clip '{id}' listed twice")); } out.push(id.to_string()); } out } };
+    let times = |c: &Clip| -> Vec<f64> { (0..5).map(|k| c.start + c.duration * (k as f64 + 0.5) / 5.0).collect() };
+    let hero_times = match a.get("hero_time") { None | Some(Value::Null) => times(&hc), Some(v) => { let t = v.as_f64().ok_or("match_shots: hero_time must be a number")?; if !t.is_finite() || t < hc.start || t >= hc.start + hc.duration { return Err(format!("match_shots: hero_time {t} is outside the hero ({}..{})", hc.start, hc.start + hc.duration)); } vec![t] } };
+    // work on a copy: earlier match effects (tagged matched_to) come off the hero and every target first, so a re-run replaces instead of stacking
+    let mut p = ss.project.clone(); for id in targets.iter().chain(std::iter::once(&hero)) { if let Some(c) = p.find_clip_mut(id) { c.effects.retain(|e| !e.strings.contains_key("matched_to")); } }
+    let hf = hero_times.iter().map(|t| clip_frame(&p, &hero, *t)).collect::<Result<Vec<_>, _>>()?;
+    let hb = crate::color::auto_balance::measure(&hf, 0.5, false, false).map_err(|e| format!("match_shots: hero: {e}"))?; let hl = luma_levels(&hf, [1.0; 3]).map_err(|e| format!("match_shots: hero: {e}"))?;
+    let hs = if mode == "lab" { Some(crate::color::matching::statistics(&hf[hf.len() / 2], None)?) } else { None };
+    let (mut matched, mut skipped) = (Vec::new(), Vec::new());
+    for id in &targets { let c = p.find_clip(id).ok_or("no such clip")?.clone(); let frames = match times(&c).iter().map(|t| clip_frame(&p, id, *t)).collect::<Result<Vec<_>, _>>() { Ok(f) => f, Err(e) => { skipped.push(json!({"clip_id": id, "reason": e})); continue; } };
+        if let Some(dst) = &hs { let src = crate::color::matching::statistics(&frames[frames.len() / 2], None)?; let m = crate::color::matching::transport(&src, dst, 0.0001)?;
+            let mut vals = Vec::new(); for i in 0..3 { vals.push((format!("s{i}"), src.mean[i])); vals.push((format!("t{i}"), dst.mean[i])); for j in 0..3 { vals.push((format!("a{i}{j}"), m[i][j])); } } vals.push(("strength".into(), strength));
+            let v: Vec<_> = vals.iter().map(|(k, v)| (k.as_str(), *v)).collect(); let fx = add_fx(&mut p, id, "lab_match", &v)?; tag(&mut p, id, &fx, &hero)?;
+            matched.push(json!({"clip_id": id, "effect_id": fx, "kind": "lab_match", "source_lab_mean": src.mean, "hero_lab_mean": dst.mean})); continue; }
+        let b = match crate::color::auto_balance::measure(&frames, 0.5, false, false) { Ok(b) => b, Err(e) => { skipped.push(json!({"clip_id": id, "reason": e})); continue; } };
+        let w = hb.confidence.min(b.confidence); let d = [hb.neutral_chroma[0] - b.neutral_chroma[0], hb.neutral_chroma[1] - b.neutral_chroma[1]];
+        let cast = |s: f64| { let k = [(s * w * d[0]).exp(), 1.0, (s * w * d[1]).exp()]; let y = 0.2126 * k[0] + 0.7152 * k[1] + 0.0722 * k[2]; k.map(|v| v / y) };
+        let tl = match luma_levels(&frames, cast(1.0)) { Ok(l) => l, Err(e) => { skipped.push(json!({"clip_id": id, "reason": e})); continue; } };
+        let (lift, slope, gamma) = tone_fit(tl, hl); let k = cast(strength); let (lift, slope, gamma) = (strength * lift, 1.0 + strength * (slope - 1.0), 1.0 + strength * (gamma - 1.0));
+        let gain = k.map(|kj| (lift + slope * kj).clamp(0.0, 16.0));
+        let mut vals: Vec<(String, f64)> = Vec::new(); for (key, v) in [("lift", [lift; 3]), ("gamma", [gamma; 3]), ("gain", gain), ("offset", [0.0; 3])] { for (j, ch) in ["r", "g", "b"].iter().enumerate() { vals.push((format!("{key}_{ch}"), v[j])); } }
+        for (key, v) in [("lift_m", 0.0), ("gamma_m", 1.0), ("gain_m", 1.0), ("offset_m", 0.0), ("contrast", 1.0), ("pivot", 0.435), ("saturation", 1.0), ("model", 1.0), ("space", 0.0)] { vals.push((key.into(), v)); }
+        let v: Vec<_> = vals.iter().map(|(k, v)| (k.as_str(), *v)).collect(); let fx = add_fx(&mut p, id, "primaries", &v)?; tag(&mut p, id, &fx, &hero)?;
+        matched.push(json!({"clip_id": id, "effect_id": fx, "kind": "primaries", "cast_gain": k, "cast_from": b.neutral_chroma, "cast_to": hb.neutral_chroma, "cast_confidence": w, "luma_levels": tl, "hero_luma_levels": hl, "lift": lift, "slope": slope, "gamma": gamma})); }
+    ss.project = p;
+    Ok(json!({"hero": hero, "mode": mode, "strength": strength, "matched": matched, "skipped": skipped, "hero_sampled_times": hero_times,
+        "note": "each match is one effect tagged matched_to (primaries: edit with set_color_wheels effect_id); re-running replaces them; strength 0 is identity"}))
+}
+fn tag(p: &mut Project, clip: &str, fx: &str, hero: &str) -> Result<(), String> { let e = p.find_clip_mut(clip).ok_or("no such clip")?.effects.iter_mut().find(|e| e.id == fx).ok_or("no effect")?; e.strings.insert("matched_to".into(), hero.into()); Ok(()) }
+
 
 #[cfg(test)] mod color_sampling_tests {
     use super::*;

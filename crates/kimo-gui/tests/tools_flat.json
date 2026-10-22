@@ -186,6 +186,7 @@
 "match_color",
 "match_events",
 "match_grade",
+"match_shots",
 "measure_loudness",
 "mesh_boolean",
 "mesh_extrude_path",
