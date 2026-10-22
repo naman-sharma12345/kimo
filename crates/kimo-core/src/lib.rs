@@ -19,6 +19,7 @@ pub mod shapemods;
 pub mod pathops;
 pub mod pushwipe;
 pub mod audiokeys;
+pub mod layerfx;
 pub mod paths;
 pub mod layerstyles;
 pub mod lighting;

@@ -673,6 +673,8 @@ pub fn render_frame_opts(p: &Project, t: f64, cache: &Cache, transparent: bool) 
         .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).filter_map(|c| match &c.source { Source::Particles3D(e) if e.sprite.kind == "layer" && e.sprite.hide_source && !e.sprite.clip_id.is_empty() => Some(e.sprite.clip_id.as_str()), _ => None })) // a Particles3D layer sprite's source is drawn only as the sprite
         // a keyer's clean-plate clip (strings.ref_clip) is hidden from the composite like a hidden track-matte source
         .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).flat_map(|c| c.effects.iter()).filter(|e| e.kind == "keyer").filter_map(|e| e.strings.get("ref_clip").map(|s| s.as_str())))
+        // a displacement map's / set matte's driving clip, unless it was asked to show (layerfx.rs)
+        .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).flat_map(|c| c.effects.iter()).filter(|e| crate::layerfx::KINDS.contains(&e.kind.as_str()) && e.strings.get("hide").map_or(true, |h| h == "1")).filter_map(|e| crate::layerfx::source_key(&e.kind).and_then(|k| e.strings.get(k)).map(|s| s.as_str())))
         // a gradient wipe's luma clip drives the reveal only (pushwipe.rs)
         .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).filter_map(|c| c.transition_in.as_ref().and_then(|t| t.spec.as_ref()).and_then(|s| s.luma_clip.as_deref()))).collect();
     // 3D compositor (comp3d.rs, opt-in): consecutive 3D layers wait here and are depth-composited when a 2D draw or the end flushes them
@@ -989,7 +991,7 @@ fn keyer_aux(p: &Project, c: &Clip, e: &crate::model::Effect, before: &Frame, lt
     Ok(crate::keying::KeyerAuxOwned { clean_plate, garbage: layer("garbage_mask", e.strings.get("garbage_mask"))?, core: layer("core_mask", e.strings.get("core_mask"))? })
 }
 fn apply_effects_masked(p: &Project, c: &Clip, f: &mut Frame, lt: f64, seed: u64, t: f64, cache: &Cache) -> Result<(), String> {
-    let special = |e: &crate::model::Effect| e.strings.contains_key("mask_layer") || keyer_aux_fx(e);
+    let special = |e: &crate::model::Effect| e.strings.contains_key("mask_layer") || keyer_aux_fx(e) || crate::layerfx::source_key(&e.kind).is_some();
     if !c.effects.iter().any(special) { apply_effects_local(&c.effects, f, lt, seed)?;if let Some(g)=&c.grade_graph{g.apply(f,lt,seed,p.fps)?;}p.grade_scopes.apply_clip(p,&c.id,f,lt,seed)?;return Ok(()); }
     let mut i = 0;
     while i < c.effects.len() {
@@ -1000,6 +1002,7 @@ fn apply_effects_masked(p: &Project, c: &Clip, f: &mut Frame, lt: f64, seed: u64
             if keyer_aux_fx(e) { if e.strings.contains_key("ocio_domain") || e.strings.contains_key("wrapper_working_gamut") { return Err("keyer: a clean plate or garbage/core matte cannot be combined with a colour-domain wrapper (ocio_domain / wrapper_working_gamut)".into()); }
                 // the keyer's per-pixel inputs go straight to keying::apply_keyer (effects::apply carries params and strings only)
                 let aux = keyer_aux(p, c, e, &before, lt, t, cache, &ctx)?; crate::keying::apply_keyer(&e.params, f, lt, &aux.view())?; }
+            else if let Some(k) = crate::layerfx::source_key(&e.kind) { if let Some(src) = e.strings.get(k).and_then(|id| render_clip_alone(p, id, t, cache)) { crate::layerfx::apply(e, f, &src, lt); } } // displacement_map / set_matte: the driving clip rendered alone
             else { apply_effects_local(std::slice::from_ref(e), f, lt, seed)?; }
             if let Some(l) = e.strings.get("mask_layer").and_then(|mid| c.mask.as_ref().and_then(|m| m.layers.iter().find(|l| &l.id == mid))) {
                 let cov = crate::masks::layer_coverage(l, &before, lt, &ctx);

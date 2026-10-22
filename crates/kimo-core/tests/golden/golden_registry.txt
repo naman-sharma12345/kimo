@@ -10,6 +10,7 @@ add_clip b851a4076e91b8c2
 add_code_clip 79e8cbe027cdbd62
 add_counter 2cfd3406e38575f3
 add_detection_box e740cc0690940b44
+add_displacement_map 16543d3d44c96730
 add_effect ae2e4a00a10c4da2
 add_emitter 940e20f3bb9b947f
 add_glitch_confetti ea3c9845ccf22d20
@@ -322,6 +323,7 @@ set_mask_motion_blur 6a9dfeea31f99f52
 set_mask_path_key f2ede4254a2268ae
 set_mask_prop_key 4660d9a74a80b4f6
 set_material 1cf1c1110bb19863
+set_matte e251b054bbc581bc
 set_mesh_pin b5113e088ab75720
 set_meta caac3624df7fb4cf
 set_motion_blur 43c53975314e62c0

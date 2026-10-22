@@ -270,6 +270,7 @@ pub fn clip_refs(c: &Clip) -> Vec<(String, String)> {
         if let Some(t) = &m.matte { v.push(("mask.matte.source".to_string(), t.source.clone())); }
         for l in &m.layers { if let Some(r) = l.strings.get("ref_clip") { v.push((format!("mask.layers.{}.ref_clip", l.id), r.clone())); } }
     }
+    for e in &c.effects { if let Some(k) = crate::layerfx::source_key(&e.kind) { if let Some(r) = e.strings.get(k) { v.push((format!("effects.{}.strings.{k}", e.id), r.clone())); } } } // displacement_map / set_matte driving clip
     if let Some(l) = c.transition_in.as_ref().and_then(|t| t.spec.as_ref()).and_then(|s| s.luma_clip.as_ref()) { v.push(("transition_in.spec.luma_clip".to_string(), l.clone())); } // add_push_wipe's luma clip
     match &c.source {
         Source::ShardBurst(e) => { if let Some(t) = e.plane.as_ref().and_then(|p| p.occlusion_target.as_ref()) { v.push(("source.plane.occlusion_target".to_string(), t.clone())); } }
@@ -286,7 +287,7 @@ pub fn clip_refs(c: &Clip) -> Vec<(String, String)> {
 fn unknown_string_refs(c: &Clip, ids: &std::collections::HashSet<&str>, max_id: u64) -> Vec<(String, String)> {
     let looks = |s: &str| { let d: String = s.chars().rev().take_while(|x| x.is_ascii_digit()).collect(); s.starts_with("clip") && !d.is_empty() && d.parse::<u64>().map(|n| n < max_id).unwrap_or(false) && !ids.contains(s) };
     let mut v = vec![];
-    for e in &c.effects { for (k, val) in &e.strings { if looks(val) { v.push((format!("unknown:effects.{}.strings.{k}", e.id), val.clone())); } } }
+    for e in &c.effects { for (k, val) in &e.strings { if crate::layerfx::source_key(&e.kind) != Some(k.as_str()) && looks(val) { v.push((format!("unknown:effects.{}.strings.{k}", e.id), val.clone())); } } }
     if let Some(m) = &c.mask { for l in &m.layers { for (k, val) in &l.strings { if k != "ref_clip" && looks(val) { v.push((format!("unknown:mask.layers.{}.strings.{k}", l.id), val.clone())); } } } }
     v
 }
@@ -299,6 +300,7 @@ fn clear_in_tracks(tracks: &mut Vec<Track>, ids: &[String], out: &mut Vec<Cleare
         for (field, rid) in hits {
             if field == "mask.matte.source" { if let Some(m) = c.mask.as_mut() { m.matte = None; } }
             else if field == "source.plane.occlusion_target" { if let Source::ShardBurst(e) = &mut c.source { if let Some(p) = e.plane.as_mut() { p.occlusion_target = None; } } }
+            else if let Some((eid, key)) = field.strip_prefix("effects.").and_then(|x| x.split_once(".strings.")) { for e in c.effects.iter_mut().filter(|e| e.id == eid) { e.strings.remove(key); } } // the effect then does nothing
             else if field == "transition_in.spec.luma_clip" { if let Some(s) = c.transition_in.as_mut().and_then(|t| t.spec.as_mut()) { s.luma_clip = None; } } // the wipe falls back to its gradient
             else if field == "source.emit_clip" { if let Source::Emitter(e) = &mut c.source { e.emit_clip.clear(); } }
             else if field == "source.sprite.clip_id" { if let Source::Particles3D(e) = &mut c.source { e.sprite.clip_id.clear(); } }
