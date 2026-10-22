@@ -39,6 +39,7 @@
 "add_shape",
 "add_shape_modifier",
 "add_shard_burst",
+"add_smart_punch",
 "add_speed_lines",
 "add_text",
 "add_text_animator",

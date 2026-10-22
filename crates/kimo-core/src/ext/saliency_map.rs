@@ -111,7 +111,7 @@ fn rect4(v: &Value, i: usize, w: usize, h: usize) -> Result<[f64; 4], String> {
     Ok([r[0], r[1], r[2], r[3]])
 }
 
-fn luma_of(f: &crate::effects::Frame) -> Vec<f64> { let im = Image::from_frame(f); (0..im.w * im.h).map(|i| im.luma(i)).collect() }
+pub fn luma_of(f: &crate::effects::Frame) -> Vec<f64> { let im = Image::from_frame(f); (0..im.w * im.h).map(|i| im.luma(i)).collect() }
 
 fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let t = a.get("time").and_then(|v| v.as_f64()).filter(|t| t.is_finite() && *t >= 0.0).ok_or("out_of_range: time must be a number of timeline seconds >= 0")?;

@@ -32,6 +32,7 @@ export const FAMILIES = [
   ['effects', /^add_lens_blur$/],   /* lens blur: the clip flashes, the Inspector shows its lens_blur effect (radius, blades, focus, depth map: focal_depth / invert) */
   ['transform', /^audio_to_keyframes$/],   /* audio to keyframes: the keyed clip flashes, the Inspector shows the property and its new per-frame curve */
   ['transform', /^add_punch_ins$/],   /* punch-ins: the punched clips flash, the Inspector shows their scale / x / y with the punch layered on their own animation */
+  ['transform', /^add_smart_punch$/],   /* smart punch: continuous auto-follow zoom; same scale / x / y Inspector readout as add_punch_ins, keyed every sample instead of once per cut */
   ['effects', /^add_depth_parallax$/],   /* depth parallax: the clip flashes, the Inspector shows its depth_parallax effect (depth map clip, pan, dolly, zoom, focal_depth) */
   ['effects', /^add_displacement_map$/],   /* displacement map: the warped clip flashes, the Inspector shows its displacement_map effect (map clip, max px, channels) */
   ['effects', /^add_blur_fill$/],   /* blur fill: the framed clip and its new fill clip flash, the Inspector shows the fill's blur and exposure */
