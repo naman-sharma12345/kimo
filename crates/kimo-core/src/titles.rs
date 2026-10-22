@@ -12,7 +12,7 @@ fn rgb(a: &Value, k: &str, d: [f64; 3]) -> [f64; 3] { a.get(k).and_then(|v| v.as
 fn txt(text: &str, font: &str, size: f64, color: [f64; 3], spacing: f64, align: &str) -> Source { Source::Text { text: text.into(), font: font.into(), size, color, letter_spacing: spacing, stroke_width: 0.0, stroke_color: [0.0; 3], shadow: 0.0, align: align.into() } }
 fn fade(c: &mut Clip, fin: f64, fout: f64) { let d = c.duration; let o = c.props.get_mut("opacity").unwrap(); o.base = 0.0; o.set_key(0.0, 0.0, Ease::Out); o.set_key(fin, 1.0, Ease::Out); o.set_key((d - fout).max(fin + 0.01), 1.0, Ease::In); o.set_key(d, 0.0, Ease::In); }
 
-pub const STYLES: &[&str] = &["cinematic", "impact", "lower_third", "kinetic", "elegant", "neon"];
+pub const STYLES: &[&str] = &["cinematic", "impact", "lower_third", "kinetic", "elegant", "neon", "hook_box", "subscribe_pop"];
 
 fn peak(p: &Prop) -> f64 { p.keys.iter().map(|k| k.v).fold(p.base, f64::max) }
 /// A title line wider than the canvas (a long word on 9:16) is scaled down to 90% of the width: type size, letter spacing and
@@ -80,6 +80,21 @@ pub fn add_title(ss: &mut Session, a: &Value) -> Result<Value, String> {
             let mut fx = TextFx { weight: 800.0, uppercase: true, glow: 22.0 * k, glow_color: accent, ..Default::default() };
             let mut f = an("char", "square", 0.0); f.id = "an1".into(); f.opacity.base = 0.0; f.shape = "square".into(); let mut offs = 0.0; for i in 0..7 { f.offset.set_key(i as f64 * 0.07, if i % 2 == 0 { 0.0 } else { 1.0 }, Ease::Hold); offs += 1.0; } let _ = offs; f.offset.set_key(0.5, 1.5, Ease::Hold); f.smoothness.base = 0.0; f.start.base = 0.0; f.end.base = 1.0;
             fx.animators = vec![f]; c.text_fx = Some(fx); let o = c.props.get_mut("opacity").unwrap(); o.base = 1.0; o.set_key(dur - 0.3f64.min(dur * 0.25), 1.0, Ease::In); o.set_key(dur, 0.0, Ease::In); clips.push(c);
+        }
+        "hook_box" => {
+            // box first: a track's clips draw in order, so the later text sits on top of it
+            let pop = |c: &mut Clip| { let sc = c.props.get_mut("scale").unwrap(); sc.base = 0.0; sc.set_key(0.0, 0.0, Ease::Out); sc.set_key(0.3, 1.0, Ease::OutBack); };
+            let box_color = rgb(a, "box_color", [0.05, 0.05, 0.07]);
+            let mut r = clip(ss, Source::Shape { shape: "rect".into(), width: wpx * 0.86, height: 170.0 * k, fill: box_color, stroke_width: 0.0, stroke_color: [0.0; 3], sides: 4, corner_radius: 22.0 * k }, start, dur); pop(&mut r); fade(&mut r, 0.15, 0.4); clips.push(r);
+            let mut c = clip(ss, txt(&text, font_o.unwrap_or("Anton"), 84.0 * k, color, 0.0, "center"), start, dur); c.text_fx = Some(TextFx { uppercase: true, ..Default::default() }); pop(&mut c); fade(&mut c, 0.15, 0.4); clips.push(c);
+        }
+        "subscribe_pop" => {
+            // pill, then dot (drawn over the pill's left edge), then text; scale 0 hides each at both ends, so opacity stays 1
+            let y = 260.0 * k;
+            let pop = |c: &mut Clip, sh: f64| { let sc = c.props.get_mut("scale").unwrap(); sc.base = 0.0; sc.set_key(0.0, 0.0, Ease::Out); sc.set_key((0.12 - sh).max(0.0), 1.0, Ease::OutBack); sc.set_key((dur - 0.35 - sh).max(0.13), 1.0, Ease::In); sc.set_key((dur - 0.05 - sh).max(0.14), 0.0, Ease::In); c.props.get_mut("opacity").unwrap().base = 1.0; c.props.get_mut("y").unwrap().base = y; };
+            let mut p = clip(ss, Source::Shape { shape: "rect".into(), width: 230.0 * k, height: 66.0 * k, fill: accent, stroke_width: 0.0, stroke_color: [0.0; 3], sides: 4, corner_radius: 33.0 * k }, start, dur); pop(&mut p, 0.0); clips.push(p);
+            let mut d = clip(ss, Source::Shape { shape: "ellipse".into(), width: 28.0 * k, height: 28.0 * k, fill: [1.0, 1.0, 1.0], stroke_width: 0.0, stroke_color: [0.0; 3], sides: 4, corner_radius: 0.0 }, start, dur); pop(&mut d, 0.04); d.props.get_mut("x").unwrap().base = -88.0 * k; clips.push(d);
+            let mut c = clip(ss, txt(&text, font_o.unwrap_or("Montserrat"), 30.0 * k, [1.0, 1.0, 1.0], 0.0, "center"), start, dur); c.text_fx = Some(TextFx { weight: 700.0, uppercase: true, ..Default::default() }); pop(&mut c, 0.0); clips.push(c);
         }
         o => return Err(format!("unknown style {o}; styles: {:?}", STYLES)),
     }
