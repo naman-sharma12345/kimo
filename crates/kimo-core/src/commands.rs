@@ -312,3 +312,38 @@ pub fn dispatch_ex(ss: &mut Session, name: &str, args: &Value) -> Result<Value, 
         e
     })
 }
+
+#[cfg(test)]
+mod color_arg_tests {
+    use super::{color, color_alpha};
+    use serde_json::json;
+    #[test] fn hex_forms_read_as_srgb_bytes_over_255() {
+        assert_eq!(color(&json!({"c": "#ffffff"}), "c", [0.0; 3]).unwrap(), [1.0, 1.0, 1.0]);
+        assert_eq!(color(&json!({"c": "#FFF"}), "c", [0.0; 3]).unwrap(), [1.0, 1.0, 1.0]);
+        assert_eq!(color(&json!({"c": "#336699"}), "c", [0.0; 3]).unwrap(), [51.0 / 255.0, 102.0 / 255.0, 153.0 / 255.0]);
+        assert_eq!(color(&json!({"c": "#33669980"}), "c", [0.0; 3]).unwrap(), [51.0 / 255.0, 102.0 / 255.0, 153.0 / 255.0]);
+        assert_eq!(color_alpha(&json!({"c": "#33669980"}), "c"), 128.0 / 255.0);
+        assert_eq!(color_alpha(&json!({"c": "#336699"}), "c"), 1.0);
+    }
+    #[test] fn short_hex_expands_and_hex_alpha_is_the_4th_value_like_the_list_form() {
+        assert_eq!(color(&json!({"c": "#369"}), "c", [0.0; 3]).unwrap(), color(&json!({"c": "#336699"}), "c", [0.0; 3]).unwrap());
+        let list = json!({"c": [51.0 / 255.0, 102.0 / 255.0, 153.0 / 255.0, 128.0 / 255.0]});
+        assert_eq!(color(&json!({"c": "#33669980"}), "c", [0.0; 3]).unwrap(), color(&list, "c", [0.0; 3]).unwrap());
+        assert_eq!(color_alpha(&json!({"c": "#33669980"}), "c"), color_alpha(&list, "c"));
+        assert_eq!(color_alpha(&json!({"c": "#000000ff"}), "c"), 1.0); assert_eq!(color_alpha(&json!({"c": "#00000000"}), "c"), 0.0);
+    }
+    #[test] fn arrays_absent_and_null_read_exactly_as_before() {
+        assert_eq!(color(&json!({"c": [1, 0.5, 0]}), "c", [0.0; 3]).unwrap(), [1.0, 0.5, 0.0]);
+        assert_eq!(color(&json!({"c": [1, 0.5, 0, 0.25]}), "c", [0.0; 3]).unwrap(), [1.0, 0.5, 0.0]);
+        assert_eq!(color_alpha(&json!({"c": [1, 0.5, 0, 0.25]}), "c"), 0.25);
+        assert_eq!(color(&json!({}), "c", [0.2; 3]).unwrap(), [0.2; 3]);
+        assert_eq!(color(&json!({"c": null}), "c", [0.2; 3]).unwrap(), [0.2; 3]);
+        assert_eq!(color(&json!({"c": [1, 2]}), "c", [0.2; 3]).unwrap(), [0.2; 3]);
+    }
+    #[test] fn a_string_that_is_not_hex_is_refused_by_name() {
+        for s in ["white", "#ffff", "#gggggg", "ffffff", ""] {
+            let e = color(&json!({"color": s}), "color", [0.0; 3]).unwrap_err();
+            assert!(e.contains("'color'") && e.contains("#rrggbb"), "{s}: {e}");
+        }
+    }
+}

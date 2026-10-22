@@ -287,6 +287,10 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
     };
     let height = number(a, "delivery_height", ss.project.height as f64, 1., 16384.)?;
     used["delivery_height"] = json!(height);
+    let qp = super::frame_quality::params(a.get("quality").unwrap_or(&Value::Null))?;
+    if a.get("decode_media").is_some_and(|v| !v.is_boolean()) {
+        return Err("out_of_range: decode_media must be boolean".into());
+    }
     let mut frames = vec![];
     let mut suppressed = vec![];
     let mut counts = BTreeMap::<String, usize>::new();
@@ -402,6 +406,13 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
             prev = Some(img);
         }
         let mut frow = json!({"time":t,"findings":[]});
+        if let Some(q) = &qp {
+            // v6 quality numbers: this frame and the one a project frame earlier (none before t = 0)
+            let img = analysis::render(ss, &Request { time: *t, source: "composite".into() })?;
+            let dt = 1. / ss.project.fps.max(1e-9);
+            let before = if *t - dt >= -1e-9 { Some(analysis::render(ss, &Request { time: (*t - dt).max(0.), source: "composite".into() })?) } else { None };
+            frow["quality"] = super::frame_quality::quality(&img, before.as_ref(), q);
+        }
         for f in findings {
             let code = f["code"].as_str().unwrap().to_string();
             *counts.entry(code).or_default() += 1;
@@ -486,6 +497,22 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
     if let Some(x) = sampled {
         out["sampled"] = x;
     }
+    if let Some(q) = &qp {
+        // the extremes over the sampled frames, flat scalars with their times
+        let fr = out["frames"].as_array().cloned().unwrap_or_default();
+        let pick = |k: &str, hi: bool| -> (Value, Value) {
+            let mut best: Option<(f64, Value, Value)> = None;   // (value, the value as written, time)
+            for f in &fr { if let Some(v) = f["quality"][k].as_f64() { if best.as_ref().map_or(true, |b| if hi { v > b.0 } else { v < b.0 }) { best = Some((v, f["quality"][k].clone(), f["time"].clone())); } } }
+            best.map_or((Value::Null, Value::Null), |(_, v, t)| (v, t))
+        };
+        let mut sq = json!({"params": {"crush_below": q.crush_below, "clip_above": q.clip_above, "band_step": q.band_step}});
+        for (name, k, hi) in [("max_crushed_frac", "crushed_frac", true), ("max_clipped_frac", "clipped_frac", true), ("max_channel_clipped_frac", "channel_clipped_frac", true), ("min_luma_levels", "luma_levels", false), ("max_band_plateau_px", "band_plateau_px", true), ("min_mean_luma", "mean_luma", false), ("min_prev_mean_delta", "prev_mean_delta", false)] {
+            let (v, t) = pick(k, hi); sq[name] = v; sq[format!("{name}_t")] = t;
+        }
+        let ident: Vec<Value> = fr.iter().filter(|f| f["quality"]["prev_identical"] == json!(true)).map(|f| f["time"].clone()).collect();
+        sq["identical_to_prev"] = json!(ident.len()); sq["identical_to_prev_times"] = json!(ident.iter().take(32).cloned().collect::<Vec<_>>());
+        out["summary"]["quality"] = sq;
+    }
     Ok(out)
 }
 fn severity_score(f: &Value) -> f64 {
@@ -517,10 +544,10 @@ fn static_interval(ss: &Session, t0: f64, t1: f64) -> Value {
     json!({"code":"static_frame","t0":t0,"t1":t1,"layers":[],"worst":{"duration_s":t1-t0,"audio_present":audio},"severity":"info"})
 }
 pub fn commands() -> Vec<Command> {
-    vec![Command{name:"lint_frame",mutates:false,description:"Read-only advisory frame lint, report-only, not a design certification. Initial geometry/static checks: out_of_bounds (source layer bounds, not ink), invisible_layer (sampled), low_res_upscale, static_frame. Never edits or blocks export. time OR times OR range {start,end,step default .5}, max120 samples; with none, text_contrast over media samples each text's visible span every .5s. checks defaults to implemented checks. params echoes thresholds, overridable. Tags lint:allow_bleed and lint:ignore=<code> suppress with an explicit counted list. annotate default true writes boxed PNG paths and inline images. Text checks: text_contrast (WCAG ratio heuristic: 4.5 normal, 3.0 large; \"large\" = capital-H ink of at least 24 px at 1080p, no WCAG 18pt/bold-14pt rule), min_text_size (capital-H ink), safe_zone (platform estimates), text_overflow (canvas only, not own-box overflow).",schema:obj(vec![("time",n("timeline seconds")),("times",json!({"type":"array","items":{"type":"number"}})),("range",json!({"type":"object"})),("checks",json!({"type":"array","items":{"type":"string"}})),("params",json!({"type":"object"})),("delivery_height",n("pixels, default canvas height")),("profile",s("safe margins profile, default title_safe")),("annotate",json!({"type":"boolean"})),("max_findings",n("default200"))],&[]),run}]
+    vec![Command{name:"lint_frame",mutates:false,description:"Read-only advisory frame lint, report-only, not a design certification. Initial geometry/static checks: out_of_bounds (source layer bounds, not ink), invisible_layer (sampled), low_res_upscale, static_frame. Never edits or blocks export. time OR times OR range {start,end,step default .5}, max120 samples; with none, text_contrast over media samples each text's visible span every .5s. checks defaults to implemented checks. params echoes thresholds, overridable. Tags lint:allow_bleed and lint:ignore=<code> suppress with an explicit counted list. annotate default true writes boxed PNG paths and inline images. Text checks: text_contrast (WCAG ratio heuristic: 4.5 normal, 3.0 large; \"large\" = capital-H ink of at least 24 px at 1080p, no WCAG 18pt/bold-14pt rule), min_text_size (capital-H ink), safe_zone (platform estimates), text_overflow (canvas only, not own-box overflow). quality (true or {crush_below 0.02, clip_above 0.98, band_step 2}) adds raw numbers per sampled frame: mean luma, crushed / clipped / channel-clipped fractions, 8-bit luma levels, banding (small steps per row, flat plateau px between them) and the change from the frame one project frame earlier (mean and max delta, identical), plus their extremes in summary.quality. text_contrast reads the real media background; decode_media true decodes into the session cache, false keeps the v5 background (media drawn black).",schema:obj(vec![("time",n("timeline seconds")),("times",json!({"type":"array","items":{"type":"number"}})),("range",json!({"type":"object"})),("checks",json!({"type":"array","items":{"type":"string"}})),("params",json!({"type":"object"})),("delivery_height",n("pixels, default canvas height")),("profile",s("safe margins profile, default title_safe")),("annotate",json!({"type":"boolean"})),("max_findings",n("default200")),("quality",json!({"description":"true or {crush_below, clip_above, band_step}: per-frame quality numbers; absent = v5 output"})),("decode_media",json!({"type":"boolean","description":"true: decode media into the session cache; false: v5 background (media black); omitted: real media background"}))],&[]),run}]
 }
 // Text metrics adapters staged from the delivered C1/C2/C3 contracts.
-fn text_cap(c: &Clip, w: f64, h: f64) -> Result<f64, String> {
+pub(crate) fn text_cap(c: &Clip, w: f64, h: f64) -> Result<f64, String> {
     let Source::Text {
         font,
         size,
@@ -703,11 +730,20 @@ fn text_findings(
                 continue;
             };
             let p = super::view::view_of(&ss.project, None, Some(&[c.id.clone()]));
-            // Decode the media under the text first (prepare_at). With a fresh, unprepared cache every media clip
-            // drew black, so white text over video read 21.0 (v5.1 debt, b72a06c read-only check, 2026-10-18).
-            let mut bg_cache = crate::render::Cache::new();
-            crate::render::prepare_at(&p, &mut bg_cache, Some(t))?;
-            let bg = crate::render::render_frame(&p, t, &bg_cache)?;
+            // v6-all merge: absent decode_media reads the real media background (fresh cache prepared at t, the lint_contrast_media fix);
+            // decode_media: true decodes into the session cache (eyes wave); decode_media: false keeps the v5 empty-cache background.
+            let bg = match a.get("decode_media").and_then(|v| v.as_bool()) {
+                Some(true) => { crate::render::prepare_at(&p, &mut ss.cache, Some(t))?; crate::render::render_frame(&p, t, &ss.cache)? }
+                Some(false) => crate::render::render_frame(&p, t, &crate::render::Cache::new())?,
+                None => {
+                // Decode the media under the text first (prepare_at). With a fresh, unprepared cache every media clip
+                // drew black, so white text over video read 21.0 (v5.1 debt, b72a06c read-only check, 2026-10-18).
+                let mut bg_cache = crate::render::Cache::new();
+                crate::render::prepare_at(&p, &mut bg_cache, Some(t))?;
+                let bg = crate::render::render_frame(&p, t, &bg_cache)?;
+                bg
+                }
+            };
             let img = Image::from_frame(&bg);
             let (x0, y0, x1, y1) = (
                 r[0].floor().max(0.) as usize,

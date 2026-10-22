@@ -347,6 +347,7 @@ fn measure_loudness(ss: &mut Session, a: &Value) -> Result<Value, String> {
         Some(v) => v.as_bool().ok_or("true_peak boolean required")?,
         None => false,
     };
+    let extra = loudness_extras(a)?;
     let true_peak = if tp {
         crate::editorial::true_peak_4x(&pcm)?
     } else {
@@ -354,9 +355,62 @@ fn measure_loudness(ss: &mut Session, a: &Value) -> Result<Value, String> {
     };
     let l = loudness(&pcm);
     let peak = pcm.iter().map(|v| v.abs() as f64).fold(0., f64::max);
-    Ok(
-        json!({"integrated_lufs":l,"sample_peak_dbfs":if peak>0.{Some(20.*peak.log10())}else{None},"method":"EBU R128 stereo 48k; clip measurement post filters, before volume/pan; timeline post mix/limiter","minimum_seconds":0.4,"true_peak_dbfs":true_peak,"true_peak_method":if tp{Some("4x 64-tap Blackman-windowed sinc estimate, not certified")}else{None}}),
-    )
+    let mut out = json!({"integrated_lufs":l,"sample_peak_dbfs":if peak>0.{Some(20.*peak.log10())}else{None},"method":"EBU R128 stereo 48k; clip measurement post filters, before volume/pan; timeline post mix/limiter","minimum_seconds":0.4,"true_peak_dbfs":true_peak,"true_peak_method":if tp{Some("4x 64-tap Blackman-windowed sinc estimate, not certified")}else{None}});
+    // v6 optional outputs: present only when their argument is given, so a v5 call returns v5 bytes
+    if let Some(x) = extra { x.apply(&pcm, &mut out)?; }
+    Ok(out)
+}
+/// The v6 optional arguments of measure_loudness; None when none is given (v5 output).
+struct LoudnessExtras { curve: Option<(bool, bool)>, hop: usize, max_points: Option<usize>, lra: Option<usize>, clip_db: Option<f64> }
+/// A hop in seconds as a count of 10 ms chunks: 0.1..3.0 s, a multiple of 0.01 s.
+fn hop_chunks(a: &Value, k: &str) -> Result<usize, String> {
+    let v = match a.get(k) { None => 0.1, Some(v) => v.as_f64().filter(|x| x.is_finite()).ok_or_else(|| format!("{k} must be a number of seconds"))? };
+    let c = (v * 100.).round();
+    if !(10.0..=300.0).contains(&c) || (c / 100. - v).abs() > 1e-9 { return Err(format!("{k} must be 0.1..3 s in 0.01 s steps")); }
+    Ok(c as usize)
+}
+fn loudness_extras(a: &Value) -> Result<Option<LoudnessExtras>, String> {
+    let curve = match a.get("curve") {
+        None => None,
+        Some(v) => Some(match v.as_str() { Some("momentary") => (true, false), Some("short_term") => (false, true), Some("both") => (true, true), _ => return Err("curve must be momentary, short_term or both".into()) }),
+    };
+    let lra = match a.get("lra") { None => false, Some(v) => v.as_bool().ok_or("lra boolean required")? };
+    let clip_db = match a.get("clip_threshold_dbfs") { None => None, Some(v) => Some(v.as_f64().filter(|x| x.is_finite() && (-60.0..=0.0).contains(x)).ok_or("clip_threshold_dbfs must be a number -60..0")?) };
+    if (a.get("hop_s").is_some() || a.get("max_points").is_some()) && curve.is_none() { return Err("hop_s / max_points need curve".into()); }
+    if a.get("lra_hop_s").is_some() && !lra { return Err("lra_hop_s needs lra=true".into()); }
+    if curve.is_none() && !lra && clip_db.is_none() { return Ok(None); }
+    let hop = hop_chunks(a, "hop_s")?;
+    let max_points = match a.get("max_points") { None => None, Some(v) => Some(v.as_u64().filter(|n| (10..=100_000).contains(n)).ok_or("max_points must be an integer 10..100000")? as usize) };
+    let lra = if lra { Some(hop_chunks(a, "lra_hop_s")?) } else { None };
+    Ok(Some(LoudnessExtras { curve, hop, max_points, lra, clip_db }))
+}
+impl LoudnessExtras {
+    fn apply(&self, pcm: &[f32], out: &mut Value) -> Result<(), String> {
+        let chunks = if self.curve.is_some() || self.lra.is_some() { crate::editorial::k_energy(pcm).map(|e| crate::editorial::k_energy_chunks(&e)).unwrap_or_default() } else { vec![] };
+        let max = |v: &[Option<f64>]| v.iter().flatten().copied().fold(None, |m: Option<f64>, x| Some(m.map_or(x, |m| m.max(x))));
+        if let Some((mo, st)) = self.curve {
+            // max_points raises the hop (in 10 ms steps) so the longer series (momentary) holds at most max_points readings
+            let span = chunks.len().saturating_sub(40);
+            let hop = match self.max_points { Some(m) => self.hop.max(span.div_ceil(m - 1)), None => self.hop };
+            if span / hop + 1 > 100_000 { return Err(format!("curve would hold {} readings (cap 100000); raise hop_s or pass max_points", span / hop + 1)); }
+            let series = |win: usize| { let v = crate::editorial::loudness_series(&chunks, win, hop); json!({"window_s": win as f64 / 100., "hop_s": hop as f64 / 100., "first_end_s": win as f64 / 100., "max_lufs": max(&v), "lufs": v}) };
+            let mut c = json!({"requested_hop_s": self.hop as f64 / 100., "max_points": self.max_points, "t": "reading k covers [first_end_s - window_s + k*hop_s, first_end_s + k*hop_s) seconds from the start of the measured audio (clip start for clip_id, timeline 0 for the mix)", "gating": "none (EBU Tech 3341 momentary / short-term are ungated)", "k_weighting": "BS.1770 two-stage 48 kHz filter, the one integrated_lufs uses; a trailing part under 10 ms is not read", "null": "window energy exactly 0"});
+            if mo { c["momentary"] = series(40); }
+            if st { c["short_term"] = series(300); }
+            out["loudness_curve"] = c;
+        }
+        if let Some(h) = self.lra {
+            let st = crate::editorial::loudness_series(&chunks, 300, h);
+            let r = crate::editorial::loudness_range(&st);
+            out["loudness_range"] = json!({"lra_lu": r.map(|r| r.0), "low_lufs": r.map(|r| r.1), "high_lufs": r.map(|r| r.2), "readings_used": r.map_or(0, |r| r.3), "readings_total": st.len(), "short_term_hop_s": h as f64 / 100.,
+                "method": "EBU Tech 3342: short-term (3 s) readings every short_term_hop_s, absolute gate -70 LUFS, relative gate -20 LU below the energy mean of the absolutely gated readings, LRA = 95th - 10th percentile (nearest rank, index round(p*(n-1))); null under 3 s or when nothing passes the gates"});
+        }
+        if let Some(db) = self.clip_db {
+            let (samples, frames) = crate::editorial::count_clipped(pcm, 10f64.powf(db / 20.));
+            out["clipping"] = json!({"threshold_dbfs": db, "clipped_samples": samples, "clipped_frames": frames, "samples_total": pcm.len(), "counted": "clipped_samples: channel samples with |x| >= 10^(threshold_dbfs/20); clipped_frames: stereo frames where either channel is; decoded 16-bit sources top out at 32767/32768 (-0.00027 dBFS), so a 0 threshold misses full-scale 16-bit samples"});
+        }
+        Ok(())
+    }
 }
 fn normalize_loudness_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let id = str_arg(a, "clip_id")?;
@@ -802,10 +856,10 @@ pub fn commands() -> Vec<Command> {
  Command{name:"add_audio_effect",description:"Append validated EQ/compressor/deesser/reverb/denoise or raw biquad (DFII transposed f64 state), fir and stereo mix_matrix. Raw defaults identity; no normalization/clamping. Render/export uses validated FFmpeg filters plus CPU reverb. Reverb is stereo damped-comb/allpass Schroeder; tail cropped to clip duration, reverb applied after FFmpeg effects.",mutates:true,schema:obj(vec![("clip_id",s("media clip")),("kind",json!({"type":"string","enum":["eq","compressor","deesser","reverb","denoise","biquad","fir","mix_matrix"]})),("params",json!({"type":"object","additionalProperties":true}))],&["clip_id","kind"]),run:add_audio_effect},
  Command{name:"remove_audio_effect",description:"Remove effect by zero-based index.",mutates:true,schema:obj(vec![("clip_id",s("clip")),("effect_index",json!({"type":"integer","minimum":0}))],&["clip_id","effect_index"]),run:remove_audio_effect},
  Command{name:"set_audio_pan",description:"Stereo balance -1 left to +1 right; attenuates opposite channel.",mutates:true,schema:obj(vec![("clip_id",s("clip")),("pan",n("-1..1"))],&["clip_id","pan"]),run:set_audio_pan},
- Command{name:"measure_loudness",description:"EBU R128 integrated stereo LUFS and sample peak. Optional clip_id measures decoded post filters/pre gain; absent measures final timeline mix. Silence or <400ms LUFS returns null. true_peak=true adds 4x sinc reconstruction peak estimate (not certified).",mutates:false,schema:obj(vec![("clip_id",s("optional clip")),("true_peak",json!({"type":"boolean","default":false}))],&[]),run:measure_loudness},
+ Command{name:"measure_loudness",description:"EBU R128 integrated stereo LUFS and sample peak, plus optional momentary/short-term LUFS curve, loudness range and clipped-sample count. Optional clip_id measures decoded post filters/pre gain; absent measures final timeline mix. Silence or <400ms LUFS returns null. true_peak=true adds 4x sinc reconstruction peak estimate (not certified): BS.1770-4 Annex 2 style 4x oversampling with a 64-tap-per-phase Blackman-windowed sinc, dBTP. curve=momentary|short_term|both adds loudness_curve: ungated EBU Tech 3341 momentary (400 ms) and/or short-term (3 s) LUFS readings every hop_s (0.1..3 s, default 0.1) with each series' max_lufs; payload is about 10 readings per second per series at the default (a 5-min clip is about 3000 per series, ~60 KB), so pass a larger hop_s or max_points (raises hop_s so each series holds at most that many readings) to keep it small. lra=true adds loudness_range per EBU Tech 3342: 3 s readings every lra_hop_s (default 0.1), gates -70 LUFS absolute and -20 LU relative, lra_lu = 95th minus 10th percentile, plus low_lufs/high_lufs. clip_threshold_dbfs (-60..0) adds clipping: channel samples and stereo frames at or above that level. Raw numbers only, no compliance verdict; reference values, not applied: EBU R128 -23 LUFS, streaming about -14 LUFS, -1 dBTP ceiling. Without these arguments the output is unchanged from v5.",mutates:false,schema:obj(vec![("clip_id",s("optional clip")),("true_peak",json!({"type":"boolean","default":false})),("curve",json!({"type":"string","enum":["momentary","short_term","both"],"description":"adds loudness_curve: EBU Tech 3341 momentary (400 ms) / short-term (3 s) LUFS series"})),("hop_s",json!({"type":"number","minimum":0.1,"maximum":3,"description":"curve reading spacing seconds, 0.01 s steps, default 0.1"})),("max_points",json!({"type":"integer","minimum":10,"maximum":100000,"description":"cap readings per curve series; raises hop_s to fit"})),("lra",json!({"type":"boolean","default":false,"description":"adds loudness_range (EBU Tech 3342)"})),("lra_hop_s",json!({"type":"number","minimum":0.1,"maximum":3,"description":"short-term reading spacing for LRA seconds, default 0.1"})),("clip_threshold_dbfs",json!({"type":"number","minimum":-60,"maximum":0,"description":"adds clipping: samples and frames with |x| at or above this level"}))],&[]),run:measure_loudness},
  Command{name:"normalize_loudness",description:"Replace clip volume with measured loudness gain. Rejects sample peaks over -1dBFS; target -36..-5 LUFS. Remeasure final timeline after mix.",mutates:true,schema:obj(vec![("clip_id",s("clip")),("target_lufs",n("default -14"))],&["clip_id"]),run:normalize_loudness},
  Command{name:"auto_duck",description:"Duck a music track under dialogue: detect rms or speech (VAD) on the under track, or explicit speech_windows; amount_db, attack/release/hold s.",mutates:true,schema:obj(vec![("track",s("target music track")),("under",s("dialogue track for RMS detection; omit with speech_windows")),("speech_windows",json!({"type":"array","items":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2},"description":"Optional 0..1000 ABSOLUTE timeline-second [start,end] speech windows; sorted/merged, clamped to TARGET clip extents. under and threshold_db are ignored if supplied. Empty list removes the previous duck envelope (unity), never RMS fallback. No RMS decode; exact relative gain during windows, linear attack pre-roll/release post-roll, preserves volume"})),("amount_db",n("-60..0 default -12")),("threshold_db",n("default -35")),("attack",n("seconds default .1")),("release",n("seconds default .3")),("detect",json!({"type":"string","enum":["rms","speech"],"description":"under-track detection; speech = VAD, ignores room tone/hiss; default rms"})),("hold",n("seconds 0..5 the duck stays down after the voice stops; default 0"))],&["track"]),run:auto_duck},
- Command{name:"sync_clips",description:"Align 1x media clips by bounded RMS audio correlation (5ms resolution; rejects silence and ambiguous repeats), or explicit source in-point SMPTE timecodes, optional drop_frame at 29.97/59.94. Shifts starts, preserves source in-points.",mutates:true,schema:obj(vec![("clip_ids",json!({"type":"array","items":{"type":"string"},"minItems":2,"maxItems":16})),("by",json!({"type":"string","enum":["audio","timecode"]})),("timecodes",json!({"type":"array","items":{"type":"string"}})),("fps",n("integer non-drop or 30000/1001,60000/1001 drop")),("drop_frame",json!({"type":"boolean","default":false})),("window",n("1..60s default30")),("max_offset",n(".05..10s default5")),("min_correlation",n("default .75"))],&["clip_ids","by"]),run:sync_clips},
+ Command{name:"sync_clips",description:"Align media clips by audio correlation, or by explicit source timecodes. Align 1x media clips by bounded RMS audio correlation (5ms resolution; rejects silence and ambiguous repeats), or explicit source in-point SMPTE timecodes, optional drop_frame at 29.97/59.94. Shifts starts, preserves source in-points.",mutates:true,schema:obj(vec![("clip_ids",json!({"type":"array","items":{"type":"string"},"minItems":2,"maxItems":16})),("by",json!({"type":"string","enum":["audio","timecode"]})),("timecodes",json!({"type":"array","items":{"type":"string"}})),("fps",n("integer non-drop or 30000/1001,60000/1001 drop")),("drop_frame",json!({"type":"boolean","default":false})),("window",n("1..60s default30")),("max_offset",n(".05..10s default5")),("min_correlation",n("default .75"))],&["clip_ids","by"]),run:sync_clips},
  Command{name:"add_multicam",description:"Move 2..16 synchronized media clips into persistent multicam group; common interval, angle zero video, fixed audio angle. Generates normal timeline clips for all exports.",mutates:true,schema:obj(vec![("angles",json!({"type":"array","items":{"type":"string"}})),("audio_angle",json!({"type":"integer","minimum":0}))],&["angles"]),run:add_multicam},
  Command{name:"switch_angle",description:"Switch multicam video at absolute timeline seconds t, zero-based angle; continuous audio remains fixed. Rebuilds group track, replacing manual edits there.",mutates:true,schema:obj(vec![("multicam_id",s("group")),("t",n("absolute timeline seconds")),("angle",json!({"type":"integer","minimum":0}))],&["multicam_id","t","angle"]),run:switch_angle},
  Command{name:"list_multicam",description:"Read multicam groups, angle recipes and switches.",mutates:false,schema:obj(vec![],&[]),run:list_multicam},

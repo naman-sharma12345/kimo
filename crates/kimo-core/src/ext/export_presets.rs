@@ -18,11 +18,11 @@ pub fn fit_web(w: usize, h: usize) -> (usize, usize) {
 fn check_ext(path: &str, ext: &str) -> Result<(), String> { if path.to_lowercase().ends_with(ext) { Ok(()) } else { Err(format!("this preset requires a {ext} output path")) } }
 
 pub fn commands() -> Vec<Command> { vec![
-Command { name: "inspect_export_preset", description: "Describe a named export preset (web-1080, master, alpha-prores) or list all: container, codec, color rules and the output size it would produce for the current project.", mutates: false,
+Command { name: "inspect_export_preset", description: "Describe a named export preset, or list them all: container, codec, colour rules and output size. Describe a named export preset (web-1080, master, alpha-prores) or list all: container, codec, color rules and the output size it would produce for the current project.", mutates: false,
     schema: obj(vec![("name", s("preset name, omit to list"))], &[]),
     run: |ss, a| { let one = |n: &str, e: &str, d: &str| { let mut v = json!({"name":n,"extension":e,"description":d}); if n == "web-1080" { let (w, h) = fit_web(ss.project.width as usize, ss.project.height as usize); v["output_size"] = json!([w, h]); } v };
         match a.get("name").and_then(|v| v.as_str()) { Some(n) => { let p = PRESETS.iter().find(|p| p.0 == n).ok_or("unknown preset")?; Ok(one(p.0, p.1, p.2)) }, None => Ok(json!({"presets": PRESETS.iter().map(|p| one(p.0, p.1, p.2)).collect::<Vec<_>>()})) } } },
-Command { name: "export_preset", description: "Export with a named preset: web-1080 (.mp4, H.264/AAC, fit 1080p), master (.mkv, FFV1 16-bit RGB lossless) or alpha-prores (.mov, ProRes 4444 with alpha). Container/extension enforced. Optional start/end seconds (web-1080 and alpha-prores). Ordinary export is unchanged.", mutates: false,
+Command { name: "export_preset", description: "Export with a named preset: web-1080 (H.264/AAC mp4), master (FFV1 lossless mkv) or alpha-prores (ProRes 4444 mov). Export with a named preset: web-1080 (.mp4, H.264/AAC, fit 1080p), master (.mkv, FFV1 16-bit RGB lossless) or alpha-prores (.mov, ProRes 4444 with alpha). Container/extension enforced. Optional start/end seconds (web-1080 and alpha-prores). Ordinary export is unchanged.", mutates: false,
     schema: obj(vec![("path", s("output path; extension must match the preset")), ("preset", json!({"type":"string","enum":["web-1080","master","alpha-prores"]})), ("start", n("range start s, default 0")), ("end", n("range end s, default end"))], &["path","preset"]),
     run: |ss, a| { let p = &ss.project; let path = str_arg(a, "path")?; let preset = str_arg(a, "preset")?;
         let (t_in, t_out) = (opt_num(a, "start", 0.0), opt_num(a, "end", p.duration()));

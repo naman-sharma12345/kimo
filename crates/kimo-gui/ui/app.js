@@ -3,10 +3,17 @@
 // object; a single rAF-batched render paints the current mode.
 import { connect } from './bridge.js';
 import { MODES, inferMode } from './modes.js';
-import { KINDS, PRE, POST, tickRunning, pickedRows, TL_PARTS } from './panels.js';
-import { route, freezeNow, flashing } from './router.js';
+import { KINDS, PRE, POST, tickRunning, pickedRows, TL_PARTS, TL_SMALL } from './panels.js';
+import { route, freezeNow, flashing, takeFlashEnd } from './router.js';
 
 const DESIGN_W = 1376, DESIGN_H = 768;
+// smallest viewer kept when a window is too small for a screen's fixed tracks (then the app is scaled down to fit)
+const MIN_FLEX_W = 160, MIN_FLEX_H = 260;
+// small windows: the Inspector's least height beside the viewer, and the least the band under it keeps (design px).
+// 402 = the panel's own title line (47) + the tallest READ card, the flash pin one (341.5) + its bottom gap (13), so
+// the card sits under the 'Inspector' title instead of over it; the timeline keeps 110 (ruler + 2 compact track rows, panels.js TL_SMALL).
+const MIN_INSP_H = 402, MIN_BAND_H = 110;
+let fitScale = 1;
 const RAWISH = /^(c|clip|t|track|fx|effect|node|n|layer|l|asset|media|an|marker|mask|m|cam|light|obj)[_-]?\d+$/i;   /* GUI-FIX-2: an engine id inside a reason */
 
 export const state = {
@@ -190,8 +197,27 @@ function buildLayout() {
   // BEFORE the new grid tracks are set (read after, they were the old grid lines indexed into the new tracks)
   const hop = builtMode != null && builtMode !== state.mode && !hidden, old = {};
   if (hop) for (const [k, el] of Object.entries(nodes)) old[slotOf(k, el._kind)] = [el.offsetLeft, el.offsetTop, el.offsetWidth, el.offsetHeight];
+  // A window too small for this screen's fixed tracks plus a minimal viewer (e.g. 640 px wide): the app is laid out
+  // at the smallest size that fits and scaled down to the window, so no panel runs past the window edge. Where it
+  // already fits (every size from 1100 x 768 up) nothing is set and the layout is exactly the one above.
+  const needW = DESIGN_W - (fl[2] - fl[0]) + MIN_FLEX_W, needH = DESIGN_H - (fl[3] - fl[1]) + MIN_FLEX_H;
+  fitScale = Math.min(1, innerWidth / needW, innerHeight / needH);
+  if (fitScale < 1) Object.assign(root.style, { width: innerWidth / fitScale + 'px', height: innerHeight / fitScale + 'px', transform: `scale(${fitScale})`, transformOrigin: '0 0' });
+  else for (const k of ['width', 'height', 'transform', 'transform-origin']) root.style.removeProperty(k);
   main.style.gridTemplateColumns = tracks(X, fl[0], fl[2]);
-  main.style.gridTemplateRows = tracks(Y, fl[1], fl[3]);
+  // Small windows only (fitScale < 1, i.e. under 1100 x 768): an Inspector that shares the viewer's rows gets at least
+  // MIN_INSP_H design px there (a 4-row READ card, the flash pin one included, sits under the panel's title), taken from the
+  // tallest row of the band under it (the timeline), which keeps at least MIN_BAND_H. Grid lines keep their order, so
+  // every panel stays on its rows; at fitScale 1 the rows are exactly the ones above.
+  let ry = Y, rHi = fl[3];
+  TL_SMALL.on = false;
+  if (fitScale < 1 && rects.insp && rects.insp[1] === fl[1] && rects.insp[3] === fl[3]) {
+    let fixed = 0, bi = -1, bw = 0;
+    for (let i = 0; i < Y.length - 1; i++) { const w = Y[i + 1] - Y[i]; if (!(Y[i] >= fl[1] && Y[i + 1] <= fl[3])) fixed += w; if (Y[i] >= fl[3] && w > bw) { bw = w; bi = i; } }
+    const flexH = innerHeight / fitScale - top - foot - fixed, take = bi < 0 ? 0 : Math.min(MIN_INSP_H - flexH, bw - MIN_BAND_H);
+    if (take > 0) { ry = Y.map(e => e >= fl[3] && e <= Y[bi] ? e + take : e); rHi = fl[3] + take; TL_SMALL.on = true; }   /* the shorter timeline draws compact track rows (panels.js) */
+  }
+  main.style.gridTemplateRows = tracks(ry, fl[1], rHi);
   springs.length = 0;
   // One workspace: a panel the new screen shares with the old one (the rail, the viewer, the timeline, the
   // inspector) is the SAME element, re-placed on the grid, never re-created; others are pooled off-document and
@@ -324,7 +350,7 @@ function stepSprings(now) {
 const queue = [];
 let rafId = 0, dirty = true, hidden = document.visibilityState === 'hidden';
 export const QMAX = 2048;
-export const metrics = { raf: 0, renders: 0, scoped: 0, panelWrites: 0, textPatches: 0, trackWrites: 0, ticks: 0, events: 0, coalesced: 0, dropped: 0, qmax: 0, staleFrames: 0 };
+export const metrics = { raf: 0, renders: 0, scoped: 0, panelWrites: 0, textPatches: 0, trackWrites: 0, ticks: 0, events: 0, coalesced: 0, dropped: 0, qmax: 0, staleFrames: 0, flashEnds: 0 };
 function enqueue(ev) {
   metrics.events++;
   // Hidden: fold the event into state right away (the reducer never touches
@@ -378,15 +404,36 @@ function isClipEdit(ev) { const n = ev && (ev.tool_name ?? (ev.type === 'tool_st
 function renderScoped() { for (const [name, spec] of Object.entries(MODES[state.mode].panels)) if (spec.kind === 'timeline' || spec.kind === 'agent') renderPanel(name); }
 function requestFrame() { if (!rafId && !hidden) rafId = requestAnimationFrame(frame); }
 function frame() {
-  rafId = 0; metrics.raf++; freezeNow(performance.now());
+  rafId = 0; metrics.raf++; freezeNow(performance.now()); fullPaint = false;
   try { frameBody(); } finally { freezeNow(0); }
+  armFlashEnd(takeFlashEnd(), fullPaint);
 }
+// Flash expiry: ONE timeout at the earliest live stamp + FLASH_MS (no polling, no rAF, no interval). Its callback paints
+// directly (no animation frame): the clock now reads past that stamp, so the run-out .flash drops, and the timer re-arms
+// for the next earliest stamp still drawn. A frame already owed paints it instead (marked dirty, no second frame asked).
+// A full paint read every drawn stamp, so its earliest replaces the timer (none drawn, e.g. the panel went away: no
+// timer); a partial paint only brings it earlier. Hiding or leaving the page clears it, so an idle or closed window has no timer.
+let flashTo = 0, flashAt = Infinity, fullPaint = false;
+function armFlashEnd(e, whole) {
+  if (whole ? e === flashAt : !(e < flashAt)) return;
+  clearFlashEnd(); if (!(e < Infinity)) return;
+  flashAt = e;
+  flashTo = setTimeout(flashExpired, Math.max(0, Math.ceil(e - performance.now())));
+}
+function flashExpired() {
+  flashTo = 0; flashAt = Infinity; metrics.flashEnds++; dirty = true;
+  if (rafId || hidden) return;
+  freezeNow(performance.now());
+  try { dirty = false; deferred.on = false; panDirty.clear(); render(); metrics.renders++; } finally { freezeNow(0); }
+  armFlashEnd(takeFlashEnd(), true);
+}
+function clearFlashEnd() { if (flashTo) clearTimeout(flashTo); flashTo = 0; flashAt = Infinity; }
 function frameBody() {
   if (queue.length > 1) metrics.coalesced += queue.length - 1;
   const evs = queue.splice(0), editOnly = evs.length > 0 && !dirty && evs.every(isClipEdit);
   for (const ev of evs) for (const e of route(ev, state, MODES)) apply(e);
   if (editOnly && !layoutDirty && builtMode === state.mode) { dirty = false; renderScoped(); metrics.renders++; metrics.scoped++; deferred.on = true; requestFrame(); }
-  else if (dirty || deferred.on) { dirty = false; deferred.on = false; panDirty.clear(); render(); metrics.renders++; }
+  else if (dirty || deferred.on) { dirty = false; deferred.on = false; panDirty.clear(); render(); metrics.renders++; fullPaint = true; }
   else if (panDirty.size) { for (const n of panDirty) renderPanel(n); panDirty.clear(); metrics.renders++; }
   // meter ballistics: frames only while a hit/decay window is open, then nothing
   if (state.animUntil && performance.now() < state.animUntil) { dirty = true; requestFrame(); } else state.animUntil = 0;
@@ -395,10 +442,11 @@ function frameBody() {
 }
 function setHidden(h) {
   hidden = h;
-  if (h) { if (rafId) cancelAnimationFrame(rafId); rafId = 0; clearTimeout(tickId); tickId = 0; stepSprings(0); }
+  if (h) { if (rafId) cancelAnimationFrame(rafId); rafId = 0; clearTimeout(tickId); tickId = 0; clearFlashEnd(); stepSprings(0); }
   else { dirty = true; requestFrame(); }
 }
 document.addEventListener('visibilitychange', () => setHidden(document.visibilityState === 'hidden'));
+window.addEventListener('pagehide', clearFlashEnd);   /* closing the window: no flash timer outlives the page */
 
 // ---------- ticker ----------
 // The elapsed clock and a running call's duration are the only things that
@@ -584,7 +632,7 @@ function onWheel(e) {
   if (e.ctrlKey || e.metaKey) {
     const zmax = Math.max(1, full / 4), z = Math.min(zmax, Math.max(1, P.z * Math.exp(-dy * .004)));
     if (z === P.z) return;
-    const fx = Math.min(1, Math.max(0, (e.clientX - el.getBoundingClientRect().left - x0) / wpx)), at = t0 + fx * span;
+    const fx = Math.min(1, Math.max(0, ((e.clientX - el.getBoundingClientRect().left) / fitScale - x0) / wpx)), at = t0 + fx * span;
     P.z = z; P.t = z > 1 ? at - fx * full / z : null;
   } else if (Math.abs(dx) >= Math.abs(dy)) {
     if (P.z <= 1 || !dx) return;
@@ -627,7 +675,7 @@ function unflash(d) { if (d._ft) { clearTimeout(d._ft); d._ft = 0; } d.classList
 // click a rail row: its args / latency / result in the existing inspector; click it again or Esc to go back
 main.addEventListener('click', e => { const r = e.target.closest && e.target.closest('.call[data-call]'); if (!r) return; const id = r.dataset.call, c = state.calls.find(x => String(x.id) === id); state.pick = c && state.pick !== c.id ? c.id : null; schedule(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && state.pick != null) { state.pick = null; schedule(); } });
-window.__kimo = { state, apply: enqueue, metrics, setHidden };
+window.__kimo = { state, apply: enqueue, metrics, setHidden, flashTimer: () => (flashTo ? flashAt : null) };
 
 // Tauri: a minimized window keeps document.visibilityState on some
 // platforms, so the shell's own window events gate the loop too.

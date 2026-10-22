@@ -14,7 +14,7 @@ import { READONLY, inferMode } from './modes.js';
 import { COV_C, pipelineOps, projectOps, qaOps, space, C_MUT, cSnap, cRestore, cPush } from './project_ops.js';
 import { COV_A, covAOps, covASee, covAPre, covAHistory } from './cov_a.js';
 import { COVB, covbOps, covbLearn, covbHistory } from './cov_b.js';
-import { readRows, callRows, CHIP, colourRows, scopeLine } from './reads.js';
+import { readRows, readHead, callRows, CHIP, colourRows, scopeLine } from './reads.js';
 import { fix2Pre, fix2Post } from './fix2.js';   /* GUI-FIX-2 */
 
 export const FAMILIES = [
@@ -49,7 +49,11 @@ let frameNow = 0;
 export const freezeNow = t => { frameNow = t; };
 const now = () => frameNow || performance.now();
 const FLASH_MS = 700;
-export const flashing = t => t != null && now() - t < FLASH_MS;
+/* the earliest moment a stamp that read as flashing runs out: app.js takes it after each frame and repaints once then,
+   so a run-out flash never stays in the DOM (nothing else repaints an idle screen) */
+let flashEnd = Infinity;
+export const flashing = t => { const on = t != null && now() - t < FLASH_MS; if (on && +t + FLASH_MS < flashEnd) flashEnd = +t + FLASH_MS; return on; };
+export const takeFlashEnd = () => { const e = flashEnd; flashEnd = Infinity; return e; };
 
 // A value as the inspector shows it. Numbers and percent strings both parse:
 // "104%" stays 104%, a scale of 1.12 reads 112%, other numbers lose float noise.
@@ -825,7 +829,7 @@ function audioOps(state, MODES, ev) {
     if (/loud|normaliz|lufs/.test(n)) {
       const tg = num(R.target_lufs ?? get('target_lufs')); if (tg != null && /normaliz/.test(n)) L.target = tg.toFixed(1);
       const sg = x => (x > 0.049 ? '+' : x < -0.049 ? '-' : '') + Math.abs(x).toFixed(1);
-      const add = [meas != null && ['Input', `${sg(meas)} LUFS`], gdb != null && ['Gain', `${sg(gdb)} dB`], num(R.true_peak_dbfs) != null && ['Peak', `${sg(R.true_peak_dbfs)} dBTP`], num(R.true_peak_dbfs) == null && num(R.sample_peak_dbfs) != null && ['Peak', `${sg(R.sample_peak_dbfs)} dBFS`]].filter(Boolean);
+      const add = [meas != null && ['Input', `${sg(meas)} LUFS`], gdb != null && ['Gain', `${sg(gdb)} dB`], num(R.true_peak_dbfs) != null && ['Peak', `${sg(R.true_peak_dbfs)} dBTP`], num(R.true_peak_dbfs) == null && num(R.sample_peak_dbfs) != null && ['Peak', `${sg(R.sample_peak_dbfs)} dBFS`], num(R.loudness_range?.lra_lu) != null && ['LRA', `${num(R.loudness_range.lra_lu).toFixed(1)} LU`]].filter(Boolean);   /* v6: measure_loudness lra=true */
       if (add.length) { const keep = (L.rows || []).filter(r => !add.some(a => a[0] === r[0])); L.rows = [...add, ...keep].slice(0, 3); for (const r of add) r._flash = t; L._flash = t; }
     }
     const gain = num(get('gain') ?? get('gain_db')) ?? 0;
@@ -910,6 +914,8 @@ function exportOps(state, MODES, ev) {
     if (vw.src) row._thumb = vw.src;
     if (dur != null) row[4] = mmss(dur); row._flash = now(); row._live = false;
   }
+  // v6 render_flow stats: the numbers go on the info panel of the screen the call lands on, as a read card; without flow_stats the call stays the v5 render row only
+  if (ok && tn === 'render_flow' && R0.flow_stats && typeof R0.flow_stats === 'object') readCard(state, MODES, readHead(tn, R0), readRows(tn, R0));
   if (vw.progress && !/^(collect_project|contact_sheet)$/.test(tn)) vw.progress = ok ? (vw.progress.left === 'starting' ? { ...vw.progress, pct: 100, left: 'done', right: dur != null ? `in ${mmss(dur)}` : '' } : { ...vw.progress, pct: 100, right: (dur != null ? `done in ${mmss(dur)}` : 'done') }) : { ...vw.progress, right: 'failed', halt: true };   /* a failed job's sweep stops */
   return true;
 }
@@ -1159,7 +1165,7 @@ function inspectOps(state, MODES, ev, id) {
     const err = ev.phase === 'error', dur = P.dur_ms ?? ev.duration_ms, sm = err ? '' : summary(P.result);
     out.push({ type: 'tool_end', id, name: ev.tool_name, dur_ms: dur, status: err ? 'error' : 'ok', error: P.error, read: true });
     hud(state, ev, 'inspect', ev.tool_name + (err ? ' failed' : sm ? ' · ' + sm : ' ✓'));
-    if (!err) { readCard(state, MODES, ev.tool_name, readRows(String(ev.tool_name), P.result)); scopeStats(state, MODES, scopeLine(String(ev.tool_name), P.result)); }   // the answer stays on the screen's info panel
+    if (!err) { readCard(state, MODES, readHead(String(ev.tool_name), P.result), readRows(String(ev.tool_name), P.result)); scopeStats(state, MODES, scopeLine(String(ev.tool_name), P.result)); }   // the answer stays on the screen's info panel
   }
   return out;
 }

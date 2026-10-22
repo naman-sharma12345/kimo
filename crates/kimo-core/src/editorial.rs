@@ -99,10 +99,9 @@ impl AudioEffect {
 /// ITU BS.1770 K weighting at 48 kHz, stereo channel weights 1, EBU R128
 /// 400 ms blocks at 100 ms hops; absolute -70 LUFS and relative -10 LU gates.
 /// No true-peak claim: peak below is a sample peak.
-pub fn loudness(pcm: &[f32]) -> Option<f64> {
-    if pcm.len() < 38400 {
-        return None;
-    }
+/// Per-frame K-weighted energy (BS.1770 pre-filter + RLB high-pass, 48 kHz coefficients), summed over L and R (G = 1.0).
+/// Shared by `loudness` and the momentary / short-term / LRA series so every number comes from one filter.
+pub fn k_energy(pcm: &[f32]) -> Option<Vec<f64>> {
     crate::guard::reserve(pcm.len().checked_mul(4)?);
     let mut energy = vec![0.; pcm.len() / 2];
     for ch in 0..2 {
@@ -136,6 +135,13 @@ pub fn loudness(pcm: &[f32]) -> Option<f64> {
             *e += z * z;
         }
     }
+    Some(energy)
+}
+pub fn loudness(pcm: &[f32]) -> Option<f64> {
+    if pcm.len() < 38400 {
+        return None;
+    }
+    let energy = k_energy(pcm)?;
     let mut blocks = vec![];
     let mut sum: f64 = energy[..19200].iter().sum();
     for st in (0..=energy.len() - 19200).step_by(4800) {
@@ -155,6 +161,60 @@ pub fn loudness(pcm: &[f32]) -> Option<f64> {
     let threshold = mean * 0.1;
     let gated: Vec<f64> = blocks.into_iter().filter(|v| *v >= threshold).collect();
     Some(-0.691 + 10. * (gated.iter().sum::<f64>() / gated.len() as f64).log10())
+}
+
+/// Exact 10 ms (480-frame) sums of `k_energy`; a trailing partial chunk (< 10 ms) is dropped. Window sums are
+/// built from these by addition only, so a silent window sums to exactly 0 and reads null, never a drift value.
+pub fn k_energy_chunks(energy: &[f64]) -> Vec<f64> {
+    energy.chunks_exact(480).map(|c| c.iter().sum()).collect()
+}
+/// Ungated sliding loudness (EBU Tech 3341 momentary = 40 chunks / 400 ms, short-term = 300 chunks / 3 s): reading k
+/// covers chunks [k*hop, k*hop+win), i.e. it ends at (win + k*hop) * 10 ms. LUFS = -0.691 + 10 log10(mean energy);
+/// None where the window energy is zero. No readings when fewer than `win` chunks exist.
+pub fn loudness_series(chunks: &[f64], win: usize, hop: usize) -> Vec<Option<f64>> {
+    let mut out = vec![];
+    if win == 0 || hop == 0 || chunks.len() < win {
+        return out;
+    }
+    let mut st = 0;
+    while st + win <= chunks.len() {
+        if out.len() % 4096 == 0 {
+            crate::guard::check()
+        }
+        let e = chunks[st..st + win].iter().sum::<f64>() / (win * 480) as f64;
+        out.push(if e > 0. { Some(-0.691 + 10. * e.log10()) } else { None });
+        st += hop;
+    }
+    out
+}
+/// Loudness range per EBU Tech 3342 from short-term (3 s) readings: absolute gate -70 LUFS, relative gate 20 LU below
+/// the energy mean of the absolutely gated readings, then the 10th and 95th percentiles (nearest rank on the sorted
+/// values, index round(p*(n-1))). Returns (lra_lu, low_lufs, high_lufs, readings_used); None when no reading passes.
+pub fn loudness_range(short_term: &[Option<f64>]) -> Option<(f64, f64, f64, usize)> {
+    let abs: Vec<f64> = short_term.iter().flatten().copied().filter(|v| *v >= -70.).collect();
+    if abs.is_empty() {
+        return None;
+    }
+    let mean = abs.iter().map(|v| 10f64.powf((v + 0.691) / 10.)).sum::<f64>() / abs.len() as f64;
+    let rel = -0.691 + 10. * mean.log10() - 20.;
+    let mut kept: Vec<f64> = abs.into_iter().filter(|v| *v >= rel).collect();
+    if kept.is_empty() {
+        return None;
+    }
+    kept.sort_by(f64::total_cmp);
+    let at = |p: f64| kept[((kept.len() - 1) as f64 * p).round() as usize];
+    let (lo, hi) = (at(0.10), at(0.95));
+    Some((hi - lo, lo, hi, kept.len()))
+}
+/// Count interleaved stereo samples with |x| >= `threshold` (linear), and frames where either channel does.
+pub fn count_clipped(pcm: &[f32], threshold: f64) -> (usize, usize) {
+    let (mut samples, mut frames) = (0, 0);
+    for f in pcm.chunks_exact(2) {
+        let n = f.iter().filter(|v| v.abs() as f64 >= threshold).count();
+        samples += n;
+        frames += (n > 0) as usize;
+    }
+    (samples, frames)
 }
 
 /// Stereo Schroeder reverb: eight parallel damped combs and four serial

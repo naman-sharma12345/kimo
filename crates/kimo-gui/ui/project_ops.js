@@ -6,15 +6,17 @@
 //     (project_diff, template_define / template_delete), the Batch table (batch, recipe_apply,
 //     template_apply), the Media list + its footer (load_project dependencies, save_project);
 //     set_meta renames the clip / track on the timeline and writes Name / Role / Tags in the Inspector (m16);
-//   qa: diff_frames, lint_frame, check_code_clip_determinism and the frame cache answer in the HUD status toast and keep
-//     the result on their own rail row (Naman 7:24), no mode hop, nothing on the canvas.
+//   qa: diff_frames, compare_ranges, lint_frame, flash_series, audio_spectrum, check_code_clip_determinism and the frame cache answer in the HUD status toast and keep
+//     the result on their own rail row (Naman 7:24), no mode hop, nothing on the canvas (flash_series also lists its luminance transition stamps,
+//     first-crossing times, on the info panel's Stamps row, and with flash_limit the busiest 1 s window: flashes @ start, windows over the limit,
+//     flashing area, luminance and red).
 // Never a raw id: clips read as their timeline names, checkpoints and templates by the names the call gave.
 import { _now as now, RAW_ID, findClip, findTrack, timelineView, numOf, fitRuler } from './router.js';
 
 export const COV_C = {
   pipeline: /^(set_color_pipeline|set_clip_input_color|set_hdr_mastering|set_ocio_view_delivery)$/,
   project: /^(set_meta|load_project|save_project|project_diff|checkpoint|checkpoint_delete|restore|undo|redo|batch|recipe_apply|template_apply|template_define|template_delete)$/,
-  qa: /^(diff_frames|lint_frame|cache_clear|cache_set_budget|check_code_clip_determinism)$/,
+  qa: /^(diff_frames|compare_ranges|lint_frame|flash_series|audio_spectrum|cache_clear|cache_set_budget|check_code_clip_determinism)$/,
 };
 
 // Kimo colour IDs (kimo-core color: gamut 0..7, transfer 0..8)
@@ -314,6 +316,14 @@ function metaOps(state, MODES, A, R) {
 // does not hop. The toast says what came back ("diff_frames · now vs graded: 77% changed, major") and the rail row keeps it
 // in place of the start-time args, so the result stays readable after the toast fades.
 const sec = v => { const x = numOf(v); return x == null ? '' : ` ${Math.round(x * 100) / 100}s`; };
+// diff_frames quality object -> one line of raw numbers (PSNR dB, SSIM, MS-SSIM); null PSNR reads "identical"
+function qualityLine(Q) {
+  const fx = (v, d) => (typeof v === 'number' && Number.isFinite(v) ? v.toFixed(d) : null), parts = [];
+  if ('psnr_db' in Q) parts.push(`PSNR ${fx(Q.psnr_db, 2) != null ? fx(Q.psnr_db, 2) + ' dB' : Q.identical === true ? 'identical' : 'none'}`);
+  if ('ssim' in Q) parts.push(`SSIM ${fx(Q.ssim, 4) ?? 'none'}`);
+  if ('ms_ssim' in Q) parts.push(`MS-SSIM ${fx(Q.ms_ssim, 4) ?? 'none'}`);
+  return parts.length ? parts.join(' · ') : null;
+}
 function side(state, MODES, s) {
   if (!s || typeof s !== 'object') return 'now';
   const src = String(s.source ?? 'composite'); let m, w;
@@ -339,12 +349,74 @@ export function qaOps(state, MODES, ev) {
     if (!what) return false;
     const psnr = numOf((R.metrics || {}).psnr_db);
     rail = { changed: D.bit_identical ? 'none' : what.replace(/ changed/, '') }; toast = `${tn} · ${a} vs ${b}: ${what}${psnr != null && !D.bit_identical ? ` (PSNR ${Math.round(psnr * 10) / 10} dB)` : ''}`;
+    // v6 quality object (only when the call passed quality): raw luma PSNR / SSIM / MS-SSIM scalars, null PSNR = identical, never a verdict
+    const Q = R.quality && typeof R.quality === 'object' ? R.quality : null;
+    ev._dfQuality = Q ? qualityLine(Q) : null;
+  } else if (tn === 'compare_ranges') {
+    // A/B over time: only the summary's top-level scalars are read (the t_s / psnr_db / ssim curves arrive cut to 8 entries plus a
+    // "…+N" marker in the feed). A null PSNR mean with every sample identical reads "identical"; nothing here is a verdict.
+    const S = R.summary && typeof R.summary === 'object' ? R.summary : {}, pts = numOf(R.points); if (pts == null) return false;
+    const sd = (s, st) => side(state, MODES, { source: s && s.source, time: numOf(st) ?? 0 });
+    const range = `${sd(R.a || A.a, (R.a || {}).start)} vs ${sd(R.b || A.b, (R.b || {}).start)} · ${sec(numOf(R.duration) ?? 0).trim()}, ${pl(n(pts), 'sample')}`;
+    const fx = (v, d) => (typeof v === 'number' && Number.isFinite(v) ? v.toFixed(d) : null);
+    const row = (k, unit, d) => { const m = S[k]; if (!m || typeof m !== 'object') return null; const mean = fx(m.mean, d), min = fx(m.min, d), p5 = fx(m.p5, d);
+      if (mean == null) return numOf(R.identical_count) === pts ? 'identical' : 'none';
+      const at = numOf(m.min_at_s); return `mean ${mean}${unit}, min ${min}${unit}${at != null ? ' at ' + sec(at).trim() : ''}, p5 ${p5}${unit}`; };
+    const ps = row('psnr_db', ' dB', 2), ss = row('ssim', '', 4), ms = row('ms_ssim', '', 4), idn = n(R.identical_count);
+    rail = { [`${pl(n(pts), 'sample')}`]: ps != null ? `PSNR ${ps}` : ss != null ? `SSIM ${ss}` : `MS-SSIM ${ms}` };
+    toast = `${tn} · ${range}: ${[ps != null && `PSNR ${ps}`, ss != null && `SSIM ${ss}`].filter(Boolean).join(' · ')}${idn ? ` (${idn} identical)` : ''}`;
+    // four rows (readCard keeps 4), each allowed to wrap
+    ev._crRows = [['Range', range, 'wrap'], ...[['PSNR', ps], ['SSIM', ss], ['MS-SSIM', ms]].filter(r => r[1] != null).map(r => [r[0], r[1] + (r[0] === 'PSNR' && idn && r[1] !== 'identical' ? ` (${idn} identical)` : ''), 'wrap'])].slice(0, 4);
   } else if (tn === 'lint_frame') {
     const t = A.time != null ? sec(A.time).trim() : Array.isArray(A.times) ? pl(A.times.length, 'time') : '';
     const S = R.summary || {}, by = S.counts_by_code && typeof S.counts_by_code === 'object' ? S.counts_by_code : {};
     const parts = Object.entries(by).filter(([, k]) => numOf(k)).map(([c, k]) => `${LINT[c] || c.replace(/_/g, ' ')} ×${n(k)}`);
     const what = parts.length ? parts.join(', ') : 'clean';
     rail = { [t || 'frame']: what }; toast = `${tn}${t ? ' ' + t : ''} · ${what}`;
+  } else if (tn === 'flash_series') {
+    // raw counts only, no verdict: the busiest window's transitions and the largest changed area, as the engine measured them
+    const T = R.totals || {}, P0 = R.params_used || {}; if (R.samples == null) return false;
+    const rg = R.range || {}, span = rg.start != null && rg.end != null ? `${sec(rg.start).trim()}–${sec(rg.end).trim()}` : '';
+    const win = numOf(P0.window_s) ?? 1, area = numOf(T.max_changed_area_fraction);
+    const what = `max ${n(T.max_lum_transitions_in_window)} luminance / ${n(T.max_red_transitions_in_window)} red transitions per ${Math.round(win * 100) / 100}s` + (area != null ? `, area ${Math.round(area * 100)}%` : '');
+    // the info panel's Transitions row: the same three numbers in fewer words, stacked under its label (it wrapped to 6 lines)
+    ev._flashTr = `max ${n(T.max_lum_transitions_in_window)} luminance · ${n(T.max_red_transitions_in_window)} red per ${Math.round(win * 100) / 100}s` + (area != null ? ` · area ${Math.round(area * 100)}%` : '');
+    // stamps: each luminance transition sits on its first crossing of lum_delta inside the monotonic run that reaches the
+    // swing's extreme (strict-run guard), so these times are where the change starts; up to 8 listed, then "+N more".
+    // Read from the payload's lum_stamps [{t, dir}] (kimo-mcp spectator.rs builds it from the FULL result): the result's
+    // frames arrays arrive cut to 8 entries plus a "…+N" marker, so they cannot carry a stamp. A "…+N" string or any
+    // non-finite time is skipped, never read as 0.
+    const LS = Array.isArray(P.lum_stamps) ? P.lum_stamps : [];
+    const st = LS.map(s => { const t = s && typeof s === 'object' && typeof s.t === 'number' && Number.isFinite(s.t) ? s.t : null, d = s ? s.dir : null;
+      return t != null && (d === 1 || d === -1) ? `${d > 0 ? '↑' : '↓'}${Math.round(t * 100) / 100}s` : null; }).filter(Boolean);
+    const tot = Number.isFinite(P.lum_stamps_total) ? Math.max(P.lum_stamps_total, st.length) : st.length;
+    ev._flashStamps = st.length ? st.slice(0, 8).join(' ') + (tot > 8 ? ` +${tot - 8} more` : '') : Array.isArray(P.lum_stamps) ? 'none' : 'not in feed';
+    rail = { [span || pl(n(R.samples), 'frame')]: what }; toast = `${tn}${span ? ' ' + span : ''} · ${pl(n(R.samples), 'frame')}: ${what}`;
+    // v6 flash rule numbers (only when the call gave flash_limit): top-level scalars worst_window_* / windows_over_limit /
+    // flash_area_pct_max and the red_ twins; the busiest 1 s window with its start time, how many windows exceed the limit
+    // card text kept to two lines at full card width: "5 @ 5.92s, 27>3, 98%" = 5 flashes in the worst 1 s window starting 5.92 s,
+    // 27 windows over the limit 3, largest flash area 98% (the row wrapped to 8 lines beside its label and pushed the card above a 640x360 window)
+    const lim = numOf(R.flash_limit);
+    if (lim != null) { const one = (c, s0, o, a) => { const cn = numOf(c), sv = numOf(s0), ov = numOf(o), ar = numOf(a); if (cn == null) return null;
+        return `${cn}${sv != null ? ` @ ${Math.round(sv * 100) / 100}s` : ''}${ov != null ? `, ${ov}>${Math.round(lim * 100) / 100}` : ''}${ar != null && cn > 0 ? `, ${Math.round(ar)}%` : ''}`; };
+      const lw = one(R.worst_window_flashes, R.worst_window_start, R.windows_over_limit, R.flash_area_pct_max), rw = one(R.worst_red_window_flashes, R.worst_red_window_start, R.red_windows_over_limit, R.red_flash_area_pct_max);
+      ev._flashRule = lw != null || rw != null ? `${lw ?? '–'} · red ${rw ?? '–'}` : null; }
+  } else if (tn === 'audio_spectrum') {
+    // raw levels only, from the result's top-level scalars (peak_hz / peak_dbfs / total_dbfs / loudest_band): the bands and
+    // spectrum arrays arrive cut to 8 entries plus a "…+N" marker, so no row reads them. null (silence) reads "silent", never 0.
+    const fin = v => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+    const hz = v => (v >= 1000 ? `${Math.round(v / 10) / 100} kHz` : `${Math.round(v)} Hz`), dbs = v => `${v < 0 ? '−' : ''}${Math.abs(Math.round(v * 10) / 10).toFixed(1)} dBFS`;
+    const rg = R.range || {}, span = fin(rg.start) != null && fin(rg.end) != null ? `${sec(rg.start).trim()}–${sec(rg.end).trim()}` : '';
+    const ph = fin(R.peak_hz), pd = fin(R.peak_dbfs), td = fin(R.total_dbfs), LB = R.loudest_band && typeof R.loudest_band === 'object' ? R.loudest_band : {};
+    const lo = fin(LB.lo_hz), hi = fin(LB.hi_hz), ld = fin(LB.dbfs);
+    if (fin(R.fft_size) == null) return false;
+    const peak = ph != null && pd != null ? `${hz(ph)}, ${dbs(pd)}` : 'silent';
+    const span2 = (a, b) => (b < 1000 ? `${Math.round(a)}–${Math.round(b)} Hz` : a >= 1000 ? `${Math.round(a / 10) / 100}–${Math.round(b / 10) / 100} kHz` : `${hz(a)}–${hz(b)}`);
+    const band = lo != null && hi != null && ld != null ? `${span2(lo, hi)}, ${dbs(ld)}` : 'none';
+    const who = A.clip_id ? clipName(state, MODES, A.clip_id) || 'clip' : 'mix';
+    rail = { [span || who]: `peak ${peak}` }; toast = `${tn} ${who}${span ? ' ' + span : ''} · peak ${peak}, loudest band ${band}`;
+    // four rows (readCard keeps 4), each allowed to wrap so no value is cut by an ellipsis
+    ev._specRows = [['Range', `${who}${span ? ' ' + span : ''}`, 'wrap'], ['Peak', peak, 'wrap'], ['Loudest band', band, 'wrap'], ['Total', td != null ? dbs(td) : 'silent', 'wrap']];
   } else if (tn === 'cache_set_budget') {
     const cap = numOf(R.cap_bytes) ?? (numOf(A.megabytes) != null ? numOf(A.megabytes) * 1048576 : null); if (cap == null) return false;
     const prev = state._cacheCap; state._cacheCap = cap;
@@ -359,8 +431,20 @@ export function qaOps(state, MODES, ev) {
   } else return false;
   ev._railArgs = rail; ev._hudText = toast; ev._kvDone = true;
   // GUI-FIX-1: the same answer stays on the current screen's info panel (router.js readCard), not only in the toast
-  if (tn === 'diff_frames') ev._readRows = [['Compared', `${side(state, MODES, R.a || A.a)} vs ${side(state, MODES, R.b || A.b)}`], ['Changed', rail.changed]];
-  else if (tn === 'lint_frame') ev._readRows = [['Frame', Object.keys(rail)[0]], ['Findings', Object.values(rail)[0]]];
+  if (tn === 'diff_frames') { ev._readRows = [['Compared', `${side(state, MODES, R.a || A.a)} vs ${side(state, MODES, R.b || A.b)}`, 'wrap'], ['Changed', rail.changed]]; if (ev._dfQuality) ev._readRows.push(['Quality', ev._dfQuality, 'wrap']); }
+  else if (tn === 'compare_ranges') ev._readRows = ev._crRows;
+  else if (tn === 'lint_frame') { ev._readRows = [['Frame', Object.keys(rail)[0]], ['Findings', Object.values(rail)[0]]];
+    // v6 quality numbers (lint_frame quality): the extremes from summary.quality, only when the call asked for them
+    const Q = R.summary && R.summary.quality && typeof R.summary.quality === 'object' ? R.summary.quality : null, pc = x => numOf(x) != null ? `${Math.round(x * 1000) / 10}%` : null;
+    if (Q) { const cr = pc(Q.max_crushed_frac), cl = pc(Q.max_clipped_frac), pl0 = numOf(Q.max_band_plateau_px), lv = numOf(Q.min_luma_levels), id = numOf(Q.identical_to_prev);
+      if (cr != null && cl != null) ev._readRows.push(['Crushed / clipped', `max ${cr} / ${cl}`, 'stack']);
+      const bf = [pl0 != null ? `plateau ${Math.round(pl0 * 10) / 10} px` : null, lv != null ? `${lv} levels` : null, id != null ? `${id} same as prev` : null].filter(Boolean).join(' · ');
+      if (bf) ev._readRows.push(['Banding / frozen', bf, 'stack']); } }
+  else if (tn === 'flash_series') { ev._readRows = [['Range', Object.keys(rail)[0]], ['Transitions', ev._flashTr, 'stack'], ['Stamps', ev._flashStamps, 'wrap']]; if (ev._flashRule) ev._readRows.push(['Worst 1 s flashes', ev._flashRule, 'stack']);
+    // v6 flash pin: area_basis field names the worst 10 degree field on the same row (the card keeps 4 rows; top-level worst_field_rect only)
+    const fr = R && R.area_basis === 'field' && Array.isArray(R.worst_field_rect) && R.worst_field_rect.length === 4 && R.worst_field_rect.every(v => typeof v === 'number' && Number.isFinite(v)) ? R.worst_field_rect : null;
+    if (ev._flashRule && fr) ev._readRows[ev._readRows.length - 1][1] += ` · field ${fr[0]},${fr[1]} ${fr[2]}×${fr[3]}`; }
+  else if (tn === 'audio_spectrum') ev._readRows = ev._specRows;
   else if (tn === 'check_code_clip_determinism') ev._readRows = [['Frame', Object.keys(rail)[0]], ['Result', Object.values(rail)[0]]];
   else if (tn === 'cache_set_budget') ev._readRows = [['Frame cache', rail.budget], ['Used', bytes(R.bytes ?? 0)]];
   else ev._readRows = [['Freed', bytes(R.freed_bytes ?? 0)], ['Frames', String(n(R.cleared_entries))]];
