@@ -1,9 +1,9 @@
 //! Transition engine: eased progress, soft-edged angled wipes, iris/clock/split/blinds/noise reveals, slides with overshoot,
-//! zoom/spin, dips to a colour, flash, light leak, glitch, whip pan and zoom blur.
+//! zoom/spin, dips to a colour, flash, light leak, film burn, glitch, whip pan and zoom blur.
 use crate::effects::Frame;
 use crate::model::Transition;
 
-pub const KINDS: &[&str] = &["crossfade", "dissolve", "wipe", "wipe_left", "wipe_right", "wipe_up", "wipe_down", "diagonal", "blinds", "checker", "iris", "clock", "split_h", "split_v", "noise_dissolve", "slide_left", "slide_right", "slide_up", "slide_down", "zoom", "zoom_blur", "spin", "flash", "dip_black", "dip_white", "dip_color", "light_leak", "glitch", "whip_left", "whip_right", "shatter", "shatter_cells"];
+pub const KINDS: &[&str] = &["crossfade", "dissolve", "wipe", "wipe_left", "wipe_right", "wipe_up", "wipe_down", "diagonal", "blinds", "checker", "iris", "clock", "split_h", "split_v", "noise_dissolve", "slide_left", "slide_right", "slide_up", "slide_down", "zoom", "zoom_blur", "spin", "flash", "dip_black", "dip_white", "dip_color", "light_leak", "film_burn", "glitch", "whip_left", "whip_right", "shatter", "shatter_cells"];
 pub const EASES: &[&str] = &["linear", "in", "out", "in_out", "in_cubic", "out_cubic", "in_out_cubic", "in_out_expo", "out_back", "out_bounce", "out_quart", "out_expo", "in_expo", "in_out_quint", "in_back", "in_out_back", "in_elastic", "out_elastic", "in_out_elastic", "in_bounce", "in_out_bounce"];
 
 pub fn ease(name: &str, t: f64) -> f64 {
@@ -71,6 +71,15 @@ pub fn plan(tr: &Transition, lt: f64, w: usize, h: usize) -> Plan {
             if k < 0.5 { p.op = 0.0; p.dip = Some((c, sstep(k * 2.0))); } else { p.dip = Some((c, 1.0)); p.op = sstep((k - 0.5) * 2.0); } }
         "light_leak" => { p.op = sstep((k - 0.3) / 0.4); let a = (1.0 - (2.0 * k - 1.0).abs()).powf(1.5) * tr.intensity as f32; let (ox, oy) = (hash(1, 2, seed) * 0.6 + 0.2, hash(3, 4, seed) * 0.6 + 0.2);
             p.overlay = Some(Box::new(move |f| { let (w, h) = (f.w as f32, f.h as f32); for y in 0..f.h { for x in 0..f.w { let d = (((x as f32 / w - ox) * 1.2).powi(2) + ((y as f32 / h - oy)).powi(2)).sqrt(); let g = (1.0 - d * 1.1).max(0.0).powi(2) * a; let i = (y * f.w + x) * 4; f.d[i] += g * 1.6; f.d[i + 1] += g * 0.75; f.d[i + 2] += g * 0.25; } } })); }
+        "film_burn" => { // a hot film-burn bloom from a seeded point: noise-edged heat spreads out, blows the frame to orange/white at the cut (k 0.5), then burns off
+            let it = tr.intensity as f32; let env = (1.0 - (2.0 * k - 1.0).abs()).max(0.0); p.op = sstep((k - 0.42) / 0.16);
+            let (ox, oy) = (wf * (0.15 + 0.7 * hash(11, 12, seed)), hf * (0.15 + 0.7 * hash(13, 14, seed))); let maxd = (wf * wf + hf * hf).sqrt();
+            let flick = 0.85 + 0.3 * hash((kr * 24.0) as i32, 77, seed); let reach = env * 1.3; let ns = 5.0 / wf.max(hf); let drift = k * 1.7;
+            if it > 0.0 && env > 0.0 { p.overlay = Some(Box::new(move |f| { for y in 0..f.h { for x in 0..f.w { let (xf, yf) = (x as f32, y as f32);
+                let d = ((xf - ox).powi(2) + (yf - oy).powi(2)).sqrt() / maxd; let n = 0.65 * vnoise(xf * ns + drift, yf * ns, seed) + 0.35 * vnoise(xf * ns * 2.7, yf * ns * 2.7 - drift, seed ^ 0x5bd1);
+                let h = sstep((reach - d + (n - 0.5) * 0.45) / 0.22) * env.powf(0.7) * it * flick; if h <= 0.0 { continue; }
+                let core = ((h - 0.55) / 0.45).max(0.0); let i = (y * f.w + x) * 4;
+                f.d[i] += h * 1.5 + core * 0.6; f.d[i + 1] += h * h * 0.75 + core * 0.8; f.d[i + 2] += h * h * h * 0.25 + core * 0.9; } } })); } }
         "glitch" => { let bands = 18usize; let sev = (1.0 - k) * tr.intensity as f32; let bh = (hf / bands as f32).ceil().max(1.0); let step = (kr * 14.0) as u32;
             p.mask = Some(Box::new(move |_, y| { let b = (y as f32 / bh) as i32; if hash(b, step as i32, seed) < k * 1.4 - 0.1 { 1.0 } else { 0.0 } }));
             p.post = Some(Box::new(move |f| { let (w, h) = (f.w, f.h); let src = f.d.clone(); for y in 0..h { let b = (y as f32 / bh) as i32; let off = ((hash(b, step as i32 + 5, seed) - 0.5) * 2.0 * sev * w as f32 * 0.25) as i32; let rs = (sev * 14.0) as i32;

@@ -95,7 +95,7 @@ Use the quality-tier audit and test notes in the BETA appendix; checklist marks 
 
 #### Transitions (31 registered kinds)
 - [x] crossfade, wipes x4, slides x4, zoom, spin, flash, iris, blinds, checker, diagonal
-- [x] dip black/white/color, whip left/right, light leak, glitch, zoom blur, clock, split h/v, noise dissolve, shatter / shatter_cells
+- [x] dip black/white/color, whip left/right, light leak, film burn, glitch, zoom blur, clock, split h/v, noise dissolve, shatter / shatter_cells
 - [~] 10 transition easings; no centered/start/end alignment control
 
 ### Parameters and controls
@@ -115,7 +115,7 @@ Use the quality-tier audit and test notes in the BETA appendix; checklist marks 
 ### What it does
 
 #### Color (Lumetri-style)
-- [x] exposure, contrast, saturation, temperature, tint, color wheels (lift/gamma/gain), curves (luma S-curve), HSL secondary, LUT (.cube), teal/orange, vignette, color isolate, levels, brightness/contrast, channel mixer, gradient map, colorize, shadow/highlight, threshold
+- [x] exposure, contrast, saturation, temperature, tint, color wheels (lift/gamma/gain), curves (luma S-curve), HSL secondary, LUT (.cube), teal/orange, vignette (shaped: centre, roundness, squareness, size, aspect, feather, edge colour; centre can follow a track_point clip or a tracked mask), color isolate, levels, brightness/contrast, channel mixer, gradient map, colorize, shadow/highlight, threshold
 - [x] scopes (waveform/vectorscope/histogram data via get_scopes)
 - [~] free-position master/RGB curves, hue curves, qualifier with per-effect masks and display-sRGB/D65 Lab shot match; pending: mask tracking binding, semantic match and automatic creative tone selection
 - [~] opt-in scene-linear wide-gamut pipeline, explicit gamut/log transforms, supported pointwise grade LUT export, approximate film looks, optional pinned OCIO/ACES2 reference; no automatic camera IDT, measured film-stock calibration, production OCIO config import or certification
@@ -649,7 +649,7 @@ User bar: every feature best in class. Tiers: **PRO** = matches or beats the pro
 | Tracking (ring of 9 patches, translation + rotation + scale, windowed decode, refit from frame 0 each frame) | V2 | this row describes the point/ring tracker; separate planar tracker has homography/reacquisition with limited-use tiers below. No per-patch confidence UI |
 | Motion blur (`set_motion_blur`: shutter-angle multi-sample of x/y/scale/rotation, 4-16 samples) | V2 | no per-effect/param blur, forward source optical-flow blur is separate and has occlusion/fast-motion gaps; adjustment layers/text animators not covered |
 | Renderer | V1 | alpha-correct bilinear + 2x2..4x4 supersampling on transforms (done); still CPU f32, no mipmaps/Lanczos for large downscales, no GPU |
-| Transitions | V2 | 31 kinds, 10 easings, soft angled wipes, clock, split, iris, noise dissolve, dips, light leak, glitch, whip pan, zoom blur. Missing: outgoing-clip push/slide-out, luma-matte wipes from image, GPU-shader transitions |
+| Transitions | V2 | 31 kinds, 10 easings, soft angled wipes, clock, split, iris, noise dissolve, dips, light leak, film burn, glitch, whip pan, zoom blur. Missing: outgoing-clip push/slide-out, luma-matte wipes from image, GPU-shader transitions |
 | Particles | V2 (emitter) | add_emitter: 11 presets (incl. dust, smoke), forces, turbulence, attractor, floor bounce, trails, fade_in, sprites soft/hard/mote/puff/streak/ring/star/spark; no layer collisions, no texture sprites, no fluid sim |
 | Text | V2 | kerned layout, word wrap, AE-style char/word/line animators with range selectors (6 shapes, keyframable) + 9 presets, stroke, blurred shadow, glow, gradient, rounded bg box. Missing: per-span rich text, unrestricted variable fonts, emoji; path text and font-weight control shipped |
 | Masks | V2 | bezier path-shape keys and expansion shipped; no per-point feather, ML roto or automated mask tracking |
