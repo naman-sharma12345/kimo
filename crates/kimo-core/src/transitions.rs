@@ -77,7 +77,7 @@ pub fn plan(tr: &Transition, lt: f64, w: usize, h: usize) -> Plan {
             let flick = 0.85 + 0.3 * hash((kr * 24.0) as i32, 77, seed); let reach = env * 1.3; let ns = 5.0 / wf.max(hf); let drift = k * 1.7;
             if it > 0.0 && env > 0.0 { p.overlay = Some(Box::new(move |f| { for y in 0..f.h { for x in 0..f.w { let (xf, yf) = (x as f32, y as f32);
                 let d = ((xf - ox).powi(2) + (yf - oy).powi(2)).sqrt() / maxd; let n = 0.65 * vnoise(xf * ns + drift, yf * ns, seed) + 0.35 * vnoise(xf * ns * 2.7, yf * ns * 2.7 - drift, seed ^ 0x5bd1);
-                let h = sstep((reach - d + (n - 0.5) * 0.45) / 0.22) * env.powf(0.7) * it * flick; if h <= 0.0 { continue; }
+                let h = sstep((reach - d + (n - 0.5) * 0.45) / 0.22) * env.powf(0.3) * it * flick; if h <= 0.0 { continue; }
                 let core = ((h - 0.55) / 0.45).max(0.0); let i = (y * f.w + x) * 4;
                 f.d[i] += h * 1.5 + core * 0.6; f.d[i + 1] += h * h * 0.75 + core * 0.8; f.d[i + 2] += h * h * h * 0.25 + core * 0.9; } } })); } }
         "glitch" => { let bands = 18usize; let sev = (1.0 - k) * tr.intensity as f32; let bh = (hf / bands as f32).ceil().max(1.0); let step = (kr * 14.0) as u32;

@@ -43,7 +43,7 @@ add_text e504fc3dce60034a
 add_text_animator 7c837530f3da76ca
 add_title 1461c7f60bd47216
 add_track cf1da67768a18dbb
-add_transition 5c58371f3cdcdcc0
+add_transition 206007cccc65ed1e
 analyze_color 34563f36b4186ca4
 analyze_exposure 9ca9ecd0326382b4
 analyze_exposure_sequence 635cbb61a9b00303
