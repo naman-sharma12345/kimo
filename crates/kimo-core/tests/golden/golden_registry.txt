@@ -16,6 +16,7 @@ add_displacement_map be79622940cf29ef
 add_effect 36e63ee4829d5542
 add_emitter 940e20f3bb9b947f
 add_glitch_confetti ea3c9845ccf22d20
+add_glow_text 11957bdb81e0bc57
 add_hud_frame 3dbd990dc13820bb
 add_lens_blur 465cef3d1ba4c9ca
 add_managed_linear_effect 15e7663749141579
