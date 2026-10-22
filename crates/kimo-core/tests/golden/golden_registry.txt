@@ -10,7 +10,7 @@ add_clip b851a4076e91b8c2
 add_code_clip 79e8cbe027cdbd62
 add_counter 2cfd3406e38575f3
 add_detection_box e740cc0690940b44
-add_effect ae2e4a00a10c4da2
+add_effect 7f8f4ddf014abd1b
 add_emitter 940e20f3bb9b947f
 add_glitch_confetti ea3c9845ccf22d20
 add_hud_frame 4518e23cbffd7cd9
