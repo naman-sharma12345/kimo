@@ -84,6 +84,49 @@ fn gradient_wipe_reveals_in_ramp_order_with_the_outgoing_clip_held_still() {
     let f = frame(&s, 1.25); let mixed = (0..W).filter(|&x| { let p = px(&f, x, 45); p[0] > 12.0 && p[1] > 12.0 }).count(); assert!(mixed > 30, "softness 0.4 must blend a wide edge, {mixed} mixed columns");
 }
 
+/// A 4 s video whose every pixel's red value counts its frame: 40 + 5 * frame (10 fps).
+fn counting_video() -> String {
+    use std::io::Write;
+    let path = std::env::temp_dir().join(format!("kimo-pw-{}-count.mp4", std::process::id()));
+    let mut ch = std::process::Command::new("ffmpeg").args(["-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", &format!("{W}x{H}"), "-r", "10", "-i", "-", "-c:v", "libx264rgb", "-qp", "0", "-pix_fmt", "rgb24", path.to_str().unwrap()]).stdin(std::process::Stdio::piped()).spawn().expect("ffmpeg");
+    { let mut si = ch.stdin.take().unwrap(); for fi in 0..40usize { let mut o = Vec::with_capacity(W * H * 3); for _ in 0..W * H { o.extend_from_slice(&[(40 + 5 * fi) as u8, 0, 40]); } si.write_all(&o).unwrap(); } }
+    assert!(ch.wait().unwrap().success()); path.to_str().unwrap().to_string()
+}
+
+/// KP4: on a plain cut the outgoing clip keeps playing from its media past its out point (Premiere's handles) instead of
+/// freezing on its last frame; with no media left it holds its last frame as before.
+#[test]
+fn on_a_cut_the_outgoing_clip_keeps_playing_through_the_transition() {
+    for (in_pt, want, word) in [(0.0, 100.0, "keeps playing"), (3.0, 235.0, "held")] {
+        let mut s = Session::new(); c(&mut s, "project_set", json!({"width": W, "height": H, "fps": 10}));
+        let av = id(&c(&mut s, "import_media", json!({"path": counting_video()})), "asset_id"); let pb = png("b", |x, _| [0, ramp(x), 40]); let ab = id(&c(&mut s, "import_media", json!({"path": pb})), "asset_id");
+        let t1 = id(&c(&mut s, "add_track", json!({})), "track_id");
+        c(&mut s, "add_clip", json!({"track_id": t1, "source_type": "media", "asset_id": av, "start": 0, "duration": 1.0, "in_point": in_pt}));
+        let b = id(&c(&mut s, "add_clip", json!({"track_id": t1, "source_type": "media", "asset_id": ab, "start": 1.0, "duration": 1.0})), "clip_id");
+        let own_last = if in_pt == 0.0 { 85.0 } else { 235.0 }; let f = frame(&s, 0.95); let last = px(&f, 10, 45)[0]; assert!((last - own_last).abs() <= 3.0, "in {in_pt}: the clip's own last frame is red {own_last}, got {last}");
+        for kind in ["push", "gradient_wipe"] {
+            let r = if kind == "push" { c(&mut s, "add_push_wipe", json!({"clip_id": b, "kind": kind, "duration": 0.5, "ease": "linear"})) } else { c(&mut s, "add_push_wipe", json!({"clip_id": b, "kind": kind, "duration": 0.5, "ease": "linear", "softness": 0.0})) };
+            assert!(r["outgoing"].as_str().unwrap().contains(word), "in {in_pt} {kind}: {r}");
+            let f = frame(&s, 1.25); let (x, y) = if kind == "push" { (10, 45) } else { (120, 45) }; let p = px(&f, x, y);
+            assert!(p[1] < 8.0 && (p[0] - want).abs() <= 3.0, "in {in_pt} {kind}: at 1.25 s the outgoing clip must show red {want} (its media 0.25 s past the cut), got {p:?}");
+        }
+    }
+}
+
+/// KP4: an angular wipe's start line is a soft edge too: crossing it, the mix of B changes gradually, never in one row.
+#[test]
+fn an_angular_wipe_has_no_hard_seam_on_its_start_line() {
+    let (mut s, _a, b) = scene(false);
+    c(&mut s, "add_push_wipe", json!({"clip_id": b, "kind": "gradient_wipe", "duration": 0.5, "ease": "linear", "softness": 0.3, "gradient": "angular"}));
+    let f = frame(&s, 1.25); let x = 150; let r = ramp(x) as f32;
+    let mix: Vec<f32> = (30..61).map(|y| (px(&f, x, y)[1] / r).clamp(0.0, 1.0)).collect();
+    let jump = mix.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max);
+    assert!(jump < 0.3, "angular start line (3 o'clock, x {x}): B's share must change gradually across it, biggest row-to-row jump {jump:.2} in {mix:.2?}");
+    assert!(mix[0] < mix[30], "above the line is later in the sweep than below it: {mix:.2?}");
+    let f = frame(&s, 1.49); let late = (0..W).step_by(8).flat_map(|x| (0..H).step_by(8).map(move |y| (x, y))).map(|(x, y)| { let p = px(&f, x, y); p[0] }).fold(0.0f32, f32::max);
+    assert!(late < 40.0, "at the end of the sweep the start line must have closed (no A left), max red {late}");
+}
+
 #[test]
 fn a_luma_clip_drives_the_wipe_and_stays_hidden() {
     let (mut s, _a, b) = scene(false);

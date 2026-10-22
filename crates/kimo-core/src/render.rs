@@ -251,11 +251,15 @@ fn prepare_window(p: &Project, cache: &mut Cache, t0: f64, t1: f64, window:usize
     if !all { for c in flat.iter().filter(|c| active.contains(&c.id)) { if let Some(tr) = c.transition_in.as_ref().filter(|tr| tr.kind == "morph_cut") { if t0 < c.start + tr.duration { if let Some(a) = crate::transitions::morph_prev(p, c) { if !active.contains(&a.id) { morph_t.insert(a.id.clone(), a.start + a.duration - 0.5 / p.fps); } } } } } }
     // push / gradient_wipe (pushwipe.rs): the outgoing abutting clip's last frame and a luma clip are read too
     if !all { for c in flat.iter().filter(|c| active.contains(&c.id)) { if c.transition_in.as_ref().is_some_and(|tr| crate::pushwipe::KINDS.contains(&tr.kind.as_str()) && t0 < c.start + tr.duration) { for (id, tm) in crate::pushwipe::needs(p, c, t0.max(c.start)) { if !active.contains(&id) { morph_t.insert(id, tm); } } } } }
+    // ... and the outgoing clip is decoded lengthened past its out point (pushwipe::outgoing_clip), a superset of its own frames
+    let mut pw_ext: std::collections::HashMap<String, Clip> = std::collections::HashMap::new();
+    for c in flat.iter().filter(|c| all || active.contains(&c.id)) { if c.transition_in.as_ref().is_some_and(|tr| crate::pushwipe::KINDS.contains(&tr.kind.as_str()) && (all || t0 < c.start + tr.duration)) { if let Some(x) = crate::pushwipe::outgoing_clip(p, c) { if crate::pushwipe::handle_secs(p, c) > 0.0 { pw_ext.insert(x.id.clone(), x); } } } }
     for k in morph_t.keys() { active.insert(k.clone()); }
     if !all { cache.frames.retain(|k, _| active.contains(k)); cache.code.retain(|k, _| active.contains(k)); }
     let media_count=flat.iter().filter(|c|active.contains(&c.id)&&matches!(c.source,Source::Media{..})&&c.props.get("audio_only").map(|q|q.at(0.)).unwrap_or(0.)<0.5).count().max(1);
     if !all{let budget=decode_cache_limit()/media_count;cache.frames.retain(|_,(_,fr)|fr.buf.len()+fr.linear_buf.as_ref().map(|b|b.len()*5).unwrap_or(0)<=budget);}
     for c in &flat {
+        let c = pw_ext.get(&c.id).unwrap_or(c);
         let Source::Media { asset } = &c.source else { continue };
         if !active.contains(&c.id) || c.props.get("audio_only").map(|q| q.at(0.0)).unwrap_or(0.0) >= 0.5 { continue; }
         let total = media_total(c,p.fps);
@@ -719,7 +723,7 @@ pub fn render_frame_opts(p: &Project, t: f64, cache: &Cache, transparent: bool) 
         if let Some(tr_in) = &c.transition_in { if lt < tr_in.duration {
             let mut pl = crate::transitions::plan(tr_in, lt, w, h); op *= pl.op; dx += pl.dx; dy += pl.dy; sc *= pl.scale; rot_extra += pl.rot;
             if let Some(m) = crate::pushwipe::luma_mask(p, tr_in, lt, t, w, cache) { pl.mask = Some(m); } // gradient_wipe driven by a clip's luma
-            if let Some(u) = pl.under.as_ref() { crate::comp3d::flush(&mut out, &mut g3, p, t); let prev = crate::pushwipe::outgoing(p, c, cache); u(&mut out, prev.as_ref()); if !transparent { for i in 0..w * h { out.d[i*4+3] = 1.0; } } } // push / gradient_wipe: the outgoing picture
+            if let Some(u) = pl.under.as_ref() { crate::comp3d::flush(&mut out, &mut g3, p, t); let prev = crate::pushwipe::outgoing(p, c, t, cache); u(&mut out, prev.as_ref()); if !transparent { for i in 0..w * h { out.d[i*4+3] = 1.0; } } } // push / gradient_wipe: the outgoing picture
             if let Some((col, a)) = pl.dip { crate::comp3d::flush(&mut out, &mut g3, p, t); for i in 0..w * h { for j in 0..3 { out.d[i*4+j] = out.d[i*4+j] * (1.0 - a) + col[j] * a; } out.d[i*4+3] = out.d[i*4+3] + a * (1.0 - out.d[i*4+3]); } }
             mask = None; tplan = Some(pl);
         }}
@@ -955,8 +959,12 @@ fn silhouette_alpha(p: &Project, id: &str, tt: f64, cache: &Cache) -> Option<(us
     if let Ok(mut c) = SIL_CACHE.lock() { if c.len() >= 96 { c.pop_front(); } c.push_back((key, rc.clone())); } Some((fr.w, fr.h, rc))
 }
 pub fn render_clip_alone(p: &Project, id: &str, t: f64, cache: &Cache) -> Option<Frame> {
+    let c = p.tracks.iter().flat_map(|tr| tr.clips.iter()).find(|c| c.id == id)?; render_clip_alone_as(p, c, t, cache)
+}
+/// render_clip_alone for a clip given by value (e.g. one lengthened past its out point, pushwipe::outgoing_clip).
+pub fn render_clip_alone_as(p: &Project, c: &Clip, t: f64, cache: &Cache) -> Option<Frame> {
     if MATTE_DEPTH.with(|d| d.get()) >= 3 { return None; }
-    let c = p.tracks.iter().flat_map(|tr| tr.clips.iter()).find(|c| c.id == id).map(|c| (**c).clone())?;
+    let c = c.clone();
     if t < c.start - 1e-9 || t >= c.start + c.duration - 1e-9 { return Some(Frame::new(p.width as usize, p.height as usize)); }
     let mut c = c; if let Some(m) = c.mask.as_mut() { m.matte = None; }
     let sub = Project { grade_scopes: p.grade_scopes.subset(&[crate::model::Track{id:"matte".into(),clips:vec![std::sync::Arc::new(c.clone())],locked:false,muted:false,name:String::new()}]), lights: p.lights.clone(), materials: p.materials.clone(), editorial: p.editorial.clone(), ocio_view_delivery: None, occluders: p.occluders.clone(), color_pipeline: p.color_pipeline.clone(), tracks: vec![crate::model::Track { id: "matte".into(), clips: vec![std::sync::Arc::new(c)], locked: false, muted: false, name: String::new() }], assets: p.assets.clone(), camera: p.camera.clone(), comp3d: p.comp3d.clone(), markers: vec![], name: String::new(), width: p.width, height: p.height, fps: p.fps, next_id: 0, deps: None, templates: vec![], base_dir: p.base_dir.clone() };

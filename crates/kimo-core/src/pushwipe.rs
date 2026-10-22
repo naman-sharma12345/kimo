@@ -2,10 +2,12 @@
 //! push: the incoming clip slides in from one edge while the outgoing picture slides out of the opposite edge, in step.
 //! gradient_wipe: the incoming clip is revealed in order of a ramp's value: a linear, radial or angular gradient, or the luma
 //! of another clip (hidden from the composite, like a hidden track-matte source). Dark pixels reveal first; invert flips it.
-//! The outgoing picture is the abutting clip that ends where this one starts on its track (its last frame is held, as
-//! morph_cut does), or, with no abutting clip, whatever is already drawn under the incoming clip (an overlap on a lower track).
+//! The outgoing picture is the abutting clip that ends where this one starts on its track, carried on past its out point from
+//! its own media for the length of the transition (Premiere's handles; its last frame is held once the media runs out, and for
+//! stills, retimed clips and generators), or, with no abutting clip, whatever is already drawn under the incoming clip.
+//! An angular wipe is soft on both of its edges: the moving one and the start line it sweeps away from.
 use crate::effects::Frame;
-use crate::model::{Clip, Project, Transition};
+use crate::model::{Clip, Project, Source, TimeMode, Transition};
 use crate::transitions::{Mask, Plan};
 
 pub const KINDS: &[&str] = &["push", "gradient_wipe"];
@@ -59,10 +61,18 @@ pub fn gradient_value(kind: &str, angle: f64, center: [f64; 2], w: usize, h: usi
 }
 /// Reveal of a ramp value `l` at progress k with softness s: 0 everywhere at k = 0, 1 everywhere at k = 1, smoothstep edge of width s.
 pub fn reveal(l: f32, k: f32, soft: f32, invert: bool) -> f32 { let l = if invert { 1.0 - l } else { l }; let s = soft.max(1e-4); sstep((k * (1.0 + s) - l) / s) }
+/// Reveal of an angular sweep at turn fraction `v`: the swept sector runs from the start line (0) to a leading edge at
+/// k (1 + 2s) - s, each edge a smoothstep of width s centred on it. Its copies one turn on and back close the start line as the
+/// sweep comes round, so k = 0 shows none of B, k = 1 all of it, and the start line is as soft as the moving edge.
+pub fn sweep(v: f32, k: f32, soft: f32, invert: bool) -> f32 {
+    let v = if invert { 1.0 - v } else { v }; let s = soft.max(1e-4); let a = k * (1.0 + 2.0 * s) - s;
+    let cov = |x: f32| sstep((a - x) / s + 0.5) * sstep(x / s + 0.5);
+    cov(v).max(cov(v + 1.0)).max(cov(v - 1.0))
+}
 
 pub fn gradient_plan(p: &mut Plan, tr: &Transition, k: f32, w: usize, h: usize) {
     let sp = tr.spec.clone().unwrap_or_default(); let g = gradient_value(&sp.gradient, tr.angle, sp.center, w, h); let (soft, inv) = (tr.softness.clamp(0.0, 1.0) as f32, sp.invert);
-    p.mask = Some(Box::new(move |x, y| reveal(g(x, y), k, soft, inv)));
+    if sp.gradient == "angular" { p.mask = Some(Box::new(move |x, y| sweep(g(x, y), k, soft, inv))); } else { p.mask = Some(Box::new(move |x, y| reveal(g(x, y), k, soft, inv))); }
     p.under = Some(Box::new(|out, prev| if let Some(a) = prev { over_shifted(out, a, 0.0, 0.0) }));
 }
 /// The mask of a gradient wipe driven by a luma field (one value 0..1 per pixel, row-major, width w).
@@ -80,14 +90,28 @@ pub fn abut_prev<'a>(p: &'a Project, c: &Clip) -> Option<&'a Clip> {
         .filter(|x| x.id != c.id && x.start + x.duration <= c.start + 1e-6 && c.start - (x.start + x.duration) < tol)
         .max_by(|a, b| (a.start + a.duration).total_cmp(&(b.start + b.duration)))
 }
-/// Time the outgoing clip is sampled at: its last frame.
-pub fn prev_time(p: &Project, a: &Clip) -> f64 { a.start + a.duration - 0.5 / p.fps.max(1.0) }
+/// The outgoing clip as a push / gradient wipe on `c` reads it: the abutting clip lengthened past its out point by the gap and
+/// the transition's duration, as far as its media goes (a constant-speed, forward media clip; anything else keeps its length,
+/// so its last frame is held). None with no abutting clip.
+pub fn outgoing_clip(p: &Project, c: &Clip) -> Option<Clip> {
+    let a = abut_prev(p, c)?; let want = (c.start - a.start - a.duration).max(0.0) + c.transition_in.as_ref().map_or(0.0, |tr| tr.duration);
+    let more = match &a.source {
+        Source::Media { asset } if !a.retimed() && matches!(a.time_mode, TimeMode::Normal) && a.speed > 0.0 => match p.assets.get(asset) {
+            Some(m) if m.duration > 0.0 && !crate::render::is_still_path(&m.path) => ((m.duration - a.in_point) / a.speed - a.duration).max(0.0), _ => 0.0 },
+        _ => 0.0 };
+    let mut x = a.clone(); x.duration += want.min(more).max(0.0); Some(x)
+}
+/// Seconds the outgoing clip keeps playing past its out point (0: its last frame is held).
+pub fn handle_secs(p: &Project, c: &Clip) -> f64 { match (abut_prev(p, c), outgoing_clip(p, c)) { (Some(a), Some(x)) => x.duration - a.duration, _ => 0.0 } }
+/// Time the outgoing clip `x` (from outgoing_clip) is sampled at for project time `t`: `t` itself while it still has media,
+/// then its last frame.
+pub fn prev_time(p: &Project, x: &Clip, t: f64) -> f64 { t.clamp(x.start, (x.start + x.duration - 0.5 / p.fps.max(1.0)).max(x.start)) }
 /// Time a luma clip is sampled at: project time, held to the clip's own span.
 pub fn luma_time(p: &Project, l: &Clip, t: f64) -> f64 { t.clamp(l.start, (l.start + l.duration - 0.5 / p.fps.max(1.0)).max(l.start)) }
 /// Clips (and the time each is sampled at) a push / gradient wipe on `c` reads besides `c` itself, for decoding.
 pub fn needs(p: &Project, c: &Clip, t: f64) -> Vec<(String, f64)> {
     let Some(tr) = c.transition_in.as_ref().filter(|tr| KINDS.contains(&tr.kind.as_str())) else { return vec![] };
-    let mut v = vec![]; if let Some(a) = abut_prev(p, c) { v.push((a.id.clone(), prev_time(p, a))); }
+    let mut v = vec![]; if let Some(x) = outgoing_clip(p, c) { v.push((x.id.clone(), prev_time(p, &x, t))); }
     if let Some(l) = tr.spec.as_ref().and_then(|s| s.luma_clip.as_deref()).and_then(|id| p.find_clip(id)) { v.push((l.id.clone(), luma_time(p, l, t))); }
     v
 }
@@ -99,5 +123,6 @@ pub fn luma_mask(p: &Project, tr: &Transition, k_lt: f64, t: f64, w: usize, cach
     let k = crate::transitions::ease(&tr.ease, (k_lt / tr.duration).clamp(0.0, 1.0)) as f32;
     Some(field_mask(tr, k, luma_of(&f), w))
 }
-/// The outgoing abutting clip's held last frame, rendered alone (premultiplied, transparent around it).
-pub fn outgoing(p: &Project, c: &Clip, cache: &crate::render::Cache) -> Option<Frame> { let a = abut_prev(p, c)?; crate::render::render_clip_alone(p, &a.id, prev_time(p, a), cache) }
+/// The outgoing abutting clip at project time `t` (carried on past its out point, see outgoing_clip), rendered alone
+/// (premultiplied, transparent around it).
+pub fn outgoing(p: &Project, c: &Clip, t: f64, cache: &crate::render::Cache) -> Option<Frame> { let x = outgoing_clip(p, c)?; crate::render::render_clip_alone_as(p, &x, prev_time(p, &x, t), cache) }

@@ -52,10 +52,12 @@ pub fn commands() -> Vec<Command> { vec![
             let luma = match a.get("luma_clip_id") { None => None, Some(v) => { let id = v.as_str().ok_or("luma_clip_id must be a clip id")?.to_string();
                 if id == cid { return Err("luma_clip_id must be another clip, not the incoming clip itself".into()); }
                 if ss.project.find_clip(&id).is_none() { return Err(format!("no such clip {id} (luma_clip_id)")); } Some(id) } };
-            let outgoing = match crate::pushwipe::abut_prev(&ss.project, c) { Some(p) => format!("clip {} (ends where {cid} starts; its last frame is held)", p.id), None => "the layers under the incoming clip (no clip ends where it starts on its track)".to_string() };
             let spec = TransitionSpec { direction, gradient, luma_clip: luma.clone(), center, invert };
             let tr = Transition { kind: kind.clone(), duration: d, ease: ease.clone(), softness, angle, color: [0.0; 3], intensity: 1.0, count: 10.0, seed: 0, spec: Some(spec) };
             ss.project.find_clip_mut(&cid).unwrap().transition_in = Some(tr);
+            let cc = ss.project.find_clip(&cid).unwrap(); let hs = crate::pushwipe::handle_secs(&ss.project, cc);
+            let outgoing = match crate::pushwipe::abut_prev(&ss.project, cc) { Some(p) if hs > 1e-9 => format!("clip {} (ends where {cid} starts; it keeps playing {hs:.2} s past its out point from its media)", p.id),
+                Some(p) => format!("clip {} (ends where {cid} starts; its last frame is held: no media past its out point)", p.id), None => "the layers under the incoming clip (no clip ends where it starts on its track)".to_string() };
             let mut r = json!({"clip_id": cid, "kind": kind, "duration": d, "ease": ease, "outgoing": outgoing});
             if let Some(l) = luma { r["luma_clip_id"] = json!(l); r["note"] = json!("the luma clip is hidden from the composite and sampled at the same time (held to its own span)"); }
             Ok(r) } },
