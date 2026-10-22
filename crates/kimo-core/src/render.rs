@@ -997,8 +997,11 @@ pub fn render_clip_alone_as(p: &Project, c: &Clip, t: f64, cache: &Cache) -> Opt
 /// None when no effect needs it, so every other clip keeps its own effect list untouched.
 pub fn resolve_flares(p: &Project, effs: &[crate::model::Effect], t: f64, lt: f64, cache: &Cache) -> Result<Option<Vec<crate::model::Effect>>, String> {
     let need = |e: &crate::model::Effect| e.kind == "lens_flare" && e.params.get("mode").map(|q| q.at(lt)).unwrap_or(0.0) >= 0.5 && ["source_clip", "source_light", "occluder"].iter().any(|k| e.strings.contains_key(*k));
-    if !effs.iter().any(need) { return Ok(None); }
+    let vneed = |e: &crate::model::Effect| e.kind == "vignette" && crate::vignette::needs_source(&e.strings);
+    if !effs.iter().any(|e| need(e) || vneed(e)) { return Ok(None); }
     let mut out = effs.to_vec();
+    for e in out.iter_mut().filter(|e| vneed(&**e)) { let (sx, sy) = crate::vignette::source_px(p, &e.params, &e.strings, t, lt)?;
+        e.params.insert("_src_x".into(), crate::keyframe::Prop::new(sx)); e.params.insert("_src_y".into(), crate::keyframe::Prop::new(sy)); }
     for e in out.iter_mut().filter(|e| need(&**e)) {
         let (sx, sy) = crate::flare::source_px(p, &e.params, &e.strings, t, lt)?; let mut vis = 1.0f32;
         if let Some(id) = e.strings.get("occluder") { if !p.tracks.iter().any(|tr| tr.clips.iter().any(|c| &c.id == id)) { return Err(format!("lens_flare: no clip '{id}' for occluder")); }

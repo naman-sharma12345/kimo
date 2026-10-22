@@ -162,9 +162,12 @@ const LEAK_ROWS = ['amount', 'speed', 'x', 'y', 'size', 'travel', 'color_r', 'co
 // saber (neon light stroke along the alpha outline): its params; the names no other effect uses also show from set_effect_param
 const SABER_NEW = ['core_size', 'core_r', 'core_g', 'core_b', 'glow_r', 'glow_g', 'glow_b', 'glow_intensity', 'glow_spread', 'reveal_angle', 'flicker', 'flicker_speed', 'distortion', 'distortion_speed'];
 const SABER_ROWS = ['mode', ...SABER_NEW, 'start', 'end', 'composite'];
-const FX_ROWS = { glow: ['amount', 'radius', 'threshold', ...GLOW_NEW], lens_flare: ['x', 'y', 'brightness', 'streak', ...FLARE_NEW], light_wrap: ['width', 'intensity', 'blur', 'desaturate', 'linear'], skin_smooth: SKIN_ROWS, hdr_zones: ZONE_ROWS, look: LOOK_ROWS, color_warper: WARP_ROWS, light_sweep: SWEEP_ROWS, light_leak: LEAK_ROWS, saber: SABER_ROWS,
+// vignette (shaped + tracked): its params; the shape/centre names no other effect uses also show from set_effect_param
+const VIG_NEW = ['center_x', 'center_y', 'roundness', 'squareness', 'aspect', 'feather'];
+const VIG_ROWS = ['amount', 'softness', ...VIG_NEW, 'size', 'color_r', 'color_g', 'color_b'];
+const FX_ROWS = { glow: ['amount', 'radius', 'threshold', ...GLOW_NEW], lens_flare: ['x', 'y', 'brightness', 'streak', ...FLARE_NEW], light_wrap: ['width', 'intensity', 'blur', 'desaturate', 'linear'], skin_smooth: SKIN_ROWS, hdr_zones: ZONE_ROWS, look: LOOK_ROWS, color_warper: WARP_ROWS, light_sweep: SWEEP_ROWS, light_leak: LEAK_ROWS, saber: SABER_ROWS, vignette: VIG_ROWS,
   grain: ['amount', 'size', 'softness', 'color', 'shadows', 'mids', 'highlights', 'red', 'green', 'blue'] };   // grain: Film Look Creator-style shaping
-const FX_NEW = new Set([...GLOW_NEW, ...FLARE_NEW, 'edge_intensity', 'edge_width', 'reception', 'travel', ...SABER_NEW]);
+const FX_NEW = new Set([...GLOW_NEW, ...FLARE_NEW, 'edge_intensity', 'edge_width', 'reception', 'travel', ...SABER_NEW, ...VIG_NEW]);
 function gradeOps(state, MODES, ev) {
   if (ev.phase !== 'complete') return false;
   const P = ev.payload || {}, tn = String(ev.tool_name).toLowerCase();
@@ -205,6 +208,7 @@ function gradeOps(state, MODES, ev) {
         const pr = A.params && typeof A.params === 'object' ? A.params : {}, st = A.strings && typeof A.strings === 'object' ? A.strings : {};
         for (const k of FX_ROWS[kind]) { const v = numOf(pr[k]); if (v != null) { setRow(`${kind} ${k}`, fmtVal(v, k)); hit = true; } }
         for (const k of ['source_clip', 'source_light', 'occluder']) if (kind === 'lens_flare' && typeof st[k] === 'string') { setRow(`lens_flare ${k}`, st[k].slice(0, 24)); hit = true; }
+        for (const k of ['source_clip', 'source_mask']) if (kind === 'vignette' && typeof st[k] === 'string') { setRow(`vignette ${k}`, st[k].slice(0, 24)); hit = true; }
       }
       if (tn === 'set_effect_param' && FX_NEW.has(String(A.param)) && numOf(A.value) != null) { setRow(String(A.param), fmtVal(numOf(A.value), String(A.param))); hit = true; }
       if (A.clip_id != null && !KV.sub) KV.sub = String(A.clip_id);

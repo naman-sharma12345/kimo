@@ -78,6 +78,7 @@ pub mod frosted;
 pub mod lightwrap;
 pub mod glow;
 pub mod flare;
+pub mod vignette;
 pub mod castshadow;
 
 pub mod long_gap;

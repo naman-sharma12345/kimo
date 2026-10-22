@@ -19,7 +19,7 @@ pub(crate) fn p(m: &Params, k: &str, def: f64, t: f64) -> f32 { m.get(k).map(|x|
 
 /// Every `strings` key some effect (or its mask / OCIO / wrapper / LUT reader) reads. add_effect refuses any other key, which would be
 /// stored and never read. Collected from every `strings.get/contains_key/insert/remove("..")` in the crate plus the OCIO keys read by name.
-pub const STRING_KEYS: &[&str] = &["a", "aux_path", "b", "bound_linear_gamut", "cct_space", "cdl_payload", "config_path", "core_mask", "cube_text", "d", "dir", "edge", "expr", "field", "fill_rule", "fps", "g", "garbage_mask", "height_source", "hits", "interp", "kernel", "keys", "kind", "lights", "linear_space", "mask_layer", "material", "mode", "ocio_config", "ocio_display_space", "ocio_domain", "ocio_linear_space", "ocio_version", "ocio_view_delivery", "ocio_working_space", "occluder", "path", "position", "profile", "r", "ref_clip", "seed", "shape", "solve_id", "source_clip", "source_light", "wrapper_gamut", "wrapper_reference_white", "wrapper_transfer", "wrapper_working_gamut"];
+pub const STRING_KEYS: &[&str] = &["a", "aux_path", "b", "bound_linear_gamut", "cct_space", "cdl_payload", "config_path", "core_mask", "cube_text", "d", "dir", "edge", "expr", "field", "fill_rule", "fps", "g", "garbage_mask", "height_source", "hits", "interp", "kernel", "keys", "kind", "lights", "linear_space", "mask_layer", "material", "mode", "ocio_config", "ocio_display_space", "ocio_domain", "ocio_linear_space", "ocio_version", "ocio_view_delivery", "ocio_working_space", "occluder", "path", "position", "profile", "r", "ref_clip", "seed", "shape", "solve_id", "source_clip", "source_light", "source_mask", "wrapper_gamut", "wrapper_reference_white", "wrapper_transfer", "wrapper_working_gamut"];
 
 /// (kind, description, [(param, default, description)]) - drives list_effects and tool schemas.
 pub const CATALOG: &[(&str, &str, &[(&str, f64, &str)])] = &[
@@ -40,7 +40,7 @@ pub const CATALOG: &[(&str, &str, &[(&str, f64, &str)])] = &[
         ("gain_r",1.0,"highlights R"),("gain_g",1.0,"highlights G"),("gain_b",1.0,"highlights B")]),
     ("curves", "Luma S-curve", &[("amount", 0.0, "-1..1 (positive = more contrast S-curve)")]),
     ("teal_orange", "Hollywood teal/orange split tone", &[("amount", 0.5, "0..1")]),
-    ("vignette", "Darkened edges", &[("amount", 0.5, "0..1"), ("softness", 0.5, "0..1")]),
+    ("vignette", "Darkened (or tinted) edges; shape it (roundness, squareness, size, aspect, feather) and centre it, or follow a tracked clip (strings.source_clip) or tracked mask (strings.source_mask)", &[("amount", 0.5, "0..1"), ("softness", 0.5, "0..1"), ("center_x", 0.5, "centre 0..1 of width"), ("center_y", 0.5, "centre 0..1 of height"), ("roundness", 0.0, "0 frame-shaped .. 1 true circle"), ("squareness", 0.0, "0 ellipse .. 1 rounded rectangle"), ("size", 1.0, "reach, 1 = frame corner"), ("aspect", 1.0, "width/height stretch"), ("feather", 0.5, "edge softness 0.05..1 (overrides softness)"), ("color_r", 0.0, "edge colour 0..1"), ("color_g", 0.0, "edge colour 0..1"), ("color_b", 0.0, "edge colour 0..1")]),
     ("blur", "Box-approx gaussian blur", &[("radius", 4.0, "pixels")]),
     ("glow", "Bloom on highlights. mode 1 = deep glow: soft-knee bright pass, exact Gaussian sum or exponential falloff, A/B tint, linear light", &[("amount", 0.5, "0..2"), ("radius", 12.0, "pixels (mode 1: widest Gaussian sigma / exponential R)"), ("threshold", 0.7, "0..1"),
         ("mode", 0.0, "0 classic, 1 deep glow"), ("falloff", 0.0, "mode 1: 0 sum of Gaussians, 1 exponential exp(-r/radius)"), ("iterations", 5.0, "mode 1 falloff 0: 1..8 Gaussians, sigma_k = radius*2^k/2^(n-1)"), ("exposure", 0.0, "mode 1: -8..8 stops"), ("knee", 0.2, "mode 1: 0..1 soft knee (as bloom)"),
@@ -127,6 +127,7 @@ pub fn apply(kind: &str, params: &Params, strings: &BTreeMap<String, String>, f:
                 let sh = (1.0 - l).powi(2) * a * 0.12; let hi = l.powi(2) * a * 0.14;
                 [c[0] - sh*1.0 + hi*1.0, c[1] + sh*0.35 + hi*0.25, c[2] + sh*0.9 - hi*1.0] });
         }
+        "vignette" if crate::vignette::extended(params) => crate::vignette::apply(params, f, t),
         "vignette" => {
             let a = p(params, "amount", 0.5, t); let s = p(params, "softness", 0.5, t).max(0.05);
             let (w, h) = (f.w as f32, f.h as f32);
