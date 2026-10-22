@@ -9,12 +9,13 @@
 //! A clip drawn alone (the outgoing picture of a push, a matte source) brings its map clip along, hidden, read at the same time
 //! held to the map's own span (so a map laid over the outgoing shot of a push stays on it through the push), and the push's move
 //! of the outgoing picture is part of its place, so its map stays on screen like the incoming clip's.
+//! Camera Lens Blur takes a depth (blur) map the same way when add_lens_blur names depth_clip_id (lens_depth below; lens.rs apply_map).
 use crate::effects::Frame;
 use crate::model::Effect;
 
 pub const CHANNELS: &[&str] = &["red", "green", "blue", "alpha", "luma", "hue", "saturation", "lightness"];
 pub const EDGES: &[&str] = &["clamp", "wrap", "transparent"];
-pub const KINDS: &[&str] = &["displacement_map", "set_matte"];
+pub const KINDS: &[&str] = &["displacement_map", "set_matte", "lens_blur"];
 pub const MAP_SPACES: &[&str] = &["screen", "clip"];
 
 /// Where the clip lands on the canvas: f = c + (dx, dy) + R(rot) * scale * (q - c), c the canvas centre, y down (render.rs transform_bb).
@@ -22,7 +23,10 @@ pub const MAP_SPACES: &[&str] = &["screen", "clip"];
 impl Place { pub fn identity(&self) -> bool { (self.scale - 1.0).abs() < 1e-9 && self.rot_deg == 0.0 && self.dx == 0.0 && self.dy == 0.0 } }
 
 /// The string key holding the driving clip's id.
-pub fn source_key(kind: &str) -> Option<&'static str> { match kind { "displacement_map" => Some("map_clip"), "set_matte" => Some("matte_clip"), _ => None } }
+/// lens_blur carries one only when add_lens_blur was given a depth map (depth_clip); without it the lens blur is an ordinary effect.
+pub fn source_key(kind: &str) -> Option<&'static str> { match kind { "displacement_map" => Some("map_clip"), "set_matte" => Some("matte_clip"), "lens_blur" => Some("depth_clip"), _ => None } }
+/// True when the effect is driven by another clip right now (its source key is set).
+pub fn driven(e: &Effect) -> bool { source_key(&e.kind).is_some_and(|k| e.strings.contains_key(k)) }
 
 /// A channel of a premultiplied pixel, 0..1, read as if composited over a flat `bg` grey (0.5 = no displacement, 0 = no matte).
 pub fn channel(px: &[f32], ch: &str, bg: f32) -> f32 {
@@ -67,4 +71,13 @@ pub fn set_matte(e: &Effect, f: &mut Frame, matte: &Frame) {
     let (ch, inv) = (word(e, "channel", "alpha"), e.strings.get("invert").map(|s| s == "1").unwrap_or(false));
     for y in 0..f.h { for x in 0..f.w { let m = channel(at(matte, f, x, y), ch, 0.0); let m = if inv { 1.0 - m } else { m }; f.d[(y * f.w + x) * 4 + 3] *= m.clamp(0.0, 1.0); } }
 }
-pub fn apply(e: &Effect, f: &mut Frame, src: &Frame, lt: f64, place: Option<Place>) { match e.kind.as_str() { "displacement_map" => displace(e, f, src, lt, place), "set_matte" => set_matte(e, f, src), _ => {} } }
+/// Camera Lens Blur with a depth map: the map's channel (depth_channel, default luma, read over black, inverted with invert 1) at each pixel,
+/// its distance from focal_depth (default 1 = white in focus) normalised by the farthest a value can be (max(focal, 1 - focal)), scales the radius.
+pub fn lens_depth(e: &Effect, f: &mut Frame, map: &Frame, lt: f64) {
+    if map.w == 0 || map.h == 0 { return; }
+    let (ch, inv) = (word(e, "depth_channel", "luma"), num(e, "invert", lt, 0.0) >= 0.5); let focal = num(e, "focal_depth", lt, 1.0).clamp(0.0, 1.0); let span = focal.max(1.0 - focal).max(1e-6);
+    let mut dm = vec![0f32; f.w * f.h];
+    for y in 0..f.h { for x in 0..f.w { let v = channel(at(map, f, x, y), ch, 0.0); let v = if inv { 1.0 - v } else { v }; dm[y * f.w + x] = ((v - focal).abs() / span).clamp(0.0, 1.0); } }
+    crate::lens::apply_map(f, &crate::lens::from_params(&e.params, lt), Some(&dm));
+}
+pub fn apply(e: &Effect, f: &mut Frame, src: &Frame, lt: f64, place: Option<Place>) { match e.kind.as_str() { "displacement_map" => displace(e, f, src, lt, place), "set_matte" => set_matte(e, f, src), "lens_blur" => lens_depth(e, f, src, lt), _ => {} } }

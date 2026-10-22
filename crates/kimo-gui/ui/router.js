@@ -26,7 +26,7 @@ export const FAMILIES = [
   ['edit', /^auto_reframe$/],   /* auto reframe: the clip flashes on the timeline, the Inspector shows its new crop window (axis, pan range) */
   ['edit', /^paste_attributes$/],   /* paste attributes: each target clip flashes, the Inspector shows what was pasted from the source */
   ['effects', /^add_morph_cut$/],   /* morph cut: the clip after the jump cut flashes, the Inspector shows its morph_cut transition and duration */
-  ['effects', /^add_lens_blur$/],   /* lens blur: the clip flashes, the Inspector shows its lens_blur effect (radius, blades, focus) */
+  ['effects', /^add_lens_blur$/],   /* lens blur: the clip flashes, the Inspector shows its lens_blur effect (radius, blades, focus, depth map: focal_depth / invert) */
   ['transform', /^audio_to_keyframes$/],   /* audio to keyframes: the keyed clip flashes, the Inspector shows the property and its new per-frame curve */
   ['transform', /^add_punch_ins$/],   /* punch-ins: the punched clips flash, the Inspector shows their scale / x / y with the punch layered on their own animation */
   ['effects', /^add_displacement_map$/],   /* displacement map: the warped clip flashes, the Inspector shows its displacement_map effect (map clip, max px, channels) */

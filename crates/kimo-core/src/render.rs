@@ -1019,7 +1019,7 @@ fn layer_place(p: &Project, c: &Clip, lt: f64, w: usize, h: usize) -> crate::lay
     pl
 }
 fn apply_effects_masked(p: &Project, c: &Clip, f: &mut Frame, lt: f64, seed: u64, t: f64, cache: &Cache) -> Result<(), String> {
-    let special = |e: &crate::model::Effect| e.strings.contains_key("mask_layer") || keyer_aux_fx(e) || crate::layerfx::source_key(&e.kind).is_some();
+    let special = |e: &crate::model::Effect| e.strings.contains_key("mask_layer") || keyer_aux_fx(e) || crate::layerfx::driven(e);
     if !c.effects.iter().any(special) { apply_effects_local(&c.effects, f, lt, seed)?;if let Some(g)=&c.grade_graph{g.apply(f,lt,seed,p.fps)?;}p.grade_scopes.apply_clip(p,&c.id,f,lt,seed)?;return Ok(()); }
     let mut i = 0;
     while i < c.effects.len() {
@@ -1030,7 +1030,7 @@ fn apply_effects_masked(p: &Project, c: &Clip, f: &mut Frame, lt: f64, seed: u64
             if keyer_aux_fx(e) { if e.strings.contains_key("ocio_domain") || e.strings.contains_key("wrapper_working_gamut") { return Err("keyer: a clean plate or garbage/core matte cannot be combined with a colour-domain wrapper (ocio_domain / wrapper_working_gamut)".into()); }
                 // the keyer's per-pixel inputs go straight to keying::apply_keyer (effects::apply carries params and strings only)
                 let aux = keyer_aux(p, c, e, &before, lt, t, cache, &ctx)?; crate::keying::apply_keyer(&e.params, f, lt, &aux.view())?; }
-            else if let Some(k) = crate::layerfx::source_key(&e.kind) { if let Some(src) = e.strings.get(k).and_then(|id| render_clip_alone(p, id, t, cache)) { let place = (e.kind == "displacement_map").then(|| layer_place(p, c, lt, f.w, f.h)); crate::layerfx::apply(e, f, &src, lt, place); } } // displacement_map / set_matte: the driving clip rendered alone; the map is read where the clip lands (layer_place)
+            else if let Some(k) = crate::layerfx::source_key(&e.kind).filter(|_| crate::layerfx::driven(e)) { if let Some(src) = e.strings.get(k).and_then(|id| render_clip_alone(p, id, t, cache)) { let place = (e.kind == "displacement_map").then(|| layer_place(p, c, lt, f.w, f.h)); crate::layerfx::apply(e, f, &src, lt, place); } } // displacement_map / set_matte: the driving clip rendered alone; the map is read where the clip lands (layer_place)
             else { apply_effects_local(std::slice::from_ref(e), f, lt, seed)?; }
             if let Some(l) = e.strings.get("mask_layer").and_then(|mid| c.mask.as_ref().and_then(|m| m.layers.iter().find(|l| &l.id == mid))) {
                 let cov = crate::masks::layer_coverage(l, &before, lt, &ctx);

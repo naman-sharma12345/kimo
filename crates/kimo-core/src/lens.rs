@@ -4,6 +4,8 @@
 //! The blur radius can fall off around a focus point (cx, cy, focus_radius, falloff) so a subject stays exactly sharp; effect
 //! masks (set_effect_mask) limit it to any region. Large radii gather on a box-reduced copy (factor radius/12) and are
 //! upsampled, so cost stays bounded (taps <= 384 per pixel at the work resolution).
+//! A depth (blur) map (AE Camera Lens Blur "Blur Map"): add_lens_blur depth_clip_id names another clip; layerfx.rs reads it per pixel and
+//! hands apply_map a 0..1 scale per pixel (|map - focal_depth| normalised), so the radius follows the map and a scale of 0 keeps the pixel exact.
 use crate::effects::{p, Frame, Params};
 
 fn eotf(v: f32) -> f32 { if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) } }
@@ -34,15 +36,21 @@ pub fn from_params(pr: &Params, t: f64) -> Lens {
 
 pub fn apply_params(pr: &Params, f: &mut Frame, t: f64) { apply(f, &from_params(pr, t)); }
 
-/// Per-pixel blur radius in full-resolution pixels: full outside the focus area, smoothstep up over `falloff` (fractions of the short side).
-fn radius_at(l: &Lens, w: usize, h: usize, x: f32, y: f32) -> f32 {
-    if l.focus_radius <= 0.0 { return l.radius; }
-    let md = w.min(h) as f32; let d = ((x - l.cx * w as f32).powi(2) + (y - l.cy * h as f32).powi(2)).sqrt() / md;
-    let k = ((d - l.focus_radius) / l.falloff).clamp(0.0, 1.0); l.radius * k * k * (3.0 - 2.0 * k)
+/// Per-pixel blur radius in full-resolution pixels: full outside the focus area, smoothstep up over `falloff` (fractions of the short side),
+/// times the depth map's scale at that pixel when there is one (w*h values 0..1).
+fn radius_at(l: &Lens, w: usize, h: usize, x: f32, y: f32, depth: Option<&[f32]>) -> f32 {
+    let r = if l.focus_radius <= 0.0 { l.radius } else {
+        let md = w.min(h) as f32; let d = ((x - l.cx * w as f32).powi(2) + (y - l.cy * h as f32).powi(2)).sqrt() / md;
+        let k = ((d - l.focus_radius) / l.falloff).clamp(0.0, 1.0); l.radius * k * k * (3.0 - 2.0 * k) };
+    match depth { None => r, Some(dm) => { let (xi, yi) = ((x.max(0.0) as usize).min(w - 1), (y.max(0.0) as usize).min(h - 1)); r * dm[yi * w + xi].clamp(0.0, 1.0) } }
 }
 
-pub fn apply(f: &mut Frame, l: &Lens) {
+pub fn apply(f: &mut Frame, l: &Lens) { apply_map(f, l, None) }
+
+/// apply with an optional per-pixel radius scale (depth map, w*h, 0..1; layerfx.rs lens_depth builds it).
+pub fn apply_map(f: &mut Frame, l: &Lens, depth: Option<&[f32]>) {
     let (w, h) = (f.w, f.h); if w == 0 || h == 0 || l.radius < 0.5 { return; }
+    let depth = depth.filter(|d| d.len() == w * h);
     // linear, premultiplied, highlight-boosted source at full resolution
     let mut src = vec![0f32; w * h * 4];
     for i in 0..w * h { let a = f.d[i * 4 + 3]; let (r, g, b) = (f.d[i * 4], f.d[i * 4 + 1], f.d[i * 4 + 2]);
@@ -60,7 +68,7 @@ pub fn apply(f: &mut Frame, l: &Lens) {
     let (smallr, tpr) = (&small, &tp); let mut blur = vec![0f32; sw * sh * 4];
     crate::par::rows_mut(&mut blur, sw * 4, |y, row| {
         for x in 0..sw { let o = x * 4;
-            let r = radius_at(l, w, h, (x as f32 + 0.5) * s as f32, (y as f32 + 0.5) * s as f32) / s as f32;
+            let r = radius_at(l, w, h, (x as f32 + 0.5) * s as f32, (y as f32 + 0.5) * s as f32, depth) / s as f32;
             if r < 0.5 / s as f32 { let i = (y * sw + x) * 4; row[o..o + 4].copy_from_slice(&smallr[i..i + 4]); continue; }
             let mut acc = [0f32; 4];
             for &(tx, ty, tw) in tpr.iter() {
@@ -72,7 +80,7 @@ pub fn apply(f: &mut Frame, l: &Lens) {
             for j in 0..4 { row[o + j] = acc[j] * inv; } } });
     // back to full resolution; where the full-res radius is under half a pixel the original pixel is kept bit-exact
     for y in 0..h { for x in 0..w { let i = (y * w + x) * 4;
-        let rf = radius_at(l, w, h, x as f32 + 0.5, y as f32 + 0.5);
+        let rf = radius_at(l, w, h, x as f32 + 0.5, y as f32 + 0.5, depth);
         if rf < 0.5 { continue; }
         let mut px = [0f32; 4];
         if s == 1 { px.copy_from_slice(&blur[i..i + 4]); } else {
