@@ -62,6 +62,7 @@
 "auto_reframe",
 "bake_property",
 "batch",
+"beat_cut",
 "bind_beats",
 "bind_shared_grade_graphs",
 "burn_in",

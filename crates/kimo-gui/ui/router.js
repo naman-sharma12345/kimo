@@ -23,6 +23,7 @@ export const FAMILIES = [
   ['ingest', /^(import|ingest|add_media|relink|load_media|add_clip|add_track|insert)|^add_code_clip$/],   /* add_code_clip: a web-page clip lands on the timeline like an import */
   ['edit', /^(cut|split|blade|razor|trim|extend|ripple|slip|slide|move_clip|delete_clip|lift|roll)|^(duplicate_clip|swap_clips|loop_clip|freeze_frame|delete_track|set_speed|rate_stretch|set_speed_ramp|set_time_remap|group_clips|ungroup_clip|distribute_clips|set_blend|set_echo|set_flow_blur|add_camera_shake|remove_audio_effect|set_track|project_set|set_split_edit)$/],
   ['edit', /^set_code_clip_param$/],   /* a code clip's param (constant or key): the clip flashes, the Inspector shows name = value @ t */
+  ['edit', /^beat_cut$/],   /* cut on the beat: the source clips give way to the new cuts, which flash on the timeline; the Inspector shows the beats used, bpm and bump */
   ['edit', /^auto_reframe$/],   /* auto reframe: the clip flashes on the timeline, the Inspector shows its new crop window (axis, pan range) */
   ['edit', /^paste_attributes$/],   /* paste attributes: each target clip flashes, the Inspector shows what was pasted from the source */
   ['effects', /^add_morph_cut$/],   /* morph cut: the clip after the jump cut flashes, the Inspector shows its morph_cut transition and duration */
