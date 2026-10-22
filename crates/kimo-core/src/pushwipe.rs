@@ -111,7 +111,9 @@ pub fn luma_time(p: &Project, l: &Clip, t: f64) -> f64 { t.clamp(l.start, (l.sta
 /// Clips (and the time each is sampled at) a push / gradient wipe on `c` reads besides `c` itself, for decoding.
 pub fn needs(p: &Project, c: &Clip, t: f64) -> Vec<(String, f64)> {
     let Some(tr) = c.transition_in.as_ref().filter(|tr| KINDS.contains(&tr.kind.as_str())) else { return vec![] };
-    let mut v = vec![]; if let Some(x) = outgoing_clip(p, c) { v.push((x.id.clone(), prev_time(p, &x, t))); }
+    let mut v = vec![]; if let Some(x) = outgoing_clip(p, c) { let tx = prev_time(p, &x, t); v.push((x.id.clone(), tx));
+        // the clips the outgoing shot's displacement map / set matte read, held to their own span (render_clip_alone_as)
+        for m in x.effects.iter().filter_map(|e| crate::layerfx::source_key(&e.kind).and_then(|k| e.strings.get(k))).filter_map(|id| p.find_clip(id)) { v.push((m.id.clone(), luma_time(p, m, tx))); } }
     if let Some(l) = tr.spec.as_ref().and_then(|s| s.luma_clip.as_deref()).and_then(|id| p.find_clip(id)) { v.push((l.id.clone(), luma_time(p, l, t))); }
     v
 }
@@ -125,4 +127,14 @@ pub fn luma_mask(p: &Project, tr: &Transition, k_lt: f64, t: f64, w: usize, cach
 }
 /// The outgoing abutting clip at project time `t` (carried on past its out point, see outgoing_clip), rendered alone
 /// (premultiplied, transparent around it).
-pub fn outgoing(p: &Project, c: &Clip, t: f64, cache: &crate::render::Cache) -> Option<Frame> { let x = outgoing_clip(p, c)?; crate::render::render_clip_alone_as(p, &x, prev_time(p, &x, t), cache) }
+/// A push's move of the outgoing picture rides on it as OUT_DX / OUT_DY (render-time copy only), so a screen-space displacement
+/// map on it is read where the push draws it and stays on screen, as on the incoming clip (render.rs layer_place).
+pub fn outgoing(p: &Project, c: &Clip, t: f64, cache: &crate::render::Cache) -> Option<Frame> {
+    let mut x = outgoing_clip(p, c)?;
+    if let Some(tr) = c.transition_in.as_ref().filter(|tr| tr.kind == "push" && tr.duration > 0.0 && x.effects.iter().any(|e| e.kind == "displacement_map")) {
+        let k = crate::transitions::ease(&tr.ease, ((t - c.start) / tr.duration).clamp(0.0, 1.0)) as f32 as f64; let (ux, uy) = dir_vec(tr.spec.as_ref().map(|s| s.direction.as_str()).unwrap_or("left"));
+        x.props.insert(OUT_DX.into(), crate::keyframe::Prop::new(ux * k * p.width as f64)); x.props.insert(OUT_DY.into(), crate::keyframe::Prop::new(uy * k * p.height as f64)); }
+    crate::render::render_clip_alone_as(p, &x, prev_time(p, &x, t), cache)
+}
+/// Render-time props on the outgoing copy: the push's move of the outgoing picture in canvas px (never stored in a project).
+pub const OUT_DX: &str = "_push_out_dx"; pub const OUT_DY: &str = "_push_out_dy";

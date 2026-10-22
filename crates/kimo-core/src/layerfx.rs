@@ -6,7 +6,9 @@
 //! transition in, such as a push sliding it in) to the canvas, the map is read there,
 //! and max px are screen px along the screen axes, so a map placed over a scaled, moved or rotated clip warps what is seen
 //! under it. map_space "clip" reads the map in the clip's own frame before its transform (it then scales and turns with it).
-//! A clip drawn alone (the outgoing picture of a push, a matte source) has no map clip at hand and is drawn unwarped.
+//! A clip drawn alone (the outgoing picture of a push, a matte source) brings its map clip along, hidden, read at the same time
+//! held to the map's own span (so a map laid over the outgoing shot of a push stays on it through the push), and the push's move
+//! of the outgoing picture is part of its place, so its map stays on screen like the incoming clip's.
 use crate::effects::Frame;
 use crate::model::Effect;
 

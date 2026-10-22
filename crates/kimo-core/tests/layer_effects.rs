@@ -103,6 +103,31 @@ fn the_map_stays_on_screen_while_a_push_slides_the_clip_in() {
     let f = frame(&s, 1.5); near(col(&f, 125), 145.0, "after the push the clip is in place: canvas x 125 under the band shows column 125 + 20"); near(col(&f, 100), 100.0, "after the push: canvas x 100 unshifted");
 }
 
+/// The OUTGOING clip of a push keeps its displacement map while it is pushed out (KP6; before, the outgoing picture was rendered
+/// alone without its map clip and was drawn unwarped for the whole push). The map clip spans only the outgoing shot, so it is
+/// held at its last frame while the push carries the shot on, and it stays on screen like the incoming clip's map.
+#[test]
+fn the_outgoing_clip_of_a_push_keeps_its_map() {
+    let mut s = Session::new(); c(&mut s, "project_set", json!({"width": W, "height": H, "fps": 10}));
+    let pa = png("a", |x, _| [ramp(x), 0, 40]); let aa = id(&c(&mut s, "import_media", json!({"path": pa})), "asset_id");
+    let pm = png("band", |x, _| if x >= 120 { [255, 128, 128] } else { [128, 128, 128] }); let am = id(&c(&mut s, "import_media", json!({"path": pm})), "asset_id");
+    let t1 = id(&c(&mut s, "add_track", json!({})), "track_id"); let t2 = id(&c(&mut s, "add_track", json!({})), "track_id");
+    let a = id(&c(&mut s, "add_clip", json!({"track_id": t1, "source_type": "media", "asset_id": aa, "start": 0, "duration": 1.0})), "clip_id");
+    let b = id(&c(&mut s, "add_clip", json!({"track_id": t1, "source_type": "solid", "color": [0.0, 0.0, 1.0], "start": 1.0, "duration": 1.0})), "clip_id");
+    let m = id(&c(&mut s, "add_clip", json!({"track_id": t2, "source_type": "media", "asset_id": am, "start": 0, "duration": 1.0})), "clip_id");
+    c(&mut s, "add_displacement_map", json!({"clip_id": a, "map_clip_id": m, "max_horizontal": 20}));
+    c(&mut s, "add_push_wipe", json!({"clip_id": b, "kind": "push", "direction": "right", "duration": 1.0, "ease": "linear"}));
+    let f = frame(&s, 0.5); near(col(&f, 130), 150.0, "before the push: canvas x 130 is under the band (+20)"); near(col(&f, 100), 100.0, "before the push: x 100 unshifted");
+    // half way through the push the outgoing shot is 80 px right: canvas column X shows its column X - 80
+    let f = frame(&s, 1.5);
+    near(col(&f, 130), 70.0, "outgoing half way out (80 px right): canvas x 130 is under the map's red band, so it shows outgoing column 50 + 20");
+    near(col(&f, 100), 20.0, "outgoing half way out: canvas x 100 (outgoing column 20) is under the neutral part of the map");
+    assert!(px(&f, 40, 45)[2] > 250.0 && px(&f, 40, 45)[0] < 2.0, "the incoming blue clip fills the left half: {:?}", px(&f, 40, 45));
+    // a map asked to show is still not painted into the outgoing picture itself
+    c(&mut s, "add_displacement_map", json!({"clip_id": a, "map_clip_id": m, "max_horizontal": 20, "hide_map": false}));
+    let f = frame(&s, 1.5); near(col(&f, 100), 20.0, "hide_map false: the map is drawn on its own track, not inside the outgoing picture"); near(col(&f, 130), 70.0, "hide_map false: still warped");
+}
+
 #[test]
 fn set_matte_takes_the_alpha_from_another_clips_channel() {
     let (mut s, a, t2) = scene();

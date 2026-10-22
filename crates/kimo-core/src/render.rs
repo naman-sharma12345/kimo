@@ -685,7 +685,7 @@ pub fn render_frame_opts(p: &Project, t: f64, cache: &Cache, transparent: bool) 
     let c3 = crate::comp3d::active(p); let mut g3: Vec<crate::comp3d::Layer> = Vec::new();
     for tr in &p.tracks { for c in &tr.clips {
         if !crate::editorial::caption_visible(p, &c.id) { continue; }
-        if t < c.start - 1e-9 || t >= c.start + c.duration - 1e-9 || (hidden.contains(c.id.as_str()) && MATTE_DEPTH.with(|d| d.get()) == 0) { continue; }
+        if t < c.start - 1e-9 || t >= c.start + c.duration - 1e-9 || (hidden.contains(c.id.as_str()) && MATTE_DEPTH.with(|d| d.get()) == 0) || tr.id == ALONE_SRC_TRACK { continue; }
         crate::guard::check();
         let lt0 = if c.posterize_fps > 0.0 { (((t - c.start) * c.posterize_fps + 1e-6).floor() / c.posterize_fps).max(0.0) } else { (t - c.start).max(0.0) };
         let (ne, esp) = match &c.echo { Some(e) if !matches!(c.source, Source::Adjustment) => (e.count.min(64) as usize, e.spacing), _ => (0, 0.0) };
@@ -961,13 +961,21 @@ fn silhouette_alpha(p: &Project, id: &str, tt: f64, cache: &Cache) -> Option<(us
 pub fn render_clip_alone(p: &Project, id: &str, t: f64, cache: &Cache) -> Option<Frame> {
     let c = p.tracks.iter().flat_map(|tr| tr.clips.iter()).find(|c| c.id == id)?; render_clip_alone_as(p, c, t, cache)
 }
+/// The track of a clip rendered alone that carries the clips its effects read (render_clip_alone_as); never drawn.
+const ALONE_SRC_TRACK: &str = "\u{1}alone_src";
 /// render_clip_alone for a clip given by value (e.g. one lengthened past its out point, pushwipe::outgoing_clip).
 pub fn render_clip_alone_as(p: &Project, c: &Clip, t: f64, cache: &Cache) -> Option<Frame> {
     if MATTE_DEPTH.with(|d| d.get()) >= 3 { return None; }
     let c = c.clone();
     if t < c.start - 1e-9 || t >= c.start + c.duration - 1e-9 { return Some(Frame::new(p.width as usize, p.height as usize)); }
     let mut c = c; if let Some(m) = c.mask.as_mut() { m.matte = None; }
-    let sub = Project { grade_scopes: p.grade_scopes.subset(&[crate::model::Track{id:"matte".into(),clips:vec![std::sync::Arc::new(c.clone())],locked:false,muted:false,name:String::new()}]), lights: p.lights.clone(), materials: p.materials.clone(), editorial: p.editorial.clone(), ocio_view_delivery: None, occluders: p.occluders.clone(), color_pipeline: p.color_pipeline.clone(), tracks: vec![crate::model::Track { id: "matte".into(), clips: vec![std::sync::Arc::new(c)], locked: false, muted: false, name: String::new() }], assets: p.assets.clone(), camera: p.camera.clone(), comp3d: p.comp3d.clone(), markers: vec![], name: String::new(), width: p.width, height: p.height, fps: p.fps, next_id: 0, deps: None, templates: vec![], base_dir: p.base_dir.clone() };
+    // the clips its displacement map / set matte read come along on a hidden track, so those effects run here too (the outgoing
+    // picture of a push, a matte source); each is read at t held to its own span, as a gradient wipe's luma clip is, so a map laid
+    // over the outgoing shot stays on it while a push carries the shot on past its out point
+    let mut srcs: Vec<std::sync::Arc<Clip>> = vec![];
+    for e in c.effects.iter() { let Some(k) = crate::layerfx::source_key(&e.kind) else { continue };
+        if let Some(m) = e.strings.get(k).and_then(|id| p.find_clip(id)).filter(|m| m.id != c.id && !srcs.iter().any(|s| s.id == m.id)) { let mut m = m.clone(); m.start += t - crate::pushwipe::luma_time(p, &m, t); srcs.push(std::sync::Arc::new(m)); } }
+    let sub = Project { grade_scopes: p.grade_scopes.subset(&[crate::model::Track{id:"matte".into(),clips:vec![std::sync::Arc::new(c.clone())],locked:false,muted:false,name:String::new()}]), lights: p.lights.clone(), materials: p.materials.clone(), editorial: p.editorial.clone(), ocio_view_delivery: None, occluders: p.occluders.clone(), color_pipeline: p.color_pipeline.clone(), tracks: std::iter::once(crate::model::Track { id: "matte".into(), clips: vec![std::sync::Arc::new(c)], locked: false, muted: false, name: String::new() }).chain((!srcs.is_empty()).then(|| crate::model::Track { id: ALONE_SRC_TRACK.into(), clips: srcs, locked: false, muted: false, name: String::new() })).collect(), assets: p.assets.clone(), camera: p.camera.clone(), comp3d: p.comp3d.clone(), markers: vec![], name: String::new(), width: p.width, height: p.height, fps: p.fps, next_id: 0, deps: None, templates: vec![], base_dir: p.base_dir.clone() };
     MATTE_DEPTH.with(|d| d.set(d.get() + 1)); let r = render_frame_opts(&sub, t, cache, true).ok(); MATTE_DEPTH.with(|d| d.set(d.get() - 1)); r
 }
 
@@ -1004,6 +1012,8 @@ fn layer_place(p: &Project, c: &Clip, lt: f64, w: usize, h: usize) -> crate::lay
     let (mx, my, ma) = match &c.motion_path { Some(mp) => { let (x, y, a) = crate::motion::sample(mp, prop(c, "path", lt), w, h); (x, y, if mp.auto_orient { a + mp.orient_offset } else { 0.0 }) } None => (0.0, 0.0, 0.0) };
     let mut pl = crate::layerfx::Place { scale: xprop(p, c, "scale", lt), rot_deg: xprop(p, c, "rotation", lt) + ma, dx: xprop(p, c, "x", lt) + mx, dy: xprop(p, c, "y", lt) + my };
     if let Some(tr) = c.transition_in.as_ref().filter(|tr| lt < tr.duration) { let tp = crate::transitions::plan(tr, lt, w, h); pl.dx += tp.dx; pl.dy += tp.dy; pl.scale *= tp.scale; pl.rot_deg += tp.rot; } // as the draw composes it
+    // the outgoing picture of a push is moved out after it is drawn alone (pushwipe::outgoing puts that move on its copy)
+    if let Some(q) = c.props.get(crate::pushwipe::OUT_DX) { pl.dx += q.base; } if let Some(q) = c.props.get(crate::pushwipe::OUT_DY) { pl.dy += q.base; }
     pl
 }
 fn apply_effects_masked(p: &Project, c: &Clip, f: &mut Frame, lt: f64, seed: u64, t: f64, cache: &Cache) -> Result<(), String> {
