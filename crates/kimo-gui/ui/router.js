@@ -28,6 +28,7 @@ export const FAMILIES = [
   ['effects', /^add_morph_cut$/],   /* morph cut: the clip after the jump cut flashes, the Inspector shows its morph_cut transition and duration */
   ['effects', /^add_lens_blur$/],   /* lens blur: the clip flashes, the Inspector shows its lens_blur effect (radius, blades, focus) */
   ['transform', /^audio_to_keyframes$/],   /* audio to keyframes: the keyed clip flashes, the Inspector shows the property and its new per-frame curve */
+  ['transform', /^add_punch_ins$/],   /* punch-ins: the punched clips flash, the Inspector shows their new scale / x / y (and the ease keys) */
   ['effects', /^add_displacement_map$/],   /* displacement map: the warped clip flashes, the Inspector shows its displacement_map effect (map clip, max px, channels) */
   ['roto', /^set_matte$/],   /* set matte: the matted clip flashes, the Inspector shows its set_matte effect (matte clip, channel, invert) */
   ['effects', /^add_push_wipe$/],   /* push / gradient wipe: the incoming clip flashes, the Inspector shows its transition (kind, direction or gradient, duration) */

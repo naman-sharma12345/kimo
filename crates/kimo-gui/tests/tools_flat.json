@@ -53,6 +53,7 @@
 "audio_probe",
 "audio_speech_intervals",
 "audio_to_keyframes",
+"add_punch_ins",
 "audio_transients",
 "audit_color_output",
 "auto_duck",
