@@ -135,7 +135,9 @@ const FLARE_NEW = ['mode', 'halo', 'halo_size', 'ring', 'ring_size', 'ghosts', '
 // skin_smooth (Face Refinement-style) and hdr_zones (HDR palette zones): a Grade row per numeric param the call sets
 const ZONE_ROWS = ['global', 'dark', 'shadow', 'light', 'highlight', 'specular', 'dark_range', 'shadow_range', 'light_range', 'highlight_range', 'specular_range', 'falloff', 'dark_sat', 'shadow_sat', 'light_sat', 'highlight_sat', 'specular_sat'];
 const SKIN_ROWS = ['amount', 'radius', 'texture', 'color_even', 'skin_hue', 'skin_width', 'skin_only', 'show_matte'];
-const FX_ROWS = { glow: ['amount', 'radius', 'threshold', ...GLOW_NEW], lens_flare: ['x', 'y', 'brightness', 'streak', ...FLARE_NEW], light_wrap: ['width', 'intensity', 'blur', 'desaturate', 'linear'], skin_smooth: SKIN_ROWS, hdr_zones: ZONE_ROWS,
+// look (one-tap creator looks, preset 0..7): a Grade row per numeric param the call sets
+const LOOK_ROWS = ['preset', 'intensity', 'protect_skin'];
+const FX_ROWS = { glow: ['amount', 'radius', 'threshold', ...GLOW_NEW], lens_flare: ['x', 'y', 'brightness', 'streak', ...FLARE_NEW], light_wrap: ['width', 'intensity', 'blur', 'desaturate', 'linear'], skin_smooth: SKIN_ROWS, hdr_zones: ZONE_ROWS, look: LOOK_ROWS,
   grain: ['amount', 'size', 'softness', 'color', 'shadows', 'mids', 'highlights', 'red', 'green', 'blue'] };   // grain: Film Look Creator-style shaping
 const FX_NEW = new Set([...GLOW_NEW, ...FLARE_NEW]);
 function gradeOps(state, MODES, ev) {

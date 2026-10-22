@@ -46,6 +46,7 @@ pub mod auto_balance;
 pub mod boost_detail;
 pub mod dehaze;
 pub mod skin_smooth;
+pub mod looks;
 pub mod hdr_zones;
 pub mod grain_look;
 pub mod ocio;
@@ -108,6 +109,7 @@ pub fn catalog3() -> &'static [Entry] {
         v.extend(boost_detail::catalog());
         v.extend(dehaze::catalog());
         v.extend(skin_smooth::catalog());
+        v.extend(looks::catalog());
         v.extend(hdr_zones::catalog());
         v.extend(crate::keying::catalog4());
         v
@@ -169,6 +171,7 @@ pub fn apply3(kind: &str, pr: &Params, f: &mut Frame, t: f64, _seed: u64) -> Res
         "color_boost" | "midtone_detail" => return boost_detail::apply(kind, pr, f, t),
         "dehaze" => return dehaze::apply(pr, f, t),
         "skin_smooth" => return skin_smooth::apply(pr, f, t),
+        "look" => return looks::apply(pr, f, t),
         "hdr_zones" => return hdr_zones::apply(pr, f, t),
         "cdl" => return cdl::apply(pr, f, t),
         "lab_match" => return matching::apply(pr, f, t),
