@@ -18,6 +18,7 @@ import { readRows, callRows, CHIP, colourRows, scopeLine } from './reads.js';
 import { fix2Pre, fix2Post } from './fix2.js';   /* GUI-FIX-2 */
 
 export const FAMILIES = [
+  ['ingest', /^(auto_rough_cut|place_broll)$/], ['audio', /^finish_audio$/], ['color', /^auto_grade$/], ['effects', /^remove_transition$/],   /* director recipes (director_tools.rs): clips laid on the timeline, the mix, the grade, a transition taken off */
   ['pipeline', COV_C.pipeline], ['project', COV_C.project], ['qa', COV_C.qa],   /* project_ops.js: colour pipeline rows, m02 history / diff / batch / media, QA + cache in the HUD toast + rail row */
   ['edit', COV_A],   /* markers, cut / beat detection, beat binding, silence cuts, time mode, sync, multicam, burn-in, raw transition, event matching: cov_a.js */
   ['ingest', /^(import|ingest|add_media|relink|load_media|add_clip|add_track|insert)|^add_code_clip$/],   /* add_code_clip: a web-page clip lands on the timeline like an import */

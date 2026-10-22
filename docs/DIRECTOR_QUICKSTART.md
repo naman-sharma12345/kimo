@@ -56,8 +56,8 @@ op over a list (`{"foreach": {"var": "k", "in": ["clip30", "clip31"]}, "ops": [{
   `linear, in, out, in_out, hold, out_quart, out_expo, out_back, in_out_quint, ...` (not `ease_out`).
 - **Audio effect params** are named per kind: compressor `threshold_db, ratio, attack_ms, release_ms, makeup_db`;
   eq `frequency, width, gain_db`; reverb `decay, delay_ms`; denoise `reduction_db, floor_db`. A wrong name lists them.
-- **`export` returns no file size.** `list_dependencies` after importing the file shows its size, or check the
-  bitrate budget: 16 MB over 60 s is about 2 Mb/s.
+- **`export` returns `bytes` and `duration`.** Check `bytes` against the delivery cap (16 MB = 16,000,000) before you
+  deliver; over it, export again with a higher `crf` (16 MB over 60 s is about 2 Mb/s).
 - **Speech-to-text needs the `whisper` CLI** (`pip install openai-whisper`). Without it, write the cues yourself
   from the script and time them to `audio_speech_intervals`.
 - **Durations**: any decimal is fine (1.266667 s and 1.3334 s are 38 and 40 frames at 30 fps).
@@ -65,6 +65,8 @@ op over a list (`{"foreach": {"var": "k", "in": ["clip30", "clip31"]}, "ops": [{
   warning, and when the call then fails the error names the ignored argument and the right one. A small model guessed all three.
 - **`set_color_wheels` gain** is a multiplier per channel plus master, `[r, g, b, master]`, 1 = unchanged. `[0.15, 0.15, 0.05, 0.15]`
   is not "a little warmer", it is nearly black (a small model did exactly this and then cut the shot as "too dark").
+  The order, per channel: `out = ((gain - lift) * x + lift + offset) ^ (1/gamma)`: lift, gain and offset first, gamma
+  last as a power (gamma > 1 lifts the mids), then master on luma, then contrast around pivot, then saturation.
   Re-measure with `get_scopes` after every grade.
 - **Captions are a track of their own.** Put `add_caption_cues` on a new track above the picture, not on the talking-head track.
 - **`session_stats`** counts calls made inside other tools (`remove_silence_cuts` calls `lift_range`).
@@ -77,13 +79,18 @@ Run through this before every export. Each item is a mistake a dry-run agent mad
    track above the talking head, and the dialogue keeps playing under it. B-roll after the last word plays over silence.
 2. **No grade crushed a shot.** For every graded clip, `get_scopes` average luma is near the talking head's (about 0.4) and
    never under 0.15. If a shot looks too dark after grading, undo the grade; do not delete the shot.
-3. **Captions are on their own track,** above the picture, and `lint_frame` / `compute_text_bounds` puts them inside the
-   platform safe zone (`query_safe_margins {profile: "tiktok"}`).
+3. **Captions are on their own track,** above the picture, and on 9:16 `validate_captions {all: true, include_titles: true}`
+   reports no `OFF_SAFE_AREA` (the top 12% and bottom 20% sit under the Reels/Shorts UI). Each finding carries a `fix` call
+   that moves the captions or the title back inside.
 4. **The title is visible in its first half** and drawn in the preset's font: if `add_title` returned a `font_substituted`
    warning, install the fonts (below) or pass `font` explicitly.
 5. **Loudness is measured, not guessed.** `measure_loudness` on the mix reads about -14 LUFS; if `normalize_loudness`
    refuses, use the target it names or the compressor call it gives.
 6. **Frames were looked at.** `contact_sheet` across the cut points, after the last change.
+
+**Demo machine.** `kimo call check_environment` (or the `check_environment` tool) reports the whisper-cli binary and
+model, the title fonts and ffmpeg with libx264, `ok: true` when all are there, and the exact command for each gap in
+`fixes`. It downloads nothing.
 
 **Fonts.** The title presets use OFL Google Fonts (Anton, Bebas Neue, Montserrat, Cormorant Garamond, Playfair Display,
 Syne). The repo does not ship the .ttf files: run `bash fonts/fetch.sh` once. kimo finds `fonts/` when the build target is

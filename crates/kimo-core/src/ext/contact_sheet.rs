@@ -37,7 +37,7 @@ pub fn commands() -> Vec<Command> { vec![
             ("keyframes_of", json!({"description":"clip id or array of clip ids","oneOf":[{"type":"string"},{"type":"array","items":{"type":"string"}}]})), ("at_cuts", json!({"type":"boolean","description":"also sample every cut: the first frame of each clip (cut-boundary sampling), merged with the other times"})), ("cols", n("grid columns 1..4, default auto (3x3 / 4x4 for 9 / 16 tiles)")), ("tile_px", n("tile long edge in px, 64..320, default 320 (max 320x180 cells at 16:9)")),
             ("labels", json!({"type":"string","enum":["time","time+props","none"],"description":"default time (timestamp drawn on each tile). time+props also lists the properties keyed at that time in the result."})), ("keyframe_cap", n("max keyframe-derived times, 1..64, default 64"))], &["path"]),
         run: |ss, a| crate::ext::view::with_view(ss, a, |ss| {
-            let p = str_arg(a, "path")?; let fps = ss.project.fps.max(1.0); let tol = 0.5 / fps; let dur = ss.project.duration();
+            let p = str_arg(a, "path")?; crate::render::check_still_path(p, true)?; let fps = ss.project.fps.max(1.0); let tol = 0.5 / fps; let dur = ss.project.duration();
             let label_mode = a.get("labels").and_then(|v| v.as_str()).unwrap_or("time"); if !["time", "time+props", "none"].contains(&label_mode) { return Err("labels must be one of time, time+props, none".into()); }
             let mut times: Vec<(f64, Option<String>)> = vec![];
             if let Some(ts) = a.get("times").and_then(|v| v.as_array()) { for v in ts { let t = v.as_f64().filter(|t| t.is_finite()).ok_or("times must be finite numbers")?; times.push((t, None)); } }

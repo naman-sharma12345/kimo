@@ -148,6 +148,29 @@ fn to_captions(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let warnings: Vec<Value> = cues.iter().enumerate().flat_map(|(i, q)| q.warnings.iter().map(move |w| json!({"cue": i, "code": w}))).collect();
     Ok(json!({"caption_id": gid, "transcript_id": id, "clip_ids": clips, "cues": cues.len(), "overlaps": overlaps, "max_cps": (max_cps * 100.0).round() / 100.0, "max_lines": cues.iter().map(|q| q.text.lines().count()).max().unwrap_or(0), "warnings": warnings, "exported": exported}))
 }
+/// 9:16 safe area for captions and titles, canvas pixels [x0, y0, x1, y1]: the top 12% sits under the platform's top bar and the
+/// bottom 20% under the Reels/Shorts/TikTok caption and button UI; 5% stays clear at each side.
+fn safe_band_9x16(w: f64, h: f64) -> [f64; 4] { [w * 0.05, h * 0.12, w * 0.95, h * 0.80] }
+/// Ink box [x0, y0, x1, y1] of a text clip at its middle, measured exactly as the renderer lays it out.
+fn text_box(ss: &mut Session, cid: &str) -> Option<[f64; 4]> {
+    let d = ss.project.find_clip(cid)?.duration;
+    let b = crate::commands::dispatch(ss, "compute_text_bounds", &json!({"clip_id": cid, "t": (d / 2.0).max(0.0)})).ok()?;
+    let r = b.get("canvas_rect")?.as_array()?; let g = |i: usize| r.get(i).and_then(|v| v.as_f64());
+    let (x, y, w, h) = (g(0)?, g(1)?, g(2)?, g(3)?); Some([x, y, x + w, y + h])
+}
+/// Vertical move (px, + is down) that brings every box inside the band with an 8 px margin, and whether a box is wider than the band.
+fn band_fix(boxes: &[[f64; 4]], band: [f64; 4]) -> (f64, bool) {
+    let (top, bot) = boxes.iter().fold((f64::MAX, f64::MIN), |a, r| (a.0.min(r[1]), a.1.max(r[3])));
+    let dy = if bot > band[3] { band[3] - 8.0 - bot } else if top < band[1] { band[1] + 8.0 - top } else { 0.0 };
+    (dy.round(), boxes.iter().any(|r| r[2] - r[0] > band[2] - band[0]))
+}
+fn outside(r: &[f64; 4], band: [f64; 4]) -> bool { r[0] < band[0] - 1.0 || r[1] < band[1] - 1.0 || r[2] > band[2] + 1.0 || r[3] > band[3] + 1.0 }
+fn base_y(ss: &Session, cid: &str) -> f64 { ss.project.find_clip(cid).and_then(|c| c.props.get("y").map(|p| p.base)).unwrap_or(0.0) } // xform-lint: ok (the stored base, to set a new base)
+fn safe_msg(what: &str, n: usize, worst: [f64; 4], band: [f64; 4], h: f64, wide: bool) -> String {
+    format!("{n} {what} reach outside the 9:16 safe area (y {:.0}..{:.0} of {h:.0} px, x {:.0}..{:.0}): the top 12% and bottom 20% sit under the Reels/Shorts/TikTok UI; worst box [{:.0}, {:.0}, {:.0}, {:.0}]{}",
+        band[1], band[3], band[0], band[2], worst[0], worst[1], worst[2], worst[3], if wide { "; a box is wider than the safe area" } else { "" })
+}
+fn way(dy: f64) -> &'static str { if dy < 0.0 { "up" } else { "down" } }
 fn validate_captions(ss: &mut Session, a: &Value) -> Result<Value, String> {
     use crate::caption_validate as cv;
     let mut p = cv::profile(a.get("profile").and_then(|v| v.as_str()).unwrap_or("web")).ok_or("profile must be web|broadcast|social_9x16|custom")?;
@@ -155,6 +178,9 @@ fn validate_captions(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let ids: Vec<String> = match (a.get("group_id").and_then(|v| v.as_str()), a.get("all").and_then(|v| v.as_bool())) {
         (Some(g), _) => { if !ss.project.editorial.captions.contains_key(g) { return Err(format!("no such caption group '{}'", sanitize(g))); } vec![g.to_string()] }
         (None, Some(true)) => ss.project.editorial.captions.keys().cloned().collect(), _ => return Err("pass group_id or all:true".into()) };
+    let (cw, ch) = (ss.project.width as f64, ss.project.height as f64);
+    let band = if p.name == "social_9x16" || ch > cw { Some(safe_band_9x16(cw, ch)) } else { None };
+    let include_titles = a.get("include_titles").and_then(|v| v.as_bool()).unwrap_or(false); let mut unmeasured = 0usize;
     let mut res = vec![];
     for gid in ids {
         let g = ss.project.editorial.captions[&gid].clone(); let tr = g.transcript_id.as_ref().and_then(|t| ss.project.editorial.transcripts.get(t));
@@ -164,11 +190,44 @@ fn validate_captions(ss: &mut Session, a: &Value) -> Result<Value, String> {
             cues.push(cv::CueIn { id: cid.clone(), start: c.start, end: c.start + c.duration, text, words }); }
         cues.sort_by(|x, y| x.start.partial_cmp(&y.start).unwrap_or(std::cmp::Ordering::Equal));
         let script: Option<std::collections::BTreeSet<String>> = tr.and_then(|t| t.script_text.as_ref()).map(|s| s.split_whitespace().map(crate::transcript_coverage::norm).filter(|t| !t.is_empty()).collect());
-        let f = cv::validate(&cues, &p, ss.project.fps, script.as_ref()); let errors = f.iter().filter(|x| x.severity == "error").count();
+        let f = cv::validate(&cues, &p, ss.project.fps, script.as_ref());
+        let mut f: Vec<Value> = f.iter().map(|x| serde_json::to_value(x).unwrap_or(Value::Null)).collect();
+        if let Some(band) = band {
+            let boxes: Vec<(String, [f64; 4])> = cues.iter().filter_map(|c| text_box(ss, &c.id).map(|r| (c.id.clone(), r))).collect();
+            let off: Vec<&(String, [f64; 4])> = boxes.iter().filter(|(_, r)| outside(r, band)).collect();
+            if !off.is_empty() {
+                let rs: Vec<[f64; 4]> = off.iter().map(|x| x.1).collect(); let (dy, wide) = band_fix(&rs, band);
+                let worst = *rs.iter().max_by(|x, y| { let o = |r: &[f64; 4]| (band[0] - r[0]).max(band[1] - r[1]).max(r[2] - band[2]).max(r[3] - band[3]); o(x).partial_cmp(&o(y)).unwrap_or(std::cmp::Ordering::Equal) }).unwrap();
+                let y = base_y(ss, &off[0].0) + dy; let size = ss.project.find_clip(&off[0].0).and_then(|c| match &c.source { crate::model::Source::Text { size, .. } => Some(*size), _ => None }).unwrap_or(0.0);
+                let mut args = json!({"caption_id": gid, "style": g.style, "y": y}); if size > 0.0 { args["size"] = json!(if wide { (size * (band[2] - band[0]) / rs.iter().map(|r| r[2] - r[0]).fold(1.0, f64::max)).floor() } else { size }); }
+                f.push(json!({"severity": "error", "code": "OFF_SAFE_AREA", "cue_ids": off.iter().map(|x| x.0.clone()).collect::<Vec<_>>(), "message": safe_msg("cues", off.len(), worst, band, ch, wide),
+                    "fix_hint": format!("move the captions {} {:.0} px{}: set_caption_style {}", way(dy), dy.abs(), if wide { " and make them smaller" } else { "" }, args), "fix": {"tool": "set_caption_style", "args": args}}));
+            }
+            if boxes.len() < cues.len() { unmeasured += cues.len() - boxes.len(); }
+        }
+        let errors = f.iter().filter(|x| x["severity"] == "error").count();
         res.push(json!({"group_id": gid, "cues": cues.len(), "errors": errors, "warnings": f.len() - errors, "findings": f}));
     }
     let clean = res.iter().all(|r| r["findings"].as_array().map_or(true, |f| f.is_empty()));
-    Ok(json!({"profile": p.name, "clean": clean, "groups": res, "skipped": cv::SKIPPED.iter().map(|(c, r)| json!({"code": c, "reason": r})).collect::<Vec<_>>()}))
+    let mut out = json!({"profile": p.name, "clean": clean, "groups": res});
+    if let (Some(band), true) = (band, include_titles) {
+        let in_groups: std::collections::HashSet<String> = ss.project.editorial.captions.values().flat_map(|g| g.clips.iter().cloned()).collect();
+        let titles: Vec<String> = ss.project.tracks.iter().flat_map(|t| t.clips.iter()).filter(|c| matches!(c.source, crate::model::Source::Text { .. }) && !in_groups.contains(&c.id)).map(|c| c.id.clone()).collect();
+        let mut tf = vec![];
+        for id in &titles {
+            let Some(r) = text_box(ss, id) else { unmeasured += 1; continue }; if !outside(&r, band) { continue; }
+            let (dy, wide) = band_fix(&[r], band); let args = json!({"clip_id": id, "property": "y", "value": base_y(ss, id) + dy});
+            tf.push(json!({"severity": "error", "code": "OFF_SAFE_AREA", "cue_ids": [id], "message": safe_msg("text clip(s)", 1, r, band, ch, wide),
+                "fix_hint": format!("move the title {} {:.0} px{}: set_property {}", way(dy), dy.abs(), if wide { ", then narrow it (set_text_style box_width or a smaller size)" } else { "" }, args), "fix": {"tool": "set_property", "args": args}}));
+        }
+        if !tf.is_empty() { out["clean"] = json!(false); }
+        out["titles"] = json!({"clips": titles.len(), "errors": tf.len(), "findings": tf});
+    }
+    let mut skipped: Vec<Value> = cv::SKIPPED.iter().filter(|(c, _)| band.is_none() || *c != "OFF_SAFE_AREA").map(|(c, r)| json!({"code": c, "reason": r})).collect();
+    if band.is_none() { if let Some(s) = skipped.iter_mut().find(|s| s["code"] == "OFF_SAFE_AREA") { s["reason"] = json!("checked only on 9:16 (a portrait canvas or profile social_9x16)"); } }
+    if unmeasured > 0 { skipped.push(json!({"code": "OFF_SAFE_AREA", "reason": format!("{unmeasured} text clip(s) could not be measured")})); }
+    out["skipped"] = json!(skipped);
+    Ok(out)
 }
 fn edit_preview(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let id = tid(ss, a)?; let tr = &ss.project.editorial.transcripts[&id]; let sw = tr.script_words();
@@ -202,8 +261,8 @@ pub fn commands() -> Vec<Command> { vec![
         schema: obj(vec![("transcript_id", s("transcript (optional when only one exists)")), ("script_text", s("intended script; defaults to the transcript's script_text")), ("min_gap", n("silence interval threshold in seconds, default 0.3"))], &[]), run: coverage_tool },
     Command { name: "transcript_to_captions", description: "Build a caption group on a track from the chosen takes' words. Deterministic, phrase-aware grouping: at most max_lines lines (default 2) of max_chars_per_line (42), balanced lines with no one-word line, at least 3 words per cue unless the sentence ends, reading speed up to max_cps (17), duration between min_dur (1.0 s) and max_dur (6.0 s), and min_gap_frames (2) between cues so cues never overlap. Breaks prefer sentence ends, then clause punctuation, then pauses over 0.3 s. Cue text stays bound to word ids (transcript_edit_word updates it, timing unchanged). Cue clips use the existing text clips and styles. replace_group swaps an earlier group; srt_path / vtt_path also write the same cues as SRT / WebVTT (UTF-8, no BOM, LF line ends, written atomically; an existing file is an error dest_exists unless overwrite:true; relative paths are caller-relative like export outputs; the result returns paths only, never cue text). Layout is character-count based and never calls the renderer.", mutates: true,
         schema: obj(vec![("transcript_id", s("transcript (optional when only one exists)")), ("track_id", s("track for the cue clips")), ("style", json!({"type":"string","enum":["subtitle","boxed","yellow"]})), ("font", s("ttf path")), ("max_lines", json!({"type":"integer","minimum":1,"maximum":4})), ("max_chars_per_line", json!({"type":"integer","minimum":8,"maximum":120})), ("max_cps", n("characters per second, default 17")), ("min_dur", n("seconds, default 1.0")), ("max_dur", n("seconds, default 6.0")), ("min_gap_frames", n("frames between cues, default 2")), ("prefer_break_at", json!({"type":"array","items":{"type":"string","enum":["sentence","clause","pause"]}})), ("replace_group", s("caption group to replace")), ("srt_path", s("also write an SRT file")), ("vtt_path", s("also write a WebVTT file")), ("overwrite", json!({"type":"boolean","description":"allow replacing an existing srt_path / vtt_path file"}))], &["track_id"]), run: to_captions },
-    Command { name: "validate_captions", description: "Check caption groups against a profile (web, broadcast, social_9x16, custom with the transcript_to_captions parameters). Findings are {severity, code, cue_ids, message, fix_hint} and never quote cue text. Codes: CAPTION_OVERLAP, CAPTION_GAP_TOO_SMALL, CUE_TOO_SHORT, CUE_TOO_LONG, READING_SPEED, LINE_TOO_LONG, TOO_MANY_LINES, ORPHAN_WORD, LOW_CONFIDENCE_WORD, WORD_TIMING_NON_MONOTONIC, SCRIPT_MISMATCH. OFF_SAFE_AREA, CUE_BEFORE_AUDIO and CUE_AFTER_AUDIO are listed under skipped with the reason (no text bounds or voice-activity data available). Read-only.", mutates: false,
-        schema: obj(vec![("group_id", s("caption group")), ("all", json!({"type":"boolean","description":"validate every caption group"})), ("profile", json!({"type":"string","enum":["web","broadcast","social_9x16","custom"]})), ("max_chars_per_line", n("custom profile")), ("max_lines", n("custom profile")), ("max_cps", n("custom profile")), ("min_dur", n("custom profile")), ("max_dur", n("custom profile")), ("min_gap_frames", n("custom profile"))], &[]), run: validate_captions },
+    Command { name: "validate_captions", description: "Check caption groups against a profile (web, broadcast, social_9x16, custom with the transcript_to_captions parameters). Findings are {severity, code, cue_ids, message, fix_hint} and never quote cue text. Codes: CAPTION_OVERLAP, CAPTION_GAP_TOO_SMALL, CUE_TOO_SHORT, CUE_TOO_LONG, READING_SPEED, LINE_TOO_LONG, TOO_MANY_LINES, ORPHAN_WORD, LOW_CONFIDENCE_WORD, WORD_TIMING_NON_MONOTONIC, SCRIPT_MISMATCH. OFF_SAFE_AREA on 9:16 (portrait canvas or social_9x16): text outside the top 12% / bottom 20% platform UI bands, with a fix call; include_titles checks other text clips too. CUE_BEFORE_AUDIO and CUE_AFTER_AUDIO are listed under skipped (no voice-activity data). Read-only.", mutates: false,
+        schema: obj(vec![("group_id", s("caption group")), ("all", json!({"type":"boolean","description":"validate every caption group"})), ("include_titles", json!({"type":"boolean","description":"on 9:16, also check text clips outside caption groups (titles) against the safe area"})), ("profile", json!({"type":"string","enum":["web","broadcast","social_9x16","custom"]})), ("max_chars_per_line", n("custom profile")), ("max_lines", n("custom profile")), ("max_cps", n("custom profile")), ("min_dur", n("custom profile")), ("max_dur", n("custom profile")), ("min_gap_frames", n("custom profile"))], &[]), run: validate_captions },
     Command { name: "transcript_edit_preview", description: "Read-only plan for word-level edits given as script-order index ranges: {op: delete|replace, from_index, to_index}. Returns the timeline ranges an audio cut would remove (merged), cut markers, the bound caption cues affected and whether delete would remove them entirely. The project is not changed; applying plans is a later addition.", mutates: false,
         schema: obj(vec![("transcript_id", s("transcript (optional when only one exists)")), ("edits", json!({"type":"array","items":{"type":"object","properties":{"op":{"type":"string","enum":["delete","replace"]},"from_index":{"type":"integer","minimum":0},"to_index":{"type":"integer","minimum":0}},"required":["op","from_index"]}}))], &["edits"]), run: edit_preview },
 ] }

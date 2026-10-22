@@ -65,6 +65,7 @@ const T = {
   cache_stats: R => [['Frames', short(R.entries)], ['Used', `${mb(R.bytes)} of ${mb(R.cap_bytes)}`], ['Hit rate', pct((num(R.hit_rate) ?? 0) * 100)], ['Evictions', short(R.evictions)]],
   read_pixels: R => [['Pixels', num(R.count) != null ? short(Math.round(R.count / 4)) : null], ['First RGB', rgb(R.data)], ['Size', R.width ? `${R.width}×${R.height}` : null]],
   get_project: R => [['Assets', R.assets ? short(Object.keys(R.assets).length) : null], ['Tracks', Array.isArray(R.tracks) ? short(R.tracks.length) : R.tracks ? short(Object.keys(R.tracks).length) : null], ['Duration', num(R.duration) != null ? r2(R.duration) + ' s' : null], ['Canvas', R.width ? `${R.width}×${R.height}` : null]],
+  check_environment: R => [['Demo ready', short(R.ok)], ['Fixes', Array.isArray(R.fixes) ? `${R.fixes.length}` : null], ['ffmpeg', R.ffmpeg ? short(R.ffmpeg.version) : null]],
   kimo_info: R => [['Version', short(R.version)], ['Backends', R.backends ? Object.entries(R.backends).filter(([, b]) => b && b.available).map(([k]) => k).join(', ') || 'none' : null], ...genericRows(R, 2)],
   list_edit_points: R => [['Edit points', Array.isArray(R.points) ? `${R.points.length} · ${R.points.slice(0, 4).map(x => r2(x) + 's').join(' ')}` : null]],
   list_markers: R => [['Markers', Array.isArray(R.markers) ? `${R.markers.length}` + (R.markers.length ? ' · ' + R.markers.slice(0, 2).map(m => `${m.name ?? ''} ${r2(m.time ?? 0)}s`.trim()).join(', ') : '') : null]],
