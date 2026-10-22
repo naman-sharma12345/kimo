@@ -132,9 +132,10 @@ const HUE = { r: 100, g: 220, b: 340 };   // where each channel pulls on the rin
 // the params list_effects gives glow / lens_flare / light_wrap (the mode 1 / linear options included), in catalog order
 const GLOW_NEW = ['mode', 'falloff', 'iterations', 'exposure', 'knee', 'color_a_r', 'color_a_g', 'color_a_b', 'color_b_r', 'color_b_g', 'color_b_b', 'linear'];
 const FLARE_NEW = ['mode', 'halo', 'halo_size', 'ring', 'ring_size', 'ghosts', 'ghost_count', 'ghost_spacing', 'ghost_size', 'streak_length', 'streak_width', 'starburst', 'rays', 'ray_length', 'ray_angle', 'source_r'];
-// skin_smooth (Face Refinement-style): a Grade row per numeric param the call sets
+// skin_smooth (Face Refinement-style) and hdr_zones (HDR palette zones): a Grade row per numeric param the call sets
+const ZONE_ROWS = ['global', 'dark', 'shadow', 'light', 'highlight', 'specular', 'dark_range', 'shadow_range', 'light_range', 'highlight_range', 'specular_range', 'falloff', 'dark_sat', 'shadow_sat', 'light_sat', 'highlight_sat', 'specular_sat'];
 const SKIN_ROWS = ['amount', 'radius', 'texture', 'color_even', 'skin_hue', 'skin_width', 'skin_only', 'show_matte'];
-const FX_ROWS = { glow: ['amount', 'radius', 'threshold', ...GLOW_NEW], lens_flare: ['x', 'y', 'brightness', 'streak', ...FLARE_NEW], light_wrap: ['width', 'intensity', 'blur', 'desaturate', 'linear'], skin_smooth: SKIN_ROWS };
+const FX_ROWS = { glow: ['amount', 'radius', 'threshold', ...GLOW_NEW], lens_flare: ['x', 'y', 'brightness', 'streak', ...FLARE_NEW], light_wrap: ['width', 'intensity', 'blur', 'desaturate', 'linear'], skin_smooth: SKIN_ROWS, hdr_zones: ZONE_ROWS };
 const FX_NEW = new Set([...GLOW_NEW, ...FLARE_NEW]);
 function gradeOps(state, MODES, ev) {
   if (ev.phase !== 'complete') return false;
