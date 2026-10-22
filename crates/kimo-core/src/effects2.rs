@@ -3,6 +3,7 @@ use crate::effects::{box_blur3, lum, p, Frame, Params};
 
 type C = (&'static str, f64, &'static str);
 pub const CATALOG2: &[(&str, &str, &[C])] = &[
+    ("saber", "Saber: a neon light stroke along the layer's alpha outline (text, logo, shape): hot core + coloured glow, write-on reveal, flicker, wobble", &[("mode", 0.0, "0 outline (the alpha edge), 1 fill (the whole shape burns)"), ("core_size", 2.0, "core half-width px"), ("core_r", 1.0, "0..1"), ("core_g", 1.0, "0..1"), ("core_b", 1.0, "0..1"), ("glow_r", 0.15, "0..1"), ("glow_g", 0.55, "0..1"), ("glow_b", 1.0, "0..1"), ("glow_intensity", 1.5, "glow strength, 0..10"), ("glow_spread", 10.0, "glow reach px"), ("start", 0.0, "reveal start 0..1 along reveal_angle"), ("end", 1.0, "reveal end 0..1 (key 0 -> 1 = write-on)"), ("reveal_angle", 0.0, "reveal direction deg (0 left->right, 90 top->bottom)"), ("flicker", 0.0, "0..1 random brightness flicker"), ("flicker_speed", 12.0, "flickers/s"), ("distortion", 0.0, "stroke wobble px"), ("distortion_speed", 1.0, "wobble speed"), ("composite", 0.0, "0 over the layer, 1 the light alone (layer hidden)")]),
     ("light_sweep", "CC Light Sweep: a soft band of light crossing the layer (shine on text, logos, products), edge light on alpha edges", &[("position", 0.5, "0..1 along the sweep (0, 1 = just off frame)"), ("speed", 0.0, "sweeps/s on top of position, 0 = still"), ("angle", 0.0, "band tilt deg from vertical (90 = horizontal, moves down)"), ("width", 0.12, "band width, fraction of the travel"), ("shape", 1.0, "0 linear, 1 smooth, 2 sharp"), ("intensity", 1.0, "sweep light"), ("edge_intensity", 0.0, "light on the layer's alpha edges"), ("edge_width", 3.0, "edge px"), ("color_r", 1.0, "0..1"), ("color_g", 1.0, "0..1"), ("color_b", 1.0, "0..1"), ("reception", 0.0, "0 add, 1 composite (also past the layer), 2 cutout (light only)")]),
     ("twirl", "Twirl distortion around a point", &[("angle", 120.0, "degrees at center"), ("radius", 0.5, "fraction of min dimension"), ("cx", 0.5, "0..1"), ("cy", 0.5, "0..1")]),
     ("bulge", "Bulge/pinch (positive bulges out)", &[("amount", 0.6, "-1..1"), ("radius", 0.5, "fraction"), ("cx", 0.5, "0..1"), ("cy", 0.5, "0..1")]),
@@ -141,9 +142,85 @@ pub fn apply2(kind: &str, pr: &Params, f: &mut Frame, t: f64, seed: u64) -> Resu
         "lens_blur" => crate::lens::apply_params(pr, f, t),
         "displacement_map" | "set_matte" | "depth_parallax" => {} // need another clip: applied in render.rs apply_effects_masked (layerfx.rs)
         "light_sweep" => light_sweep(pr, f, t),
+        "saber" => saber(pr, f, t),
         other => return crate::color::apply3(other, pr, f, t, seed),
     }
     Ok(())
+}
+
+/// Exact Euclidean distance (px) from every pixel to the nearest pixel where `m` is set (Felzenszwalb-Huttenlocher, separable);
+/// 1e9 where no pixel is set.
+fn edt(m: &[bool], w: usize, h: usize) -> Vec<f32> {
+    const INF: f64 = 1e18;
+    fn pass(f: &[f64], d: &mut [f64], v: &mut [usize], z: &mut [f64]) {
+        let n = f.len(); let Some(p0) = (0..n).find(|&q| f[q] < INF) else { for q in 0..n { d[q] = INF; } return; };
+        let mut k = 0usize; v[0] = p0; z[0] = -INF; z[1] = INF;
+        for q in p0 + 1..n { if f[q] >= INF { continue; }
+            let mut s; loop { let p = v[k]; s = ((f[q] + (q * q) as f64) - (f[p] + (p * p) as f64)) / (2.0 * q as f64 - 2.0 * p as f64); if s <= z[k] { k -= 1; } else { break; } }
+            k += 1; v[k] = q; z[k] = s; z[k + 1] = INF; }
+        k = 0; for q in 0..n { while z[k + 1] < q as f64 { k += 1; } let p = v[k]; d[q] = (q as f64 - p as f64).powi(2) + f[p]; }
+    }
+    let n = w.max(h); let (mut f, mut d, mut v, mut z) = (vec![0f64; n], vec![0f64; n], vec![0usize; n], vec![0f64; n + 1]);
+    let mut g = vec![INF; w * h];
+    for x in 0..w { for y in 0..h { f[y] = if m[y * w + x] { 0.0 } else { INF }; } pass(&f[..h], &mut d[..h], &mut v[..h], &mut z[..h + 1]); for y in 0..h { g[y * w + x] = d[y]; } }
+    for y in 0..h { f[..w].copy_from_slice(&g[y * w..y * w + w]); pass(&f[..w], &mut d[..w], &mut v[..w], &mut z[..w + 1]); for x in 0..w { g[y * w + x] = d[x]; } }
+    g.iter().map(|&q| if q >= INF * 0.5 { 1e9 } else { q.sqrt() as f32 }).collect()
+}
+/// Smooth value noise in 0..1 over (x, y) on an integer lattice, interpolated in z (time) too.
+fn saber_noise(x: f32, y: f32, z: f32, s: u32) -> f32 {
+    let (xi, yi, zi) = (x.floor(), y.floor(), z.floor()); let (fx, fy, fz) = (x - xi, y - yi, z - zi); let sm = |u: f32| u * u * (3.0 - 2.0 * u); let (ux, uy, uz) = (sm(fx), sm(fy), sm(fz));
+    let at = |dz: i32| { let ss = s.wrapping_add(((zi as i32 + dz) as u32).wrapping_mul(7919)); let (a, b, c, d) = (hash(xi as i32, yi as i32, ss), hash(xi as i32 + 1, yi as i32, ss), hash(xi as i32, yi as i32 + 1, ss), hash(xi as i32 + 1, yi as i32 + 1, ss)); (a + (b - a) * ux) + ((c + (d - c) * ux) - (a + (b - a) * ux)) * uy };
+    at(0) + (at(1) - at(0)) * uz
+}
+/// Saber (Video Copilot Saber) / a neon light stroke. The layer's alpha (>= 0.5 is inside) gives an exact distance field: in mode 0
+/// the distance to the outline (both sides), in mode 1 the distance to the shape (0 inside). The core is 1 within core_size px
+/// (0.75 px soft edge); the glow is glow_intensity * (0.6 e^(-x/spread) + 0.4 e^(-(x/0.35 spread)^2)) with x the distance past
+/// the core, tapered to 0 at 5 x spread; inside the outline (mode 0) only the gaussian part, so the layer's middle stays as it was.
+/// The light is reveal-masked along reveal_angle across the layer's alpha bounds (start..end, 1.5 px soft), times a flicker
+/// (1 - flicker * value noise at flicker_speed), and wobbled by distortion px of animated value noise. It is added as emitted
+/// light: premultiplied colour + light, coverage = its brightest channel (composite 1: the light alone). Pixels with no light
+/// keep their exact value (composite 0), so end <= start leaves the layer bit-exact.
+fn saber(pr: &Params, f: &mut Frame, t: f64) {
+    let g = |k: &str, d: f64| p(pr, k, d, t);
+    let (w, h) = (f.w, f.h); if w == 0 || h == 0 { return; }
+    let (start, end) = (g("start", 0.0).clamp(0.0, 1.0), g("end", 1.0).clamp(0.0, 1.0)); let comp = g("composite", 0.0) >= 0.5;
+    if end <= start && !comp { return; }
+    let fill = g("mode", 0.0) >= 0.5; let core = g("core_size", 2.0).max(0.0); let cc = [g("core_r", 1.0), g("core_g", 1.0), g("core_b", 1.0)]; let gc = [g("glow_r", 0.15), g("glow_g", 0.55), g("glow_b", 1.0)];
+    let gi = g("glow_intensity", 1.5).max(0.0); let sp = g("glow_spread", 10.0).max(0.5); let fl = g("flicker", 0.0).clamp(0.0, 1.0); let fs = g("flicker_speed", 12.0).max(0.0);
+    let dist = g("distortion", 0.0).max(0.0); let ds = g("distortion_speed", 1.0);
+    let inside: Vec<bool> = (0..w * h).map(|i| f.d[i * 4 + 3] >= 0.5).collect();
+    if !inside.iter().any(|&b| b) { if comp { for v in f.d.iter_mut() { *v = 0.0; } } return; }
+    let to_in = edt(&inside, w, h); let outside: Vec<bool> = inside.iter().map(|b| !b).collect(); let to_out = edt(&outside, w, h);
+    // e: distance to the stroke (outline or shape), negative-free; ins: the pixel is inside the outline (mode 0 inner glow)
+    let field: Vec<f32> = (0..w * h).map(|i| if inside[i] { if fill { 0.0 } else { -(to_out[i] - 0.5).max(0.0) } } else { (to_in[i] - 0.5).max(0.0) }).collect();
+    let sample = |x: f32, y: f32| -> f32 { let (x, y) = (x.clamp(0.0, (w - 1) as f32), y.clamp(0.0, (h - 1) as f32)); let (x0, y0) = (x.floor() as usize, y.floor() as usize); let (x1, y1) = ((x0 + 1).min(w - 1), (y0 + 1).min(h - 1)); let (fx, fy) = (x - x0 as f32, y - y0 as f32);
+        let a = field[y0 * w + x0] + (field[y0 * w + x1] - field[y0 * w + x0]) * fx; let b = field[y1 * w + x0] + (field[y1 * w + x1] - field[y1 * w + x0]) * fx; a + (b - a) * fy };
+    // reveal coordinate: projection on the reveal direction, 0..1 across the layer's alpha bounds
+    let ang = g("reveal_angle", 0.0).to_radians(); let (dx, dy) = (ang.cos(), ang.sin());
+    let (mut lo, mut hi) = (f32::MAX, f32::MIN); for y in 0..h { for x in 0..w { if f.d[(y * w + x) * 4 + 3] > 0.01 { let u = (x as f32 + 0.5) * dx + (y as f32 + 0.5) * dy; lo = lo.min(u); hi = hi.max(u); } } }
+    let span = (hi - lo).max(1.0); let soft = 1.5 / span;
+    let ss = |a: f32, b: f32, x: f32| { let u = ((x - a) / (b - a)).clamp(0.0, 1.0); u * u * (3.0 - 2.0 * u) };
+    let flick = if fl > 0.0 { let z = t as f32 * fs; let k = z.floor(); let u = z - k; let n = hash(k as i32, 77, 991) + (hash(k as i32 + 1, 77, 991) - hash(k as i32, 77, 991)) * (u * u * (3.0 - 2.0 * u)); 1.0 - fl * n } else { 1.0 };
+    let tz = t as f32 * ds;
+    for y in 0..h { for x in 0..w {
+        let i = y * w + x; let o = i * 4;
+        let u = ((((x as f32 + 0.5) * dx + (y as f32 + 0.5) * dy) - lo) / span).clamp(0.0, 1.0);
+        let m = if end <= start { 0.0 } else { let a = if start <= 0.0 { 1.0 } else { ss(start - soft, start, u) }; let b = if end >= 1.0 { 1.0 } else { 1.0 - ss(end, end + soft, u) }; a * b };
+        let mut light = [0f32; 3];
+        if m > 0.0 {
+            let sd = if dist > 0.0 { let (fx, fy) = (x as f32 / 20.0, y as f32 / 20.0); sample(x as f32 + dist * (2.0 * saber_noise(fx, fy, tz, 17) - 1.0), y as f32 + dist * (2.0 * saber_noise(fx, fy, tz, 29) - 1.0)) } else { field[i] };
+            let (e, ins) = (sd.abs(), sd < 0.0);
+            let k_core = 1.0 - ss(core - 0.75, core + 0.75, e);
+            let xg = (e - core).max(0.0); let taper = (1.0 - (xg / (5.0 * sp)).powi(2)).max(0.0).powi(2);
+            let k_glow = gi * taper * if ins { 0.5 * (-(xg / (0.35 * sp)).powi(2)).exp() } else { 0.6 * (-xg / sp).exp() + 0.4 * (-(xg / (0.35 * sp)).powi(2)).exp() };
+            let k = m * flick; for j in 0..3 { light[j] = k * (k_core * cc[j] + k_glow * gc[j]); }
+        }
+        let ka = light[0].max(light[1]).max(light[2]).clamp(0.0, 1.0);
+        if comp { if ka > 1e-6 { for j in 0..3 { f.d[o + j] = light[j] / ka; } } else { for j in 0..3 { f.d[o + j] = 0.0; } } f.d[o + 3] = ka; continue; }
+        if ka <= 0.0 { continue; }
+        let a = f.d[o + 3].clamp(0.0, 1.0); let na = (a + ka * (1.0 - a)).min(1.0);
+        for j in 0..3 { f.d[o + j] = (f.d[o + j] * a + light[j]) / na; } f.d[o + 3] = na;
+    } }
 }
 
 /// CC Light Sweep. The band is tilted `angle` degrees from vertical and travels along its normal (left to right at 0, top to

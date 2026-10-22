@@ -147,8 +147,11 @@ const FLARE_NEW = ['mode', 'halo', 'halo_size', 'ring', 'ring_size', 'ghosts', '
 // light_sweep (CC Light Sweep) and the editable light_leak: their params; only the names no other effect uses show from set_effect_param
 const SWEEP_ROWS = ['position', 'speed', 'angle', 'width', 'shape', 'intensity', 'edge_intensity', 'edge_width', 'color_r', 'color_g', 'color_b', 'reception'];
 const LEAK_ROWS = ['amount', 'speed', 'x', 'y', 'size', 'travel', 'color_r', 'color_g', 'color_b'];
-const FX_ROWS = { glow: ['amount', 'radius', 'threshold', ...GLOW_NEW], lens_flare: ['x', 'y', 'brightness', 'streak', ...FLARE_NEW], light_wrap: ['width', 'intensity', 'blur', 'desaturate', 'linear'], light_sweep: SWEEP_ROWS, light_leak: LEAK_ROWS };
-const FX_NEW = new Set([...GLOW_NEW, ...FLARE_NEW, 'edge_intensity', 'edge_width', 'reception', 'travel']);
+// saber (neon light stroke along the alpha outline): its params; the names no other effect uses also show from set_effect_param
+const SABER_NEW = ['core_size', 'core_r', 'core_g', 'core_b', 'glow_r', 'glow_g', 'glow_b', 'glow_intensity', 'glow_spread', 'reveal_angle', 'flicker', 'flicker_speed', 'distortion', 'distortion_speed'];
+const SABER_ROWS = ['mode', ...SABER_NEW, 'start', 'end', 'composite'];
+const FX_ROWS = { glow: ['amount', 'radius', 'threshold', ...GLOW_NEW], lens_flare: ['x', 'y', 'brightness', 'streak', ...FLARE_NEW], light_wrap: ['width', 'intensity', 'blur', 'desaturate', 'linear'], light_sweep: SWEEP_ROWS, light_leak: LEAK_ROWS, saber: SABER_ROWS };
+const FX_NEW = new Set([...GLOW_NEW, ...FLARE_NEW, 'edge_intensity', 'edge_width', 'reception', 'travel', ...SABER_NEW]);
 function gradeOps(state, MODES, ev) {
   if (ev.phase !== 'complete') return false;
   const P = ev.payload || {}, tn = String(ev.tool_name).toLowerCase();
@@ -183,7 +186,7 @@ function gradeOps(state, MODES, ev) {
       const one = numOf(prm.amount ?? prm.value);
       const NAMES = { temperature: 'Temperature', tint: 'Tint', contrast: 'Contrast', saturation: 'Saturation', exposure: 'Exposure' };
       if (NAMES[kind] && one != null) { setRow(NAMES[kind], fmtVal(one)); hit = true; }
-      // glow (mode 1 deep glow), lens_flare (mode 1 v2), light_wrap (linear), light_sweep and light_leak: a row per numeric param the call sets, plus the flare's source/occluder ids;
+      // glow (mode 1 deep glow), lens_flare (mode 1 v2), light_wrap (linear), light_sweep, light_leak and saber: a row per numeric param the call sets, plus the flare's source/occluder ids;
       // set_effect_param carries no kind, so only the new param names show from it
       if (FX_ROWS[kind] && /^(add|apply)_effect$/.test(tn)) {
         const pr = A.params && typeof A.params === 'object' ? A.params : {}, st = A.strings && typeof A.strings === 'object' ? A.strings : {};
