@@ -143,8 +143,10 @@ const HUE = { r: 100, g: 220, b: 340 };   // where each channel pulls on the rin
 // the params list_effects gives glow / lens_flare / light_wrap (the mode 1 / linear options included), in catalog order
 const GLOW_NEW = ['mode', 'falloff', 'iterations', 'exposure', 'knee', 'color_a_r', 'color_a_g', 'color_a_b', 'color_b_r', 'color_b_g', 'color_b_b', 'linear'];
 const FLARE_NEW = ['mode', 'halo', 'halo_size', 'ring', 'ring_size', 'ghosts', 'ghost_count', 'ghost_spacing', 'ghost_size', 'streak_length', 'streak_width', 'starburst', 'rays', 'ray_length', 'ray_angle', 'source_r'];
-const FX_ROWS = { glow: ['amount', 'radius', 'threshold', ...GLOW_NEW], lens_flare: ['x', 'y', 'brightness', 'streak', ...FLARE_NEW], light_wrap: ['width', 'intensity', 'blur', 'desaturate', 'linear'] };
-const FX_NEW = new Set([...GLOW_NEW, ...FLARE_NEW]);
+// light_sweep (CC Light Sweep): its params; only the names no other effect uses show from set_effect_param
+const SWEEP_ROWS = ['position', 'speed', 'angle', 'width', 'shape', 'intensity', 'edge_intensity', 'edge_width', 'color_r', 'color_g', 'color_b', 'reception'];
+const FX_ROWS = { glow: ['amount', 'radius', 'threshold', ...GLOW_NEW], lens_flare: ['x', 'y', 'brightness', 'streak', ...FLARE_NEW], light_wrap: ['width', 'intensity', 'blur', 'desaturate', 'linear'], light_sweep: SWEEP_ROWS };
+const FX_NEW = new Set([...GLOW_NEW, ...FLARE_NEW, 'edge_intensity', 'edge_width', 'reception']);
 function gradeOps(state, MODES, ev) {
   if (ev.phase !== 'complete') return false;
   const P = ev.payload || {}, tn = String(ev.tool_name).toLowerCase();
@@ -179,7 +181,7 @@ function gradeOps(state, MODES, ev) {
       const one = numOf(prm.amount ?? prm.value);
       const NAMES = { temperature: 'Temperature', tint: 'Tint', contrast: 'Contrast', saturation: 'Saturation', exposure: 'Exposure' };
       if (NAMES[kind] && one != null) { setRow(NAMES[kind], fmtVal(one)); hit = true; }
-      // glow (mode 1 deep glow), lens_flare (mode 1 v2) and light_wrap (linear): a row per numeric param the call sets, plus the flare's source/occluder ids;
+      // glow (mode 1 deep glow), lens_flare (mode 1 v2), light_wrap (linear) and light_sweep: a row per numeric param the call sets, plus the flare's source/occluder ids;
       // set_effect_param carries no kind, so only the new param names show from it
       if (FX_ROWS[kind] && /^(add|apply)_effect$/.test(tn)) {
         const pr = A.params && typeof A.params === 'object' ? A.params : {}, st = A.strings && typeof A.strings === 'object' ? A.strings : {};

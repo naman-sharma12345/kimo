@@ -3,6 +3,7 @@ use crate::effects::{box_blur3, lum, p, Frame, Params};
 
 type C = (&'static str, f64, &'static str);
 pub const CATALOG2: &[(&str, &str, &[C])] = &[
+    ("light_sweep", "CC Light Sweep: a soft band of light crossing the layer (shine on text, logos, products), edge light on alpha edges", &[("position", 0.5, "0..1 along the sweep (0, 1 = just off frame)"), ("speed", 0.0, "sweeps/s on top of position, 0 = still"), ("angle", 0.0, "band tilt deg from vertical (90 = horizontal, moves down)"), ("width", 0.12, "band width, fraction of the travel"), ("shape", 1.0, "0 linear, 1 smooth, 2 sharp"), ("intensity", 1.0, "sweep light"), ("edge_intensity", 0.0, "light on the layer's alpha edges"), ("edge_width", 3.0, "edge px"), ("color_r", 1.0, "0..1"), ("color_g", 1.0, "0..1"), ("color_b", 1.0, "0..1"), ("reception", 0.0, "0 add, 1 composite (also past the layer), 2 cutout (light only)")]),
     ("twirl", "Twirl distortion around a point", &[("angle", 120.0, "degrees at center"), ("radius", 0.5, "fraction of min dimension"), ("cx", 0.5, "0..1"), ("cy", 0.5, "0..1")]),
     ("bulge", "Bulge/pinch (positive bulges out)", &[("amount", 0.6, "-1..1"), ("radius", 0.5, "fraction"), ("cx", 0.5, "0..1"), ("cy", 0.5, "0..1")]),
     ("polar", "Polar coordinates (rect to polar, or back with inverse=1)", &[("inverse", 0.0, "0/1")]),
@@ -139,7 +140,39 @@ pub fn apply2(kind: &str, pr: &Params, f: &mut Frame, t: f64, seed: u64) -> Resu
         "frosted_glass" => return if crate::frosted::in_post() { crate::frosted::apply(pr, f, t) } else { Ok(()) },
         "lens_blur" => crate::lens::apply_params(pr, f, t),
         "displacement_map" | "set_matte" => {} // need another clip: applied in render.rs apply_effects_masked (layerfx.rs)
+        "light_sweep" => light_sweep(pr, f, t),
         other => return crate::color::apply3(other, pr, f, t, seed),
     }
     Ok(())
+}
+
+/// CC Light Sweep. The band is tilted `angle` degrees from vertical and travels along its normal (left to right at 0, top to
+/// bottom at 90); position 0 and 1 park it just off the frame, speed adds sweeps per second (wrapping). width is the band's
+/// width as a fraction of the travel span; shape 0 linear, 1 smooth (cosine), 2 sharp (flat core). Light is added in the
+/// layer's straight colour: reception 0 on the layer only, 1 also over its transparent part, 2 the light alone cut to the layer.
+/// edge_intensity lights the layer's alpha border (pixels within edge_width px of transparency) inside the band.
+fn light_sweep(pr: &Params, f: &mut Frame, t: f64) {
+    let g = |k: &str, d: f64| p(pr, k, d, t);
+    let (w, h) = (f.w, f.h); let (wf, hf) = (w as f32, h as f32); if w == 0 || h == 0 { return; }
+    let ang = g("angle", 0.0).to_radians(); let (nx, ny) = (ang.cos(), ang.sin());
+    let half = (wf * nx.abs() + hf * ny.abs()) / 2.0; let bw = (g("width", 0.12).max(0.0) * 2.0 * half).max(0.5); let hw = bw / 2.0;
+    let (pos, sp) = (g("position", 0.5), g("speed", 0.0)); let pos = if sp != 0.0 { (pos + t as f32 * sp).rem_euclid(1.0) } else { pos };
+    let s0 = -half - hw + pos * (2.0 * half + bw);
+    let shape = g("shape", 1.0).round() as i32;
+    let prof = |d: f32| -> f32 { let u = d.abs() / hw; if u >= 1.0 { return 0.0; } match shape { 0 => 1.0 - u, 2 => { let v = ((1.0 - u) / 0.35).min(1.0); v * v * (3.0 - 2.0 * v) } _ => 0.5 + 0.5 * (std::f32::consts::PI * u).cos() } };
+    let (si, ei, ew) = (g("intensity", 1.0), g("edge_intensity", 0.0), g("edge_width", 3.0).max(0.0)); let col = [g("color_r", 1.0), g("color_g", 1.0), g("color_b", 1.0)]; let rec = g("reception", 0.0).round() as i32;
+    // alpha border: alpha minus its minimum over a (2r+1)^2 box (separable); the frame's own border is not an edge
+    let edge: Option<Vec<f32>> = (ei != 0.0 && ew > 0.0).then(|| { let r = ew.ceil() as usize; let a: Vec<f32> = (0..w * h).map(|i| f.d[i * 4 + 3]).collect(); let mut tmp = vec![0f32; w * h];
+        for y in 0..h { for x in 0..w { tmp[y * w + x] = (x.saturating_sub(r)..=(x + r).min(w - 1)).map(|xx| a[y * w + xx]).fold(1.0, f32::min); } }
+        (0..w * h).map(|i| { let (x, y) = (i % w, i / w); (a[i] - (y.saturating_sub(r)..=(y + r).min(h - 1)).map(|yy| tmp[yy * w + x]).fold(1.0, f32::min)).max(0.0) }).collect() });
+    let (cx, cy) = (wf / 2.0, hf / 2.0);
+    for y in 0..h { for x in 0..w {
+        let i = (y * w + x) * 4; let b = prof((x as f32 + 0.5 - cx) * nx + (y as f32 + 0.5 - cy) * ny - s0);
+        let k = b * (si + ei * edge.as_ref().map_or(0.0, |e| e[y * w + x])); let a = f.d[i + 3];
+        match rec {
+            1 => { let na = (a + k.clamp(0.0, 1.0) * (1.0 - a)).min(1.0); if na > 1e-6 { for j in 0..3 { f.d[i + j] = (f.d[i + j] * a + k * col[j]) / na; } } f.d[i + 3] = na; }
+            2 => { let ka = k.clamp(0.0, 1.0); if ka > 1e-6 { for j in 0..3 { f.d[i + j] = col[j] * k / ka; } } else { for j in 0..3 { f.d[i + j] = 0.0; } } f.d[i + 3] = ka * a; }
+            _ => { if k != 0.0 { for j in 0..3 { f.d[i + j] += k * col[j]; } } }
+        }
+    } }
 }
