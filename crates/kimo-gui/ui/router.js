@@ -24,6 +24,7 @@ export const FAMILIES = [
   ['ingest', /^(import|ingest|add_media|relink|load_media|add_clip|add_track|insert)|^add_code_clip$/],   /* add_code_clip: a web-page clip lands on the timeline like an import */
   ['edit', /^(cut|split|blade|razor|trim|extend|ripple|slip|slide|move_clip|delete_clip|lift|roll)|^(duplicate_clip|swap_clips|loop_clip|freeze_frame|delete_track|set_speed|rate_stretch|set_speed_ramp|set_time_remap|group_clips|ungroup_clip|distribute_clips|set_blend|set_echo|set_flow_blur|add_camera_shake|remove_audio_effect|set_track|project_set|set_split_edit)$/],
   ['edit', /^set_code_clip_param$/],   /* a code clip's param (constant or key): the clip flashes, the Inspector shows name = value @ t */
+  ['edit', /^scene_split$/],   /* scene edit detection: one clip becomes one clip per shot; the new cuts flash on the timeline, the Inspector lists the cut times */
   ['edit', /^beat_cut$/],   /* cut on the beat: the source clips give way to the new cuts, which flash on the timeline; the Inspector shows the beats used, bpm and bump */
   ['edit', /^auto_reframe$/],   /* auto reframe: the clip flashes on the timeline, the Inspector shows its new crop window (axis, pan range) */
   ['edit', /^paste_attributes$/],   /* paste attributes: each target clip flashes, the Inspector shows what was pasted from the source */
@@ -37,6 +38,7 @@ export const FAMILIES = [
   ['roto', /^set_matte$/],   /* set matte: the matted clip flashes, the Inspector shows its set_matte effect (matte clip, channel, invert) */
   ['effects', /^add_push_wipe$/],   /* push / gradient wipe: the incoming clip flashes, the Inspector shows its transition (kind, direction or gradient, duration) */
   ['effects', /^(add_effect|apply_effect|set_effect|add_transition|remove_effect|add_speed|set_posterize|add_adjustment|add_managed_linear_effect$)/],
+  ['transform', /^link_property$/],   /* pickwhip: the target property follows its driver; the Inspector shows driver, multiplier, offset and delay */
   ['transform', /^(set_property|set_clip_property|set_props?$|transform|set_transform|keyframe|set_keyframe|add_keyframe|scale|rotate|position|set_motion|add_null|set_parent|set_expression)/],
   ['color', /^(grade|color|colour|lut|apply_lut|set_lut|ocio|render_scope|analyze_exposure|wheel|curve|node_|hdr|render_ocio|render_exposure|render_gamut|set_grade_node|set_grade_graph|pick_white_balance|pick_key_color|auto_color|match_shots|match_grade|match_color|set_white_balance|set_grade_output|remove_grade_node|generate_lut_node|add_acescct_primaries|create_shared_grade_graph|bind_shared_grade_graphs|remove_shared_grade_graph|set_node_param|set_node_mask|apply_asc_cdl|set_color_curve|set_color_wheels|set_grade_scopes|add_node$|connect_nodes|disconnect_nodes)/],
   ['audio', /^(set_|add_|apply_|auto_|measure_|normalize_|analyze_)?(mix|audio|gain|fader|mute|solo|pan|compress|eq|limiter|limit|loudness|duck|stem|bus|route_)|^track_beats$/],
