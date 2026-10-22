@@ -89,8 +89,8 @@ pub(crate) fn color_opt(a: &Value, k: &str) -> Result<Option<[f64; 4]>, String> 
             for (i, v) in x.iter().enumerate() { c[i] = v.as_f64().ok_or_else(|| format!("{k}: expected 3 or 4 numbers, element {i} is {v}"))?; }
             Ok(Some(c))
         }
-        Some(Value::String(s)) => hex_rgba(s).map(Some).ok_or_else(|| format!("{k}: \"{s}\" is not a colour; use [r,g,b] with values 0..1, or hex \"#rrggbb\"")),
-        Some(v) => Err(format!("{k}: {v} is not a colour; use [r,g,b] with values 0..1, or hex \"#rrggbb\"")),
+        Some(Value::String(s)) => hex_rgba(s).map(Some).ok_or_else(|| format!("{k}: \"{s}\" is not a colour; argument '{k}' takes [r,g,b] with values 0..1, or hex \"#rrggbb\" (also \"#rgb\", \"#rgba\", \"#rrggbbaa\")")),
+        Some(v) => Err(format!("{k}: {v} is not a colour; argument '{k}' takes [r,g,b] with values 0..1, or hex \"#rrggbb\"")),
     }
 }
 
@@ -339,10 +339,11 @@ mod color_arg_tests {
         assert_eq!(color_alpha(&json!({"c": [1, 0.5, 0, 0.25]}), "c"), 0.25);
         assert_eq!(color(&json!({}), "c", [0.2; 3]).unwrap(), [0.2; 3]);
         assert_eq!(color(&json!({"c": null}), "c", [0.2; 3]).unwrap(), [0.2; 3]);
-        assert_eq!(color(&json!({"c": [1, 2]}), "c", [0.2; 3]).unwrap(), [0.2; 3]);
+        // v6-all merge: a wrong-length array is an error naming the key (v6 colour-argument rule, tests/color_array_length.rs)
+        assert!(color(&json!({"c": [1, 2]}), "c", [0.2; 3]).unwrap_err().contains("c: expected 3 or 4 numbers, got 2"));
     }
     #[test] fn a_string_that_is_not_hex_is_refused_by_name() {
-        for s in ["white", "#ffff", "#gggggg", "ffffff", ""] {
+        for s in ["white", "#fffff", "#gggggg", "ffffff", ""] {   // "#ffff" is the v6 "#rgba" form, so 5 digits stands in for a bad length
             let e = color(&json!({"color": s}), "color", [0.0; 3]).unwrap_err();
             assert!(e.contains("'color'") && e.contains("#rrggbb"), "{s}: {e}");
         }
