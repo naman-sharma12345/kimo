@@ -398,6 +398,6 @@ undistort_clip 070c6703ea0b998f
 undo 3a20d8fe69b6597d
 ungroup_clip e4719e10ac442585
 update_mask 8259fffee1ffbbbd
-validate_captions 15f7daad77bc714d
+validate_captions 6b195d64537b0071
 validate_hdr_transfer_math 75436f55ab7f60e1
 validate_planar_track 4abd93360c84b36c

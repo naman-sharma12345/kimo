@@ -77,8 +77,9 @@ Run through this before every export. Each item is a mistake a dry-run agent mad
    track above the talking head, and the dialogue keeps playing under it. B-roll after the last word plays over silence.
 2. **No grade crushed a shot.** For every graded clip, `get_scopes` average luma is near the talking head's (about 0.4) and
    never under 0.15. If a shot looks too dark after grading, undo the grade; do not delete the shot.
-3. **Captions are on their own track,** above the picture, and `lint_frame` / `compute_text_bounds` puts them inside the
-   platform safe zone (`query_safe_margins {profile: "tiktok"}`).
+3. **Captions are on their own track,** above the picture, and on 9:16 `validate_captions {all: true, include_titles: true}`
+   reports no `OFF_SAFE_AREA` (the top 12% and bottom 20% sit under the Reels/Shorts UI). Each finding carries a `fix` call
+   that moves the captions or the title back inside.
 4. **The title is visible in its first half** and drawn in the preset's font: if `add_title` returned a `font_substituted`
    warning, install the fonts (below) or pass `font` explicitly.
 5. **Loudness is measured, not guessed.** `measure_loudness` on the mix reads about -14 LUFS; if `normalize_loudness`
