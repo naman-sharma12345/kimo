@@ -66,3 +66,44 @@ fn auto_color_refusals_leave_project_untouched() {
     let flat = c(&mut s2, "add_clip", json!({"track_id":t,"source_type":"solid","color":[0.4,0.3,0.2],"start":0,"duration":1}))["clip_id"].clone();
     let e = dispatch(&mut s2, "auto_color", &json!({"clip_id":flat})).expect_err("flat frame must be refused"); assert!(e.to_string().contains("flat"), "'{e}' lacks 'flat'");
 }
+
+
+/// A test image written as PNG through ffmpeg: rows 0..ns are strongly coloured (half a shaded red sheet, half a shaded lilac),
+/// the remaining rows a neutral grey ramp 0.1..0.75. The shapes of clip2 (a red sheet and a lilac tumbler filling the frame).
+fn coloured_scene(sat_rows: usize, cast: Value) -> (Session, Value, usize) {
+    let (w, h) = (64usize, 64usize); let dir = std::env::temp_dir().join(format!("kimo-auto-color-{}-{sat_rows}", std::process::id())); std::fs::create_dir_all(&dir).unwrap();
+    let mut px = format!("P6\n{w} {h}\n255\n").into_bytes();
+    for y in 0..h { for x in 0..w { let t = x as f64 / (w - 1) as f64;
+        let c = if y < sat_rows { let s = 0.6 + 0.4 * t; let base = if y < sat_rows / 2 { [0.85, 0.18, 0.28] } else { [0.78, 0.62, 0.9] }; base.map(|v| v * s) } else { [0.1 + 0.65 * t; 3] };
+        px.extend(c.map(|v| (v * 255.0).round() as u8)); } }
+    let (ppm, png) = (dir.join("scene.ppm"), dir.join("scene.png")); std::fs::write(&ppm, px).unwrap();
+    let st = std::process::Command::new("ffmpeg").args(["-v", "error", "-y", "-i"]).arg(&ppm).args(["-pix_fmt", "rgb24"]).arg(&png).status().unwrap(); assert!(st.success());
+    let mut s = Session::new(); c(&mut s, "project_set", json!({"width":w,"height":h,"fps":25}));
+    let a = c(&mut s, "import_media", json!({"path": png}))["asset_id"].clone(); let t = c(&mut s, "add_track", json!({}))["track_id"].clone();
+    let id = c(&mut s, "add_clip", json!({"track_id":t,"source_type":"media","asset_id":a,"start":0,"duration":2,"fit":"stretch"}))["clip_id"].clone();
+    if cast != json!({}) { c(&mut s, "add_effect", json!({"clip_id":id,"kind":"white_balance","params":cast})); }
+    (s, id, sat_rows) }
+/// Render a media scene (its frames decoded first).
+fn render_media(s: &mut Session) -> Vec<f32> { kimo_core::render::prepare_at(&s.project, &mut s.cache, Some(0.5)).unwrap(); render(s) }
+/// Largest |r-g| or |b-g| over the grey-ramp rows only.
+fn neutral_spread(d: &[f32], from_row: usize) -> f32 { spread(&d[from_row * 64 * 4..]) }
+
+#[test]
+fn auto_color_ignores_a_frame_dominated_by_strong_colour() {
+    // 70% of the frame is a red sheet and a lilac object, 30% true greys, no cast. Treating the brightest/darkest pixels per channel
+    // as neutral turns the greys green (red and blue white points come from the coloured objects); the greys must stay grey.
+    let (mut s, id, rows) = coloured_scene(45, json!({})); let before = render_media(&mut s); assert!(neutral_spread(&before, rows) < 0.01 && spread(&before) > 0.3, "fixture: grey rows grey, coloured rows coloured");
+    let r = c(&mut s, "auto_color", json!({"clip_id":id})); let after = render_media(&mut s);
+    let sp = neutral_spread(&after, rows); let moved = before.iter().zip(&after).map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+    assert!(sp <= 0.01 && moved <= 0.02, "a frame that is mostly one strong colour must stay put: grey rows spread {sp}, largest change {moved}, result {r}");
+    assert!(r["confidence"].as_f64().expect("confidence") < 0.5, "the result says how little neutral there was: {r}");
+}
+
+#[test]
+fn auto_color_balances_greys_past_coloured_objects() {
+    // 30% strong colour, 70% greys under a warm gain cast: the cast must still come out of the greys.
+    let (mut s, id, rows) = coloured_scene(19, json!({"r_gain":1.25,"g_gain":1.0,"b_gain":0.75})); let sp0 = neutral_spread(&render_media(&mut s), rows); assert!(sp0 > 0.1, "fixture carries a cast {sp0}");
+    let r = c(&mut s, "auto_color", json!({"clip_id":id})); let sp = neutral_spread(&render_media(&mut s), rows);
+    assert!(sp <= 0.015, "greys must be neutralised despite the coloured third: spread {sp0} -> {sp}, result {r}");
+    assert!(r["neutral_share"].as_f64().expect("neutral_share") > 0.6, "{r}");
+}
