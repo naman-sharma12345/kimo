@@ -39,7 +39,7 @@ add_shape_modifier 25cf6df0b8d052db
 add_shard_burst 41b2c108dde0a230
 add_speed_lines 0db4bddd46e7a057
 add_text e504fc3dce60034a
-add_text_animator a76965da7be4b400
+add_text_animator 7c837530f3da76ca
 add_title 1461c7f60bd47216
 add_track cf1da67768a18dbb
 add_transition 5c58371f3cdcdcc0
@@ -286,7 +286,7 @@ save_project d51a7abb5be457b3
 session_stats 08b78ec5daffb184
 set_3d_compositor c3fab2e718ae3113
 set_3d_layer_shadows 872bd4ddb9990918
-set_animator_keyframe 966192e400dafaf5
+set_animator_keyframe 1f7119987f8dc80b
 set_audio a4b4452073f105be
 set_audio_effect_key 02e5c3c88e7432d6
 set_audio_pan f9b02d2054de6500

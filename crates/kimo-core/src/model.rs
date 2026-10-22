@@ -395,7 +395,13 @@ pub struct TextAnimator {
     #[serde(default, skip_serializing_if = "Option::is_none")] pub fill_amount: Option<Prop>,
     /// Reshapes the selector amount k -> ease(k) with the shared easing primitive. None = k untouched.
     #[serde(default, skip_serializing_if = "Option::is_none")] pub ease: Option<crate::keyframe::Ease>,
+    /// AE Wiggly Selector: the selector amount is multiplied per unit by smooth noise between min and max (text.rs). None = no wiggle.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub wiggly: Option<Wiggly>,
 }
+/// Wiggly Selector (After Effects): per unit a smooth random value in min..max (each -1..1, keyframable), changing `freq` times a second;
+/// `correlation` 0 = every unit wanders on its own, 1 = all units share one wiggle; stable per `seed`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Wiggly { pub min: Prop, pub max: Prop, pub freq: f64, pub correlation: f64, pub seed: u64 }
 
 /// Echo ghosts: `count` earlier (or later when spacing<0) copies of the layer at `spacing` seconds apart.
 /// mode: composite (ghosts fade by decay^k), add / screen (light trails), average (equal-weight frame blending = temporal smear).
