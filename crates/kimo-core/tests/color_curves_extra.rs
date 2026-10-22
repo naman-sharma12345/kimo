@@ -98,3 +98,17 @@ fn tool_new_channel_refusals_leave_project_untouched() {
         let e = dispatch(&mut s, "set_color_curve", &a).expect_err(&format!("{a} must be refused")); assert!(e.to_string().contains(want), "{a}: '{e}' lacks '{want}'");
         assert_eq!(serde_json::to_string(&s.project).unwrap(), snap, "{a} mutated the project"); }
 }
+
+/// The hue axis is the Rec.709 CbCr angle, not HSV: the tool must say so (small models assume HSV blue = 240), and the
+/// documented anchors must be where the effect actually puts the colours.
+#[test]
+fn hue_axis_documented_and_anchors_true() {
+    let cmd = kimo_core::commands::registry_ref().iter().find(|c| c.name == "set_color_curve").expect("set_color_curve");
+    let doc = cmd.schema["properties"]["points"]["description"].as_str().unwrap_or("");
+    assert!(doc.contains("CbCr") && doc.contains("not HSV") && doc.contains("blue 355") && doc.contains("red 103"), "set_color_curve points must document the hue axis (CbCr angle, red 103, blue 355); got '{doc}'");
+    for (name, col, at) in [("blue", [0.05f32, 0.1, 0.9, 1.0], 355.0), ("red", [0.9, 0.1, 0.05, 1.0], 103.0), ("green", [0.1, 0.8, 0.1, 1.0], 230.0), ("yellow", [0.9, 0.85, 0.1, 1.0], 175.0)] {
+        let far = (at + 180.0f64) % 360.0; let mut pts = vec![[at, 0.5], [far, 1.0]]; pts.sort_by(|a, b| a[0].total_cmp(&b[0]));
+        let f = run(&pr(&[("hl", pts.as_slice())]), &[col]); let (y0, _, _) = ycc(&col); let (y1, _, _) = ycc(&f.d[0..4]);
+        assert!(y1 < y0 * 0.75, "{name}: a hue_lum dip at the documented {at} deg must darken it: luma {y0} -> {y1}");
+    }
+}
