@@ -47,6 +47,14 @@ fn compare(file: &str, got: &[String], update: bool, fails: &mut Vec<String>) {
     for k in w.keys() { if !g.contains_key(k) { fails.push(format!("{file}: entry {k} missing now")); } }
 }
 
+/// Allows intentional tool-contract updates without rewriting any frame/project goldens.
+#[test] fn golden_registry_contract() {
+    let update = std::env::var("KIMO_UPDATE_GOLDEN").map(|v| v == "1").unwrap_or(false);
+    let mut fails = vec![];
+    compare("golden_registry.txt", &registry_lines(), update, &mut fails);
+    assert!(fails.is_empty(), "registry mismatch:\n{}", fails.join("\n"));
+}
+
 #[test] fn golden_frames_registry_and_projects() {
     pin_fonts(); let t0 = std::time::Instant::now(); let update = std::env::var("KIMO_UPDATE_GOLDEN").map(|v| v == "1").unwrap_or(false);
     let (mut frames, mut projects, mut nondet) = (vec![], vec![], vec![]); let mut nframes = 0;

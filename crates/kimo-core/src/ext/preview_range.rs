@@ -29,6 +29,8 @@ fn in_job_dir(p: &std::path::Path) -> bool { let mut d = p.parent(); while let S
 fn num(a: &Value, k: &str, d: f64, lo: f64, hi: f64) -> Result<f64, String> { match a.get(k) { None | Some(Value::Null) => Ok(d), Some(v) => { let x = v.as_f64().filter(|x| x.is_finite()).ok_or(format!("out_of_range: {k} must be a number"))?; if x < lo || x > hi { return Err(format!("out_of_range: {k} must be between {lo} and {hi}")); } Ok(x) } } }
 
 fn preview(ss: &mut Session, a: &Value) -> Result<Value, String> {
+    let use_proxies = match a.get("use_proxies") { None => true, Some(v) => v.as_bool().ok_or("use_proxies must be boolean")? };
+    let mut proxy_assets = std::collections::BTreeSet::new();
     let t_all = std::time::Instant::now(); let p = &ss.project; let fps = if p.fps > 0.0 { p.fps } else { 30.0 };
     let end_tl = super::export_manifest::project_end(p); if end_tl <= 0.0 { return Err("out_of_range: the timeline is empty".into()); }
     let total = (end_tl * fps).ceil() as usize; let max_s = num(a, "max_seconds", MAX_SECONDS, 0.1, MAX_SECONDS_HARD)?;
@@ -50,7 +52,8 @@ fn preview(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let mut cache = crate::render::Cache::new_export(); let mut hashes: Vec<String> = vec![]; let mut first_ms = 0.0; let mut i = 0usize; let mut werr: Option<String> = None;
     while i < n && werr.is_none() {
         let end_i = (i + nt * 4).min(n); crate::guard::check();
-        if let Err(e) = crate::render::prepare_export_range(p, &mut cache, idxs[i] as f64 / fps, idxs[end_i - 1] as f64 / fps) { drop(stdin); let _ = child.kill(); let _ = child.wait(); let _ = std::fs::remove_file(&tmp); return Err(e); }
+        if let Err(e) = if use_proxies { crate::render::prepare_preview_range(p, &mut cache, idxs[i] as f64 / fps, idxs[end_i - 1] as f64 / fps) } else { crate::render::prepare_export_range(p, &mut cache, idxs[i] as f64 / fps, idxs[end_i - 1] as f64 / fps) } { drop(stdin); let _ = child.kill(); let _ = child.wait(); let _ = std::fs::remove_file(&tmp); return Err(e); }
+        proxy_assets.extend(cache.proxy_assets());
         let next = std::sync::atomic::AtomicUsize::new(i); let slots: Vec<std::sync::Mutex<Option<Result<Vec<u8>, String>>>> = (i..end_i).map(|_| std::sync::Mutex::new(None)).collect();
         std::thread::scope(|sc| { for _ in 0..nt.min(end_i - i) { let (cache, next, slots, idxs) = (&cache, &next, &slots, &idxs); crate::guard::scope_spawn(sc, move || loop { let k = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst); if k >= end_i { break; }
             let r = crate::render::export_frame_rgba8(p, idxs[k] as f64 / fps, cache).map(|f| box_downscale(&f, w, h, nw, nh)); *slots[k - i].lock().unwrap() = Some(r); }); } });
@@ -70,14 +73,14 @@ fn preview(ss: &mut Session, a: &Value) -> Result<Value, String> {
         if audible { crate::color::mux::legacy_audio(out.to_str().ok_or("invalid path")?, &pcm, n)?; }
         audio = json!({"included": audible, "samples": pcm.len() / 2, "pcm_sha256": sha256_hex(&bytes), "audible": audible});
     }
-    let mut r = json!({"path": out.to_str(), "frames": n, "width": nw, "height": nh, "fps": ofps, "scale": scale, "fps_divisor": div, "start": f0 as f64 / fps, "end": f1 as f64 / fps, "duration": n as f64 / ofps, "audio": audio,
+    let mut r = json!({"path": out.to_str(), "frames": n, "width": nw, "height": nh, "fps": ofps, "scale": scale, "fps_divisor": div, "start": f0 as f64 / fps, "end": f1 as f64 / fps, "duration": n as f64 / ofps, "audio": audio,"proxy_assets":proxy_assets,"use_proxies":use_proxies,
         "timing_ms": {"first_frame": first_ms, "total": t_all.elapsed().as_secs_f64() * 1000.0}, "bytes": std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0), "note": "draft quality (x264 ultrafast crf 28); not a delivery encode"});
     if want_hashes { r["frame_hashes"] = json!(hashes); }
     Ok(r)
 }
 pub fn commands() -> Vec<Command> { vec![
     Command { name: "preview_range", mutates: false,
-        description: "Render a cheap draft mp4 preview of a time range through the same path as export. Draft preview of a time range as a short mp4 through the same composition path as export (same frame renderer and colour pipeline), cheaply: scale (box-downscaled, default 0.5, 1 = full size), fps_divisor (render every Nth frame, default 1), audio (default false; the mixed PCM for the range muxed as AAC). Bounded to 30 s by default (max_seconds up to 300). Read-only: the project is not changed and the path must not be inside an export job's chunk directory. hashes:true returns the sha256 of every rendered RGBA8 frame (after scaling) so a preview can be compared with export frames. Draft quality, not a delivery encode. Returns path, frames, size, timing_ms {first_frame, total}.",
-        schema: obj(vec![("start", n("range start, seconds (default 0)")), ("end", n("range end, seconds (default start + max_seconds, capped at the timeline end)")), ("scale", n("0.1..1, default 0.5")), ("fps_divisor", n("whole number 1..30, default 1")), ("audio", json!({"type":"boolean"})), ("max_seconds", n("bound on the range, default 30, max 300")), ("path", s("output .mp4 (default: a temp file)")), ("hashes", json!({"type":"boolean","description":"return per-frame sha256 of the RGBA8 frames"}))], &[]),
+        description: "Render a cheap draft mp4 preview of a time range through the same path as export. Draft preview of a time range as a short mp4 through the same composition path as export (same frame renderer and colour pipeline), cheaply: scale (box-downscaled, default 0.5, 1 = full size), fps_divisor (render every Nth frame, default 1), audio (default false; the mixed PCM for the range muxed as AAC). Bounded to 30 s by default (max_seconds up to 300). Read-only: the project is not changed and the path must not be inside an export job's chunk directory. hashes:true returns the sha256 of every rendered RGBA8 frame (after scaling) so a preview can be compared with export frames. Uses enabled eligible proxies by default; use_proxies:false forces originals for export comparisons. Returns proxy_assets actually used. Audio always uses originals. Draft quality, not a delivery encode. Returns path, frames, size, timing_ms {first_frame, total}.",
+        schema: obj(vec![("use_proxies",json!({"type":"boolean","description":"honor enabled preview proxies; default true; false forces originals"})),("start", n("range start, seconds (default 0)")), ("end", n("range end, seconds (default start + max_seconds, capped at the timeline end)")), ("scale", n("0.1..1, default 0.5")), ("fps_divisor", n("whole number 1..30, default 1")), ("audio", json!({"type":"boolean"})), ("max_seconds", n("bound on the range, default 30, max 300")), ("path", s("output .mp4 (default: a temp file)")), ("hashes", json!({"type":"boolean","description":"return per-frame sha256 of the RGBA8 frames"}))], &[]),
         run: preview },
 ] }

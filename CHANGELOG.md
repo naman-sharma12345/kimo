@@ -1,6 +1,12 @@
 # Changelog
 
+- Added preview proxy media management: generation, enable/disable, health listing, deep integrity validation, safe relinking and detachment. PNG/range previews can use verified proxies; exports, audio and analysis retain originals. Missing/stale proxies fall back. Persisted, undoable bindings; synchronous SDR/CFR scope. See [proxy workflow](docs/PROXY_WORKFLOW.md).
+
 ## Unreleased (v6 "eyes")
+
+- Added `transcript_search`: normalized phrase lookup with script indexes, timeline ranges and ready-to-use delete operations.
+- Added `transcript_edit_apply`: revision-checked, atomic all-track ripple deletion with transcript/caption/marker updates, source/keyframe continuity, dry-run validation and undo/redo. The first version supports explicitly bound normal-speed media and rejects ambiguous edits. See [transcript editing](docs/TRANSCRIPT_EDITING.md).
+- `transcript_edit_preview` now returns a project revision and rejects invalid `to_index` types. Added Windows guards around Unix-only code-clip process-group calls.
 
 - `vignette` is shaped and tracked: new params `center_x`/`center_y`, `roundness` (0 frame-shaped .. 1 true circle), `squareness` (ellipse .. rounded rectangle), `size`, `aspect`, `feather`, `color_r/g/b` (tint the edge instead of darkening), and the centre can follow a clip moved by `track_point` (`strings.source_clip`) or a mask layer such as one `track_mask` keyed (`strings.source_mask`, its centre / mean point). A call with only `amount`/`softness` renders exactly as before.
 - New transition kind `film_burn`: a seeded hot burn blooms from a point with a noise-ragged edge, blows the frame out orange/white at the cut, flickers, then burns off into the incoming shot (`intensity`, `seed`).

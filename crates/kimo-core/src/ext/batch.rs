@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, HashMap};
 
 pub const MAX_OPS: usize = 500;
 pub const MAX_OUT_BYTES: usize = 60_000;
-const FORBIDDEN: &[&str] = &["batch", "undo", "redo", "restore", "load_project", "save_project", "checkpoint", "checkpoint_delete", "collect_project", "relink_media", "recipe_apply", "template_apply"];
+const FORBIDDEN: &[&str] = &["batch", "undo", "redo", "restore", "load_project", "save_project", "checkpoint", "checkpoint_delete", "collect_project", "relink_media", "recipe_apply", "template_apply", "proxy_generate"];
 const FORBIDDEN_PREFIX: &[&str] = &["export", "render_job", "history_"];
 pub fn forbidden(tool: &str) -> bool { FORBIDDEN.contains(&tool) || FORBIDDEN_PREFIX.iter().any(|p| tool.starts_with(p)) }
 

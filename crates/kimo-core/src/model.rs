@@ -167,6 +167,7 @@ fn one_speed() -> f64 { 1.0 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Project {
+    #[serde(default, skip_serializing_if="crate::proxy::Proxies::is_empty")] pub proxies: crate::proxy::Proxies,
     #[serde(default)] pub grade_scopes: crate::color::grade_scopes::Scopes,
     #[serde(default)] pub editorial: crate::editorial::Editorial,
     #[serde(default)] pub lights: BTreeMap<String, crate::lighting::LightDef>,
@@ -199,7 +200,7 @@ pub struct Project {
 
 impl Default for Project {
     fn default() -> Self {
-        Project { grade_scopes: Default::default(), lights: BTreeMap::new(), materials: BTreeMap::new(), editorial: Default::default(), ocio_view_delivery: None, occluders: BTreeMap::new(), color_pipeline: Default::default(), camera: BTreeMap::new(), comp3d: None, name: "untitled".into(), width: 1280, height: 720, fps: 30.0, assets: BTreeMap::new(), tracks: vec![], next_id: 1, markers: vec![], deps: None, templates: vec![], base_dir: None }
+        Project { proxies: Default::default(), grade_scopes: Default::default(), lights: BTreeMap::new(), materials: BTreeMap::new(), editorial: Default::default(), ocio_view_delivery: None, occluders: BTreeMap::new(), color_pipeline: Default::default(), camera: BTreeMap::new(), comp3d: None, name: "untitled".into(), width: 1280, height: 720, fps: 30.0, assets: BTreeMap::new(), tracks: vec![], next_id: 1, markers: vec![], deps: None, templates: vec![], base_dir: None }
     }
 }
 

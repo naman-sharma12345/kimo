@@ -39,7 +39,7 @@ impl FrameCache {
 
 /// Render through the cache: hit = copy of the stored frame, miss = render + store.
 pub fn render_cached(fc: &mut FrameCache, p: &Project, t: f64, cache: &crate::render::Cache) -> Result<Frame, String> {
-    let k = key(p, t, false); if let Some(f) = fc.get(k) { return Ok(f); }
+    let k = key(p, t, false) ^ cache.proxy_variant(); if let Some(f) = fc.get(k) { return Ok(f); }
     let f = crate::render::render_frame(p, t, cache)?; fc.put(k, &f); Ok(f)
 }
 

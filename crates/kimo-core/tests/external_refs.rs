@@ -100,7 +100,7 @@ fn unregistered_path_fields_fail() {
         ("model.rs", "path", "REF Asset.path and OccSpec.path"), ("model.rs", "font", "REF Source::Text.font"),
         ("shards.rs", "occlusion", "REF Plane.occlusion"), ("shards.rs", "texture", "REF Plane.texture"),
         ("color/view_video.rs", "config_path", "REF Project.ocio_view_delivery.config_path"),
-        ("deps.rs", "path", "OUTPUT: ExtRef.path / Resolved.path"), ("ext/auto_captions.rs", "path", "OUTPUT: Src.path, a clip's media path already resolved through deps, held for one call"), ("deps.rs", "rel_path", "OUTPUT: DepRecord.rel_path, informational"), ("text.rs", "font_file", "OUTPUT: TextMetrics.font_file, the font file a measurement resolved to, informational"), ("model.rs", "src", "NOT A FILE: OccSpec.src is a clip id"), ("codeclip.rs", "dir", "REF Source::Code dir (code clip project folder, a directory)"), ("planar.rs", "src", "NOT A FILE: Anchor.src is a clip id (runtime, not serialized in the project)"),
+        ("proxy.rs", "path", "REF Project.proxies.entries[].path; optional preview dependency"), ("deps.rs", "path", "OUTPUT: ExtRef.path / Resolved.path"), ("ext/auto_captions.rs", "path", "OUTPUT: Src.path, a clip's media path already resolved through deps, held for one call"), ("deps.rs", "rel_path", "OUTPUT: DepRecord.rel_path, informational"), ("text.rs", "font_file", "OUTPUT: TextMetrics.font_file, the font file a measurement resolved to, informational"), ("model.rs", "src", "NOT A FILE: OccSpec.src is a clip id"), ("codeclip.rs", "dir", "REF Source::Code dir (code clip project folder, a directory)"), ("planar.rs", "src", "NOT A FILE: Anchor.src is a clip id (runtime, not serialized in the project)"),
         ("color/bake.rs", "path", "NOT A PROJECT FIELD: bake step input, per call"), ("color/bake.rs", "config_path", "NOT A PROJECT FIELD: bake step input, per call"),
         ("color/mux.rs", "dir", "NOT A PROJECT FIELD: temp transaction dir"), ("audio.rs", "path", "NOT A PROJECT FIELD: temp wav"), ("commands.rs", "path", "OUTPUT: Media.path, an image a tool call produced (cleared every dispatch), not stored in the project"),
     ];
@@ -110,7 +110,7 @@ fn unregistered_path_fields_fail() {
     fn files(d: &std::path::Path, out: &mut Vec<std::path::PathBuf>) { for e in std::fs::read_dir(d).unwrap().flatten() { let p = e.path(); if p.is_dir() { files(&p, out) } else if p.extension().map_or(false, |x| x == "rs") { out.push(p) } } }
     let mut fs = vec![]; files(&root, &mut fs); let mut bad = vec![];
     for f in fs {
-        let rel = f.strip_prefix(&root).unwrap().to_str().unwrap().to_string(); let txt = std::fs::read_to_string(&f).unwrap();
+        let rel = f.strip_prefix(&root).unwrap().to_str().unwrap().replace('\\', "/"); let txt = std::fs::read_to_string(&f).unwrap();
         // field declarations: `name: String` / `name: Option<String>` (struct fields and enum variant fields)
         let b = txt.as_bytes(); let mut i = 0;
         while i + 1 < b.len() {
@@ -138,6 +138,7 @@ fn unregistered_path_fields_fail() {
 #[test]
 fn open_sites_are_classified() {
     const SITES: &[(&str, usize, &str)] = &[
+        ("proxy.rs", 3, "PROJECT-DERIVED: original and proxy paths resolved by Project::resolve before fingerprint/probe/transcode; output path resolved against project base"),
         ("audio.rs", 7, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),
         ("codeclip.rs", 7, "3 PROJECT-DERIVED, under resolve_dir (Source::Code.dir resolved through deps): kimo.json, the folder walk and hash; 4 temp: the frame cache, the renderer's output frames and logs"),
         ("color/adjust_v2_proof.rs", 2, "caller path (tool argument / output / temp file / test), not stored in the project"),
@@ -190,7 +191,7 @@ fn open_sites_are_classified() {
         ("motion.rs", 1, "caller path (tool argument / output / temp file / test), not stored in the project"),
         ("planar.rs", 2, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),
         ("reframe.rs", 1, "PROJECT-DERIVED, resolved through deps (Project::resolve -> deps::resolve_path) at the call site: the clip's media decoded by auto_reframe's subject analysis"),
-        ("render.rs", 16, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site; 1 caller path: check_still_path reads the first bytes of a still's output path so a still never overwrites a video"),
+        ("render.rs", 17, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site; 1 caller path: check_still_path reads the first bytes of a still's output path so a still never overwrites a video"),
         ("shards.rs", 3, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),
         ("text.rs", 1, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),
         ("threed/csm.rs", 1, "no project path: an ffmpeg stdin pipe (-i -) fed with raw RGBA frames inside a #[cfg(test)] #[ignore] frame-dump harness; output goes to a test-supplied directory (KIMO_*_FRAMES env), nothing is read from or stored in the project (here: KIMO_CSM_FRAMES)"),
@@ -203,7 +204,7 @@ fn open_sites_are_classified() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     fn files(d: &std::path::Path, out: &mut Vec<std::path::PathBuf>) { for e in std::fs::read_dir(d).unwrap().flatten() { let p = e.path(); if p.is_dir() { files(&p, out) } else if p.extension().map_or(false, |x| x == "rs") { out.push(p) } } }
     let mut fs = vec![]; files(&root, &mut fs); let mut bad = vec![];
-    for f in fs { let rel = f.strip_prefix(&root).unwrap().to_str().unwrap().to_string(); let txt = std::fs::read_to_string(&f).unwrap(); let n: usize = pat.iter().map(|p| txt.matches(p).count()).sum();
+    for f in fs { let rel = f.strip_prefix(&root).unwrap().to_str().unwrap().replace('\\', "/"); let txt = std::fs::read_to_string(&f).unwrap(); let n: usize = pat.iter().map(|p| txt.matches(p).count()).sum();
         let want = SITES.iter().find(|s| s.0 == rel).map(|s| s.1).unwrap_or(0); if n != want { bad.push(format!("{rel}: {n} sites, classified {want}")); } }
     assert!(bad.is_empty(), "file-open sites changed; classify them in tests/external_refs.rs (resolve project-derived paths):\n{}", bad.join("\n"));
 }

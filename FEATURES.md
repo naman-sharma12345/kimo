@@ -1,5 +1,7 @@
 # kimo features
 
+New: [transcript phrase search and revision-checked ripple deletion](docs/TRANSCRIPT_EDITING.md), including dry runs, caption/marker updates and one-step undo. Normal-speed, explicitly bound media only; see the support limits before applying.
+
 MCP-first, AI-first video editor in Rust. Every operation (cut, transform, keyframe, effect, transition, grade, track, mix, export) is a registered command. The MCP server's tool list is generated from that registry, so a feature cannot exist without being AI-callable. The AI can also render a frame to PNG and read video scopes, so it can look at its own work and iterate.
 
 Legend: [x] shipped and tested, [~] partial / approximate, [ ] pending. Catalog counts below are reconciled to engine checkpoint `dd9a517` on 2026-10-11; use the live server (`tools/list`, `list_effects`) for later counts. Timings and fixture measurements are historical checkpoint evidence, not current benchmarks. Mixed checklist rows use [~] when only a subset is shipped; later sections state the limits.
@@ -870,3 +872,5 @@ Honest limits: disagreement proves unreliability but does not say which track is
 - loop_clip tool (BETA, new, MCP; branch arch-u10): repeat a clip `times` (1..100) extra copies back to back with optional `gap`; copies keep effects, keyframes, masks and the grade binding, drop transition_in. Does not ripple other clips. Contract rows: spacing, validation errors, binding copy, undo/redo byte-exact.
 - distribute_clips tool (BETA, new, MCP; branch arch-u10): lay a track's clips end to end in start order with a `gap`, optional new `start` for the first; only starts change, clips already in place stay shared with the undo snapshot (moved count returned). Rows: ordering, gap, start, no-op, errors.
 - swap_clips tool (BETA, new, MCP; branch arch-u11): swap two clips on the same track; the earlier one's slot start goes to the other, which then follows after the same gap, so the pair keeps its span. Refuses overlap, other tracks, locked tracks, or another clip inside the span. loop_clip/duplicate note: copies reuse the same source range (media clips share the asset, in_point and speed, so no new decode source) and get new clip ids, but effect ids are copied unchanged (effect ids are scoped per clip).
+
+- Preview proxy media: six lifecycle tools, CFR timestamp/frame validation, intra-frame H.264 generation, preview switching, original-only exports and analysis, deep SHA256 checks, fallback and byte-identical relinking. Bindings and preference persist and support undo/redo. Synchronous, opaque SDR only; see [workflow and limits](docs/PROXY_WORKFLOW.md).

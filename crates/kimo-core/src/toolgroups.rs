@@ -27,6 +27,7 @@ pub const GROUPS: &[Group] = &[
 ];
 
 pub fn group_of(n: &str) -> &'static str {
+    if n.starts_with("proxy_") { return "project"; }
     const EXACT: &[(&str, &[&str])] = &[
         ("project", &["timeline_summary", "set_meta", "find", "project_diff", "batch", "recipe_list", "recipe_describe", "recipe_apply", "template_define", "template_apply", "template_list", "template_describe", "template_delete", "project_set", "import_media", "save_project", "load_project", "undo", "redo", "history_list", "checkpoint", "restore", "checkpoint_delete", "get_project", "ext_list", "kimo_info", "check_environment", "cache_stats", "cache_clear", "cache_set_budget", "list_dependencies", "collect_project", "relink_media", "set_limits", "get_limits", "import_pixels", "read_pixels"]),
         ("tracking", &["auto_reframe", "fit_info", "camera_project_points", "camera_clip_triangle", "set_ground_plane", "place_at_track", "export_st_map"]),
@@ -43,6 +44,7 @@ pub fn group_of(n: &str) -> &'static str {
         ("animate", &["set_property", "set_keyframe", "set_keyframe_bezier", "audio_to_keyframes", "add_punch_ins", "add_smart_punch", "set_expression", "link_property", "get_curve", "move_key", "remove_key", "copy_curve", "simplify_curve", "smooth_curve", "set_motion_path", "remove_motion_path", "apply_motion_preset", "set_motion_blur", "set_flow_blur", "render_flow", "add_camera_shake", "motion_extract", "motion_diff", "bind_beats", "track_beats", "set_corner_pin", "set_mesh_pin", "set_blend", "set_camera", "set_camera_keyframe", "set_keyframes", "sample_property", "bake_property", "add_null", "set_parent", "get_transform"]),
         ("timeline", &["auto_rough_cut", "place_broll", "cut_to_beat", "add_track", "add_clip", "move_clip", "trim_clip", "split_clip", "delete_clip", "paste_attributes", "set_speed", "set_speed_ramp", "set_time_remap", "beat_cut", "set_time_mode", "freeze_frame", "ripple_delete", "ripple_trim", "roll_edit", "slip_clip", "set_split_edit", "slide_clip", "insert_gap", "lift_range", "duplicate_clip", "loop_clip", "distribute_clips", "swap_clips", "rate_stretch", "set_track", "delete_track", "split_all_at", "scene_split", "remove_silence_cuts", "group_clips", "ungroup_clip", "add_marker", "list_markers", "remove_marker", "snap_time", "list_edit_points", "add_multicam", "switch_angle", "list_multicam", "sync_clips"]),
     ];
+    if n.starts_with("transcript_") { return "text"; }
     for (g, names) in EXACT { if names.contains(&n) { return g; } }
     // rules for tools added later: the first match wins
     let has = |p: &[&str]| p.iter().any(|x| n.contains(x));

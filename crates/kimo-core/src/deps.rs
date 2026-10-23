@@ -77,6 +77,7 @@ impl Project {
     pub fn external_refs(&self) -> Vec<ExtRef> {
         let mut out = vec![];
         for (id, a) in &self.assets { out.push(ExtRef { kind: asset_kind(&a.path), owner: Owner { asset_id: Some(id.clone()), ..Default::default() }, field: format!("assets[{id}].path"), path: a.path.clone(), family: false }); }
+        for (id, q) in &self.proxies.entries { out.push(ExtRef { kind: RefKind::Media, owner: Owner { asset_id: Some(id.clone()), ..Default::default() }, field: format!("proxies[{id}].path"), path: q.path.clone(), family: false }); }
         for (id, o) in &self.occluders { out.push(ExtRef { kind: asset_kind(&o.path), owner: Owner { occluder_id: Some(id.clone()), ..Default::default() }, field: format!("occluders[{id}].path"), path: o.path.clone(), family: false }); }
         if let Some(d) = &self.ocio_view_delivery { out.push(ExtRef { kind: RefKind::Other, owner: Owner { project: true, ..Default::default() }, field: "ocio_view_delivery.config_path".into(), path: d.config_path.clone(), family: false }); }
         tracks_refs(&self.tracks, &mut out);
@@ -122,6 +123,7 @@ fn mask_slot<'a>(l: &'a mut MaskLayer, t: &[Tok]) -> Option<&'a mut String> {
 fn slot_mut<'a>(p: &'a mut Project, t: &[Tok]) -> Option<&'a mut String> {
     match t {
         [(a, Some(id)), (f, None)] if a == "assets" && f == "path" => p.assets.get_mut(id).map(|x| &mut x.path),
+        [(a, Some(id)), (f, None)] if a == "proxies" && f == "path" => p.proxies.entries.get_mut(id).map(|x| &mut x.path),
         [(a, Some(id)), (f, None)] if a == "occluders" && f == "path" => p.occluders.get_mut(id).map(|x| &mut x.path),
         [(a, None), (f, None)] if a == "ocio_view_delivery" && f == "config_path" => p.ocio_view_delivery.as_mut().map(|x| &mut x.config_path),
         [(a, Some(cid)), rest @ ..] if a == "clip" => {

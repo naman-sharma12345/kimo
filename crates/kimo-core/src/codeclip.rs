@@ -278,6 +278,7 @@ pub fn render_steps(dir: &Path, cc: &CodeClip, steps: &[Step]) -> Result<(Vec<Ve
     let py = std::env::var("KIMO_PYTHON").unwrap_or_else(|_| "python3".into());
     let mut cmd = std::process::Command::new(&py);
     cmd.arg(&script).arg(&jf).stdin(std::process::Stdio::null()).stdout(fo).stderr(fe);
+    #[cfg(unix)]
     { use std::os::unix::process::CommandExt; cmd.process_group(0); }
     let t0 = std::time::Instant::now();
     let mut child = match cmd.spawn() { Ok(c) => c, Err(e) => return cleanup(Err(format!("renderer_failed: cannot start the code clip renderer ({py}): {e}"))) };
@@ -289,6 +290,7 @@ pub fn render_steps(dir: &Path, cc: &CodeClip, steps: &[Step]) -> Result<(Vec<Ve
         match child.try_wait() { Ok(Some(s)) => break Some(s), Ok(None) => {}, Err(_) => break None }
         if t0.elapsed() > deadline {
             let pid = child.id();
+            #[cfg(unix)]
             let _ = std::process::Command::new("kill").args(["-KILL", &format!("-{pid}")]).status();
             let _ = child.kill(); let _ = child.wait();
             return cleanup(Err(format!("renderer_failed: code clip render hung past {} s ({nframes} frames); killed the renderer (pid {pid})", deadline.as_secs())));

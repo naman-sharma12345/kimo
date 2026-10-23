@@ -99,6 +99,7 @@ rust transcript_coverage fast
 rust transcript_model fast
 rust transcript_parse fast
 rust transcript_tools fast
+rust transcript_edit_apply fast
 rust undistort_roundtrip full
 rust video_delivery full
 rust view_video full
@@ -252,3 +253,5 @@ rust transition_raw full
 rust uv_math full
 py noise_1080p.py full
 py noise_fields_1080p.py full
+
+rust proxy_workflow full

@@ -352,7 +352,7 @@ fn scoped_setup() -> (Vec<Step<'static>>, String) {
     row_err(&s, "set_camera", json!({"cam_fov": 3.0}), Some("5..170")); row_err(&s, "set_camera", json!({"cam_fov": 171.0}), Some("5..170"));
 }
 #[test] fn add_counter_and_prompt_box_add_clips_and_survive_undo() {
-    let (s, t1, _t2, _c) = one_clip(); std::env::set_var("KIMO_FONTS", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fonts")); assert!(kimo_core::text::resolve_font("Montserrat").ends_with("tests/fonts/Montserrat-Var.ttf"), "text test needs tests/fonts/Montserrat-Var.ttf, no silent system-font fallback");
+    let (s, t1, _t2, _c) = one_clip(); std::env::set_var("KIMO_FONTS", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fonts")); assert!(std::path::Path::new(&kimo_core::text::resolve_font("Montserrat")).ends_with("tests/fonts/Montserrat-Var.ttf"), "text test needs tests/fonts/Montserrat-Var.ttf, no silent system-font fallback");
     let ss = row(&s, "add_counter", json!({"track_id": t1, "start": 0.0, "duration": 1.0, "from": 0, "to": 100, "prefix": "$"}), |_r, b, a| assert!(clips(a).len() > clips(b).len(), "counter adds clips"));
     renders_ok(&ss);
     let ss = row(&s, "add_prompt_box", json!({"track_id": t1, "start": 0.0, "duration": 2.0, "text": "make it pop"}), |_r, b, a| assert!(clips(a).len() > clips(b).len(), "prompt box adds clips"));
