@@ -5,6 +5,9 @@
 use super::kit::*;
 use crate::commands::dispatch_nested as call;
 use crate::model::Source;
+use std::collections::HashMap;
+
+fn bool_arg(a: &Value, k: &str) -> Result<Option<bool>, String> { match a.get(k) { None | Some(Value::Null) => Ok(None), Some(v) => v.as_bool().map(Some).ok_or_else(|| crate::errors::arg_err(a, k, "boolean")) } }
 
 fn atomic(ss: &mut Session, a: &Value, f: fn(&mut Session, &Value) -> Result<Value, String>) -> Result<Value, String> {
     let before = ss.project.clone();
@@ -312,16 +315,18 @@ fn caption_from_words(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let platform = a.get("platform").and_then(|v| v.as_str()).unwrap_or("tiktok").to_string();
     let max_chars = opt_num(a, "max_chars", 22.0).clamp(6.0, 60.0) as usize;
     let lines = opt_num(a, "lines", 2.0).clamp(1.0, 3.0) as usize;
+    let check_confidence = bool_arg(a, "check_confidence")?.unwrap_or(true);
     let mut iv = speech(ss, json!({"track_id": tid}), 1, 200.0, 40.0)?;
     if iv.is_empty() { return Err(format!("no speech detected on track '{tid}'; give the dialogue track")); }
     // a cut on the dialogue track is a phrase boundary even when the detector hears no pause there (the dead air was cut out)
     let cuts: Vec<f64> = ss.project.tracks[track_index(ss, &tid)?].clips.iter().map(|c| c.start).filter(|t| *t > 0.0).collect();
     for b in cuts { if let Some(k) = iv.iter().position(|(s, e)| *s + 0.15 < b && b + 0.15 < *e) { let (s, e) = iv[k]; iv[k] = (s, b); iv.insert(k + 1, (b, e)); } }
-    let cues = if let Some(map) = &by_asset {
-        // words per source clip: each asset's words are timed only inside that asset's clips on the track, so a caption never drifts across a cut
+    // cues carry the asset id they came from (empty: the plain `text` whole-track form) so a confidence check below can be
+    // scoped to the right clip(s); by_asset keeps captions from drifting across a cut the same way it always did.
+    let cues: Vec<(f64, f64, String, String)> = if let Some(map) = &by_asset {
         let ti = track_index(ss, &tid)?;
         let spans: Vec<(String, f64, f64)> = ss.project.tracks[ti].clips.iter().filter_map(|c| if let Source::Media { asset } = &c.source { Some((asset.clone(), c.start, c.start + c.duration)) } else { None }).collect();
-        let mut all: Vec<(f64, f64, String)> = vec![]; let mut seen = std::collections::HashSet::new();
+        let mut all: Vec<(f64, f64, String, String)> = vec![]; let mut seen = std::collections::HashSet::new();
         for (aid, _, _) in &spans {
             if !seen.insert(aid.clone()) { continue; }
             let Some(words) = map.get(aid).and_then(|v| v.as_str()).filter(|t| !t.trim().is_empty()) else { continue };
@@ -329,15 +334,15 @@ fn caption_from_words(ss: &mut Session, a: &Value) -> Result<Value, String> {
             let mut sub: Vec<(f64, f64)> = vec![];
             for (s0, e0) in &mine { for (s, e) in &iv { let (a0, b0) = (s.max(*s0), e.min(*e0)); if b0 - a0 > 0.05 { sub.push((a0, b0)); } } }
             if sub.is_empty() { sub = mine; }
-            all.extend(caption_cues(words, &sub, max_chars, lines));
+            all.extend(caption_cues(words, &sub, max_chars, lines).into_iter().map(|(s, e, t)| (s, e, t, aid.clone())));
         }
         let unknown: Vec<&String> = map.keys().filter(|k| !spans.iter().any(|(x, _, _)| &x == k)).collect();
         if !unknown.is_empty() { return Err(format!("by_asset: {unknown:?} have no clips on track '{tid}'; use the asset_ids that auto_rough_cut returned")); }
         all.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal)); all
-    } else { caption_cues(&text, &iv, max_chars, lines) };
+    } else { caption_cues(&text, &iv, max_chars, lines).into_iter().map(|(s, e, t)| (s, e, t, String::new())).collect() };
     if cues.is_empty() { return Err("text has no words to caption".into()); }
     let ct = new_track(ss)?;
-    let mut args = json!({"track_id": ct, "style": style, "cues": cues.iter().map(|(s, e, t)| json!({"start": s, "end": e, "text": t})).collect::<Vec<_>>()});
+    let mut args = json!({"track_id": ct, "style": style, "cues": cues.iter().map(|(s, e, t, _)| json!({"start": s, "end": e, "text": t})).collect::<Vec<_>>()});
     if let Some(sz) = a.get("size").and_then(|v| v.as_f64()) { args["size"] = json!(sz); }
     let r = call(ss, "add_caption_cues", &args)?;
     let cap = r["caption_id"].as_str().unwrap_or("").to_string();
@@ -370,12 +375,60 @@ fn caption_from_words(ss: &mut Session, a: &Value) -> Result<Value, String> {
             if inside { break; }
         }
     }
-    let out: Vec<Value> = cues.iter().zip(ids.iter()).map(|((s, e, t), id)| json!({"clip_id": id, "start": s, "end": e, "text": t})).collect();
+    // best-effort: cross-check each cue's given words against what kimo's own recognizer actually hears on that stretch of
+    // audio (same Hinglish-tuned pipeline auto_captions uses - beam search, Hinglish prompt, Hindi pass). This never needs the
+    // given text to be transcribed correctly by anyone; it only asks "did the recognizer struggle with this audio?" low
+    // confidence there is flagged (tag low_confidence_caption on the cue clip) so lint_edit can tell a small model exactly
+    // which captions to double-check, instead of it ever putting unverified nonsense on screen. Silent no-op with no
+    // recognizer installed - caption_from_words has never required one.
+    let mut low_confidence_cues: Vec<String> = vec![];
+    let mut confidence_checked = false;
+    if check_confidence {
+        let hint = a.get("hint").and_then(|v| v.as_str()).unwrap_or("");
+        let mut conf_cache: HashMap<String, Option<f32>> = HashMap::new();
+        for (id, (_, _, _, aid)) in ids.iter().zip(cues.iter()) {
+            let ti = track_index(ss, &tid)?;
+            let clip_ids: Vec<String> = if aid.is_empty() {
+                ss.project.tracks[ti].clips.iter().filter(|c| matches!(c.source, Source::Media { .. })).map(|c| c.id.clone()).collect()
+            } else {
+                ss.project.tracks[ti].clips.iter().filter(|c| matches!(&c.source, Source::Media { asset } if asset == aid)).map(|c| c.id.clone()).collect()
+            };
+            let key = if aid.is_empty() { "__track__".to_string() } else { aid.clone() };
+            let conf = conf_cache.entry(key).or_insert_with(|| asr_confidence(ss, a, &clip_ids, hint)).clone();
+            if let Some(c) = conf {
+                confidence_checked = true;
+                if c < 0.5 {
+                    if let Some(cl) = ss.project.find_clip_mut(id) { if !cl.tags.iter().any(|t| t == "low_confidence_caption") { cl.tags.push("low_confidence_caption".into()); } }
+                    low_confidence_cues.push(id.clone());
+                }
+            }
+        }
+    }
+    let out: Vec<Value> = cues.iter().zip(ids.iter()).map(|((s, e, t, _), id)| json!({"clip_id": id, "start": s, "end": e, "text": t, "low_confidence": low_confidence_cues.contains(id)})).collect();
     Ok(json!({"caption_id": cap, "track_id": ct, "cues": out, "size": r3(size), "y": r3(y), "platform": platform, "inside_safe_area": inside,
-        "note": "cues follow the detected speech; fix a word with edit_caption {clip_id, text}"}))
+        "low_confidence_cues": low_confidence_cues, "confidence_checked": confidence_checked,
+        "note": "cues follow the detected speech; fix a word with edit_caption {clip_id, text}. low_confidence_cues are cues whose audio kimo's recognizer genuinely struggled with; lint_edit surfaces the same thing as caption_low_confidence"}))
+}
+
+/// Best-effort ASR confidence for words `caption_from_words` was *given* (not recognized): reuses auto_captions's already-tuned
+/// recognizer (Hinglish prompt, beam search by default, a Hindi pass) to see how confidently it hears the SAME audio, whatever
+/// text it was given. None (never an error) when no recognizer is installed or none of the clips carry usable audio -
+/// caption_from_words has always worked without a recognizer, and this must not change that. `a` carries through any
+/// whisper_bin/model/language/script overrides the caller already passed to caption_from_words.
+fn asr_confidence(ss: &Session, a: &Value, clip_ids: &[String], hint: &str) -> Option<f32> {
+    if clip_ids.is_empty() { return None; }
+    let mut ca = a.clone(); ca["clip_ids"] = json!(clip_ids); if !hint.trim().is_empty() { ca["hint"] = json!(hint); }
+    let mut warn = vec![];
+    let srcs = super::auto_captions::sources(ss, &ca, &mut warn).ok()?;
+    let mut mode = String::new(); let mut lang_seen: Option<String> = None;
+    let mut all: Vec<f32> = vec![];
+    for s in &srcs { if let Ok((ws, _)) = super::auto_captions::recognize(s, &ca, &mut mode, &mut lang_seen) { all.extend(ws.iter().map(|w| w.conf)); } }
+    if all.is_empty() { return None; }
+    Some(all.iter().sum::<f32>() / all.len() as f32)
 }
 
 // ---------------------------------------------------------------- finish_audio
+
 fn clip_lufs(ss: &mut Session, cid: &str) -> Option<f64> { call(ss, "measure_loudness", &json!({"clip_id": cid})).ok()?["integrated_lufs"].as_f64() }
 fn finish_audio(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let target = opt_num(a, "target_lufs", -14.0).clamp(-30.0, -8.0);
@@ -635,12 +688,23 @@ fn lint_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
         let cov: f64 = sp.iter().map(|(s, e)| texts.iter().map(|(_, ts, td)| (e.min(ts + td) - s.max(*ts)).max(0.0)).sum::<f64>().min(e - s)).sum();
         if stot > 0.5 && cov / stot < 0.6 { probs.push(json!({"code": "captions_missing", "message": format!("only {:.0}% of the speech has text on screen", 100.0 * cov / stot), "fix": {"tool": "caption_from_words", "args": {"track_id": dtid, "by_asset": "<{asset_id: the words spoken in it}>"}}})); }
     }
+    // 3b caption confidence: caption_from_words tags a cue low_confidence_caption when kimo's own recognizer genuinely could
+    // not make out that stretch of audio, whatever text it was given - surfaced here so a small model knows exactly which
+    // captions to check against the real audio instead of trusting (or guessing at) an auto-transcript that may be wrong.
+    let mut low_conf_ids: Vec<String> = ss.project.tracks.iter().flat_map(|t| t.clips.iter()).filter(|c| c.tags.iter().any(|tg| tg == "low_confidence_caption")).map(|c| c.id.clone()).collect();
+    low_conf_ids.truncate(20);
+    for cid in low_conf_ids {
+        let cap = caption_of(ss, &cid);
+        probs.push(json!({"code": "caption_low_confidence", "clip_id": cid, "caption_id": cap,
+            "message": "kimo's recognizer could not make out this clip's audio confidently; the caption text may be wrong - check it against the clip",
+            "fix": {"tool": "edit_caption", "args": {"clip_id": cid, "text": "<verified against the actual audio>"}}}));
+    }
     // 4 loudness of the mix
     if let Ok(m) = call(ss, "measure_loudness", &json!({})) { if let Some(l) = m["integrated_lufs"].as_f64() { if (l - target).abs() > 1.0 { probs.push(json!({"code": "loudness_off", "message": format!("mix reads {l:.1} LUFS, target {target:.0}"), "fix": {"tool": "finish_audio", "args": {"target_lufs": target}}})); } } else { probs.push(json!({"code": "silent_mix", "message": "the mix has no measurable sound", "fix": {"tool": "finish_audio", "args": {}}})); } }
     // 5 length
     if let Some(d) = a.get("duration").and_then(|v| v.as_array()) { if let (Some(lo), Some(hi)) = (d.first().and_then(|v| v.as_f64()), d.get(1).and_then(|v| v.as_f64())) { if end < lo - 0.05 || end > hi + 0.05 { probs.push(json!({"code": "duration", "message": format!("timeline is {end:.2} s, wanted {lo}-{hi} s"), "fix": {"tool": "timeline_summary", "args": {}}})); } } }
     probs.truncate(20);
-    Ok(json!({"ok": probs.is_empty(), "problems": probs, "checked": ["frames every 0.5 s", "text vs title safe and the platform UI", "fonts", "b-roll inside speech", "captions cover speech", "mix loudness", "duration"], "platform": platform, "duration": r3(end)}))
+    Ok(json!({"ok": probs.is_empty(), "problems": probs, "checked": ["frames every 0.5 s", "text vs title safe and the platform UI", "fonts", "b-roll inside speech", "captions cover speech", "caption confidence vs the recognizer", "mix loudness", "duration"], "platform": platform, "duration": r3(end)}))
 }
 
 // ---------------------------------------------------------------- review_export
@@ -691,9 +755,12 @@ pub fn commands() -> Vec<Command> {
         Command { name: "place_broll", description: "Lay b-roll over a dialogue track only while someone speaks, cut on pauses, b-roll muted. Returns clip ids and times.", mutates: true,
             schema: obj(vec![("track_id", s("the dialogue track")), ("asset_ids", ids("b-roll assets, in order")), ("start", n("window start, timeline s (default: after the first phrase)")), ("end", n("window end, timeline s")),
                 ("min_shot", n("shortest shot, default 1.0 s")), ("max_shot", n("longest shot, default 2.5 s")), ("in_points", json!({"type": "object", "description": "optional {asset_id: source seconds}"})), ("volume", n("b-roll sound 0..1, default 0 (muted)"))], &["track_id", "asset_ids"]), run: |ss, a| atomic(ss, a, place_broll) },
-        Command { name: "caption_from_words", description: "Captions from words you give (per source clip or whole track), timed to the detected speech, clear of the platform UI. Returns cues.", mutates: true,
+        Command { name: "caption_from_words", description: "Captions from words you give (per source clip or whole track), timed to the detected speech, clear of the platform UI. Best-effort checks each cue's words against what kimo's own recognizer actually hears on that audio and flags any it genuinely can't make out (low_confidence_cues, and lint_edit's caption_low_confidence) - check those before export rather than guess. Returns cues.", mutates: true,
             schema: obj(vec![("track_id", s("the dialogue track")), ("text", s("the words spoken on the whole track, in order")), ("by_asset", json!({"type": "object", "description": "better: {asset_id: words spoken in that clip}; each clip's words stay on its own shots"})), ("style", s("boxed (default)|subtitle|yellow")), ("platform", s("tiktok (default)|reels|shorts|none")),
-                ("max_chars", n("characters per line, default 22")), ("lines", n("lines per cue, default 2")), ("size", n("pixel size; default fits the safe width"))], &["track_id"]), run: |ss, a| atomic(ss, a, caption_from_words) },
+                ("max_chars", n("characters per line, default 22")), ("lines", n("lines per cue, default 2")), ("size", n("pixel size; default fits the safe width")),
+                ("check_confidence", json!({"type":"boolean","description":"best-effort: cross-check given words against the recognizer on the same audio and flag cues it can't make out confidently (default true; set false to skip, e.g. no recognizer installed)"})),
+                ("hint", s("vocabulary/topic hint for the confidence check only (names, jargon in the clip) - does not change the caption text")),
+                ("whisper_bin", s("confidence check only: path to whisper-cli")), ("model", s("confidence check only: path to a ggml model"))], &["track_id"]), run: |ss, a| atomic(ss, a, caption_from_words) },
         Command { name: "finish_audio", description: "Mix for social in one call: dialogue cleaned and levelled per clip, b-roll sound off, music under speech, mix to target LUFS.", mutates: true,
             schema: obj(vec![("target_lufs", n("default -14")), ("keep_ambience", json!({"type": "boolean", "description": "keep b-roll sound (default false: muted)"})), ("music_clip_ids", ids("clips to treat as music (audio-only clips are music already)")),
                 ("music_under_speech_db", n("music level under dialogue, relative, default -14"))], &[]), run: |ss, a| atomic(ss, a, finish_audio) },

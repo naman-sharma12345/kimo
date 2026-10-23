@@ -188,7 +188,7 @@ fn portrait() -> Session { let mut ss = Session::new(); call(&mut ss, "project_s
     let t = sid(&call(&mut ss, "auto_rough_cut", json!({"asset_ids": [a]})), "track_id");
     let text = "Three phone clips go in. One finished short comes out.";
     let rc = ss.project.tracks.iter().find(|x| x.id == t).unwrap().clips.iter().map(|c| c.start).collect::<Vec<f64>>();
-    let r = call(&mut ss, "caption_from_words", json!({"track_id": t, "text": text}));
+    let r = call(&mut ss, "caption_from_words", json!({"track_id": t, "text": text, "check_confidence": false}));
     let cues = r["cues"].as_array().unwrap(); assert!(cues.len() >= 2, "{r}");  // two-line cues (default lines 2): one cue per sentence here
     let joined: Vec<String> = cues.iter().map(|c| c["text"].as_str().unwrap().replace('\n', " ")).collect();
     assert_eq!(joined.join(" "), text, "every word, in order");
@@ -329,7 +329,7 @@ fn gray_pixels(png: &str, w: usize, h: usize) -> Vec<u8> {
         (cs.first().unwrap()["start"].as_f64().unwrap(), cs.last().unwrap()["end"].as_f64().unwrap()) };
     let (s1, e1) = span(&a1); let (s2, e2) = span(&a2);
     // a short clip with many words, a long one with few: proportional timing over the whole track would push words across the cut
-    let r = call(&mut ss, "caption_from_words", json!({"track_id": t, "by_asset": {a1.clone(): "Short one here", a2.clone(): "and this second clip says a great many quick words"}}));
+    let r = call(&mut ss, "caption_from_words", json!({"track_id": t, "by_asset": {a1.clone(): "Short one here", a2.clone(): "and this second clip says a great many quick words"}, "check_confidence": false}));
     for c in r["cues"].as_array().unwrap() { let (s, e) = (c["start"].as_f64().unwrap(), c["end"].as_f64().unwrap()); let txt = c["text"].as_str().unwrap();
         let first_clip = "Short one here".contains(txt.split_whitespace().next().unwrap());
         let (lo, hi) = if first_clip { (s1, e1) } else { (s2, e2) };
@@ -343,14 +343,14 @@ fn gray_pixels(png: &str, w: usize, h: usize) -> Vec<u8> {
     let mut ss = Session::new(); call(&mut ss, "project_set", json!({"width": 720, "height": 1280, "fps": 30}));
     let a = sid(&call(&mut ss, "import_media", json!({"path": talk("bal.mp4", 6.0, &[(0.3, 5.6)], 1.0)})), "asset_id");
     let t = sid(&call(&mut ss, "auto_rough_cut", json!({"asset_ids": [a]})), "track_id");
-    let r = call(&mut ss, "caption_from_words", json!({"track_id": t, "text": "My favorite is the navy one, it never leaks."}));
+    let r = call(&mut ss, "caption_from_words", json!({"track_id": t, "text": "My favorite is the navy one, it never leaks.", "check_confidence": false}));
     for c in r["cues"].as_array().unwrap() { let txt = c["text"].as_str().unwrap();
         assert!(txt.split_whitespace().count() >= 2, "cue '{txt}' is a lone word: {r}"); }
     // no flash cues: six one-word sentences in two seconds of speech still give cues of at least 0.8 s, every word in order
     let b = sid(&call(&mut ss, "import_media", json!({"path": talk("flash.mp4", 3.0, &[(0.3, 2.5)], 1.0)})), "asset_id");
     let t2 = sid(&call(&mut ss, "auto_rough_cut", json!({"asset_ids": [b]})), "track_id");
     let text = "Yes. No. Maybe. Sure. Okay. Fine.";
-    let r = call(&mut ss, "caption_from_words", json!({"track_id": t2, "text": text}));
+    let r = call(&mut ss, "caption_from_words", json!({"track_id": t2, "text": text, "check_confidence": false}));
     let cues = r["cues"].as_array().unwrap();
     for c in cues { assert!(c["end"].as_f64().unwrap() - c["start"].as_f64().unwrap() >= 0.79, "flash cue {c}: {r}"); }
     let joined: Vec<String> = cues.iter().map(|c| c["text"].as_str().unwrap().replace('\n', " ")).collect();

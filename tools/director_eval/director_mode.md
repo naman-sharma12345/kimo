@@ -15,9 +15,15 @@ the caption words and any labels. Do the steps in this order and keep every path
 5. `stabilize {clip_id}` only for a clip that is clearly shaky (optional; each call takes a few seconds).
 6. Hook title: `add_track {}`, then `add_title {track_id, style: "impact", text: "<2-4 word hook>", start: 0, duration: 1.8}`.
    One title only. To change it, `delete_clip {clip_id}` the old one first; never stack a second title on top.
-7. Captions: `caption_from_words {track_id: <the rough-cut track>, by_asset: {"<asset_id>": "<the words spoken in that clip>", ...}}`
-   times short cues to the speech, each clip's words only over that clip's shots. Write clean, correct words for each clip
-   (the auto-transcript in the brief may be wrong: never put nonsense on screen). Fix one cue with `edit_caption {clip_id, text}`.
+7. Captions: if the brief gives you no transcript (or you do not trust the one it gives you, e.g. accented or informal
+   speech), prefer `auto_captions {clip_ids: [<the rough-cut segments' clip ids>]}` -- it recognizes the speech itself
+   (beam search, a Hinglish prompt, a Hindi pass for Hindi/Urdu/Punjabi/Marathi) and already flags words it heard with
+   low confidence (`low_confidence_words` in the result). Otherwise, `caption_from_words {track_id: <the rough-cut track>,
+   by_asset: {"<asset_id>": "<the words spoken in that clip>", ...}}` times YOUR words to the detected speech, each clip's
+   words only over that clip's shots -- write clean, correct words for each clip (an auto-transcript in the brief may be
+   wrong: never put nonsense on screen). Either way, run `lint_edit` before exporting: it now also flags
+   `caption_low_confidence` -- a cue whose audio kimo's own recognizer genuinely cannot make out confidently, whatever
+   text it was given -- with the exact `edit_caption {clip_id, text}` call to check and fix it.
 8. Optional labels: `add_track {}` then `add_text {track_id, text, start, duration, size: 56}` (1-4 words, at most 3, size 48 or more,
    never at the same time as the title). Plain letters only: emoji and symbols are not in the font.
 9. `finish_audio {}` levels the voice and mixes to -14 LUFS.

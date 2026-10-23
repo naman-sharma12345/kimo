@@ -35,6 +35,7 @@ subject, a weak hook.
 | captions and labels too small to read on a phone | lint `text_too_small` (minimum = min(w,h)/18) |
 | a second title stacked on the first, unreadable | lint `text_overlap` with `delete_clip` as the fix |
 | captions drift onto the wrong shots | `caption_from_words {by_asset: {asset_id: words}}` keeps each clip's words on that clip's shots |
+| captions put real ASR nonsense on screen (accented/informal speech: "bohozhada", "kettlebanyan") | `auto_captions` recognizes the speech itself (Hinglish prompt, beam search, a Hindi pass) instead of trusting an outside brief transcript; either way `lint_edit`'s `caption_low_confidence` flags a cue the recognizer genuinely cannot make out, with the `edit_caption` call to fix it |
 | captions cut into tiny pieces with a lone last word | balanced line breaks (fewest slack, never one dangling word, a comma preferred as a break), two-line cues, cue ends snapped to speech pauses, no cue shorter than 0.8 s |
 | blurry and whip-pan shots kept | `auto_rough_cut` measures each frame (Laplacian variance, frame change) and trims soft edges of a segment, drops a mostly soft one (`soft: "flag"` only reports) |
 | repeated near-identical shots | `auto_rough_cut` marks a segment `similar_to` another clip's kept segment (64-bit difference hash); `dedupe: true` drops it |
@@ -57,8 +58,9 @@ subject, a weak hook.
 1. Text placement that avoids the subject (titles and labels landed on the bottles in D3).
 2. Soft stretches in the middle of a segment are only reported. Splitting a segment there would cut words, which needs word timing.
 3. Title presets that read as a designed hook on 9:16, not plain white type.
-4. Replace the caption stub with KC's transcribing `auto_captions` (word timings) when it lands; `caption_from_words` stays for
-   given text.
+4. Done: `auto_captions` (word timings, Hinglish-aware) has landed; director mode prefers it when no trustworthy transcript
+   is given. `caption_from_words` stays for given text, and now (KA1) cross-checks that text against the recognizer's own
+   confidence on the same audio, flagging a cue (`caption_low_confidence` in `lint_edit`) it genuinely cannot make out.
 
 ## Running it
 

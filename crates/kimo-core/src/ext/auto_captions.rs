@@ -109,9 +109,9 @@ fn run_whisper(bin: &std::path::Path, model: &std::path::Path, wav: &std::path::
 }
 
 /// One stretch of speech to recognize: a media clip's audio, mapped to the timeline by `start + t / speed`.
-struct Src { clip_id: String, asset_id: String, path: String, in_point: f64, dur_src: f64, start: f64, speed: f64 }
+pub(crate) struct Src { clip_id: String, asset_id: String, path: String, in_point: f64, dur_src: f64, start: f64, speed: f64 }
 
-fn sources(ss: &Session, a: &Value, warnings: &mut Vec<String>) -> Result<Vec<Src>, String> {
+pub(crate) fn sources(ss: &Session, a: &Value, warnings: &mut Vec<String>) -> Result<Vec<Src>, String> {
     let want: Option<Vec<String>> = match a.get("clip_ids") { None | Some(Value::Null) => None, Some(v) => Some(v.as_array().ok_or("clip_ids must be an array of clip ids")?.iter().map(|x| x.as_str().map(String::from).ok_or("clip_ids must be strings".to_string())).collect::<Result<_, _>>()?) };
     let p = &ss.project; let mut out = vec![];
     if let Some(w) = &want { for id in w { if p.find_clip(id).is_none() { return Err(format!("no clip '{}' (get_project lists clip ids)", crate::transcript_parse::sanitize(id))); } } }
@@ -128,7 +128,7 @@ fn sources(ss: &Session, a: &Value, warnings: &mut Vec<String>) -> Result<Vec<Sr
 }
 
 /// Recognized + refined words of one source (times in source seconds from its in point) and the language used.
-fn recognize(src: &Src, a: &Value, mode: &mut String, lang_seen: &mut Option<String>) -> Result<(Vec<sw::TimedWord>, Vec<f32>), String> {
+pub(crate) fn recognize(src: &Src, a: &Value, mode: &mut String, lang_seen: &mut Option<String>) -> Result<(Vec<sw::TimedWord>, Vec<f32>), String> {
     let x = audio16k(&src.path, src.in_point, src.dur_src)?;
     if x.len() < 1600 { return Ok((vec![], x)); }
     let bin = whisper_bin(a)?; let model = whisper_model(a)?; let wav = scratch("in.wav"); write_wav(&wav, &x)?;
