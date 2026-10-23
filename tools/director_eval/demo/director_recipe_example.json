@@ -1,0 +1,38 @@
+{
+  "project": {
+    "width": 720,
+    "height": 1280,
+    "fps": 30
+  },
+  "clips": [
+    "clip1.mp4",
+    "clip2.mp4",
+    "clip3.mp4",
+    "clip5.mp4",
+    "clip6.mp4"
+  ],
+  "dropped_clips": [
+    "clip4.mp4 -- off-topic filler (\"I'm in the laptop here...\"), not part of the bottles story"
+  ],
+  "hook": {
+    "text": "MY FAVORITE BOTTLES",
+    "start": 0.0,
+    "duration": 1.8
+  },
+  "captions": {
+    "clip1.mp4": "These are my two bottles.",
+    "clip2.mp4": "The first one's purple, it's plastic. But I love it.",
+    "clip3.mp4": "This is the best bottle. It's simple, nothing fancy, but it works great.",
+    "clip5.mp4": "I use this one for a fragrance that's really good.",
+    "clip6.mp4": "Thanks everyone for watching, bye!"
+  },
+  "captions_note": "The raw auto-transcript on this accented/informal speech had real nonsense in it (e.g. \"bohozhada\", \"kettlebanyan\"); these are honest plain paraphrases of what was actually said, not invented claims -- director_mode.md's own rule is never put nonsense on screen.",
+  "highlight": {
+    "clip": "clip3.mp4",
+    "segment_index": 0,
+    "zoom": 1.25,
+    "glow_text": "THE BEST ONE",
+    "glow_duration": 1.6
+  },
+  "crf": 20
+}
