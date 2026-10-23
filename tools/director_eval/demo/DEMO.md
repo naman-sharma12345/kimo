@@ -11,11 +11,13 @@ tools/director_eval/demo/run_demo.sh /path/to/clips out.mp4
 
 `clips_dir` holds numbered 9:16 talking-head clips (`clip1.mp4`, `clip2.mp4`, ...).
 `director_recipe_example.json` next to the script is the recipe this demo ships
-with: which clips to use and in what order, the hook title, the honest per-clip
-caption text, and which clip gets the smart-punch + glow-text highlight -- the
-shape of JSON a small model in director mode would emit. A different footage set
-needs its own recipe file (`--recipe path.json` or `$RECIPE`): the words people
-actually say can't be guessed from the file names.
+with: which clips to use and in what order, the hook title, caption options
+(style/hint for kimo's own recognizer -- see below), and which clip gets the
+smart-punch + glow-text highlight -- the shape of JSON a small model in director
+mode would emit. A different footage set needs its own recipe file
+(`--recipe path.json` or `$RECIPE`) for the hook/highlight text and clip order;
+it does **not** need its own captions -- captions come from kimo's own speech
+recognition, not a hand-typed transcript (see below).
 
 ## What it runs, one call per step
 
@@ -27,24 +29,54 @@ actually say can't be guessed from the file names.
 4. `auto_grade` -- per-clip exposure / white-balance fix.
 5. `add_track` + `add_title {style: hook_box}` -- the hook, from the recipe's
    `hook` text.
-6. `caption_from_words {by_asset: {...}}` -- captions from the recipe's
-   `captions` (clean words per clip, timed to detected speech automatically).
-7. `add_smart_punch` + `add_glow_text` on the recipe's `highlight` clip, if one
+6. `auto_captions {clip_ids: [...the rough-cut's own segments...]}` -- kimo's
+   own speech recognition (beam search, a Hinglish prompt, a Hindi/Urdu/
+   Punjabi/Marathi pass, per-word confidence), styled/hinted from the recipe's
+   `captions` block. No hand-typed transcript, no `caption_from_words`, no
+   `edit_caption` paraphrases: this is what the speaker actually said, as
+   kimo's recognizer actually heard it.
+7. `transcript_get {include_words: true}` on the caption's transcript --
+   this script's own read of which words came back flagged `low_confidence`,
+   so they can be listed honestly in the run's output (see below) instead of
+   silently trusted or silently replaced.
+8. `add_smart_punch` + `add_glow_text` on the recipe's `highlight` clip, if one
    is named.
-8. `finish_audio` -- dialogue cleaned and levelled, mixed to -14 LUFS.
-9. `lint_edit`, applying the first non-cosmetic problem's own suggested fix
-   call (up to 3 passes) until clean, except the known `font_substituted`
-   caveat below.
-10. `export {crf: 20}` to the given output path.
+9. `finish_audio` -- dialogue cleaned and levelled, mixed to -14 LUFS.
+10. `lint_edit`, applying the first non-cosmetic problem's own suggested fix
+    call (up to 3 passes) until clean, except the known `font_substituted`
+    caveat below. When `lint_edit`'s fix is a template for a human/small model
+    to fill in (marked by `<angle-bracket>` placeholders -- e.g. "re-caption
+    this with the real words") the script uses the concrete `or` alternative
+    instead (a position/size fix, never invented caption text); if neither is
+    usable it stops and reports rather than guess.
+11. `export {crf: 20}` to the given output path, and a small JSON report
+    (`captions: {total_words, low_confidence_count, low_confidence_words}`)
+    is printed alongside the normal export result.
 
 ## Proven on real footage
 
-This was run end-to-end against a real 5-clip talking-head set (a sixth clip
+Run end-to-end against Naman's real 5-clip talking-head set (a sixth clip
 dropped as off-topic filler): 8 rough-cut segments, 41.9s, exported to a
-13.4-16 MB 9:16 mp4, `lint_edit` clean apart from the font caveat below. The
-project file, the asset ids, the exact clip-to-caption mapping and the smart-
-punch highlight clip all came from `director_recipe_example.json` -- nothing
-footage-specific is hardcoded in `run_demo.py`.
+14.3 MB 9:16 mp4, `lint_edit` clean apart from the font caveat below.
+
+**Caption quality.** kimo's own recognizer (the multilingual `ggml-small-q5_1`
+model already on disk, Hinglish prompt, Hindi-pass routing -- nothing
+downloaded) heard 127 words at an average confidence of 0.66, language-tagged
+`ur` (Hinglish/Hindi content written in Roman letters) with a touch of English
+and Bengali-leaning phonemes in the mix (`mode: hinglish+en+bn`). 32 of those
+127 words (25%) came back flagged `low_confidence` and are listed, verbatim,
+with their timestamps, in this run's own report -- not invented replacements,
+not silently hidden. Reading the actual frames (`proof/kd2_contact_sheet.png`
+in the task this demo was built under): the captions are coherent, honest
+Hinglish as spoken -- "isme paani boh zyada aata hai, lekin ye plastic ki hai"
+("this has too much water in it, but it's made of plastic"), "ye khola yahan
+se" ("open this from here") -- not the real nonsense an outside, non-Hinglish
+transcript produced on this same footage before (`bohozhada`, `kettlebanyan`,
+`panipitam`). The rough patches that remain are honestly rough, not invented:
+a run of flagged words ("badu", "aar", "yo" around 30s) lands on screen exactly
+as the recognizer heard it, flagged, at the exact point a listen confirms the
+audio itself is hard to make out -- the system told the truth about where it
+struggled instead of papering over it with a guess.
 
 ## Honest caveats
 
@@ -53,12 +85,11 @@ footage-specific is hardcoded in `run_demo.py`.
   demo does not run, to stay deterministic/offline). Titles render in DejaVu
   Sans instead -- `lint_edit` flags this as `font_substituted` and the script
   leaves it; cosmetic only, inside the safe area.
-- **Captions are honest paraphrases, not a transcript fix.** On accented or
-  informal speech, raw auto-transcription can produce real nonsense fragments.
-  `director_mode.md`'s own rule is "never put nonsense on screen": a recipe's
-  `captions` should be short, honest, correct words for what was actually
-  said -- generic phrasing where a specific word can't be made out, never an
-  invented claim about the subject.
+- **25% of caption words are flagged low-confidence on this footage** (32 of
+  127; see above) -- real, informal, accented speech is genuinely hard to
+  recognize in spots. This script reports exactly which words and when rather
+  than guessing a fix; a human (or a small model with the real audio in
+  front of it) is the one who should decide whether to touch them.
 - **This is a scripted deterministic run, not a live small model deciding.**
   The ~18-19 tool director-mode profile, `docs/DIRECTOR_QUICKSTART.md`,
   `docs/SMALL_MODEL_PREP.md` and the `director_eval` harness are what's

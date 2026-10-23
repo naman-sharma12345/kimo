@@ -9,17 +9,23 @@ scripted deterministically -- no live/network model call.
 <out.mp4>   is where the exported short is written.
 --kimo      path to the kimo CLI binary (default: $KIMO_BIN, else "kimo" on PATH).
 --recipe    a director_recipe_example.json-shaped file naming which clips to use,
-            in what order, and the honest caption/hook/highlight text (default:
+            in what order, and the hook/highlight text (default:
             director_recipe_example.json next to this script, which matches the
             clips this demo shipped with -- a different footage set needs its
-            own recipe file: the words people actually say can't be guessed).
+            own recipe file for the hook/highlight text, but NOT for captions:
+            captions come from kimo's own speech recognition, not a hand-typed
+            transcript).
 --project   where to keep the .kimo project file (default: <out>.kimo).
 
 One call per director-mode step: project_set -> import_media (per clip) ->
 auto_rough_cut -> auto_grade -> add_track + add_title (hook) ->
-caption_from_words -> add_smart_punch + add_glow_text (highlight, if the
+auto_captions (kimo's own recognizer on the rough-cut segments; never a
+hand-typed transcript) -> add_smart_punch + add_glow_text (highlight, if the
 recipe names one) -> finish_audio -> lint_edit (auto-fix anything it flags
-except the font-fallback caveat, up to 3 passes) -> export.
+except the font-fallback caveat, up to 3 passes) -> export. Any caption word
+kimo's recognizer is not confident about is reported in this script's own
+output (see "low-confidence" lines on stderr and the "captions" block of the
+printed JSON) -- never silently replaced with a guess.
 """
 import argparse
 import json
@@ -84,8 +90,32 @@ def main():
     call("add_title", {"track_id": title_track, "style": "hook_box", "text": hook["text"],
                         "start": hook.get("start", 0.0), "duration": hook.get("duration", 1.8)})
 
-    by_asset = {asset_ids[c]: text for c, text in recipe["captions"].items()}
-    call("caption_from_words", {"track_id": dialogue_track, "by_asset": by_asset})
+    # Captions come from kimo's own speech recognition (auto_captions), not a hand-typed
+    # transcript: director_mode.md's own guidance is to prefer auto_captions whenever the
+    # brief's transcript is not trustworthy (accented or informal speech included) rather
+    # than caption_from_words with guessed/given words. clip_ids is the rough-cut's own
+    # segments, in the order director_mode.md names.
+    cap_opts = recipe.get("captions", {})
+    seg_clip_ids = [c["clip_id"] for c in rough["clips"]]
+    cap_args = {"clip_ids": seg_clip_ids}
+    for k in ("style", "hint", "language", "script"):
+        if cap_opts.get(k):
+            cap_args[k] = cap_opts[k]
+    cap = call("auto_captions", cap_args)
+
+    low_conf_words = []
+    if cap.get("low_confidence_words"):
+        tget = call("transcript_get", {"transcript_id": cap["transcript_id"], "include_words": True})
+        # WordFlag::LowConfidence serialises as "low_confidence" (serde's snake_case rename)
+        low_conf_words = [w for w in tget.get("words", []) if "low_confidence" in w.get("flags", [])]
+    print(
+        f"auto_captions: {cap.get('words', 0)} words, language={cap.get('language')}, "
+        f"mode={cap.get('mode')}, confidence={cap.get('confidence')}, "
+        f"low_confidence={cap.get('low_confidence_words', 0)}",
+        file=sys.stderr,
+    )
+    for w in low_conf_words:
+        print(f"  low-confidence word: \"{w['display']}\" [{w['start']:.2f}-{w['end']:.2f}]s (conf={w.get('confidence')})", file=sys.stderr)
 
     highlight = recipe.get("highlight")
     if highlight:
@@ -98,20 +128,54 @@ def main():
 
     call("finish_audio", {})
 
+    def has_placeholder(d):
+        # lint_edit's "fix" is sometimes a template for a small model with real context to fill
+        # in (e.g. "re-caption with the actual spoken words"), marked by <angle-bracket> values --
+        # never call that literally. Prefer a concrete "or" alternative when one is given; if none
+        # is, stop and report rather than invent a replacement (the lint_edit docstring already
+        # promises "never quote cue text", and this script keeps that promise too).
+        return any(isinstance(v, str) and v.strip().startswith("<") and v.strip().endswith(">") for v in (d or {}).values())
+
     for attempt in range(3):
         lint = call("lint_edit", {})
         real_problems = [p for p in lint.get("problems", []) if p["code"] != "font_substituted"]
         if not real_problems:
             break
-        fix = real_problems[0]["fix"]
-        call(fix["tool"], fix["args"])
-        if "then" in fix:
-            call(fix["then"]["tool"], fix["then"]["args"])
+        prob = real_problems[0]
+        fix = prob["fix"]
+        chosen = fix
+        if has_placeholder(fix.get("args", {})):
+            alt = fix.get("or")
+            if isinstance(alt, dict) and "tool" in alt and not has_placeholder(alt.get("args", {})):
+                chosen = alt
+            else:
+                raise SystemExit(
+                    f"lint_edit flagged {prob['code']} with no concrete fix to apply -- not inventing "
+                    f"one: {json.dumps(prob)}"
+                )
+        call(chosen["tool"], chosen["args"])
+        if "then" in chosen:
+            call(chosen["then"]["tool"], chosen["then"]["args"])
     else:
         raise SystemExit(f"lint_edit still unhappy after 3 fix attempts: {real_problems}")
 
     result = call("export", {"path": out_path, "crf": recipe.get("crf", 20)})
-    print(json.dumps(result, indent=2))
+    report = {
+        "export": result,
+        "captions": {
+            "caption_id": cap.get("caption_id"),
+            "transcript_id": cap.get("transcript_id"),
+            "language": cap.get("language"),
+            "mode": cap.get("mode"),
+            "confidence": cap.get("confidence"),
+            "total_words": cap.get("words"),
+            "low_confidence_count": cap.get("low_confidence_words", 0),
+            "low_confidence_words": [
+                {"text": w["display"], "start": w["start"], "end": w["end"]} for w in low_conf_words
+            ],
+        },
+    }
+    print(json.dumps(report, indent=2))
     print(f"\nwrote {out_path} ({result['bytes']/1e6:.1f} MB, {result['duration']:.1f}s)", file=sys.stderr)
 
 

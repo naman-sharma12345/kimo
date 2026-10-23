@@ -20,13 +20,10 @@
     "duration": 1.8
   },
   "captions": {
-    "clip1.mp4": "These are my two bottles.",
-    "clip2.mp4": "The first one's purple, it's plastic. But I love it.",
-    "clip3.mp4": "This is the best bottle. It's simple, nothing fancy, but it works great.",
-    "clip5.mp4": "I use this one for a fragrance that's really good.",
-    "clip6.mp4": "Thanks everyone for watching, bye!"
+    "style": "boxed",
+    "hint": "Kimo, bottles, tumbler, fragrance"
   },
-  "captions_note": "The raw auto-transcript on this accented/informal speech had real nonsense in it (e.g. \"bohozhada\", \"kettlebanyan\"); these are honest plain paraphrases of what was actually said, not invented claims -- director_mode.md's own rule is never put nonsense on screen.",
+  "captions_note": "Captions come from kimo's own speech recognition (auto_captions: beam search, a Hinglish prompt, a Hindi/Urdu/Punjabi/Marathi pass), not a hand-typed transcript -- director_mode.md's own guidance when the brief's transcript is not trustworthy (this speech is accented, informal Hinglish). 'hint' is a vocabulary/topic hint for the recognizer only; it does not change what gets written on screen. Any word the recognizer is not confident about is reported by run_demo.py (stderr + the printed JSON's captions.low_confidence_words), never silently replaced with a guess.",
   "highlight": {
     "clip": "clip3.mp4",
     "segment_index": 0,
