@@ -142,9 +142,21 @@ pub(crate) fn strict_decode(path:&str,c:&Clip)->Result<Vec<f32>,AudioError>{
  let probe=crate::color::process::capture(Command::new("ffprobe").args(["-v","error","-select_streams","a:0","-show_entries","stream=index","-of","json",path]),1024*1024,std::time::Duration::from_secs(30)).map_err(AudioError::DecodeFailed)?;
  let header:serde_json::Value=serde_json::from_slice(&probe).map_err(|e|AudioError::DecodeFailed(e.to_string()))?;let streams=header["streams"].as_array().ok_or_else(||AudioError::DecodeFailed("invalid stream probe".into()))?;if streams.is_empty(){return Err(AudioError::NoAudioTrack)}
  let remap=remap_decode(c);if remap.as_ref().is_some_and(|(_,s)|!s.is_finite()){return Err(AudioError::InvalidInput("finite time remap required".into()))}
- let samples=strict_samples(remap.as_ref().map_or(c.duration,|(_,s)|c.duration.max(*s))+c.audio.echo.max(0.)+2.)?;let bytes=samples.checked_mul(4).ok_or_else(||AudioError::ResourceLimit("decode bytes overflow".into()))?;if bytes>strict_audio_cap(){return Err(AudioError::ResourceLimit(format!("audio decode exceeds{}byte cap",strict_audio_cap())))}crate::guard::reserve(bytes.checked_mul(2).ok_or_else(||AudioError::ResourceLimit("audio allocation overflow".into()))?);
- let raw=crate::color::process::decode_capture(Command::new("ffmpeg").args(["-v","error","-ss",&c.in_point.to_string(),"-t",&remap.as_ref().map_or(c.duration*c.speed,|(_,s)|*s).to_string(),"-i",path,"-vn","-af",&filter_chain(remap.as_ref().map_or(c,|(o,_)|o)),"-f","f32le","-ac","2","-ar",&SR.to_string(),"-"]),bytes,crate::color::process::encode_deadline((c.duration*25.).ceil() as usize)).map_err(AudioError::DecodeFailed)?;
- if raw.len()%8!=0{return Err(AudioError::DecodeFailed("partial stereo float sample".into()))}let mut out=Vec::with_capacity(raw.len()/4);for(i,b)in raw.chunks_exact(4).enumerate(){if i%32768==0{crate::guard::check()}let v=f32::from_le_bytes(b.try_into().unwrap());if !v.is_finite(){return Err(AudioError::DecodeFailed("nonfinite decoded sample".into()))}out.push(v)}crate::editorial::process_pcm_checked(&mut out,&c.audio.effects).map_err(AudioError::InvalidInput)?;if remap.is_some(){return Ok(remap_pcm(c,&out))}Ok(out)
+ // ffmpeg's `-ss` seek before/after `-i` lands within a handful of samples of the
+ // mathematically exact point for a nonzero seek target on some containers/codecs
+ // (measured: a fixed small sample offset even with accurate_seek on, growing the
+ // longer the seek). Seeking is only ever exact at the true start of the stream, so
+ // we always decode from source time 0 and drop the unwanted lead-in ourselves;
+ // this is what keeps ripple-deleted pieces of the same source sample-aligned with
+ // each other and with an unedited decode of the same material.
+ let span=remap.as_ref().map_or(c.duration*c.speed,|(_,s)|*s);
+ let total=c.in_point+span;
+ let samples=strict_samples(remap.as_ref().map_or(c.duration,|(_,s)|c.duration.max(*s))+c.in_point+c.audio.echo.max(0.)+2.)?;let bytes=samples.checked_mul(4).ok_or_else(||AudioError::ResourceLimit("decode bytes overflow".into()))?;if bytes>strict_audio_cap(){return Err(AudioError::ResourceLimit(format!("audio decode exceeds{}byte cap",strict_audio_cap())))}crate::guard::reserve(bytes.checked_mul(2).ok_or_else(||AudioError::ResourceLimit("audio allocation overflow".into()))?);
+ let raw=crate::color::process::decode_capture(Command::new("ffmpeg").args(["-v","error","-ss","0","-t",&total.to_string(),"-i",path,"-vn","-af",&filter_chain(remap.as_ref().map_or(c,|(o,_)|o)),"-f","f32le","-ac","2","-ar",&SR.to_string(),"-"]),bytes,crate::color::process::encode_deadline((total*25.).ceil() as usize)).map_err(AudioError::DecodeFailed)?;
+ if raw.len()%8!=0{return Err(AudioError::DecodeFailed("partial stereo float sample".into()))}let mut out=Vec::with_capacity(raw.len()/4);for(i,b)in raw.chunks_exact(4).enumerate(){if i%32768==0{crate::guard::check()}let v=f32::from_le_bytes(b.try_into().unwrap());if !v.is_finite(){return Err(AudioError::DecodeFailed("nonfinite decoded sample".into()))}out.push(v)}
+ let skip=((c.in_point*SR as f64).round() as usize).saturating_mul(2);
+ if skip>=out.len(){out.clear()}else if skip>0{out.drain(0..skip);}
+ crate::editorial::process_pcm_checked(&mut out,&c.audio.effects).map_err(AudioError::InvalidInput)?;if remap.is_some(){return Ok(remap_pcm(c,&out))}Ok(out)
 }
 /// New strict path for high-bit export only. The legacy mix/decode API is unchanged.
 pub fn mix_strict(p:&Project)->Result<Vec<f32>,AudioError>{
