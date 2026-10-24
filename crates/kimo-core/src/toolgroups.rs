@@ -121,6 +121,10 @@ pub const DIRECTOR: &[(&str, &str)] = &[
     ("review_export", "Look at any video file, your export or a source clip: a grid of its frames, duration, size, loudness."),
     ("save_project", "Save the project JSON to path."),
     ("undo", "Undo the last change. A recipe call (auto_*, place_broll, finish_audio) is one step."),
+    ("add_smart_punch", "Automatic subject-follow punch-in: a continuous zoom that centres on wherever the saliency map says the eye goes. {clip_id, zoom}."),
+    ("add_glow_text", "A title clip with a pulsing neon glow pre-applied: one call for the caption/hook look. {track_id, text, start, duration}."),
+    ("auto_reframe", "Crop a clip to the canvas aspect (e.g. 16:9 into 9:16), following its subject. The fix lint_edit names for aspect_mismatch."),
+    ("add_punch_ins", "Jump-cut punch-ins: alternate a track's clips between wide and zoomed around a focus point (talking-head style)."),
 ];
 
 /// Profile names: grouped (default), flat, core, director, or a comma list of group names to expand (the other groups stay collapsed). Unknown text falls back to grouped.

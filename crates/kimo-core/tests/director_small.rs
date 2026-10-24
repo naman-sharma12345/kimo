@@ -100,6 +100,20 @@ fn silent_no_audio_track(name: &str, dur: f64) -> String {
 
 /// The grouped list hides every action behind group names, and the flat list is 395 tools (about 150k tokens): a small model
 /// either cannot find add_clip or cannot afford the list. KIMO_TOOLS=director is the editing short list.
+/// KF2: the demo's own highlight tools (add_smart_punch, add_glow_text) are called directly by
+/// tools/director_eval/demo/run_demo_mcp.py for the recipe's highlight moment, and the quickstart's own step 3
+/// mentions the smart-punch highlight -- but a small model restricted to director mode could not see or call them
+/// without first succeeding at a search_tools call it has no reason to make. Same gap for auto_reframe (the fix
+/// lint_edit's aspect_mismatch names) and add_punch_ins (the alternate jump-cut highlight style).
+#[test] fn director_profile_exposes_the_demos_own_highlight_and_reframe_tools() {
+    let prof = kimo_core::toolgroups::parse_profile("director");
+    let list = kimo_core::toolgroups::profile_list(&prof, &std::collections::HashSet::new());
+    let names: Vec<&str> = list.iter().filter_map(|t| t["name"].as_str()).collect();
+    for want in ["add_smart_punch", "add_glow_text", "auto_reframe", "add_punch_ins"] {
+        assert!(names.contains(&want), "director profile lacks {want}: {names:?}");
+    }
+}
+
 #[test] fn director_profile_is_a_short_editing_list() {
     let prof = kimo_core::toolgroups::parse_profile("director");
     let list = kimo_core::toolgroups::profile_list(&prof, &std::collections::HashSet::new());
@@ -107,8 +121,8 @@ fn silent_no_audio_track(name: &str, dur: f64) -> String {
     for want in ["import_media", "add_clip", "export", "auto_rough_cut", "place_broll", "caption_from_words", "finish_audio", "auto_grade", "lint_edit", "review_export", "search_tools"] {
         assert!(names.contains(&want), "director profile lacks {want}: {names:?}");
     }
-    assert!(names.len() <= 34, "{} tools: {names:?}", names.len());
-    let bytes = serde_json::to_string(&list).unwrap().len(); assert!(bytes < 24_000, "director list is {bytes} bytes");
+    assert!(names.len() <= 36, "{} tools: {names:?}", names.len()); // KF2: 29 + 4 highlight/reframe tools + 2 meta tools = 35
+    let bytes = serde_json::to_string(&list).unwrap().len(); assert!(bytes < 29_000, "director list is {bytes} bytes"); // KF2: +4 tools (their real schemas) pushed this from ~21k; 29k keeps headroom while still well under the 150k flat-list cost
     for t in &list { let d = t["description"].as_str().unwrap(); assert!(d.len() <= 150, "{}: {} chars", t["name"], d.len()); }
     // every listed tool is a real one with its real schema
     for t in list.iter().filter(|t| !["search_tools", "kimo_describe"].contains(&t["name"].as_str().unwrap())) {

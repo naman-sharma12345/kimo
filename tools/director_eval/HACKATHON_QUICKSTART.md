@@ -1,7 +1,7 @@
 # Hackathon quickstart: director mode over MCP
 
 Kimo cuts a short from raw phone footage. In director mode, a small model drives it through
-about 30 MCP tools instead of the full 445-tool registry. This page is the fastest path from a
+about 35 MCP tools instead of the full 445-tool registry. This page is the fastest path from a
 clone to a real exported short: build, list the tools a small model actually sees, run the demo
 driver on your own clips, and the handful of things that trip people up first.
 
@@ -32,7 +32,7 @@ nothing to run standing-alone. `tools/list` takes a `mode` param that overrides 
 {"jsonrpc":"2.0","id":2,"method":"tools/list","params":{"mode":"director"}}
 ```
 
-This returns **31 tools** -- the recipe tools from `director_mode.md` (`auto_rough_cut`,
+This returns **35 tools** -- the recipe tools from `director_mode.md` (`auto_rough_cut`,
 `auto_grade`, `auto_captions`, `caption_from_words`, `finish_audio`, `lint_edit`, `export`, ...)
 with one-line descriptions written for a small model, not the full 445-tool registry. Every tool
 is still callable by name under any profile. `tools/director_eval/mcp.py` is a ~60-line Python
