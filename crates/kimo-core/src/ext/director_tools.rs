@@ -714,6 +714,52 @@ fn lint_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
             None => if too_wide { json!({"tool": "set_text_style", "args": {"clip_id": id, "box_width": r3(2.0 * half)}, "then": {"tool": "set_property", "args": {"clip_id": id, "property": "y", "value": r3(cur_y + dy)}}}) } else { json!({"tool": "set_property", "args": {"clip_id": id, "property": "y", "value": r3(cur_y + dy)}}) } };
         probs.push(json!({"code": "text_outside_safe_area", "clip_id": id, "caption_id": cap, "rect": [r[0].round(), r[1].round(), r[2].round(), r[3].round()], "message": format!("text box {:?} is under the {platform} UI or outside title safe{}", [r[0].round(), r[1].round(), r[2].round(), r[3].round()], if too_wide { " and too wide" } else { "" }), "fix": fix}));
     }
+    // 2b text over the subject: the drawn rect of a title/caption overlapping the saliency peak of the
+    // MEDIA under it (not the text itself - saliency is computed on a text-free clone of the timeline, since
+    // a bright caption would otherwise light up its own spot and self-flag). Reuses add_smart_punch's own
+    // saliency machinery (ext/saliency_map.rs: spectral residual, Hou & Zhang 2007) at a small, cheap proxy
+    // size (work_px 32, a fraction of the default 64), sampled only at a few instants inside each text
+    // clip's own span - additive, non-mutating, same pattern as aspect_mismatch above.
+    {
+        let mut media_proj = ss.project.clone();
+        for tr in media_proj.tracks.iter_mut() { tr.clips.retain(|c| !matches!(c.source, Source::Text { .. })); }
+        let mut flagged_subject = std::collections::HashSet::new();
+        for (id, s0, d) in &texts {
+            if *d <= 0.0 { continue; }
+            if let Some(c) = caption_of(ss, id) { if flagged_subject.contains(&c) { continue; } }
+            let mut hit: Option<(f64, [f64; 4], f64)> = None;
+            for frac in [0.25, 0.5, 0.75] {
+                let off = (d * frac).clamp(0.0, (d - 0.01).max(0.0));
+                let Some((r, _)) = text_rect(ss, id, off) else { continue };
+                let t_abs = r3(s0 + off);
+                if crate::render::prepare_analysis_range(&media_proj, &mut ss.cache, t_abs, t_abs).is_err() { continue; }
+                let Ok(frame) = crate::render::render_frame(&media_proj, t_abs, &ss.cache) else { continue };
+                let l = crate::ext::saliency_map::luma_of(&frame);
+                let long = w.max(h).max(1.0); let work_px = 32.0;
+                let (ww, wh) = (((w * work_px) / long).round().max(1.0) as usize, ((h * work_px) / long).round().max(1.0) as usize);
+                let g = crate::ext::saliency_map::area_down(&l, w as usize, h as usize, ww, wh);
+                let spec = crate::ext::saliency_map::spectral_residual(&g, ww, wh, 2.5);
+                let st = crate::ext::saliency_map::stats(&spec, ww, wh, w as usize, h as usize, &[r], 3);
+                if st["empty"] == json!(true) { continue; }
+                let mx = st["rects"][0]["max"].as_f64().unwrap_or(0.0);
+                if mx >= 0.92 { hit = Some((t_abs, r, st["peak"]["y"].as_f64().unwrap_or(h / 2.0))); break; }
+            }
+            let Some((t_abs, r, peak_y)) = hit else { continue };
+            let cap = caption_of(ss, id);
+            if let Some(c) = &cap { flagged_subject.insert(c.clone()); }
+            let cur_y = ss.project.tracks.iter().flat_map(|t| t.clips.iter()).find(|c| &c.id == id).and_then(|c| c.props.get("y").map(|p| p.base)).unwrap_or(0.0); // xform-lint: ok (the stored base, to set a new base with set_property)
+            let top_lim = safe[1].max(140.0); let bottom_lim = safe[1] + safe[3] - r[3] - 16.0;
+            let dy = if peak_y >= r[1] + r[3] / 2.0 { top_lim - r[1] } else { bottom_lim - r[1] };
+            let fix = match &cap {
+                Some(c) => json!({"tool": "set_caption_style", "args": {"caption_id": c, "style": "boxed", "y": r3(cur_y + dy)}}),
+                None => json!({"tool": "set_property", "args": {"clip_id": id, "property": "y", "value": r3(cur_y + dy)}}),
+            };
+            probs.push(json!({"code": "text_over_subject", "severity": "warning", "clip_id": id, "caption_id": cap, "at": t_abs,
+                "rect": [r[0].round(), r[1].round(), r[2].round(), r[3].round()],
+                "message": format!("text box {:?} sits over the subject at {t_abs:.2} s", [r[0].round(), r[1].round(), r[2].round(), r[3].round()]),
+                "fix": fix}));
+        }
+    }
     // 3 speech: the dialogue track is the lowest track with speech
     let mut dia: Option<(String, Vec<(f64, f64)>)> = None;
     let tids: Vec<String> = ss.project.tracks.iter().filter(|t| t.clips.iter().any(|c| matches!(c.source, Source::Media { .. }))).map(|t| t.id.clone()).collect();
@@ -751,7 +797,7 @@ fn lint_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
     // 5 length
     if let Some(d) = a.get("duration").and_then(|v| v.as_array()) { if let (Some(lo), Some(hi)) = (d.first().and_then(|v| v.as_f64()), d.get(1).and_then(|v| v.as_f64())) { if end < lo - 0.05 || end > hi + 0.05 { probs.push(json!({"code": "duration", "message": format!("timeline is {end:.2} s, wanted {lo}-{hi} s"), "fix": {"tool": "timeline_summary", "args": {}}})); } } }
     probs.truncate(20);
-    Ok(json!({"ok": probs.is_empty(), "problems": probs, "checked": ["frames every 0.5 s", "text vs title safe and the platform UI", "fonts", "media clip aspect vs canvas", "b-roll inside speech", "captions cover speech", "caption confidence vs the recognizer", "mix loudness", "duration"], "platform": platform, "duration": r3(end)}))
+    Ok(json!({"ok": probs.is_empty(), "problems": probs, "checked": ["frames every 0.5 s", "text vs title safe and the platform UI", "text vs the subject in frame", "fonts", "media clip aspect vs canvas", "b-roll inside speech", "captions cover speech", "caption confidence vs the recognizer", "mix loudness", "duration"], "platform": platform, "duration": r3(end)}))
 }
 
 // ---------------------------------------------------------------- review_export

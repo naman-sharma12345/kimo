@@ -190,6 +190,50 @@ fn silent_no_audio_track(name: &str, dur: f64) -> String {
     assert!(!probs.iter().any(|p| p["code"] == json!("aspect_mismatch") && p["clip_id"] == json!(c_match)), "matching-aspect clip flagged: {r}");
 }
 
+/// KF3: docs/SMALL_MODEL_PREP.md's "Next" item 1 - a title/caption placed over the actual subject in frame
+/// (titles and labels landed on the bottles in D3). lint_edit should flag it (text_over_subject, severity
+/// warning) using the same saliency machinery add_smart_punch already relies on (ext/saliency_map.rs),
+/// computed on the media only (not the text itself, which would otherwise self-flag); a title moved clear
+/// of the subject must not be flagged.
+#[test] fn text_over_subject_flags_a_title_placed_on_a_bright_salient_object() {
+    fn spot_png(name: &str, w: usize, h: usize) -> String {
+        let p = dir().join(name); if p.exists() { return p.to_string_lossy().into_owned(); }
+        use std::io::Write;
+        // a lightly grained grey background (spectral residual is ill-conditioned on a perfectly flat picture,
+        // same reason tests/saliency_map.rs's own disc fixture grains its background) with one soft white disc
+        // (r 46 px) centred on the canvas (180, 320) - the "bottle" stand-in, directly under a default-centred
+        // title. Deterministic LCG grain, same recipe as tests/saliency_map.rs::disc_bmp().
+        let mut st: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut ch = Command::new("ffmpeg").args(["-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", &format!("{w}x{h}"), "-i", "-", "-frames:v", "1", p.to_str().unwrap()]).stdin(Stdio::piped()).spawn().expect("ffmpeg");
+        { let mut si = ch.stdin.take().unwrap(); let mut o = Vec::with_capacity(w * h * 3);
+            for y in 0..h { for x in 0..w {
+                st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); let grain = (st >> 61) as i32 - 4;
+                let d = ((x as f64 + 0.5 - 180.0).powi(2) + (y as f64 + 0.5 - 320.0).powi(2)).sqrt();
+                let vv = if d <= 46.0 { 255u8 } else { (128 + grain) as u8 };
+                o.extend_from_slice(&[vv, vv, vv]); } }
+            si.write_all(&o).unwrap(); }
+        assert!(ch.wait().unwrap().success()); p.to_string_lossy().into_owned()
+    }
+    let mut ss = portrait(); // 360x640
+    let mt = sid(&call(&mut ss, "add_track", json!({})), "track_id");
+    let a = sid(&call(&mut ss, "import_media", json!({"path": spot_png("kf3_subject.png", 360, 640)})), "asset_id");
+    call(&mut ss, "add_clip", json!({"track_id": mt, "source_type": "media", "asset_id": a, "start": 0.0, "duration": 2.0, "fit": "cover"}));
+    let tt = sid(&call(&mut ss, "add_track", json!({})), "track_id");
+    // default position (x=0, y=0) is canvas centre - exactly on top of the bright block above.
+    let title = sid(&call(&mut ss, "add_text", json!({"track_id": tt, "text": "ROAST TOUR", "start": 0.0, "duration": 2.0, "size": 90})), "clip_id");
+    let r = call(&mut ss, "lint_edit", json!({"platform": "none"}));
+    let probs = r["problems"].as_array().unwrap();
+    let hit = probs.iter().find(|p| p["code"] == json!("text_over_subject") && p["clip_id"] == json!(title))
+        .unwrap_or_else(|| panic!("title over the bright subject was not flagged: {r}"));
+    assert_eq!(hit["severity"], json!("warning"), "{hit}");
+    assert!(hit["fix"]["tool"].as_str().is_some(), "{hit}");
+    // the same title moved well clear of the subject (top of frame) must not be flagged.
+    call(&mut ss, "set_property", json!({"clip_id": title, "property": "y", "value": -260.0}));
+    let r2 = call(&mut ss, "lint_edit", json!({"platform": "none"}));
+    let probs2 = r2["problems"].as_array().unwrap();
+    assert!(!probs2.iter().any(|p| p["code"] == json!("text_over_subject") && p["clip_id"] == json!(title)), "moved title still flagged: {r2}");
+}
+
 /// The eval's talking head: models left 1-3 s of dead air between takes (laid whole clips) or cut words off (guessed times).
 #[test] fn auto_rough_cut_drops_the_dead_air_and_keeps_every_word() {
     let mut ss = portrait();
