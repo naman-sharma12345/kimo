@@ -55,12 +55,18 @@ subject, a weak hook.
 
 ## Next
 
-1. Text placement that avoids the subject (titles and labels landed on the bottles in D3).
-2. Soft stretches in the middle of a segment are only reported. Splitting a segment there would cut words, which needs word timing.
-3. Title presets that read as a designed hook on 9:16, not plain white type.
-4. Done: `auto_captions` (word timings, Hinglish-aware) has landed; director mode prefers it when no trustworthy transcript
+1. Soft stretches in the middle of a segment are only reported. Splitting a segment there would cut words, which needs word timing.
+2. Title presets that read as a designed hook on 9:16, not plain white type.
+3. Done: `auto_captions` (word timings, Hinglish-aware) has landed; director mode prefers it when no trustworthy transcript
    is given. `caption_from_words` stays for given text, and now (KA1) cross-checks that text against the recognizer's own
    confidence on the same audio, flagging a cue (`caption_low_confidence` in `lint_edit`) it genuinely cannot make out.
+4. Done: text placement that avoids the subject (titles and labels landed on the bottles in D3). `lint_edit`'s
+   `text_over_subject` finding now warns when a title/caption overlaps the frame's strongest subject (reusing
+   `add_smart_punch`'s saliency map) and suggests a new `y`. Limit: it only checks the single strongest subject in
+   frame, so a hard-edged object can still be missed.
+5. Done: filler-word trim. The new `trim_filler_words(clip_id, spans?, words?, pad?)` tool (in the `timeline` group,
+   not yet on the director-mode list) ripple-deletes flagged word spans from a clip's own footage. It does not retime
+   captions already on the timeline -- run `auto_captions` after trimming, not before.
 
 ## Running it
 

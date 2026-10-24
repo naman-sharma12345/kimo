@@ -8,6 +8,26 @@ driver on your own clips, and the handful of things that trip people up first.
 See `director_mode.md` for the call sequence and `../../docs/SMALL_MODEL_PREP.md` for why
 director mode exists and what it fixed.
 
+## What's new tonight
+
+- **`lint_edit` catches two more problems:**
+  - `aspect_mismatch` (warning) -- a clip's own aspect doesn't match the canvas by more than 5%, so `add_clip`'s default `fit: "cover"` is silently cropping or padding it. The `fix` field already names the call: `auto_reframe` on that `clip_id`.
+  - `text_over_subject` (warning) -- a title or caption sits over the frame's strongest subject (reuses `add_smart_punch`'s own saliency map). The `fix` field gives a new `y` to move it to. **Known limit: it only checks the single strongest subject in frame** -- a hard-edged object can still slip past it, so treat it as a hint, not a guarantee.
+  Both are additive and non-mutating like the rest of `lint_edit` -- fix, then run `lint_edit` again to confirm.
+- **New tool: `trim_filler_words(clip_id, spans?, words?, pad?)`** ripple-deletes flagged word spans out of a clip's own footage and closes the gap. It's registered in the `timeline` group, **not yet on the director-mode list** -- call it by name, find it with `search_tools`, or use `mode: "flat"` to see the full registry.
+
+  ```json
+  {"name": "trim_filler_words", "arguments": {"clip_id": "clip2", "words": ["um", "uh"]}}
+  ```
+
+  or give exact spans in source time (seconds since the clip's own `in_point` -- the same zero point `auto_captions` word timestamps use):
+
+  ```json
+  {"name": "trim_filler_words", "arguments": {"clip_id": "clip2", "spans": [{"start": 4.1, "end": 4.6}], "pad": 0.05}}
+  ```
+
+  **Run `auto_captions` after trimming, not before:** captions already on the timeline are not retimed when you cut words out from under them.
+
 ## 1. Build kimo-mcp
 
 ```
