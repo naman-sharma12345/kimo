@@ -281,3 +281,61 @@ fn checker_pan_and_spatial_object_hard_flash() {
     let on = dispatch(&mut s, "detect_cuts", &json!({"spatial":{"grid":"4x4"}})).unwrap();
     assert_eq!(on["count"], 2);
 }
+
+#[test]
+fn fast_whip_pan_is_not_a_hard_cut_but_a_real_cut_still_is() {
+    // A deterministic pseudo-random "world" texture wider than the frame, panned across quickly
+    // (30px/frame for 8 frames) with a 3-tap directional blur standing in for real motion blur --
+    // content shifts continuously across frames, the way a phone's fast whip pan looks. This must
+    // not register as a cut. A real hard cut (the world inverted outright, then held static) sits
+    // earlier in the same clip and must still be detected.
+    fn hashf(x: i64) -> f64 {
+        let h = (x as i64).wrapping_mul(2654435761) as u32;
+        let h = h ^ (h >> 13);
+        let h = h.wrapping_mul(2246822519);
+        (h % 1000) as f64 / 999.0
+    }
+    fn world(x: i64, invert: bool) -> f64 {
+        let v = hashf(x);
+        if invert { 1. - v } else { v }
+    }
+    fn frame(w: usize, h: usize, offset: i64, invert: bool) -> Image {
+        let mut im = Image::new(w, h);
+        for x in 0..w {
+            // 3-tap box blur along the pan direction, standing in for real motion blur.
+            let v = (world(x as i64 + offset, invert)
+                + world(x as i64 + offset + 1, invert)
+                + world(x as i64 + offset + 2, invert))
+                / 3.;
+            for y in 0..h {
+                for c in 0..3 {
+                    im.rgb[c][y * w + x] = v;
+                }
+            }
+        }
+        im
+    }
+    let (w, h) = (64, 8);
+    let mut frames = vec![];
+    for _ in 0..10 {
+        frames.push(frame(w, h, 0, false));
+    } // static shot
+    for _ in 0..10 {
+        frames.push(frame(w, h, 0, true));
+    } // HARD CUT: whole scene inverted, then held
+    let pan_offsets = [0, 30, 60, 90, 120, 150, 180, 210, 240];
+    for o in pan_offsets {
+        frames.push(frame(w, h, o, true));
+    } // fast whip pan, same scene
+    for _ in 0..10 {
+        frames.push(frame(w, h, *pan_offsets.last().unwrap(), true));
+    } // settles
+    let (cuts, _) = cuts::detect(&frames, "combined", 0.35, 3, true);
+    assert_eq!(
+        cuts.len(),
+        1,
+        "the whip pan must not add a cut, only the real one survives: {cuts:?}"
+    );
+    assert_eq!(cuts[0].kind, "hard_cut");
+    assert_eq!(cuts[0].index, 10, "the real cut is still found where the scene actually changed: {cuts:?}");
+}

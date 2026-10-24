@@ -8,6 +8,13 @@ pub struct Cut {
     pub start: Option<usize>,
     pub end: Option<usize>,
 }
+// A whip pan's motion-blurred, continuously-shifting content can score as high as a real cut on a
+// single frame. The distinguishing signal is what happens next: a true cut settles, a pan keeps
+// moving. PAN_LOOKAHEAD frames after a hard-cut candidate are averaged and compared against
+// PAN_SUSTAIN_RATIO of the candidate's own score; staying above that fraction means the camera is
+// still moving, not that the scene changed once.
+const PAN_LOOKAHEAD: usize = 3;
+const PAN_SUSTAIN_RATIO: f64 = 0.4;
 pub fn score(a: &Image, b: &Image, method: &str) -> f64 {
     let h = hist_distance(a, b);
     let l = (luma_delta(a, b) / 0.25).min(1.);
@@ -145,13 +152,26 @@ pub fn detect_stats_spatial(
             && scores[i] > prior * 3. + 0.02
             && (content_change > 0.02 || (means[i] - means[i - 1]).abs() > 0.02)
         {
-            cuts.push(Cut {
-                index: i,
-                score: scores[i],
-                kind: "hard_cut",
-                start: None,
-                end: None,
-            });
+            // Temporal-consistency gate: a hard cut is a single-frame event, so the shot it lands in
+            // should settle back toward the pre-cut baseline on the very next frames. A fast whip pan
+            // (motion blur, content sliding continuously) keeps producing a comparably large
+            // frame-to-frame score for several frames in a row instead of settling, because the camera
+            // is still moving, not because the scene changed once. Sustained elevated difference right
+            // after the candidate means "still panning", not "cut" -- suppress it rather than report a
+            // false hard cut partway through continuous motion.
+            let fwd_hi = (i + 1 + PAN_LOOKAHEAD).min(n);
+            let sustained_pan = fwd_hi > i + 1
+                && scores[i + 1..fwd_hi].iter().sum::<f64>() / (fwd_hi - i - 1) as f64
+                    > scores[i] * PAN_SUSTAIN_RATIO;
+            if !sustained_pan {
+                cuts.push(Cut {
+                    index: i,
+                    score: scores[i],
+                    kind: "hard_cut",
+                    start: None,
+                    end: None,
+                });
+            }
         }
         i += 1;
     }
