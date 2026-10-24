@@ -167,6 +167,11 @@ fn one_speed() -> f64 { 1.0 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Project {
+    /// link_property's live links: (target clip/property/effect) <- (driver clip/property/effect) * multiplier + offset,
+    /// delayed. Absent/empty for every project that never called link_property, so old files stay byte-stable. Resolved
+    /// fresh from the current driver at every render and sample_property read (crate::ext::link_property::resolve_links)
+    /// -- the persisted keys below are last-bake snapshot, kept for tools/files that are not link-aware.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")] pub links: Vec<crate::ext::link_property::Link>,
     #[serde(default, skip_serializing_if="crate::proxy::Proxies::is_empty")] pub proxies: crate::proxy::Proxies,
     #[serde(default)] pub grade_scopes: crate::color::grade_scopes::Scopes,
     #[serde(default)] pub editorial: crate::editorial::Editorial,
@@ -200,7 +205,7 @@ pub struct Project {
 
 impl Default for Project {
     fn default() -> Self {
-        Project { proxies: Default::default(), grade_scopes: Default::default(), lights: BTreeMap::new(), materials: BTreeMap::new(), editorial: Default::default(), ocio_view_delivery: None, occluders: BTreeMap::new(), color_pipeline: Default::default(), camera: BTreeMap::new(), comp3d: None, name: "untitled".into(), width: 1280, height: 720, fps: 30.0, assets: BTreeMap::new(), tracks: vec![], next_id: 1, markers: vec![], deps: None, templates: vec![], base_dir: None }
+        Project { links: vec![], proxies: Default::default(), grade_scopes: Default::default(), lights: BTreeMap::new(), materials: BTreeMap::new(), editorial: Default::default(), ocio_view_delivery: None, occluders: BTreeMap::new(), color_pipeline: Default::default(), camera: BTreeMap::new(), comp3d: None, name: "untitled".into(), width: 1280, height: 720, fps: 30.0, assets: BTreeMap::new(), tracks: vec![], next_id: 1, markers: vec![], deps: None, templates: vec![], base_dir: None }
     }
 }
 

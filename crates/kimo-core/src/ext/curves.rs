@@ -52,8 +52,12 @@ fn sample_times(a: &Value) -> Result<Vec<f64>, String> {
 fn sample_property(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let times = sample_times(a)?; let space = a.get("space").and_then(|v| v.as_str()).unwrap_or("timeline"); if !["timeline", "clip"].contains(&space) { return Err("space is not allowed. Valid: timeline, clip".into()); }
     let prop = str_arg(a, "property")?;
-    if let Some(cam) = a.get("camera").and_then(|v| v.as_bool()).filter(|b| *b) { let _ = cam; let p = ss.project.camera.get(prop).ok_or_else(|| format!("no camera field '{prop}'. Valid: {}", ss.project.camera.keys().cloned().collect::<Vec<_>>().join(", ")))?; let mut vals = Vec::with_capacity(times.len()); for t in &times { vals.push(p.at(*t)); } return Ok(json!({"values": vals, "times": times, "space": "timeline", "target": "camera"})); }
-    let cid = str_arg(a, "clip_id")?; let c = ss.project.find_clip(cid).ok_or(format!("no clip '{cid}'"))?;
+    // Live links (link_property): resolved fresh from the driver's current state before anything here is read, so a
+    // property that is a link target reports what the driver is worth NOW, not what it was worth when link_property
+    // last ran. A pure read against a resolved clone -- ss.project itself is never touched (sample_property stays read-only).
+    let resolved = crate::ext::link_property::resolve_links(&ss.project); let proj: &crate::model::Project = &resolved;
+    if let Some(cam) = a.get("camera").and_then(|v| v.as_bool()).filter(|b| *b) { let _ = cam; let p = proj.camera.get(prop).ok_or_else(|| format!("no camera field '{prop}'. Valid: {}", proj.camera.keys().cloned().collect::<Vec<_>>().join(", ")))?; let mut vals = Vec::with_capacity(times.len()); for t in &times { vals.push(p.at(*t)); } return Ok(json!({"values": vals, "times": times, "space": "timeline", "target": "camera"})); }
+    let cid = str_arg(a, "clip_id")?; let c = proj.find_clip(cid).ok_or(format!("no clip '{cid}'"))?;
     let eff = a.get("effect_id").and_then(|v| v.as_str()); let dflt = if eff.is_none() && !c.props.contains_key(prop) { static_default(prop) } else { None };
     let p = match eff { Some(id) => c.effects.iter().find(|x| x.id == id).ok_or("no such effect")?.params.get(prop), None => c.props.get(prop).or(dflt.as_ref()) };
     let p = p.ok_or_else(|| format!("clip has no property '{prop}'. Properties on this clip: {}", c.props.keys().cloned().collect::<Vec<_>>().join(", ")))?;

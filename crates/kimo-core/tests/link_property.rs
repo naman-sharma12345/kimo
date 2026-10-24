@@ -50,3 +50,29 @@ fn c_relinking_follows_new_driver_keys_and_bad_links_are_refused() {
     assert!(dispatch(&mut s, "link_property", &json!({"clip_id": title, "property": "x", "driver_clip_id": "nope", "driver_property": "x"})).is_err());
     assert!(dispatch(&mut s, "link_property", &json!({"clip_id": title, "property": "x", "driver_clip_id": mover, "driver_property": "x", "multiplier": "big"})).is_err());
 }
+
+
+#[test]
+fn d_live_link_follows_driver_edits_without_relinking() {
+    let (mut s, mover, title) = setup();
+    // opacity follows the mover's x (multiplier+offset still apply): opacity = 0.5 + 0.01 * x
+    c(&mut s, "link_property", json!({"clip_id": title, "property": "opacity", "driver_clip_id": mover, "driver_property": "x", "multiplier": 0.01, "offset": 0.5}));
+    // Edit the DRIVER's keyframes directly -- no second link_property call. A live link must pick this up;
+    // a baked one (the old bug) keeps showing whatever the driver was worth at the moment link_property ran.
+    c(&mut s, "set_keyframe", json!({"clip_id": mover, "property": "x", "time": 2.0, "value": 20.0}));
+    let d = sample(&mut s, &mover, "x", &[2.0])[0];
+    let v = sample(&mut s, &title, "opacity", &[2.0])[0];
+    assert!((v - (0.5 + 0.01 * d)).abs() < 0.01, "sample_property: opacity {v} must equal 0.5 + 0.01 * {d} (the driver's NEW value) right after editing the driver, with no re-link");
+
+    // Same story at actual render time (not just sample_property): render the title clip alone (transparent
+    // canvas, so its own alpha equals its own opacity exactly) before vs after editing the driver again.
+    let cache = kimo_core::render::Cache::new();
+    let before = kimo_core::render::render_clip_alone(&s.project, &title, 2.0, &cache).expect("renders");
+    let alpha_before = before.d[(before.w / 2 + (before.h / 2) * before.w) * 4 + 3];
+    c(&mut s, "set_keyframe", json!({"clip_id": mover, "property": "x", "time": 2.0, "value": -30.0}));
+    let after = kimo_core::render::render_clip_alone(&s.project, &title, 2.0, &cache).expect("renders");
+    let alpha_after = after.d[(after.w / 2 + (after.h / 2) * after.w) * 4 + 3];
+    let expect_before = 0.5 + 0.01 * 20.0; let expect_after = 0.5 + 0.01 * -30.0;
+    assert!((alpha_before - expect_before).abs() < 0.02, "render before second edit: alpha {alpha_before} ~= {expect_before}");
+    assert!((alpha_after - expect_after).abs() < 0.02, "render after editing the driver again (no relink): alpha {alpha_after} ~= {expect_after}, not stuck at {alpha_before}");
+}
