@@ -483,9 +483,22 @@ fn finish_audio(ss: &mut Session, a: &Value) -> Result<Value, String> {
 }
 
 // ---------------------------------------------------------------- auto_grade
-fn mean_rgb(path: &str, t: f64) -> Option<[f64; 3]> {
+/// The same cover/contain/stretch choice render.rs's decode() makes for a clip's `fit`, built as an ffmpeg -vf fragment
+/// so a sampler can see what fit actually puts on screen instead of the untouched source frame (KC1, 2026-10-24: a
+/// pillarboxed/letterboxed source -- black bars the fit crop never shows -- made the unfit reading read as false-dark).
+fn fit_filter(fit: f64, w: u32, h: u32) -> String {
+    if fit >= 1.5 { format!("scale={w}:{h}") }
+    else if fit >= 0.5 { format!("scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}") }
+    else { format!("scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0") }
+}
+/// Mean RGB (0..1) of what the clip's own `fit` transform actually shows at time `t` -- the project's fit/crop/pad is
+/// applied FIRST (matching render.rs's decode()), then the result is downsampled to 64x64 for a cheap, stable read.
+/// Measuring the raw, unfit source frame instead (the bug this replaced) reads a pillarboxed/letterboxed or off-center
+/// source as false-dark or false-bright and grades the real, already-correct on-screen picture by that wrong number.
+fn mean_rgb(path: &str, t: f64, fit: f64, w: u32, h: u32) -> Option<[f64; 3]> {
+    let vf = format!("{},scale=64:64", fit_filter(fit, w.max(1), h.max(1)));
     let mut cmd = std::process::Command::new("ffmpeg");
-    cmd.args(["-v", "error", "-ss", &format!("{:.3}", t.max(0.0)), "-i", path, "-frames:v", "1", "-vf", "scale=64:64", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]);
+    cmd.args(["-v", "error", "-ss", &format!("{:.3}", t.max(0.0)), "-i", path, "-frames:v", "1", "-vf", &vf, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]);
     let b = capture(&mut cmd, 64 * 64 * 3 + 16, std::time::Duration::from_secs(30)).ok()?;
     if b.len() < 64 * 64 * 3 { return None; }
     let mut s = [0f64; 3]; for p in b[..64 * 64 * 3].chunks(3) { for k in 0..3 { s[k] += p[k] as f64 / 255.0; } }
@@ -502,7 +515,8 @@ fn auto_grade(ss: &mut Session, a: &Value) -> Result<Value, String> {
         let Source::Media { asset: aid } = &c.source else { skipped.push(json!({"clip_id": id, "why": "not a media clip"})); continue };
         let Some(asset) = ss.project.assets.get(aid).cloned() else { continue };
         if asset.width == 0 { continue; }
-        let Some(m) = mean_rgb(&crate::deps::resolve_str(&asset.path), c.in_point + c.duration * c.speed / 2.0) else { skipped.push(json!({"clip_id": id, "why": "could not read a frame"})); continue };
+        let fit = c.props.get("fit").map(|q| q.at(0.0)).unwrap_or(0.0);
+        let Some(m) = mean_rgb(&crate::deps::resolve_str(&asset.path), c.in_point + c.duration * c.speed / 2.0, fit, ss.project.width, ss.project.height) else { skipped.push(json!({"clip_id": id, "why": "could not read a frame"})); continue };
         let l = luma(m).max(1e-3);
         let cast = (m[0] - m[1]).abs().max((m[2] - m[1]).abs());
         // a shot inside the normal range with no visible cast is left as shot

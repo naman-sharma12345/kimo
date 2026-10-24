@@ -510,3 +510,36 @@ fn talk_v(name: &str, dur: f64, speech: &[(f64, f64)], src: &str, vf: &str) -> S
     let after = kimo_core::ext::speech_intervals::speech_decode_call_count();
     assert_eq!(after - before, 1, "the one dialogue track's audio should decode exactly once (probe + final reuse the same PCM), not once per aggressiveness: {r}");
 }
+
+
+/// KC1 (2026-10-24): landscape/4K phone footage that is pillarboxed (black bars either side of a centered
+/// portrait-shaped subject -- common when a landscape capture is uploaded without a re-encode) measured auto_grade's
+/// exposure from the SOURCE's raw 64x64 downsample with no fit/crop applied at all. For a pillarboxed source the raw
+/// frame is mostly black bars, so auto_grade sees a false "dark" reading, computes the maximum exposure gain (clamped
+/// 2.4x), and applies it to the clip -- but the clip's "cover" fit crops the black bars away entirely, so the gain
+/// lands on the already-well-exposed visible content and blows it out. auto_grade must measure what the fit/crop
+/// transform actually puts on screen, not the untouched source frame.
+fn pillarboxed_landscape(name: &str, dur: f64, canvas_w: u32, canvas_h: u32, band_w: u32) -> String {
+    let p = dir().join(name); if p.exists() { return p.to_string_lossy().into_owned(); }
+    ffmpeg(&["-f", "lavfi", "-i", &format!("color=c=gray:s={band_w}x{canvas_h}:d={dur}"),
+        "-f", "lavfi", "-i", &format!("anoisesrc=a=0.004:d={dur}:r=48000"),
+        "-vf", &format!("pad={canvas_w}:{canvas_h}:({canvas_w}-{band_w})/2:0:color=black"),
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", p.to_str().unwrap()]);
+    p.to_string_lossy().into_owned()
+}
+#[test] fn auto_grade_measures_the_fitted_frame_not_the_unfit_source() {
+    let mut ss = portrait(); let t = sid(&call(&mut ss, "add_track", json!({})), "track_id");
+    // 1280x720 landscape source, "cover" fit into a 360x640 (9:16) project crops to the center ~360/(1280*640/720)=31.6%
+    // of the width -- so a centered gray band a bit wider than that (40%) is ALL that's visible after fit; the rest
+    // (pure black pillarbox) must never factor into the exposure reading.
+    let band_w = (1280.0_f64 * 0.40).round() as u32;
+    let src = sid(&call(&mut ss, "import_media", json!({"path": pillarboxed_landscape("pillarbox.mp4", 2.0, 1280, 720, band_w)})), "asset_id");
+    let _c = sid(&call(&mut ss, "add_clip", json!({"track_id": t, "source_type": "media", "asset_id": src, "start": 0, "duration": 2, "fit": "cover"})), "clip_id");
+    let before = call(&mut ss, "get_scopes", json!({"time": 1.0}));
+    let lb = before["luma_mean"].as_f64().unwrap();
+    assert!((0.32..=0.6).contains(&lb), "fixture sanity: the visible (cropped) band should already read as normally exposed, got {lb:.3}");
+    let r = call(&mut ss, "auto_grade", json!({}));
+    let after = call(&mut ss, "get_scopes", json!({"time": 1.0}));
+    let la = after["luma_mean"].as_f64().unwrap();
+    assert!(la < 0.75, "auto_grade blew out a clip that was already well exposed on screen: luma {lb:.3} -> {la:.3} ({r}) -- it measured the unfit source (mostly black pillarbox), not what \"cover\" fit actually shows");
+}
