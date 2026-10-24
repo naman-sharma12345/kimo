@@ -10,7 +10,11 @@ const W: usize = 160; const H: usize = 120;
 fn c(s: &mut Session, n: &str, a: Value) -> Value { dispatch(s, n, &a).unwrap_or_else(|e| panic!("{n}: {e}")) }
 fn png(tag: &str, px: impl Fn(usize, usize) -> u8) -> std::path::PathBuf {
     use std::io::Write;
-    let p = std::env::temp_dir().join(format!("kimo-lensdepth-{tag}-{}.ppm", std::process::id()));
+    // a per-call atomic counter: every test in this file calls png("plate", ...)/png("map", ...) with the same tag,
+    // so a path built from tag+pid alone collides across concurrently-running tests under the default parallel runner.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let p = std::env::temp_dir().join(format!("kimo-lensdepth-{tag}-{}-{n}.ppm", std::process::id()));
     let mut b = vec![0u8; W * H * 3]; for y in 0..H { for x in 0..W { let v = px(x, y); for j in 0..3 { b[(y * W + x) * 3 + j] = v; } } }
     let mut f = std::fs::File::create(&p).unwrap(); write!(f, "P6\n{W} {H}\n255\n").unwrap(); f.write_all(&b).unwrap();
     let out = p.with_extension("png"); assert!(std::process::Command::new("ffmpeg").args(["-v", "error", "-y", "-i", p.to_str().unwrap(), out.to_str().unwrap()]).stdin(std::process::Stdio::null()).status().unwrap().success());

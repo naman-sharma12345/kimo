@@ -21,7 +21,11 @@ fn pixel(i: usize, j: usize, t0: f64, len: f64, nt: usize, moving: bool) -> ([f6
     for k in 0..nt { let t = t0 + (k as f64 + 0.5) / nt as f64 * len; for sy in 0..4 { for sx in 0..4 { let (x, y) = (i as f64 + (sx as f64 + 0.5) / 4.0, j as f64 + (sy as f64 + 0.5) / 4.0);
         let (s, d) = scene(x, y, t, moving); for q in 0..3 { c[q] += s[q] / n; } cov += d / n; } } } (c, cov) }
 fn write_clip(moving: bool) -> String {
-    let path = std::env::temp_dir().join(format!("kimo-vblur-{}-{}.mkv", std::process::id(), moving)).to_str().unwrap().to_string();
+    // a per-call atomic counter: vector_mode_refusals and vector_blur_on_static_footage_is_bit_identical both call
+    // write_clip(false), so a path built from pid+moving alone is the same file for both under parallel tests.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!("kimo-vblur-{}-{}-{n}.mkv", std::process::id(), moving)).to_str().unwrap().to_string();
     let mut ch = std::process::Command::new("ffmpeg").args(["-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", &format!("{W}x{H}"), "-r", "24", "-i", "-", "-c:v", "ffv1", "-pix_fmt", "bgr0", &path])
         .stdin(std::process::Stdio::piped()).spawn().unwrap();
     { let si = ch.stdin.as_mut().unwrap(); for f in 0..NF { let mut buf = Vec::with_capacity(W * H * 3);

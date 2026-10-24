@@ -9,7 +9,11 @@ use serde_json::{json, Value};
 const W: usize = 160; const H: usize = 90;
 fn png(name: &str, f: impl Fn(usize, usize) -> [u8; 3]) -> String {
     use std::io::Write;
-    let path = std::env::temp_dir().join(format!("kimo-lfx-{}-{name}.png", std::process::id()));
+    // a per-call atomic counter: scene() calls png("a", ...) for nearly every test, and two tests both call
+    // png("band", ...) with the identical closure -- a path built from name+pid alone is shared across tests.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!("kimo-lfx-{}-{name}-{n}.png", std::process::id()));
     let mut ch = std::process::Command::new("ffmpeg").args(["-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", &format!("{W}x{H}"), "-i", "-", "-frames:v", "1", path.to_str().unwrap()]).stdin(std::process::Stdio::piped()).spawn().expect("ffmpeg");
     { let mut si = ch.stdin.take().unwrap(); let mut o = Vec::with_capacity(W * H * 3); for y in 0..H { for x in 0..W { o.extend_from_slice(&f(x, y)); } } si.write_all(&o).unwrap(); }
     assert!(ch.wait().unwrap().success()); path.to_str().unwrap().to_string()

@@ -12,7 +12,12 @@ const SR: usize = 48000;
 
 /// A 4 s source: solid `color` video + mono tone that is `f1` Hz before source second `at` and `f2` Hz after.
 fn source(name: &str, color: &str, f1: f64, f2: f64, at: f64) -> String {
-    let p = std::env::temp_dir().join(format!("kimo-jl-{name}-{}.mkv", std::process::id()));
+    // a per-call atomic counter: cut() calls source("a",...)/source("b",...) with the same literal args every time,
+    // and every test in this file calls cut() -- a path built from name+pid alone is shared by every test,
+    // so concurrent tests can read a sibling test's half-written fixture under the default parallel runner.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let p = std::env::temp_dir().join(format!("kimo-jl-{name}-{}-{n}.mkv", std::process::id()));
     let expr = format!("'0.3*sin(2*PI*if(lt(t,{at}),{f1},{f2})*t)'");
     assert!(std::process::Command::new("ffmpeg").args(["-v","error","-y","-f","lavfi","-i",&format!("color=c={color}:s=64x36:r=25:d=4"),
         "-f","lavfi","-i",&format!("aevalsrc={expr}:s=48000:d=4"),"-c:v","ffv1","-c:a","pcm_s16le","-shortest",p.to_str().unwrap()]).status().unwrap().success());

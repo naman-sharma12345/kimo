@@ -8,6 +8,14 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
+/// `no_recognizer_at_all_names_the_real_situation_and_a_real_fallback` and `a_missing_recognizer_says_how_to_get_one`
+/// mutate process-global PATH/KIMO_MODELS/KIMO_WHISPER_BIN to simulate "no recognizer installed"; under the default
+/// parallel test runner every test in this binary shares that one process environment, so any other test spawning
+/// ffmpeg/ffprobe (directly or via dispatch) while PATH is restricted can get a spurious NotFound. Every test here
+/// takes this lock for its whole body so the two env-mutating tests never overlap with anything else in the file.
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+fn env_guard() -> std::sync::MutexGuard<'static, ()> { ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner()) }
+
 fn dir() -> PathBuf { let d = std::env::temp_dir().join(format!("kimo_auto_captions_{}", std::process::id())); std::fs::create_dir_all(&d).unwrap(); d }
 fn call(ss: &mut Session, name: &str, a: Value) -> Value { dispatch(ss, name, &a).unwrap_or_else(|e| panic!("{name} {a}: {e}")) }
 fn portrait() -> Session {
@@ -30,7 +38,7 @@ fn ink(ss: &Session, t: f64) -> Ink {
     k.ycx = if k.yellow > 0 { sx / k.yellow as f64 } else { -1.0 }; k
 }
 
-#[test] fn pop_style_reveals_each_word_as_it_is_spoken_and_colours_it() {
+#[test] fn pop_style_reveals_each_word_as_it_is_spoken_and_colours_it() { let _env_guard = env_guard();
     let mut ss = portrait();
     let r = call(&mut ss, "auto_captions", json!({"words": words(), "style": "pop", "position": "bottom"}));
     assert_eq!(r["words"], 5); assert_eq!(r["pages"], 2, "{r}"); assert!(r["caption_id"].is_string());
@@ -43,7 +51,7 @@ fn ink(ss: &Session, t: f64) -> Ink {
     assert_eq!(ink(&ss, 0.3).n, 0, "nothing shows before the first word");
 }
 
-#[test] fn captions_sit_in_the_portrait_safe_band() {
+#[test] fn captions_sit_in_the_portrait_safe_band() { let _env_guard = env_guard();
     let mut ss = portrait(); call(&mut ss, "auto_captions", json!({"words": words(), "style": "karaoke", "position": "bottom"}));
     for t in [0.6, 1.3, 2.2] { let k = ink(&ss, t); assert!(k.n > 0, "caption at {t}");
         assert!(k.x0 >= 18 && k.x1 <= 342, "inside 5% side margins at {t}: x {}..{}", k.x0, k.x1);
@@ -52,7 +60,7 @@ fn ink(ss: &Session, t: f64) -> Ink {
     let k = ink(&top, 1.3); assert!((k.y1 as f64) < 0.4 * 640.0, "top band: y {}..{}", k.y0, k.y1);
 }
 
-#[test] fn boxed_style_colours_a_keyword_and_the_spoken_word() {
+#[test] fn boxed_style_colours_a_keyword_and_the_spoken_word() { let _env_guard = env_guard();
     let mut ss = portrait(); let r = call(&mut ss, "auto_captions", json!({"words": words(), "style": "boxed", "position": "bottom"}));
     assert_eq!(r["pages"], 2);
     // page 2 is "best bottle.": while "best" is spoken it is green (active) and "bottle" is the yellow keyword
@@ -60,7 +68,7 @@ fn ink(ss: &Session, t: f64) -> Ink {
     assert!(k.ycx > (k.x0 + k.x1) as f64 / 2.0, "the keyword is the second word (right half): {k:?}");
 }
 
-#[test] fn a_word_fix_keeps_the_timing_and_the_animation() {
+#[test] fn a_word_fix_keeps_the_timing_and_the_animation() { let _env_guard = env_guard();
     let mut ss = portrait(); let r = call(&mut ss, "auto_captions", json!({"words": words(), "style": "pop", "position": "bottom"}));
     let id = r["caption_id"].as_str().unwrap().to_string(); let before = ink(&ss, 2.2);
     let clips_before: Vec<(f64, f64)> = ss.project.tracks.last().unwrap().clips.iter().map(|c| (c.start, c.duration)).collect();
@@ -75,7 +83,7 @@ fn ink(ss: &Session, t: f64) -> Ink {
     let none = dispatch(&mut ss, "edit_caption_words", &json!({"edits": [{"find": "zebra", "text": "x"}]})).unwrap_err(); assert!(none.contains("no caption word matches"), "{none}");
 }
 
-#[test] fn sidecars_match_the_pages() {
+#[test] fn sidecars_match_the_pages() { let _env_guard = env_guard();
     let mut ss = portrait(); let srt = dir().join("c.srt"); let vtt = dir().join("c.vtt"); let _ = std::fs::remove_file(&srt); let _ = std::fs::remove_file(&vtt);
     let r = call(&mut ss, "auto_captions", json!({"words": words(), "style": "clean", "position": "bottom", "srt_path": srt.to_str().unwrap()}));
     assert_eq!(r["files"][0], srt.to_str().unwrap()); let s = std::fs::read_to_string(&srt).unwrap();
@@ -113,7 +121,7 @@ fn with_clip(start: f64) -> Session {
     call(&mut ss, "add_clip", json!({"track_id": t, "source_type": "media", "asset_id": asset, "start": start, "duration": 2.0})); ss
 }
 
-#[test] fn recognized_words_land_on_the_timeline_snapped_to_the_audio() {
+#[test] fn recognized_words_land_on_the_timeline_snapped_to_the_audio() { let _env_guard = env_guard();
     let (bin, log) = stub("en"); let model = dir().join("ggml-small-q5_1.bin"); std::fs::write(&model, b"stub").unwrap();
     let mut ss = with_clip(2.0);
     let r = call(&mut ss, "auto_captions", json!({"whisper_bin": bin.to_str().unwrap(), "model": model.to_str().unwrap(), "language": "en", "style": "pop", "position": "bottom"}));
@@ -123,7 +131,7 @@ fn with_clip(start: f64) -> Session {
     for (got, want) in st.iter().zip([2.55, 3.05, 3.60]) { assert!((got - want).abs() <= 0.04, "word start {got:.3} vs burst onset {want} (raw DTW was 250 ms late): {st:?}"); }
 }
 
-#[test] fn hindi_speech_is_captioned_as_roman_hinglish() {
+#[test] fn hindi_speech_is_captioned_as_roman_hinglish() { let _env_guard = env_guard();
     let (bin, log) = stub("hi"); let model = dir().join("ggml-small-q5_1.bin"); std::fs::write(&model, b"stub").unwrap();
     let mut ss = with_clip(0.0);
     let r = call(&mut ss, "auto_captions", json!({"whisper_bin": bin.to_str().unwrap(), "model": model.to_str().unwrap(), "hint": "Kimo"}));
@@ -132,7 +140,7 @@ fn with_clip(start: f64) -> Session {
     assert_eq!(lines.len(), 2, "detect, then a Roman-script pass: {args}"); assert!(lines[0].contains("-l auto") && lines[0].contains("-dl"), "language id only: {args}"); assert!(lines[1].contains("-l en") && lines[1].contains("Haan toh") && lines[1].contains("Kimo"), "{args}");
 }
 
-#[test] fn a_turbo_model_writes_hinglish_from_a_hindi_pass_not_an_english_one() {
+#[test] fn a_turbo_model_writes_hinglish_from_a_hindi_pass_not_an_english_one() { let _env_guard = env_guard();
     // large-v3-turbo given -l en (plus the Roman prompt) on Hindi speech translates it into English (Naman's clips: 62.7% WER);
     // -l hi then romanize keeps the words that were said (49.7% strict / 37.9% ignoring spelling).
     let (bin, log) = stub_as("hi", "hi_turbo"); let model = dir().join("ggml-large-v3-turbo-q5_0.bin"); std::fs::write(&model, b"stub").unwrap();
@@ -158,7 +166,7 @@ fn stub_said(tag: &str, said: &[&str]) -> PathBuf {
     std::fs::write(&bin, script).unwrap(); Command::new("chmod").arg("+x").arg(&bin).status().unwrap(); bin
 }
 
-#[test] fn hinglish_variants_are_written_one_way_and_english_is_left_alone() {
+#[test] fn hinglish_variants_are_written_one_way_and_english_is_left_alone() { let _env_guard = env_guard();
     // the recognizer spells the same Hinglish word several ways (bahut / bohat / bohot, pani / paani, ek dum / ekdum);
     // Hinglish captions get one spelling, keeping the speaker's capitals and punctuation; English mode is untouched
     let said = ["Bahut", "pani,", "ek", "dum", "YEH", "nahin."];
@@ -184,14 +192,14 @@ fn stub_said(tag: &str, said: &[&str]) -> PathBuf {
     assert!(e.contains("normalize_spelling"), "{e}");
 }
 
-#[test] fn devanagari_is_romanized_the_way_hinglish_is_written() {
+#[test] fn devanagari_is_romanized_the_way_hinglish_is_written() { let _env_guard = env_guard();
     use kimo_core::speech_words::romanize;
     assert_eq!(romanize("पानी बहुत ठंडा रहता है।"), "pani bahut thanda rahta hai.");
     assert_eq!(romanize("ये मेरी बोतल प्लास्टिक की है"), "ye meri botal plastik ki hai");
     assert_eq!(romanize("हमेशा"), "hamesha"); assert_eq!(romanize("I love it"), "I love it");
 }
 
-#[test] fn no_recognizer_at_all_names_the_real_situation_and_a_real_fallback() {
+#[test] fn no_recognizer_at_all_names_the_real_situation_and_a_real_fallback() { let _env_guard = env_guard();
     // The real hackathon-box scenario: no whisper-cli anywhere, no model, nothing overridden --
     // the exact shape director_mode.md's own small model hits when it calls auto_captions with no
     // speech model installed. The old message led with a shell script and an env var the caller
@@ -215,7 +223,7 @@ fn stub_said(tag: &str, said: &[&str]) -> PathBuf {
     assert!(e.contains("tools/whisper/fetch.sh"), "still says how to add a recognizer later: {e}");
 }
 
-#[test] fn a_missing_recognizer_says_how_to_get_one() {
+#[test] fn a_missing_recognizer_says_how_to_get_one() { let _env_guard = env_guard();
     let mut ss = with_clip(0.0); std::env::set_var("KIMO_MODELS", dir().join("no_models_here"));
     let e = dispatch(&mut ss, "auto_captions", &json!({"whisper_bin": "/nonexistent/whisper-cli"})).unwrap_err();
     assert!(e.contains("tools/whisper/fetch.sh") || e.contains("speech recognizer"), "{e}");
@@ -232,7 +240,7 @@ fn face_plate(name: &str, y0: f64, y1: f64) -> PathBuf {
             .arg(&p).stdin(Stdio::null()).status().unwrap(); assert!(st.success()); }
     p
 }
-#[test] fn captions_move_off_a_face_low_in_the_frame() {
+#[test] fn captions_move_off_a_face_low_in_the_frame() { let _env_guard = env_guard();
     for (name, y0, y1, want) in [("face_low.mp4", 0.52, 0.86, "top"), ("face_high.mp4", 0.10, 0.38, "bottom")] {
         let mut ss = portrait(); let a = call(&mut ss, "import_media", json!({"path": face_plate(name, y0, y1).to_str().unwrap()}));
         let t = call(&mut ss, "add_track", json!({}))["track_id"].as_str().unwrap().to_string();
