@@ -414,3 +414,41 @@ fn talk_v(name: &str, dur: f64, speech: &[(f64, f64)], src: &str, vf: &str) -> S
     let n = ss.project.tracks.iter().flat_map(|t| t.clips.iter()).find(|x| x.id == c).unwrap().effects.iter().filter(|e| e.kind == "primaries").count();
     assert_eq!(n, 1, "one primaries grade, not a stack");
 }
+
+/// Perf (KP1): lint_edit's picture check samples a timeline every 0.5s via get_scopes, and get_scopes' own
+/// single-instant prepare_at window (24 frames) is far smaller than the 0.5s gap between samples once a clip
+/// runs more than a second or two - nearly every sample needs a fresh decode. kimo's media decode always
+/// re-seeks to a clip's own start and discards every frame before the one it actually wants (bounded memory,
+/// not bounded CPU), so each sample's decode cost grows with how far into the clip it sits - quadratic in a
+/// long clip's length at this sampling cadence. lint_edit now pre-warms the same decode cache with a much
+/// bigger (export-sized) window before each sample, so most of a clip lands from one or two real decodes
+/// instead of one per sample - same decode() calls, same project, same time, so get_scopes' numbers (and
+/// lint_edit's findings) are unchanged by construction; only how many of those decodes are real drops. A 60s
+/// single clip with a real dark patch right at the end pins both: the exact same problem is still found, at
+/// the exact same instant, and the scan no longer grows the way the old per-sample window did.
+#[test] fn lint_edit_scans_a_long_clip_without_rescanning_from_its_start_each_sample() {
+    let p = dir().join("kp1_long.mp4");
+    if !p.exists() {
+        ffmpeg(&["-f", "lavfi", "-i", "testsrc2=s=360x640:r=30:d=60", "-f", "lavfi", "-i", "color=c=black:s=360x640:r=30:d=60",
+            "-filter_complex", "[0:v][1:v]overlay=enable='between(t,58,59.5)'[v]", "-map", "[v]",
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", p.to_str().unwrap()]);
+    }
+    let mut ss = portrait();
+    let t = sid(&call(&mut ss, "add_track", json!({})), "track_id");
+    let a = sid(&call(&mut ss, "import_media", json!({"path": p.to_str().unwrap()})), "asset_id");
+    call(&mut ss, "add_clip", json!({"track_id": t, "source_type": "media", "asset_id": a, "start": 0, "duration": 60, "fit": "cover"}));
+    let t0 = std::time::Instant::now();
+    let r = call(&mut ss, "lint_edit", json!({"platform": "none"}));
+    let elapsed = t0.elapsed();
+    let dark: Vec<&Value> = r["problems"].as_array().unwrap().iter().filter(|p| p["code"] == "dark_frame").collect();
+    assert_eq!(dark.len(), 1, "exactly one dark patch, found: {r}");
+    let at = dark[0]["at"].as_f64().unwrap();
+    assert!((at - 58.25).abs() < 0.05, "dark_frame should land at 58.25s (the patch's first sampled instant), got {at}: {r}");
+    // Equivalence pin: re-run on the same, unmutated project - the finding must be exactly reproducible.
+    let r2 = call(&mut ss, "lint_edit", json!({"platform": "none"}));
+    assert_eq!(r, r2, "lint_edit must be deterministic on an unchanged project");
+    // Timing: measured on this exact fixture on this box, the pre-fix scan (always re-seeking to each clip's
+    // own start per sample) took ~12.5s; the fix takes ~4.2s. 9s is a generous ceiling - comfortably above
+    // the fix's real time, comfortably below the old quadratic cost - to catch a real regression, not CI noise.
+    assert!(elapsed.as_secs_f64() < 9.0, "lint_edit took {:.1}s on a 60s single clip - the per-sample decode window regressed", elapsed.as_secs_f64());
+}

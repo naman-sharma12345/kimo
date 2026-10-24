@@ -601,6 +601,20 @@ fn lint_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
     // 1 picture: dark, blown or empty frames, sampled every 0.5 s
     let mut t = 0.25; let mut bad_at: Vec<(f64, String, Option<String>)> = vec![];
     while t < end { let top = top_media(ss, t);
+        // Perf (lint_edit speedup, KP1): get_scopes' own single-instant prepare_at decodes through a
+        // small (24-frame) window, and the underlying media decode always re-seeks to the clip's own
+        // in_point and discards everything before the requested frame (bounded MEMORY, not bounded
+        // CPU) - so as this 0.5s-step scan walks deeper into a long clip, each successive get_scopes
+        // call decodes (and throws away) more and more leading frames, which is quadratic in a clip's
+        // length for this scan's cadence. Pre-warming the SAME decode cache here with a much larger
+        // (export-sized, 256-frame) window means most of a clip lands in cache from one or two real
+        // decodes instead of one per sample; get_scopes' own prepare_at then just hits that cache. This
+        // changes nothing about what gets rendered or returned - same project, same time, same decode()
+        // call shape, only how many frames get pulled into cache per underlying decode - so get_scopes'
+        // numbers (and lint_edit's findings) are unchanged; only the decode call count drops. Errors
+        // here are ignored: get_scopes' own prepare_at still runs right after and is what actually
+        // reports a real problem (e.g. a genuinely missing/corrupt file) to the caller, unchanged.
+        if top.is_some() { let _ = crate::render::prepare_export_range(&ss.project, &mut ss.cache, t, t); }
         match &top { None => bad_at.push((t, "empty_frame".into(), None)), Some(cid) => { if let Ok(s) = call(ss, "get_scopes", &json!({"time": r3(t)})) { let l = s["luma_mean"].as_f64().unwrap_or(0.5); if l < 0.08 { bad_at.push((t, "dark_frame".into(), Some(cid.clone()))); } else if l > 0.92 { bad_at.push((t, "blown_frame".into(), Some(cid.clone()))); } } } }
         t += 0.5; }
     let mut seen = std::collections::HashSet::new();
