@@ -115,7 +115,9 @@ fn rough_cut(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let (mut t, mut clips, mut segs, mut sp_tl) = (start, vec![], vec![], vec![]);
     for id in &ids {
         let (path, adur) = asset(ss, id)?;
-        let sp = merge(speech(ss, json!({"path": path}), 1, 300.0, pad * 1000.0)?, max_pause);
+        let sp = merge(speech(ss, json!({"path": path}), 1, 300.0, pad * 1000.0).map_err(|e| {
+            if e == "no audio track" { format!("asset '{id}' ({path}) has no audio track, so auto_rough_cut can't detect speech on it; lay it with add_clip instead") } else { e }
+        })?, max_pause);
         if sp.is_empty() { return Err(format!("no speech found in asset '{id}' ({path}); lay it with add_clip instead")); }
         let lk = look(&crate::deps::resolve_str(&path), adur); let p90 = lk.as_ref().map(|l| l.p90()).unwrap_or(1.0);
         let nseg = sp.len();

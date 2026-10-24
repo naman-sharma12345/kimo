@@ -28,6 +28,12 @@ fn broll(name: &str, dur: f64, grade: &str) -> String {
     p.to_string_lossy().into_owned()
 }
 fn portrait() -> Session { let mut ss = Session::new(); call(&mut ss, "project_set", json!({"width": 360, "height": 640, "fps": 30})); ss }
+/// A clip with a video stream and NO audio stream at all (phone b-roll shot muted, or a device/app that strips audio on export).
+fn silent_no_audio_track(name: &str, dur: f64) -> String {
+    let p = dir().join(name); if p.exists() { return p.to_string_lossy().into_owned(); }
+    ffmpeg(&["-f", "lavfi", "-i", &format!("testsrc2=s=360x640:r=30:d={dur}"), "-an", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", p.to_str().unwrap()]);
+    p.to_string_lossy().into_owned()
+}
 
 /// Two models in the eval called contact_sheet with path = their finished export (to "look at it"). The sheet was written over
 /// the mp4, and the deliverable became a 0.04 s, 1-frame video. A still writer must never write a video path.
@@ -162,6 +168,19 @@ fn portrait() -> Session { let mut ss = Session::new(); call(&mut ss, "project_s
     assert_eq!(r2["clips"].as_array().unwrap().len(), 2, "{r2}");
     assert_eq!(ss.project.tracks.iter().find(|x| x.id == t).unwrap().clips.len(), 2);
     assert!(dispatch(&mut ss, "auto_rough_cut", &json!({"asset_ids": ["nope"]})).unwrap_err().contains("import_media"));
+}
+
+/// KF1: auto_rough_cut's "no speech found" error names the asset and offers add_clip as a fallback. An asset with
+/// NO AUDIO TRACK AT ALL (muted phone b-roll, or an app that strips audio) hit a different code path and surfaced
+/// just "no audio track" -- no asset id, no path, no fallback -- a dead end for a small model restricted to the
+/// director tool list, which would have no way to know add_clip exists as the way forward.
+#[test] fn auto_rough_cut_names_the_asset_and_a_fallback_when_it_has_no_audio_track() {
+    let mut ss = portrait();
+    let a = sid(&call(&mut ss, "import_media", json!({"path": silent_no_audio_track("noaudio.mp4", 3.0)})), "asset_id");
+    let err = dispatch(&mut ss, "auto_rough_cut", &json!({"asset_ids": [a.clone()]})).unwrap_err();
+    assert!(err.contains(&a), "names the asset id so a model restricted to director tools knows which clip failed: {err}");
+    assert!(err.contains("add_clip"), "offers the same fallback as the no-speech-found case: {err}");
+    assert!(err.contains("audio"), "still says what's actually wrong: {err}");
 }
 
 /// Models laid b-roll by guessed times: over pauses (dead picture) or with its own sound left on top of the voice.
