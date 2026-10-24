@@ -469,7 +469,16 @@ fn talk_v(name: &str, dur: f64, speech: &[(f64, f64)], src: &str, vf: &str) -> S
     // Timing: measured on this exact fixture on this box, the pre-fix scan (always re-seeking to each clip's
     // own start per sample) took ~12.5s; the fix takes ~4.2s. 9s is a generous ceiling - comfortably above
     // the fix's real time, comfortably below the old quadratic cost - to catch a real regression, not CI noise.
-    assert!(elapsed.as_secs_f64() < 9.0, "lint_edit took {:.1}s on a 60s single clip - the per-sample decode window regressed", elapsed.as_secs_f64());
+    // That 3x margin is a --release number only. This test is dominated by real ffmpeg subprocess decodes,
+    // whose cost barely depends on whether kimo-core itself was compiled with optimizations, so the debug
+    // build's margin is far narrower. KW2 (2026-10-24) measured both sides directly in a plain debug build
+    // on this box: this fixed code takes 12.7-13.2s (7 runs); the original quadratic rescan (the code from
+    // before 98eed5d, rebuilt in a separate debug worktree at 77e14e2 with this same test) takes 19.0-20.5s
+    // (5 runs). A flat "~3x optimized" guess (27s+) would sit above the real regression and silently stop
+    // catching it, so the debug ceiling below is picked from the measured gap instead, not a multiplier:
+    // comfortably above 13.2s, comfortably below 19.0s.
+    let ceiling = if cfg!(debug_assertions) { 18.0 } else { 9.0 };
+    assert!(elapsed.as_secs_f64() < ceiling, "lint_edit took {:.1}s on a 60s single clip (ceiling {:.1}s for this build) - the per-sample decode window regressed", elapsed.as_secs_f64(), ceiling);
 }
 
 /// KR2: lint_edit's picture-scan loop used to pre-warm the decode cache itself immediately before

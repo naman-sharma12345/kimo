@@ -115,11 +115,11 @@ clean edit -- budget for them.
 
 ## 7. Running the tests
 
-Build and run with `--release` (e.g. `cargo build --release` / `cargo test --release -p kimo-core`).
-A plain debug-mode `cargo test -p kimo-core --test director_small` fails one test --
-`lint_edit_scans_a_long_clip_without_rescanning_from_its_start_each_sample` -- because its timing
-ceiling assumes an optimized build; `lint_edit` genuinely takes longer in debug. That failure is
-expected in a debug build, not a regression.
+`--release` is recommended for speed (`cargo build --release` / `cargo test --release -p kimo-core`).
+A plain debug-mode `cargo test -p kimo-core --test director_small` also passes: the one timing
+check in it (`lint_edit_scans_a_long_clip_without_rescanning_from_its_start_each_sample`) uses a
+higher ceiling in a debug build, since `lint_edit` genuinely takes longer there -- it still fails
+if the old quadratic rescan it guards against comes back.
 
 ## Known limits
 
