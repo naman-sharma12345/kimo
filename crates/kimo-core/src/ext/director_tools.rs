@@ -676,6 +676,21 @@ fn lint_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
         probs.push(json!({"code": "text_overlap", "clip_id": b.0, "other_clip_id": a.0, "at": r3(m), "message": format!("{} and {} are on screen together at {:.2} s in the same place", a.0, b.0, m),
             "fix": {"tool": "delete_clip", "args": {"clip_id": b.0}, "or": {"tool": "set_property", "args": {"clip_id": b.0, "property": "y", "value": "<pixels from centre, clear of the other text>"}}}}));
     } }
+    // 1e media clip aspect: a clip's source aspect doesn't match the canvas, so add_clip's default framing crops or
+    // pads it without telling anyone. Non-mutating, additive: names auto_reframe as the fix.
+    const ASPECT_TOL: f64 = 0.05;
+    let canvas_aspect = w / h;
+    for tr in ss.project.tracks.iter().filter(|tr| !tr.muted) { for c in &tr.clips {
+        let Source::Media { asset } = &c.source else { continue };
+        let Some(info) = ss.project.assets.get(asset) else { continue };
+        if info.width == 0 || info.height == 0 { continue; }
+        let src_aspect = info.width as f64 / info.height as f64;
+        if ((src_aspect - canvas_aspect).abs() / canvas_aspect) <= ASPECT_TOL { continue; }
+        probs.push(json!({"code": "aspect_mismatch", "severity": "warning", "clip_id": c.id, "asset_id": asset,
+            "source_size": [info.width, info.height], "canvas_size": [w as i64, h as i64],
+            "message": format!("clip {} source is {}x{} ({:.2}:1) but the canvas is {:.2}:1 ({}x{}); the default framing crops or pads it", c.id, info.width, info.height, src_aspect, canvas_aspect, w as i64, h as i64),
+            "fix": {"tool": "auto_reframe", "args": {"clip_id": c.id}}}));
+    } }
     // 2 text: off the platform's safe area, or a substituted font
     let (avoid, safe) = zones(ss, &platform)?;
     let texts: Vec<(String, f64, f64)> = ss.project.tracks.iter().flat_map(|t| t.clips.iter()).filter(|c| matches!(c.source, Source::Text { .. })).map(|c| (c.id.clone(), c.start, c.duration)).collect();
@@ -736,7 +751,7 @@ fn lint_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
     // 5 length
     if let Some(d) = a.get("duration").and_then(|v| v.as_array()) { if let (Some(lo), Some(hi)) = (d.first().and_then(|v| v.as_f64()), d.get(1).and_then(|v| v.as_f64())) { if end < lo - 0.05 || end > hi + 0.05 { probs.push(json!({"code": "duration", "message": format!("timeline is {end:.2} s, wanted {lo}-{hi} s"), "fix": {"tool": "timeline_summary", "args": {}}})); } } }
     probs.truncate(20);
-    Ok(json!({"ok": probs.is_empty(), "problems": probs, "checked": ["frames every 0.5 s", "text vs title safe and the platform UI", "fonts", "b-roll inside speech", "captions cover speech", "caption confidence vs the recognizer", "mix loudness", "duration"], "platform": platform, "duration": r3(end)}))
+    Ok(json!({"ok": probs.is_empty(), "problems": probs, "checked": ["frames every 0.5 s", "text vs title safe and the platform UI", "fonts", "media clip aspect vs canvas", "b-roll inside speech", "captions cover speech", "caption confidence vs the recognizer", "mix loudness", "duration"], "platform": platform, "duration": r3(end)}))
 }
 
 // ---------------------------------------------------------------- review_export

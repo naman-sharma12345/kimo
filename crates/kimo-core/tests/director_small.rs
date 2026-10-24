@@ -163,6 +163,33 @@ fn silent_no_audio_track(name: &str, dur: f64) -> String {
     for gone in ["dark_frame", "broll_over_silence", "text_outside_safe_area", "loudness_off"] { assert!(!left.contains(&gone), "{gone} still there after its fix: {r2}"); }
 }
 
+/// KF2: a clip whose source aspect doesn't match the canvas gets silently cropped or padded by add_clip's default
+/// framing. lint_edit should name it (aspect_mismatch, severity warning) and point at auto_reframe; a clip whose
+/// source aspect already matches the canvas (beyond a small tolerance) must not be flagged.
+#[test] fn aspect_mismatch_flags_a_landscape_clip_on_a_vertical_canvas() {
+    fn landscape(name: &str, dur: f64) -> String {
+        let p = dir().join(name); if p.exists() { return p.to_string_lossy().into_owned(); }
+        ffmpeg(&["-f", "lavfi", "-i", &format!("testsrc2=s=640x360:r=30:d={dur}"), "-f", "lavfi", "-i", &format!("anoisesrc=a=0.004:d={dur}:r=48000"),
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", p.to_str().unwrap()]);
+        p.to_string_lossy().into_owned()
+    }
+    let mut ss = portrait(); // 360x640 canvas, 9:16
+    let t = sid(&call(&mut ss, "add_track", json!({})), "track_id");
+    let a_land = sid(&call(&mut ss, "import_media", json!({"path": landscape("aspect_land.mp4", 2.0)})), "asset_id");
+    let c_land = sid(&call(&mut ss, "add_clip", json!({"track_id": t, "source_type": "media", "asset_id": a_land, "start": 0, "duration": 2, "fit": "cover"})), "clip_id");
+    // 360x640, same aspect as the canvas -- must not be flagged
+    let a_match = sid(&call(&mut ss, "import_media", json!({"path": broll("aspect_match.mp4", 2.0, "")})), "asset_id");
+    let c_match = sid(&call(&mut ss, "add_clip", json!({"track_id": t, "source_type": "media", "asset_id": a_match, "start": 2, "duration": 2, "fit": "cover"})), "clip_id");
+    let r = call(&mut ss, "lint_edit", json!({"platform": "none"}));
+    let probs = r["problems"].as_array().unwrap();
+    let hit = probs.iter().find(|p| p["code"] == json!("aspect_mismatch") && p["clip_id"] == json!(c_land))
+        .unwrap_or_else(|| panic!("landscape clip on a 9:16 canvas not flagged: {r}"));
+    assert_eq!(hit["severity"], json!("warning"), "{hit}");
+    assert_eq!(hit["fix"]["tool"], json!("auto_reframe"), "{hit}");
+    assert_eq!(hit["fix"]["args"]["clip_id"], json!(c_land), "{hit}");
+    assert!(!probs.iter().any(|p| p["code"] == json!("aspect_mismatch") && p["clip_id"] == json!(c_match)), "matching-aspect clip flagged: {r}");
+}
+
 /// The eval's talking head: models left 1-3 s of dead air between takes (laid whole clips) or cut words off (guessed times).
 #[test] fn auto_rough_cut_drops_the_dead_air_and_keeps_every_word() {
     let mut ss = portrait();
