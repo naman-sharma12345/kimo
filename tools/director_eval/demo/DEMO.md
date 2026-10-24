@@ -9,6 +9,18 @@ model call, nothing hand-run, nothing new in `kimo-core`.
 tools/director_eval/demo/run_demo.sh /path/to/clips out.mp4
 ```
 
+`run_demo_mcp.py` runs the identical call sequence over real MCP `tools/call` JSON-RPC against a
+spawned `kimo-mcp` (stdio), instead of shelling out to the `kimo` CLI -- the actual transport a
+small model drives director mode through. It lists `tools/list {mode: "director"}` first (the
+profile a small model actually sees), records each call's latency and any tool error in a JSON
+report (`--report path.json`), and treats "no speech model installed" on `auto_captions` as a
+handled outcome: the edit ships without captions (reported honestly, not invented) instead of the
+whole run aborting.
+
+```
+tools/director_eval/demo/run_demo_mcp.py /path/to/clips out.mp4 --kimo /path/to/kimo-mcp --report report.json
+```
+
 `clips_dir` holds numbered 9:16 talking-head clips (`clip1.mp4`, `clip2.mp4`, ...).
 `director_recipe_example.json` next to the script is the recipe this demo ships
 with: which clips to use and in what order, the hook title, caption options

@@ -23,7 +23,7 @@ the caption words and any labels. Do the steps in this order and keep every path
    words only over that clip's shots -- write clean, correct words for each clip (an auto-transcript in the brief may be
    wrong: never put nonsense on screen). Either way, run `lint_edit` before exporting: it now also flags
    `caption_low_confidence` -- a cue whose audio kimo's own recognizer genuinely cannot make out confidently, whatever
-   text it was given -- with the exact `edit_caption {clip_id, text}` call to check and fix it.
+   text it was given -- with the exact `edit_caption {clip_id, text}` call to check and fix it. If no speech model is installed, `auto_captions` returns a clear error naming the fallback (skip captions and keep going, or `caption_from_words` with words you trust) -- never a crash.
 8. Optional labels: `add_track {}` then `add_text {track_id, text, start, duration, size: 56}` (1-4 words, at most 3, size 48 or more,
    never at the same time as the title). Plain letters only: emoji and symbols are not in the font.
 9. `finish_audio {}` levels the voice and mixes to -14 LUFS.

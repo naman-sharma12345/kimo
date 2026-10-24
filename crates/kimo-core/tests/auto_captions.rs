@@ -191,6 +191,30 @@ fn stub_said(tag: &str, said: &[&str]) -> PathBuf {
     assert_eq!(romanize("हमेशा"), "hamesha"); assert_eq!(romanize("I love it"), "I love it");
 }
 
+#[test] fn no_recognizer_at_all_names_the_real_situation_and_a_real_fallback() {
+    // The real hackathon-box scenario: no whisper-cli anywhere, no model, nothing overridden --
+    // the exact shape director_mode.md's own small model hits when it calls auto_captions with no
+    // speech model installed. The old message led with a shell script and an env var the caller
+    // can't run/set itself, and buried "skip captions, or use caption_from_words" behind "Or pass
+    // words:[...]" worded as a parameter hint, not a real next step. This checks the caller is told
+    // plainly what's wrong and given a real fallback it can actually do in one more tool call.
+    let mut ss = with_clip(0.0); // builds its fixture media via ffmpeg -- before PATH is touched
+    // A clean PATH with only ffmpeg symlinked in (recognize() shells out to ffmpeg before it ever
+    // looks for whisper-cli) and nothing else -- guarantees no whisper-cli resolves, on any box.
+    let ffmpeg_only = dir().join("ffmpeg_only_path"); std::fs::create_dir_all(&ffmpeg_only).unwrap();
+    let real_ffmpeg = String::from_utf8(Command::new("which").arg("ffmpeg").output().unwrap().stdout).unwrap().trim().to_string();
+    let _ = std::os::unix::fs::symlink(&real_ffmpeg, ffmpeg_only.join("ffmpeg"));
+    let saved_path = std::env::var_os("PATH"); let saved_bin = std::env::var_os("KIMO_WHISPER_BIN");
+    std::env::set_var("PATH", &ffmpeg_only); std::env::remove_var("KIMO_WHISPER_BIN");
+    std::env::set_var("KIMO_MODELS", dir().join("truly_no_models_anywhere"));
+    let e = dispatch(&mut ss, "auto_captions", &json!({})).unwrap_err();
+    if let Some(p) = saved_path { std::env::set_var("PATH", p); } if let Some(b) = saved_bin { std::env::set_var("KIMO_WHISPER_BIN", b); }
+    assert!(e.contains("no speech model is installed"), "names the real situation plainly: {e}");
+    assert!(e.contains("caption_from_words"), "names the real director-mode fallback tool: {e}");
+    assert!(e.to_lowercase().contains("skip captions") || e.to_lowercase().contains("ship without captions"), "names skipping captions as an option: {e}");
+    assert!(e.contains("tools/whisper/fetch.sh"), "still says how to add a recognizer later: {e}");
+}
+
 #[test] fn a_missing_recognizer_says_how_to_get_one() {
     let mut ss = with_clip(0.0); std::env::set_var("KIMO_MODELS", dir().join("no_models_here"));
     let e = dispatch(&mut ss, "auto_captions", &json!({"whisper_bin": "/nonexistent/whisper-cli"})).unwrap_err();

@@ -102,6 +102,7 @@ pub const DIRECTOR: &[(&str, &str)] = &[
     ("add_title", "Title card: {track_id, style: \"impact\", text, start, duration}. Put it on its own top track."),
     ("add_text", "Text clip: {track_id, text, start, duration, size}. Move it with set_property y (pixels from centre, + is down)."),
     ("caption_from_words", "Captions from the words you give, timed to the speech, clear of the TikTok/Reels buttons. Best: by_asset {asset_id: words}."),
+    ("auto_captions", "Captions from kimo's own speech recognition: {clip_ids: [...rough-cut segments...]}. Use with no trustworthy transcript. Flags low-confidence words."),
     ("edit_caption", "Change one caption cue's text: {clip_id, text}."),
     ("finish_audio", "Final mix in one call: clean dialogue, b-roll sound off, music under speech, -14 LUFS. Call before export."),
     ("remove_transition", "Take a transition off a clip: {clip_id}. lint_edit names it when a dissolve fades in from black."),

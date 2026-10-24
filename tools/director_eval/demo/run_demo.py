@@ -101,21 +101,33 @@ def main():
     for k in ("style", "hint", "language", "script"):
         if cap_opts.get(k):
             cap_args[k] = cap_opts[k]
-    cap = call("auto_captions", cap_args)
-
+    # KM1: "no speech model installed" is a handled outcome, not a crash -- the edit still ships,
+    # just without captions (reported honestly below), instead of the whole run aborting.
+    cap = {}
     low_conf_words = []
+    captions_skipped_reason = None
+    try:
+        cap = call("auto_captions", cap_args)
+    except RuntimeError as e:
+        if "no speech model is installed" in str(e):
+            captions_skipped_reason = str(e)
+            print(f"captions SKIPPED (no speech model installed) -- continuing without them: {e}", file=sys.stderr)
+        else:
+            raise
+
     if cap.get("low_confidence_words"):
         tget = call("transcript_get", {"transcript_id": cap["transcript_id"], "include_words": True})
         # WordFlag::LowConfidence serialises as "low_confidence" (serde's snake_case rename)
         low_conf_words = [w for w in tget.get("words", []) if "low_confidence" in w.get("flags", [])]
-    print(
-        f"auto_captions: {cap.get('words', 0)} words, language={cap.get('language')}, "
-        f"mode={cap.get('mode')}, confidence={cap.get('confidence')}, "
-        f"low_confidence={cap.get('low_confidence_words', 0)}",
-        file=sys.stderr,
-    )
-    for w in low_conf_words:
-        print(f"  low-confidence word: \"{w['display']}\" [{w['start']:.2f}-{w['end']:.2f}]s (conf={w.get('confidence')})", file=sys.stderr)
+    if captions_skipped_reason is None:
+        print(
+            f"auto_captions: {cap.get('words', 0)} words, language={cap.get('language')}, "
+            f"mode={cap.get('mode')}, confidence={cap.get('confidence')}, "
+            f"low_confidence={cap.get('low_confidence_words', 0)}",
+            file=sys.stderr,
+        )
+        for w in low_conf_words:
+            print(f"  low-confidence word: \"{w['display']}\" [{w['start']:.2f}-{w['end']:.2f}]s (conf={w.get('confidence')})", file=sys.stderr)
 
     highlight = recipe.get("highlight")
     if highlight:
@@ -136,9 +148,13 @@ def main():
         # promises "never quote cue text", and this script keeps that promise too).
         return any(isinstance(v, str) and v.strip().startswith("<") and v.strip().endswith(">") for v in (d or {}).values())
 
+    skip_codes = {"font_substituted"}
+    if captions_skipped_reason:
+        # nothing honest to caption with -- don't chase caption_low_confidence/captions_missing fixes
+        skip_codes |= {"caption_low_confidence", "captions_missing"}
     for attempt in range(3):
         lint = call("lint_edit", {})
-        real_problems = [p for p in lint.get("problems", []) if p["code"] != "font_substituted"]
+        real_problems = [p for p in lint.get("problems", []) if p["code"] not in skip_codes]
         if not real_problems:
             break
         prob = real_problems[0]
@@ -163,6 +179,8 @@ def main():
     report = {
         "export": result,
         "captions": {
+            "skipped_no_model": captions_skipped_reason is not None,
+            "skip_reason": captions_skipped_reason,
             "caption_id": cap.get("caption_id"),
             "transcript_id": cap.get("transcript_id"),
             "language": cap.get("language"),

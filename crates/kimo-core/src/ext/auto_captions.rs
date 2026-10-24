@@ -58,7 +58,13 @@ fn whisper_bin(a: &Value) -> Result<PathBuf, String> {
     if let Some(p) = std::env::var_os("KIMO_WHISPER_BIN") { return Ok(p.into()); }
     let local = models_dir().join("bin/whisper-cli"); if local.is_file() { return Ok(local); }
     if let Some(path) = std::env::var_os("PATH") { for d in std::env::split_paths(&path) { let p = d.join("whisper-cli"); if p.is_file() { return Ok(p); } } }
-    Err(format!("no speech recognizer found: {FETCH_HINT}. Or pass words:[{{text,start,end}}] to caption known words"))
+    // Director mode's own small-model caller has two real next steps right now, not a shell script
+    // or an env var it cannot set itself: ship the edit without captions, or call caption_from_words
+    // with words it already trusts (it best-effort flags any cue the audio makes hard to verify, the
+    // same promise auto_captions makes). Both are named first; adding a real recognizer is secondary.
+    Err(format!(
+        "no speech model is installed, so auto_captions can't transcribe this audio: skip captions (ship the edit without them), or call caption_from_words with words you already trust, by_asset per clip (it flags, rather than guesses, any cue the audio is hard to verify). auto_captions also takes words:[{{text,start,end}}] directly if you'd rather call it again that way. To add a recognizer later: {FETCH_HINT}"
+    ))
 }
 fn whisper_model(a: &Value) -> Result<PathBuf, String> {
     if let Some(p) = a.get("model").and_then(|v| v.as_str()) { let p = PathBuf::from(p); return if p.is_file() { Ok(p) } else { Err(format!("model file '{}' not found", p.display())) }; }
