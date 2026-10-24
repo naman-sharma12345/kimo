@@ -1,7 +1,7 @@
 # Hackathon quickstart: director mode over MCP
 
 Kimo cuts a short from raw phone footage. In director mode, a small model drives it through
-about 35 MCP tools instead of the full 445-tool registry. This page is the fastest path from a
+about 35 MCP tools instead of the full 446-tool registry. This page is the fastest path from a
 clone to a real exported short: build, list the tools a small model actually sees, run the demo
 driver on your own clips, and the handful of things that trip people up first.
 
@@ -54,7 +54,7 @@ nothing to run standing-alone. `tools/list` takes a `mode` param that overrides 
 
 This returns **35 tools** -- the recipe tools from `director_mode.md` (`auto_rough_cut`,
 `auto_grade`, `auto_captions`, `caption_from_words`, `finish_audio`, `lint_edit`, `export`, ...)
-with one-line descriptions written for a small model, not the full 445-tool registry. Every tool
+with one-line descriptions written for a small model, not the full 446-tool registry. Every tool
 is still callable by name under any profile. `tools/director_eval/mcp.py` is a ~60-line Python
 MCP stdio client if you want to drive this yourself instead of through a chat client; see
 `list_tools(mode=...)` and `call(name, args)`.
@@ -131,7 +131,9 @@ small model restricted to the director tool list should do the same -- skip capt
 
 (From the MCP call reports in tasks `171c602f` and `a0060384`, and reproduced fresh for this
 doc.) `lint_edit` and `export` dominate a loop that calls `lint_edit` repeatedly to converge on a
-clean edit -- budget for them.
+clean edit -- budget for them. **Note: these numbers predate tonight's two new `lint_edit`
+findings** (`aspect_mismatch`, `text_over_subject`) -- the extra per-clip checks measurably add to
+`lint_edit`'s own per-call cost, so budget a bit above this table, not exactly to it.
 
 ## 7. Running the tests
 
