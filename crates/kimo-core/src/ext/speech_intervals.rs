@@ -13,7 +13,16 @@ fn number(a: &Value, k: &str, d: f64) -> Result<f64, String> {
             .ok_or_else(|| crate::errors::arg_err(a, k, "finite number")),
     }
 }
+/// KR2: counted PER-THREAD without a new thread-local static - see render::ANALYSIS_PREPARE_CALLS's doc
+/// comment for why (the task bars adding one, and this engine has a real history of thread-local
+/// render-state bugs) and why keying a shared `Mutex<HashMap<ThreadId,_>>` by the calling thread is
+/// just as safe here next to Rust's one-thread-per-test harness. Pins how many times this function's
+/// real audio decode (an ffmpeg-backed strict_decode/mix_strict call) actually runs, independent of
+/// how many times `run` is called - see `run`'s pcm-memo, which skips this entirely on a cache hit.
+pub static SPEECH_DECODE_CALLS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<std::thread::ThreadId, usize>>> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+pub fn speech_decode_call_count() -> usize { *SPEECH_DECODE_CALLS.lock().unwrap().get(&std::thread::current().id()).unwrap_or(&0) }
 fn decode(ss: &Session, target: &Value) -> Result<Vec<f32>, String> {
+    *SPEECH_DECODE_CALLS.lock().unwrap().entry(std::thread::current().id()).or_insert(0) += 1;
     if target == "mix" || target.is_null() || target.get("mix") == Some(&json!(true)) {
         return crate::audio::mix_strict(&ss.project).map_err(|e| e.to_string());
     }
@@ -68,6 +77,46 @@ fn decode(ss: &Session, target: &Value) -> Result<Vec<f32>, String> {
     c.audio.mute = false;
     crate::audio::strict_decode(&path, &c).map_err(|e| e.to_string())
 }
+
+/// A conservative content fingerprint of everything `decode` could possibly read for ANY target:
+/// the whole project, serialized. Correct by construction (anything decode's match arms could look
+/// at - tracks, clips, assets, their paths - is inside `ss.project`), at the cost of being more
+/// conservative than strictly necessary (an edit to a clip on a different, unrelated track also
+/// invalidates the cache). That's the right trade here: decode() is the expensive part (an
+/// ffmpeg-backed strict_decode/mix_strict), building and hashing this string is not, and a correct
+/// cache miss costs exactly what every call cost before this cache existed - a correct cache HIT is
+/// the only thing being purchased. None only when serialization itself fails (never observed; a
+/// serialization failure makes the cache a permanent, harmless miss instead of a risk).
+fn project_fingerprint(ss: &Session) -> Option<u64> {
+    use std::hash::{Hash, Hasher};
+    let s = serde_json::to_string(&ss.project).ok()?;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    Some(h.finish())
+}
+/// Decodes once per (target, project-state) pair in this session and reuses the PCM on every later
+/// call with the SAME target while the project is byte-identical - e.g. lint_edit's own
+/// probe-then-final pair (director_tools.rs `speech()`, aggressiveness 2 then 1) for whichever
+/// track turns out to hold the dialogue, which used to pay this function's real decode twice for
+/// the one track that matters. Keyed on the target's own JSON (not just a track/clip id) so a
+/// `path`/`{path}` target and a `mix` target never collide. Bounded to a few entries; cleared
+/// instead of LRU-evicted past that (see Session::audio_decode_cache).
+fn decode_memo(ss: &mut Session, target: &Value) -> Result<std::sync::Arc<Vec<f32>>, String> {
+    let key = project_fingerprint(ss).and_then(|fp| serde_json::to_string(target).ok().map(|t| (t, fp)));
+    if let Some(k) = &key {
+        if let Some(hit) = ss.audio_decode_cache.get(k) {
+            return Ok(hit.clone());
+        }
+    }
+    let pcm = std::sync::Arc::new(decode(ss, target)?);
+    if let Some(k) = key {
+        if ss.audio_decode_cache.len() >= 8 {
+            ss.audio_decode_cache.clear(); // simple bound, not an LRU: see the field's own doc comment
+        }
+        ss.audio_decode_cache.insert(k, pcm.clone());
+    }
+    Ok(pcm)
+}
 fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let mut p = Params::default();
     p.mode = match a.get("mode") {
@@ -108,7 +157,7 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
     if target.as_object().map_or(false, |m| m.len() != 1) {
         return Err("target needs exactly one of clip_id|track_id|mix|path".into());
     }
-    let pcm = decode(ss, &target)?;
+    let pcm = decode_memo(ss, &target)?;
     let total = pcm.len() as f64 / 96000.;
     if start >= total {
         return Err("range start exceeds audio duration".into());

@@ -27,8 +27,16 @@ pub struct Session { pub resource_limits: crate::resource_limits::Limits, pub me
     /// Snapshot-size estimate for the history cap, refreshed every 16 mutations instead of serialising the project on every call.
     pub snap_sz: usize, pub snap_n: u32, pub snap_clips: usize,
     /// Build that first saved the loaded/current project (kept across re-saves); None until a save or a load sets it.
-    pub created_with: Option<serde_json::Value> }
-impl Session { pub fn new() -> Self { Session { resource_limits: crate::resource_limits::Limits::startup(), media: vec![], project: Project::default(), undo: vec![], redo: vec![], cache: render::Cache::new(), fcache: crate::framecache::FrameCache::new(crate::framecache::default_cap()), undo_labels: vec![], redo_labels: vec![], checkpoints: vec![], snap_sz: 1 << 20, snap_n: 0, snap_clips: 0, created_with: None, stats: Default::default() } } }
+    pub created_with: Option<serde_json::Value>,
+    /// KR2: decoded-PCM memo for audio_speech_intervals (ext/speech_intervals.rs), keyed by (target
+    /// JSON, a whole-project content fingerprint). Conservative on purpose: any project edit at all
+    /// changes the fingerprint and misses, so it is only ever a cache HIT when the project is
+    /// byte-identical to the call that filled it (e.g. lint_edit's own dialogue-track probe-then-
+    /// final pair, which runs back to back with no mutation between them) - never a stale read.
+    /// Bounded to a handful of entries; cleared rather than LRU-evicted past that, since a miss only
+    /// costs exactly what every call cost before this cache existed.
+    pub audio_decode_cache: std::collections::HashMap<(String, u64), std::sync::Arc<Vec<f32>>> }
+impl Session { pub fn new() -> Self { Session { resource_limits: crate::resource_limits::Limits::startup(), media: vec![], project: Project::default(), undo: vec![], redo: vec![], cache: render::Cache::new(), fcache: crate::framecache::FrameCache::new(crate::framecache::default_cap()), undo_labels: vec![], redo_labels: vec![], checkpoints: vec![], snap_sz: 1 << 20, snap_n: 0, snap_clips: 0, created_with: None, stats: Default::default(), audio_decode_cache: Default::default() } } }
 const MAX_CHECKPOINTS: usize = 24;
 
 #[derive(Clone)]

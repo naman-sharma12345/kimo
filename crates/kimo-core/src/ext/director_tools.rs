@@ -601,28 +601,22 @@ fn lint_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
     // 1 picture: dark, blown or empty frames, sampled every 0.5 s
     let mut t = 0.25; let mut bad_at: Vec<(f64, String, Option<String>)> = vec![];
     while t < end { let top = top_media(ss, t);
-        // Perf (lint_edit speedup, KP1): get_scopes' own single-instant prepare_at decodes through a
-        // small (24-frame) window, and the underlying media decode always re-seeks to the clip's own
-        // in_point and discards everything before the requested frame (bounded MEMORY, not bounded
-        // CPU) - so as this 0.5s-step scan walks deeper into a long clip, each successive get_scopes
-        // call decodes (and throws away) more and more leading frames, which is quadratic in a clip's
-        // length for this scan's cadence. Pre-warming the SAME decode cache here with a much larger
-        // (export-sized, 256-frame) window means most of a clip lands in cache from one or two real
-        // decodes instead of one per sample; get_scopes' own prepare_at then just hits that cache. This
-        // changes nothing about what gets rendered or returned - same project, same time, same decode()
-        // call shape, only how many frames get pulled into cache per underlying decode - so get_scopes'
-        // numbers (and lint_edit's findings) are unchanged; only the decode call count drops. Errors
-        // here are ignored: get_scopes' own prepare_at still runs right after and is what actually
-        // reports a real problem (e.g. a genuinely missing/corrupt file) to the caller, unchanged.
-        // Perf (KQ1): on top of that pre-warm, this call may also now decode from a cached, lazily
-        // built, short-GOP analysis proxy (analysis_proxy.rs) instead of the original file, when the
-        // original's own keyframes are sparse (phone footage is often one keyframe every several
-        // seconds) - seeking to the proxy's nearest keyframe bounds the decode-and-discard cost by
-        // the proxy's GOP instead of by how deep into the clip this sample sits. Export never sees
-        // this proxy (prepare_export_range never builds or selects one); get_scopes still measures
-        // the same composited frame content, just decoded from a different, visually near-lossless
-        // file, with an automatic fallback to the original on any mismatch or failure.
-        if top.is_some() { let _ = crate::render::prepare_analysis_range(&ss.project, &mut ss.cache, t, t); }
+        // Perf history (KP1, KQ1): this loop used to pre-warm the decode cache itself (a big,
+        // export-sized window, optionally through a short-GOP analysis proxy) immediately before
+        // every get_scopes call, because get_scopes' OWN internal preparation once used a much
+        // smaller window and paid a real, repeated decode-and-discard cost walking deeper into a
+        // clip on every 0.5s sample. KQ1 (fb6ddbf) changed get_scopes' own call site to use the
+        // exact same function this loop was calling to pre-warm it (render::prepare_analysis_range,
+        // same 256-frame window, same proxy eligibility) - so by KR2 this prewarm call had become a
+        // byte-for-byte duplicate of the preparation get_scopes was about to do for itself one line
+        // later: same project, same t, same function, same cache. Removing it does not change what
+        // gets decoded, selected (proxy or original) or rendered - get_scopes' own call now does the
+        // only preparation that ever happens per sample - it only removes the duplicate work (active-
+        // clip scan, decode-cache signature building, analysis_proxy::ensure's stat+sidecar read)
+        // that duplicate call paid for nothing. Errors are unaffected: get_scopes' own prepare_at
+        // call is, and always was, what actually reports a real problem (e.g. a genuinely missing or
+        // corrupt file) to the caller. Guarded by analysis_prepare_calls_count in render_state_leak-
+        // style tests: render::ANALYSIS_PREPARE_CALLS must advance by exactly 1 per sample now, not 2.
         match &top { None => bad_at.push((t, "empty_frame".into(), None)), Some(cid) => { if let Ok(s) = call(ss, "get_scopes", &json!({"time": r3(t)})) { let l = s["luma_mean"].as_f64().unwrap_or(0.5); if l < 0.08 { bad_at.push((t, "dark_frame".into(), Some(cid.clone()))); } else if l > 0.92 { bad_at.push((t, "blown_frame".into(), Some(cid.clone()))); } } } }
         t += 0.5; }
     let mut seen = std::collections::HashSet::new();

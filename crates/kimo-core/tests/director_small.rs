@@ -452,3 +452,42 @@ fn talk_v(name: &str, dur: f64, speech: &[(f64, f64)], src: &str, vf: &str) -> S
     // the fix's real time, comfortably below the old quadratic cost - to catch a real regression, not CI noise.
     assert!(elapsed.as_secs_f64() < 9.0, "lint_edit took {:.1}s on a 60s single clip - the per-sample decode window regressed", elapsed.as_secs_f64());
 }
+
+/// KR2: lint_edit's picture-scan loop used to pre-warm the decode cache itself immediately before
+/// every get_scopes call (KP1/KQ1), then get_scopes called the exact same function again for the
+/// exact same instant - after KQ1 (fb6ddbf) made get_scopes' own call site use that same function,
+/// the pre-warm became a byte-for-byte duplicate. This pins the duplicate's removal directly (not
+/// just via timing, which is sensitive to box load): render::prepare_analysis_range must run exactly
+/// once per sampled instant, not twice. thread-local counter: see its own doc comment for why this
+/// is safe next to other tests in this binary running concurrently.
+#[test] fn lint_edit_prepares_each_picture_scan_sample_exactly_once() {
+    let mut ss = portrait();
+    let t = sid(&call(&mut ss, "add_track", json!({})), "track_id");
+    let a = sid(&call(&mut ss, "import_media", json!({"path": broll("kr2_prep.mp4", 3.0, "")})), "asset_id");
+    call(&mut ss, "add_clip", json!({"track_id": t, "source_type": "media", "asset_id": a, "start": 0, "duration": 3, "fit": "cover"}));
+    let before = kimo_core::render::analysis_prepare_call_count();
+    let r = call(&mut ss, "lint_edit", json!({"platform": "none"}));
+    let after = kimo_core::render::analysis_prepare_call_count();
+    // picture scan samples at t = 0.25, 0.75, ..., < 3.0 -> 6 samples
+    let mut expected = 0usize; let mut t = 0.25; while t < 3.0 { expected += 1; t += 0.5; }
+    assert_eq!(after - before, expected, "get_scopes' own prepare_analysis_range call is the only preparation that should run per sample now (a duplicate pre-warm call would double this): {r}");
+}
+
+/// KR2: lint_edit's dialogue-track finder (director_tools.rs `speech()`) probed each candidate track
+/// at aggressiveness 2, then - for the winning track only - called it again at aggressiveness 1 for
+/// the real intervals, paying a full ffmpeg-backed audio decode twice for the one track that matters
+/// even though nothing about the project changed between the two calls. Session::audio_decode_cache
+/// (ext/speech_intervals.rs `decode_memo`) now memoizes the decode by (target, whole-project
+/// fingerprint), so the second call is a cache hit. Pinned directly via the decode call counter, not
+/// timing (audio decode on a 6s clip is fast enough that a timing ceiling here would mostly measure
+/// process noise, not the fix).
+#[test] fn lint_edit_decodes_the_dialogue_track_audio_once_not_twice() {
+    let mut ss = Session::new(); call(&mut ss, "project_set", json!({"width": 720, "height": 1280, "fps": 30}));
+    let t = sid(&call(&mut ss, "add_track", json!({})), "track_id");
+    let a = sid(&call(&mut ss, "import_media", json!({"path": talk("kr2_speech.mp4", 6.0, &[(0.3, 2.6), (3.2, 5.6)], 1.0)})), "asset_id");
+    call(&mut ss, "add_clip", json!({"track_id": t, "source_type": "media", "asset_id": a, "start": 0, "duration": 6, "fit": "cover"}));
+    let before = kimo_core::ext::speech_intervals::speech_decode_call_count();
+    let r = call(&mut ss, "lint_edit", json!({"platform": "none"}));
+    let after = kimo_core::ext::speech_intervals::speech_decode_call_count();
+    assert_eq!(after - before, 1, "the one dialogue track's audio should decode exactly once (probe + final reuse the same PCM), not once per aggressiveness: {r}");
+}

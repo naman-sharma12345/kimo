@@ -248,7 +248,18 @@ pub fn prepare_preview_range(p:&Project,cache:&mut Cache,t0:f64,t1:f64)->Result<
 /// is a plain, non-retimed, speed==1 clip in an SDR (non-color-managed) project. Falls back to the
 /// original at the first sign of trouble, exactly like the preview proxy does. Export never calls
 /// this; it always calls prepare_export_range, which never touches a proxy.
-pub fn prepare_analysis_range(p:&Project,cache:&mut Cache,t0:f64,t1:f64)->Result<(),String>{prepare_window(p,cache,t0,t1,256,false,true)}
+/// KR2: counted PER-THREAD without a new thread-local static (the task bars adding one; this engine has
+/// a real history of thread-local render-state bugs - see tests/render_state_leak.rs). Keyed by
+/// `std::thread::current().id()` in a shared, lazily-built `Mutex<HashMap<..>>` instead: Rust's
+/// default test harness gives every `#[test]` fn its own OS thread, so this is just as immune to
+/// unrelated tests calling lint_edit / get_scopes concurrently in the same binary as a real
+/// thread-local would be, with no new thread-local storage anywhere in the engine. Pins how many
+/// times real preparation work for an analysis sample actually runs - see director_tools.rs's
+/// picture scan, which used to call this itself AND rely on get_scopes calling it again for the
+/// exact same instant.
+pub static ANALYSIS_PREPARE_CALLS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<std::thread::ThreadId, usize>>> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+pub fn analysis_prepare_call_count() -> usize { *ANALYSIS_PREPARE_CALLS.lock().unwrap().get(&std::thread::current().id()).unwrap_or(&0) }
+pub fn prepare_analysis_range(p:&Project,cache:&mut Cache,t0:f64,t1:f64)->Result<(),String>{*ANALYSIS_PREPARE_CALLS.lock().unwrap().entry(std::thread::current().id()).or_insert(0)+=1;prepare_window(p,cache,t0,t1,256,false,true)}
 impl Cache {
     pub fn proxy_assets(&self)->Vec<String>{self.proxy_clips.values().cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect()}
     pub(crate) fn proxy_variant(&self)->u128 {
