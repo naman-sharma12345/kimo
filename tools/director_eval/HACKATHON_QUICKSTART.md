@@ -113,6 +113,14 @@ small model restricted to the director tool list should do the same -- skip capt
 doc.) `lint_edit` and `export` dominate a loop that calls `lint_edit` repeatedly to converge on a
 clean edit -- budget for them.
 
+## 7. Running the tests
+
+Build and run with `--release` (e.g. `cargo build --release` / `cargo test --release -p kimo-core`).
+A plain debug-mode `cargo test -p kimo-core --test director_small` fails one test --
+`lint_edit_scans_a_long_clip_without_rescanning_from_its_start_each_sample` -- because its timing
+ceiling assumes an optimized build; `lint_edit` genuinely takes longer in debug. That failure is
+expected in a debug build, not a regression.
+
 ## Known limits
 
 - **`lint_edit`'s cost floor is engine-wide, not a picture-scan bug.** Two real speedups landed
