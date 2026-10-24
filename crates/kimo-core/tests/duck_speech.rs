@@ -27,7 +27,14 @@ fn voice(dur: f64, bursts: &[(f64, f64)], speech_db: f64, floor_db: Option<f64>)
 }
 
 fn wav(name: &str, pcm: &[f32]) -> String {
-    let p = std::env::temp_dir().join(format!("kimo-duck-{name}-{}.wav", std::process::id()));
+    // Unique per call, not just per process: `name` is only "music" or "vo{len}", and every test in
+    // this file uses an 8s duration, so all tests shared the exact same two file paths and raced on
+    // them under the default parallel test runner (one test's write landing between another's write
+    // and decode) -- the two "hold" tests reproducibly saw a sibling test's audio. A per-call counter
+    // makes each temp file path unique regardless of scheduling.
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let p = std::env::temp_dir().join(format!("kimo-duck-{name}-{}-{n}.wav", std::process::id()));
     kimo_core::audio::write_wav(p.to_str().unwrap(), pcm).unwrap(); p.to_str().unwrap().to_string()
 }
 
