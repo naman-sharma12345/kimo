@@ -162,7 +162,7 @@ impl Drop for DecodeProcess{fn drop(&mut self){let _=self.0.kill();let _=self.0.
 const WINDOW: usize = 24;
 
 /// Decode `n` frames starting at global clip frame `a` (windowed: memory stays bounded for any clip length).
-fn decode(p: &Project, c: &Clip, path: &str, a: usize, n: usize) -> Result<Frames, String> {
+fn decode(p: &Project, c: &Clip, path: &str, a: usize, n: usize, seek_base: Option<(f64, i64)>) -> Result<Frames, String> {
     let (w, h) = (p.width, p.height);
     check_decodable(path)?;
     if path.ends_with(".kimopx") {
@@ -179,14 +179,14 @@ fn decode(p: &Project, c: &Clip, path: &str, a: usize, n: usize) -> Result<Frame
       let d=crate::color::interchange::fit(&src,w as usize,h as usize,fit)?;
       return Ok(Frames{still:true,working_linear:true,quantized:Default::default(),linear_buf:Some(d),buf:vec![],fs:w as usize*h as usize*4,first:0})
     } let is_img0 = is_still_path(path); let (a, n) = if is_img0 { (0, 1) } else { (a, n) };
-    let (in_pt, speed, span) = if c.retimed() { (c.in_point, 1.0, (a+n) as f64 / p.fps) } else { (c.in_point, c.speed, (a+n) as f64 / p.fps * c.speed) };
+    let (in_pt, speed, span, a_rel) = if let Some((st, fbase)) = seek_base { let rel = (a as i64 - fbase).max(0) as usize; (st, 1.0, (rel+n) as f64 / p.fps, rel) } else if c.retimed() { (c.in_point, 1.0, (a+n) as f64 / p.fps, a) } else { (c.in_point, c.speed, (a+n) as f64 / p.fps * c.speed, a) };
     let fit = c.props.get("fit").map(|q| q.at(0.0)).unwrap_or(0.0);
     let fitf = if crate::reframe::active(c) { crate::reframe::ffmpeg_fit(c, w, h, p.fps, a, n) } else if fit >= 1.5 { format!("scale={w}:{h}") } else if fit >= 0.5 { format!("scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}") } else { format!("scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0") };
     if p.color_pipeline.enabled&&path.to_lowercase().ends_with(".exr"){crate::color::interchange::validate_exr_source(path)?;}
     let float_source=p.color_pipeline.enabled&&[".exr",".pfm"].iter().any(|ext|path.to_lowercase().ends_with(ext));
     let native_fit=float_source||(p.color_pipeline.enabled&&p.color_pipeline.linear_resample);
     let pix=if float_source{"gbrapf32le"}else if p.color_pipeline.enabled{"rgba64le"}else{"rgba"};
-    let vf = format!("setpts=PTS/{},fps={},trim=start_frame={a}:end_frame={},setpts=PTS-STARTPTS,{},format={pix}",speed.max(0.01),p.fps,a+n,fitf);
+    let vf = format!("setpts=PTS/{},fps={},trim=start_frame={a_rel}:end_frame={},setpts=PTS-STARTPTS,{},format={pix}",speed.max(0.01),p.fps,a_rel+n,fitf);
     let is_img = is_still_path(path);
     let loop_args: Vec<&str> = if is_img { vec!["-loop", "1"] } else { vec![] };
     let fs = (w * h * 4) as usize;
@@ -198,7 +198,7 @@ fn decode(p: &Project, c: &Clip, path: &str, a: usize, n: usize) -> Result<Frame
     if estimate>decode_cache_limit(){return Err("decode request exceeds bounded cache; reduce size/duration or use windowed timing".into())}
     crate::guard::reserve(estimate);
     let exr_args:Vec<&str>=if path.to_lowercase().ends_with(".exr"){vec!["-apply_trc","linear"]}else{vec![]};
-    let vf=if native_fit{format!("setpts=PTS/{},fps={},trim=start_frame={a}:end_frame={},setpts=PTS-STARTPTS,format={pix}",speed.max(0.01),p.fps,a+n)}else{vf};
+    let vf=if native_fit{format!("setpts=PTS/{},fps={},trim=start_frame={a_rel}:end_frame={},setpts=PTS-STARTPTS,format={pix}",speed.max(0.01),p.fps,a_rel+n)}else{vf};
     let mut command=Command::new("ffmpeg");command.args(["-v","error"]).args(&loop_args).args(&exr_args).args(["-ss",&format!("{in_pt}"),"-t",&format!("{span}"),"-i",path,"-vf",&vf,"-frames:v",&n.max(1).to_string(),"-f","rawvideo","-pix_fmt",pix,"-"]);
     let mut buf=Vec::new();
     let linear_buf=if native_fit{
@@ -237,11 +237,18 @@ pub fn prepare(p: &Project, cache: &mut Cache) -> Result<(), String> { prepare_a
 pub fn prepare_at(p: &Project, cache: &mut Cache, t: Option<f64>) -> Result<(), String> { match t { Some(t) => prepare_range(p, cache, t, t), None => prepare_range(p, cache, f64::MIN, f64::MAX) } }
 
 /// Decode clips overlapping [t0, t1] and evict decoded clips outside it (bounds memory).
-pub fn prepare_range(p: &Project, cache: &mut Cache, t0: f64, t1: f64) -> Result<(), String> {prepare_window(p,cache,t0,t1,WINDOW,false)}
+pub fn prepare_range(p: &Project, cache: &mut Cache, t0: f64, t1: f64) -> Result<(), String> {prepare_window(p,cache,t0,t1,WINDOW,false,false)}
 /// Export-only bounded lookahead amortizes stable prefix decode without changing fps phase.
-pub fn prepare_export_range(p:&Project,cache:&mut Cache,t0:f64,t1:f64)->Result<(),String>{prepare_window(p,cache,t0,t1,256,false)}
+pub fn prepare_export_range(p:&Project,cache:&mut Cache,t0:f64,t1:f64)->Result<(),String>{prepare_window(p,cache,t0,t1,256,false,false)}
 /// Explicit editing preview. Ordinary preparation and export always select originals.
-pub fn prepare_preview_range(p:&Project,cache:&mut Cache,t0:f64,t1:f64)->Result<(),String>{prepare_window(p,cache,t0,t1,WINDOW,true)}
+pub fn prepare_preview_range(p:&Project,cache:&mut Cache,t0:f64,t1:f64)->Result<(),String>{prepare_window(p,cache,t0,t1,WINDOW,true,false)}
+/// Random-access analysis (get_scopes/lint_edit's picture scan and friends): a big (export-sized)
+/// lookahead window, same as prepare_export_range, plus permission to use a cached short-GOP
+/// analysis proxy (analysis_proxy.rs) with a near-keyframe seek when one is available and the clip
+/// is a plain, non-retimed, speed==1 clip in an SDR (non-color-managed) project. Falls back to the
+/// original at the first sign of trouble, exactly like the preview proxy does. Export never calls
+/// this; it always calls prepare_export_range, which never touches a proxy.
+pub fn prepare_analysis_range(p:&Project,cache:&mut Cache,t0:f64,t1:f64)->Result<(),String>{prepare_window(p,cache,t0,t1,256,false,true)}
 impl Cache {
     pub fn proxy_assets(&self)->Vec<String>{self.proxy_clips.values().cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect()}
     pub(crate) fn proxy_variant(&self)->u128 {
@@ -251,7 +258,7 @@ impl Cache {
         ((h.finish() as u128)<<64)|0x70726f78795f7631
     }
 }
-fn prepare_window(p: &Project, cache: &mut Cache, t0: f64, t1: f64, window:usize, preview:bool) -> Result<(), String> {
+fn prepare_window(p: &Project, cache: &mut Cache, t0: f64, t1: f64, window:usize, preview:bool, analysis:bool) -> Result<(), String> {
     cache.proxy_clips.clear();
     if !t0.is_finite()||!t1.is_finite()||t1<t0{return Err("decode range requires finite ordered times".into())}
     if cache.size != (p.width, p.height, p.fps) { cache.frames.clear(); cache.code.clear(); cache.size = (p.width, p.height, p.fps); }
@@ -287,14 +294,19 @@ fn prepare_window(p: &Project, cache: &mut Cache, t0: f64, t1: f64, window:usize
         if !all { let nf = c.props.get("stab_fill").map(|q| q.at(0.0)).unwrap_or(0.0); if nf >= 1.0 { let nf = nf.min(30.0) as usize; ia = ia.saturating_sub(nf); ib = (ib + nf).min(total - 1); } }
         let a = p.assets.get(asset).ok_or(format!("asset {asset} missing"))?;
         let original_path=p.resolve(&a.path);
-        let mut selected=if preview {crate::proxy::preview_path(p,asset)}else{None};
+        let preview_path=if preview {crate::proxy::preview_path(p,asset)}else{None};
+        let analysis_eligible = analysis && preview_path.is_none() && !p.color_pipeline.enabled && c.speed==1.0 && !c.retimed();
+        let analysis_proxy = if analysis_eligible { crate::analysis_proxy::ensure(p, asset, &original_path) } else { None };
+        let mut selected = preview_path.or_else(|| analysis_proxy.as_ref().map(|ap| ap.path.clone()));
         let mut apath=selected.clone().unwrap_or_else(||original_path.clone());
         let stat=match std::fs::metadata(&apath) {
             Ok(stat)=>stat,
             Err(_) if selected.is_some()=>{selected=None;apath=original_path.clone();std::fs::metadata(&apath).map_err(|e|format!("media stat: {e}"))?},
             Err(e)=>return Err(format!("media stat: {e}")),
         };
-        if selected.is_some(){cache.proxy_clips.insert(c.id.clone(),asset.clone());}
+        let using_preview_proxy = selected.is_some() && preview;
+        let using_analysis_proxy = selected.is_some() && !using_preview_proxy;
+        if using_preview_proxy{cache.proxy_clips.insert(c.id.clone(),asset.clone());}
         let sig = format!("{asset}|{}|{}|{}|{:?}|{:?}|{:?}|{:?}|{:?}|{}|{}|{:?}", c.in_point, c.duration, c.speed, c.speed_curve.as_ref().map(|p| serde_json::to_string(p).unwrap_or_default()), p.color_pipeline,c.props.get("input_gamut"),c.props.get("input_transfer"),c.props.get("fit"),apath,stat.len(),stat.modified().ok());
         let sig = if crate::reframe::active(c) { format!("{sig}|reframe|{}", crate::reframe::sig(c)) } else { sig };
         let sig = match &c.time_remap { Some(r) => format!("{sig}|remap|{}|{}", serde_json::to_string(&r.curve).unwrap_or_default(), r.offset), None => sig };
@@ -307,10 +319,11 @@ fn prepare_window(p: &Project, cache: &mut Cache, t0: f64, t1: f64, window:usize
         let mut count=count;
         if !all{let native=p.color_pipeline.enabled&&p.color_pipeline.linear_resample;let pixels=if native{let(dw,dh,_,_)=probe(&apath)?;(dw as usize*dh as usize).max(p.width as usize*p.height as usize)}else{p.width as usize*p.height as usize};let per=pixels*4*if p.color_pipeline.enabled{8}else{1};count=count.min((decode_cache_limit()/media_count/per.max(1)).max(1));if count<ib-ia+1{return Err("active decode range exceeds cache budget".into())}}
         cache.frames.remove(&c.id);
-        let (fr,sig) = match decode(p,c,&apath,start,count) {
-            Ok(fr) if selected.is_some() && !fr.covers(ia,ib)=>{cache.proxy_clips.remove(&c.id);(decode(p,c,&original_path,start,count)?,format!("{sig}|original-fallback"))},
+        let seek_base = if using_analysis_proxy { analysis_proxy.as_ref().and_then(|ap| crate::analysis_proxy::seek_base_for(ap, c, start)) } else { None };
+        let (fr,sig) = match decode(p,c,&apath,start,count,seek_base) {
+            Ok(fr) if selected.is_some() && !fr.covers(ia,ib)=>{if using_preview_proxy{cache.proxy_clips.remove(&c.id);}(decode(p,c,&original_path,start,count,None)?,format!("{sig}|original-fallback"))},
             Ok(fr)=>(fr,sig),
-            Err(_) if selected.is_some()=>{cache.proxy_clips.remove(&c.id);(decode(p,c,&original_path,start,count)?,format!("{sig}|original-fallback"))},
+            Err(_) if selected.is_some()=>{if using_preview_proxy{cache.proxy_clips.remove(&c.id);}(decode(p,c,&original_path,start,count,None)?,format!("{sig}|original-fallback"))},
             Err(e)=>return Err(e),
         };
         if c.retimed()&&!fr.covers(ia,ib){return Err(format!("{} overrun for clip '{}': requested source frames {ia}..={ib}, decoded {} frame(s) starting at {}; shorten the ramp/clip or choose media with enough source duration",if c.time_remap.is_some(){"time remap"}else{"speed ramp"},c.id,fr.len(),fr.first))}

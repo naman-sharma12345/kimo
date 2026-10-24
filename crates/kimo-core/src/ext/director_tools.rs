@@ -614,7 +614,15 @@ fn lint_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
         // numbers (and lint_edit's findings) are unchanged; only the decode call count drops. Errors
         // here are ignored: get_scopes' own prepare_at still runs right after and is what actually
         // reports a real problem (e.g. a genuinely missing/corrupt file) to the caller, unchanged.
-        if top.is_some() { let _ = crate::render::prepare_export_range(&ss.project, &mut ss.cache, t, t); }
+        // Perf (KQ1): on top of that pre-warm, this call may also now decode from a cached, lazily
+        // built, short-GOP analysis proxy (analysis_proxy.rs) instead of the original file, when the
+        // original's own keyframes are sparse (phone footage is often one keyframe every several
+        // seconds) - seeking to the proxy's nearest keyframe bounds the decode-and-discard cost by
+        // the proxy's GOP instead of by how deep into the clip this sample sits. Export never sees
+        // this proxy (prepare_export_range never builds or selects one); get_scopes still measures
+        // the same composited frame content, just decoded from a different, visually near-lossless
+        // file, with an automatic fallback to the original on any mismatch or failure.
+        if top.is_some() { let _ = crate::render::prepare_analysis_range(&ss.project, &mut ss.cache, t, t); }
         match &top { None => bad_at.push((t, "empty_frame".into(), None)), Some(cid) => { if let Ok(s) = call(ss, "get_scopes", &json!({"time": r3(t)})) { let l = s["luma_mean"].as_f64().unwrap_or(0.5); if l < 0.08 { bad_at.push((t, "dark_frame".into(), Some(cid.clone()))); } else if l > 0.92 { bad_at.push((t, "blown_frame".into(), Some(cid.clone()))); } } } }
         t += 0.5; }
     let mut seen = std::collections::HashSet::new();

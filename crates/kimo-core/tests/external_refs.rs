@@ -103,6 +103,7 @@ fn unregistered_path_fields_fail() {
         ("proxy.rs", "path", "REF Project.proxies.entries[].path; optional preview dependency"), ("deps.rs", "path", "OUTPUT: ExtRef.path / Resolved.path"), ("ext/auto_captions.rs", "path", "OUTPUT: Src.path, a clip's media path already resolved through deps, held for one call"), ("deps.rs", "rel_path", "OUTPUT: DepRecord.rel_path, informational"), ("text.rs", "font_file", "OUTPUT: TextMetrics.font_file, the font file a measurement resolved to, informational"), ("model.rs", "src", "NOT A FILE: OccSpec.src is a clip id"), ("codeclip.rs", "dir", "REF Source::Code dir (code clip project folder, a directory)"), ("planar.rs", "src", "NOT A FILE: Anchor.src is a clip id (runtime, not serialized in the project)"),
         ("color/bake.rs", "path", "NOT A PROJECT FIELD: bake step input, per call"), ("color/bake.rs", "config_path", "NOT A PROJECT FIELD: bake step input, per call"),
         ("color/mux.rs", "dir", "NOT A PROJECT FIELD: temp transaction dir"), ("audio.rs", "path", "NOT A PROJECT FIELD: temp wav"), ("commands.rs", "path", "OUTPUT: Media.path, an image a tool call produced (cleared every dispatch), not stored in the project"),
+        ("analysis_proxy.rs", "path", "OUTPUT: AnalysisProxy.path, a cached short-GOP analysis proxy file path (keyed by source path+size+mtime+fps), not stored in the project; analysis decode only, never export"),
     ];
     let reg_keys: &[(&str, &str)] = &[("aux_path", "REF pixel_expr/displace map resolved through deps"), ("path", "REF lut effect"), ("config_path", "REF OCIO config on any effect"), ("dir", "REF matte store on mask layers"), ("cube_text", "inline, not a file"), ("d", "SVG path data, not a file"), ("profile", "inline table"), ("mask_layer", "layer id")];
     let looks = |n: &str| { n == "path" || n == "file" || n == "src" || n == "lut" || n == "font" || n == "texture" || n == "occlusion" || n == "font_file" || n.ends_with("_path") || n.ends_with("_file") || n.ends_with("_dir") || n == "dir" };
@@ -139,6 +140,7 @@ fn unregistered_path_fields_fail() {
 fn open_sites_are_classified() {
     const SITES: &[(&str, usize, &str)] = &[
         ("proxy.rs", 3, "PROJECT-DERIVED: original and proxy paths resolved by Project::resolve before fingerprint/probe/transcode; output path resolved against project base"),
+        ("analysis_proxy.rs", 3, "PROJECT-DERIVED: the source asset path resolved by Project::resolve before ffprobe keyframe-gap check / ffmpeg transcode / cache-sidecar read; output proxy path is cache-local, never stored in the project"),
         ("audio.rs", 7, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),
         ("codeclip.rs", 7, "3 PROJECT-DERIVED, under resolve_dir (Source::Code.dir resolved through deps): kimo.json, the folder walk and hash; 4 temp: the frame cache, the renderer's output frames and logs"),
         ("color/adjust_v2_proof.rs", 2, "caller path (tool argument / output / temp file / test), not stored in the project"),
