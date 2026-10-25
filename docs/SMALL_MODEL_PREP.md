@@ -65,8 +65,11 @@ subject, a weak hook.
    `add_smart_punch`'s saliency map) and suggests a new `y`. Limit: it only checks the single strongest subject in
    frame, so a hard-edged object can still be missed.
 5. Done: filler-word trim. The new `trim_filler_words(clip_id, spans?, words?, pad?)` tool (in the `timeline` group,
-   not yet on the director-mode list) ripple-deletes flagged word spans from a clip's own footage. It does not retime
-   captions already on the timeline -- run `auto_captions` after trimming, not before.
+   not yet on the director-mode list) ripple-deletes flagged word spans from a clip's own footage. It now retimes
+   caption/text clips `auto_captions` built from that clip's own words too (`retime_captions`, default true): deletes
+   any entirely inside a removed span, trims one straddling a cut, shifts ones after it left to close the gap --
+   `auto_captions` no longer needs to be re-run after trimming. Pass `retime_captions: false` for the old (untouched,
+   drifting) behaviour.
 
 ## Running it
 

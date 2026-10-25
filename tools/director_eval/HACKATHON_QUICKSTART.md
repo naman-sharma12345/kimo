@@ -26,7 +26,7 @@ director mode exists and what it fixed.
   {"name": "trim_filler_words", "arguments": {"clip_id": "clip2", "spans": [{"start": 4.1, "end": 4.6}], "pad": 0.05}}
   ```
 
-  **Run `auto_captions` after trimming, not before:** captions already on the timeline are not retimed when you cut words out from under them.
+  **Captions now retime automatically.** If you've already run `auto_captions`, cutting filler words with `trim_filler_words` deletes any caption entirely inside a removed span, trims one straddling a cut, and shifts ones after it left to close the gap -- no need to re-run `auto_captions` after. Pass `"retime_captions": false` to get the old behaviour (captions untouched, drifting out of sync) if you want it.
 
 ## 1. Build kimo-mcp
 

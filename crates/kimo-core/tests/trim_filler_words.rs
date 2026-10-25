@@ -214,3 +214,211 @@ fn locked_track_is_rejected() {
     call(&mut ss, "set_track", json!({"track_id": track, "locked": true}));
     call_err(&mut ss, "trim_filler_words", json!({"clip_id": c1, "spans": [{"start": 1.0, "end": 1.2}]}));
 }
+
+
+// --- Caption retiming (retime_captions, default true) -------------------------------------------------------------
+//
+// Minimal, direct fixtures: a real `Transcript`/`Take` bound to c1 (so the production linkage code -- take whose
+// source.clip_id is c1, then its words by id -- has something real to walk), plus caption clips built by hand on
+// their own track with a `CueBinding` naming one of those words, exactly the (clip, cue_words) pair
+// ext/auto_captions.rs's `build()` inserts. Caption clip start/duration are the only thing the retiming math reads;
+// word times only matter for linkage, so they are kept trivial.
+use kimo_core::{
+    editorial::CaptionGroup,
+    model::{Audio, Clip, TimeMode},
+    transcript::CueBinding,
+};
+
+/// Binds a transcript take (id "take1") to `clip_id`, with one word per `word_ids` entry (content/timing irrelevant
+/// to retiming -- only the word *id* and its take_id matter for linkage).
+fn bind_transcript(ss: &mut Session, clip_id: &str, word_ids: &[&str]) {
+    let words = word_ids
+        .iter()
+        .enumerate()
+        .map(|(i, wid)| Word::new(wid, "take1", "w", i as f64, i as f64 + 0.2, Some(1.0)))
+        .collect();
+    let take = Take {
+        id: "take1".into(),
+        source: TakeSource { asset_id: None, clip_id: Some(clip_id.to_string()), path_key: None },
+        src_start: 0.0,
+        src_end: 100.0,
+        timeline_start: Some(0.0),
+        speed: 1.0,
+        order: 0,
+        status: TakeStatus::Chosen,
+        note: String::new(),
+    };
+    let tr = Transcript { id: "tr1".into(), name: "t".into(), language: "en".into(), takes: vec![take], words, version: 1, ..Default::default() };
+    ss.project.editorial.transcripts.insert("tr1".into(), tr);
+}
+
+fn text_clip(ss: &mut Session, start: f64, dur: f64, text: &str) -> Clip {
+    Clip {
+        id: ss.project.gen_id("clip"),
+        source: Source::Text { text: text.into(), font: "Inter".into(), size: 20.0, color: [1.0, 1.0, 1.0], letter_spacing: 0.0, stroke_width: 0.0, stroke_color: [0.0, 0.0, 0.0], shadow: 0.0, align: "center".into() },
+        start,
+        duration: dur,
+        in_point: 0.0,
+        speed: 1.0,
+        speed_curve: None,
+        time_remap: None,
+        speed_blend: Default::default(),
+        props: kimo_core::model::default_props(),
+        grade_graph: None,
+        effects: vec![],
+        blend: "normal".into(),
+        mask: None,
+        time_mode: TimeMode::Normal,
+        corners: None,
+        audio: Audio::default(),
+        motion_blur: 0.0,
+        echo: None,
+        motion_path: None,
+        posterize_fps: 0.0,
+        text_fx: None,
+        parent: None,
+        inherit: Default::default(),
+        name: None,
+        role: None,
+        tags: vec!["auto_captions".into()],
+        transition_in: None,
+    }
+}
+
+/// Adds a caption clip on a "Captions" track at `start..start+dur`, bound (via cue_words) to `word_id` of the
+/// transcript `bind_transcript` set up -- the exact (clip, CueBinding) pair auto_captions' `build()` inserts.
+/// Returns the clip id. Also registers/extends one CaptionGroup ("cap1") so group bookkeeping is realistic.
+fn add_linked_caption(ss: &mut Session, captions_track: &str, start: f64, dur: f64, word_id: &str) -> String {
+    let clip = text_clip(ss, start, dur, "um");
+    let id = clip.id.clone();
+    ss.project.tracks.iter_mut().find(|t| t.id == captions_track).unwrap().clips.push(std::sync::Arc::new(clip));
+    ss.project.editorial.cue_words.insert(id.clone(), CueBinding { word_ids: vec![word_id.into()], breaks_after: vec![] });
+    ss.project
+        .editorial
+        .captions
+        .entry("cap1".into())
+        .or_insert_with(|| CaptionGroup { track_id: captions_track.into(), clips: vec![], style: "auto_pop".into(), burn_in: true, transcript_id: Some("tr1".into()) })
+        .clips
+        .push(id.clone());
+    id
+}
+
+/// An unlinked ("unrelated") title clip on the same track: real text clip, no cue_words entry at all -- exactly a
+/// manually added title, not anything auto_captions ever built.
+fn add_unrelated_title(ss: &mut Session, track_id: &str, start: f64, dur: f64) -> String {
+    let clip = text_clip(ss, start, dur, "SALE TODAY");
+    let id = clip.id.clone();
+    ss.project.tracks.iter_mut().find(|t| t.id == track_id).unwrap().clips.push(std::sync::Arc::new(clip));
+    id
+}
+
+fn add_captions_track(ss: &mut Session) -> String {
+    call(ss, "add_track", json!({}))["track_id"].as_str().unwrap().to_string()
+}
+
+fn clip_window<'a>(cs: &'a [Value], id: &str) -> (f64, f64) {
+    let c = clip_by_id(cs, id);
+    (c["start"].as_f64().unwrap(), c["duration"].as_f64().unwrap())
+}
+
+fn clip_exists(cs: &[Value], id: &str) -> bool {
+    cs.iter().any(|c| c["id"] == id)
+}
+
+/// THE failing-first retiming test: four linked captions placed before / straddling the left edge / entirely inside
+/// / after a single removed span, plus one unrelated title clip spanning the whole range. After the trim: the
+/// before-caption is untouched, the straddling one is trimmed to its surviving (pre-cut) portion, the inside one is
+/// deleted, the after one shifts left by exactly the removed width, and the title is bit-for-bit untouched. No
+/// surviving caption extends past its (new, shorter) media clip.
+#[test]
+fn captions_before_inside_straddling_and_after_a_span_retime_correctly() {
+    let (mut ss, _track, c1, _c2) = fixture(10.0);
+    bind_transcript(&mut ss, &c1, &["w1", "w2", "w3", "w4"]);
+    let cap_track = add_captions_track(&mut ss);
+
+    // removed span (source time 4.0..4.3, pad 0.1) -> timeline removed range is [3.9, 4.4)
+    let before = add_linked_caption(&mut ss, &cap_track, 1.0, 0.8, "w1"); // 1.0..1.8, fully before
+    let straddle = add_linked_caption(&mut ss, &cap_track, 3.5, 0.8, "w2"); // 3.5..4.3, straddles the left edge
+    let inside = add_linked_caption(&mut ss, &cap_track, 3.95, 0.3, "w3"); // 3.95..4.25, fully inside
+    let after = add_linked_caption(&mut ss, &cap_track, 5.0, 1.0, "w4"); // 5.0..6.0, fully after
+    let title = add_unrelated_title(&mut ss, &cap_track, 0.0, 10.0); // spans everything, never linked
+
+    let r = call(&mut ss, "trim_filler_words", json!({"clip_id": c1, "spans": [{"start": 4.0, "end": 4.3}], "pad": 0.1}));
+    let removed_width = (4.3 - 4.0) + 2.0 * 0.1; // 0.5, removed range [3.9, 4.4)
+    assert!((r["removed_seconds"].as_f64().unwrap() - removed_width).abs() < 1e-9);
+    assert_eq!(r["captions_removed"], 1, "the fully-inside caption must be deleted");
+    assert_eq!(r["captions_trimmed"], 1, "the straddling caption must be trimmed");
+    assert_eq!(r["captions_shifted"], 1, "the after caption must shift");
+    assert_eq!(r["retime_captions"], true);
+
+    let cs = clips(&ss);
+
+    let (bs, bd) = clip_window(&cs, &before);
+    assert!((bs - 1.0).abs() < 1e-9 && (bd - 0.8).abs() < 1e-9, "before the cut: untouched, got {bs}..+{bd}");
+
+    let (ss_, sd) = clip_window(&cs, &straddle);
+    assert!((ss_ - 3.5).abs() < 1e-9, "straddling caption keeps its start (before the cut): got {ss_}");
+    assert!((sd - (3.9 - 3.5)).abs() < 1e-9, "straddling caption trimmed to its surviving pre-cut portion: got duration {sd}");
+    assert!(ss_ + sd <= 3.9 + 1e-9, "straddling caption must not extend into the removed range");
+
+    assert!(!clip_exists(&cs, &inside), "the fully-inside caption must be gone");
+
+    let (as_, ad) = clip_window(&cs, &after);
+    assert!((as_ - (5.0 - removed_width)).abs() < 1e-9, "after caption shifted left by the removed width: got {as_}");
+    assert!((ad - 1.0).abs() < 1e-9, "after caption's own duration is unchanged");
+
+    let (ts, td) = clip_window(&cs, &title);
+    assert!((ts - 0.0).abs() < 1e-9 && (td - 10.0).abs() < 1e-9, "unrelated title clip must be bit-for-bit untouched");
+
+    // no surviving caption extends past the clip's own new (shrunk) end
+    let new_media_end: f64 = r["clip_ids"].as_array().unwrap().iter().map(|v| {
+        let (s, d) = clip_window(&cs, v.as_str().unwrap());
+        s + d
+    }).fold(0.0, f64::max);
+    for id in [&before, &straddle, &after] {
+        let (s, d) = clip_window(&cs, id);
+        assert!(s + d <= new_media_end + 1e-6, "caption {id} ({s}..+{d}) must not extend past the media's new end {new_media_end}");
+    }
+}
+
+/// retime_captions:false reproduces the OLD (pre-fix) behaviour exactly: captions are not even looked at, so a
+/// caption that was straddling/inside/after the cut stays exactly where it was -- the documented opt-out.
+#[test]
+fn retime_captions_false_is_the_old_behaviour_captions_untouched() {
+    let (mut ss, _track, c1, _c2) = fixture(10.0);
+    bind_transcript(&mut ss, &c1, &["w1"]);
+    let cap_track = add_captions_track(&mut ss);
+    let after = add_linked_caption(&mut ss, &cap_track, 5.0, 1.0, "w1");
+
+    let r = call(&mut ss, "trim_filler_words", json!({"clip_id": c1, "spans": [{"start": 4.0, "end": 4.3}], "pad": 0.1, "retime_captions": false}));
+    assert_eq!(r["captions_shifted"], 0);
+    assert_eq!(r["captions_trimmed"], 0);
+    assert_eq!(r["captions_removed"], 0);
+    assert_eq!(r["retime_captions"], false);
+
+    let cs = clips(&ss);
+    let (as_, ad) = clip_window(&cs, &after);
+    assert!((as_ - 5.0).abs() < 1e-9, "with retime_captions:false the caption must stay exactly where it was");
+    assert!((ad - 1.0).abs() < 1e-9);
+}
+
+/// A caption clip that is never bound via cue_words (no auto_captions lineage at all) is left alone even when it's
+/// linked to nothing and the clip being trimmed has captions elsewhere -- belt-and-suspenders on top of the mixed
+/// fixture above, with retime_captions left at its true default (not passed).
+#[test]
+fn unlinked_title_clip_default_retime_still_leaves_it_untouched() {
+    let (mut ss, _track, c1, _c2) = fixture(6.0);
+    bind_transcript(&mut ss, &c1, &["w1"]);
+    let cap_track = add_captions_track(&mut ss);
+    let linked = add_linked_caption(&mut ss, &cap_track, 4.0, 1.0, "w1");
+    let title = add_unrelated_title(&mut ss, &cap_track, 0.5, 1.0);
+
+    call(&mut ss, "trim_filler_words", json!({"clip_id": c1, "spans": [{"start": 1.0, "end": 1.2}], "pad": 0.0}));
+
+    let cs = clips(&ss);
+    let (ts, td) = clip_window(&cs, &title);
+    assert!((ts - 0.5).abs() < 1e-9 && (td - 1.0).abs() < 1e-9, "unlinked title must not move even though retime_captions defaulted on");
+    // sanity: the linked one, positioned after the (tiny, unpadded) cut, did shift
+    let (ls, _ld) = clip_window(&cs, &linked);
+    assert!((ls - (4.0 - 0.2)).abs() < 1e-9, "linked caption after the cut should have shifted by the removed 0.2s");
+}

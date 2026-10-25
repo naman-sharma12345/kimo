@@ -12,8 +12,19 @@
 //! auto_captions/transcript words already use for `Word::src_start` / `Word::src_end` (see ext/auto_captions.rs,
 //! where recognition runs on audio extracted starting at the clip's in_point) -- not absolute source-file time and
 //! not timeline time.
+//!
+//! Caption retiming (retime_captions, default true): auto_captions lays its caption/text pages on their OWN track,
+//! bound back to the media clip only through the transcript -- a `Take` whose `source.clip_id` is this clip, and a
+//! `CueBinding` (ss.project.editorial.cue_words) naming which of that take's transcript words each caption clip was
+//! built from (see ext/auto_captions.rs's `build`, which inserts exactly that pair). Because captions live on a
+//! different track, `lift_range` (which only ripples the ONE track_id it's given) never moves or shrinks them, so
+//! before this a cut left captions drifting (a real-clip check: 17.267s -> 16.292s clip, captions still running to
+//! 17.2s). We find the words bound to this clip's take(s), then every caption clip whose CueBinding references one
+//! of those words, and remap each one's own `start`/`start+duration` through the same removed ranges `lift_range`
+//! was given -- the same ripple math, computed directly since lift_range itself never touches the captions track.
 use super::kit::*;
 use crate::model::{Clip, Project, Source, TimeMode};
+use std::collections::HashSet;
 
 const EPS: f64 = 1e-6;
 const DEFAULT_PAD: f64 = 0.045;
@@ -31,6 +42,14 @@ fn loc(p: &Project, id: &str) -> Result<(usize, usize), String> {
 /// plain (no remap, no speed ramp) case this tool requires.
 fn to_timeline(c: &Clip, src_t: f64) -> f64 {
     c.start + src_t / c.speed
+}
+
+fn bool_arg(a: &Value, k: &str, default: bool) -> Result<bool, String> {
+    match a.get(k) {
+        None | Some(Value::Null) => Ok(default),
+        Some(Value::Bool(b)) => Ok(*b),
+        _ => Err(format!("{k} must be a boolean")),
+    }
 }
 
 /// Spans for words matching `words` (case-insensitive, punctuation-trimmed) from any transcript take bound to this
@@ -72,10 +91,131 @@ fn words_from_transcript(ss: &Session, clip_id: &str, words: &[String]) -> Vec<(
     out
 }
 
+/// Maps a timeline time through a sorted, non-overlapping set of removed `[start, end)` ranges: a time inside a
+/// removed range collapses onto the range's own start; a time at or after a range's end shifts left by that range's
+/// width. This is exactly `lift_range`'s own ripple math, applied directly to a clip that lives on a track
+/// `lift_range` was never asked to touch (captions have their own track) rather than by calling it.
+fn remap_time(t: f64, removed: &[(f64, f64)]) -> f64 {
+    let mut shift = 0.0;
+    for &(rst, ren) in removed {
+        if t <= rst + EPS {
+            break;
+        }
+        if t >= ren - EPS {
+            shift += ren - rst;
+        } else {
+            shift += t - rst;
+            break;
+        }
+    }
+    (t - shift).max(0.0)
+}
+
+#[derive(Default, Clone, Copy)]
+struct CaptionRetime {
+    shifted: usize,
+    trimmed: usize,
+    removed: usize,
+}
+
+/// Retimes caption/text clips that auto_captions built from THIS media clip's own speech. Linkage: any transcript
+/// take whose `source.clip_id` is this clip -> that take's words (by id) -> any caption clip whose `CueBinding`
+/// (editorial.cue_words) names one of those word ids. A caption built from more than one clip's words (two takes
+/// merged onto one shared page) counts as linked here too -- only its position changes, by the ranges removed from
+/// THIS clip; it is still checked again, independently, if the other clip is trimmed in its own call. A caption
+/// clip never bound to this clip_id (a manually added title, or any clip auto_captions never touched) is never
+/// found by this lookup and so is never touched -- the one, documented exception a caption-linked title could ever
+/// hit is exactly that: not linked, not touched.
+///
+/// Per removed range (already the padded, clamped, merged, ascending timeline ranges `lift_range` was called with):
+/// a caption entirely inside it is deleted (and unlinked: dropped from cue_words and from its CaptionGroup's own
+/// clip list); one entirely after it shifts left by the removed width; one straddling a cut (on either edge, or
+/// spanning a cut in its middle) is trimmed to its surviving span. `remap_time` applied to both the clip's start and
+/// its end reproduces all three cases (and shift+trim together) without needing to special-case them.
+fn retime_linked_captions(ss: &mut Session, media_clip_id: &str, removed: &[(f64, f64)]) -> CaptionRetime {
+    let mut stats = CaptionRetime::default();
+    if removed.is_empty() {
+        return stats;
+    }
+
+    let mut linked_word_ids: HashSet<String> = HashSet::new();
+    for tr in ss.project.editorial.transcripts.values() {
+        let take_ids: HashSet<&str> = tr
+            .takes
+            .iter()
+            .filter(|t| t.source.clip_id.as_deref() == Some(media_clip_id))
+            .map(|t| t.id.as_str())
+            .collect();
+        if take_ids.is_empty() {
+            continue;
+        }
+        for w in &tr.words {
+            if take_ids.contains(w.take_id.as_str()) {
+                linked_word_ids.insert(w.id.clone());
+            }
+        }
+    }
+    if linked_word_ids.is_empty() {
+        return stats; // no captions were ever built from this clip's speech
+    }
+
+    let linked_clip_ids: Vec<String> = ss
+        .project
+        .editorial
+        .cue_words
+        .iter()
+        .filter(|(_, b)| b.word_ids.iter().any(|w| linked_word_ids.contains(w)))
+        .map(|(cid, _)| cid.clone())
+        .collect();
+    if linked_clip_ids.is_empty() {
+        return stats;
+    }
+
+    let mut to_delete: Vec<String> = vec![];
+    for cid in &linked_clip_ids {
+        let Some(c) = ss.project.find_clip(cid) else { continue };
+        let (old_start, old_dur) = (c.start, c.duration);
+        let new_start = remap_time(old_start, removed);
+        let new_end = remap_time(old_start + old_dur, removed);
+        let new_dur = (new_end - new_start).max(0.0);
+
+        if new_dur <= EPS {
+            to_delete.push(cid.clone());
+            stats.removed += 1;
+            continue;
+        }
+        let start_moved = (new_start - old_start).abs() > EPS;
+        let dur_changed = (new_dur - old_dur).abs() > EPS;
+        if dur_changed {
+            stats.trimmed += 1;
+        } else if start_moved {
+            stats.shifted += 1;
+        }
+        if start_moved || dur_changed {
+            if let Some(cm) = ss.project.find_clip_mut(cid) {
+                cm.start = new_start;
+                cm.duration = new_dur;
+            }
+        }
+    }
+
+    for cid in &to_delete {
+        for t in ss.project.tracks.iter_mut() {
+            t.clips.retain(|c| &c.id != cid);
+        }
+        ss.project.editorial.cue_words.remove(cid);
+        for g in ss.project.editorial.captions.values_mut() {
+            g.clips.retain(|c| c != cid);
+        }
+    }
+
+    stats
+}
+
 pub fn commands() -> Vec<Command> {
     vec![Command {
         name: "trim_filler_words",
-        description: "Ripple-delete flagged word spans (e.g. filler words) from one media clip's own footage on the timeline, reusing lift_range; later clips on the track shift left to close each gap.",
+        description: "Ripple-delete flagged word spans (e.g. filler words) from one media clip's own footage on the timeline, reusing lift_range; later clips on the track shift left to close each gap. Caption/text clips auto_captions built from this clip's own words are retimed to match (retime_captions, default true): deleted if entirely inside a removed span, trimmed if straddling a cut, shifted left if after it.",
         mutates: true,
         schema: obj(
             vec![
@@ -91,6 +231,10 @@ pub fn commands() -> Vec<Command> {
                 (
                     "pad",
                     n("padding seconds added on each side of every dropped span before merging, clamped so spans never run past this clip's own bounds (default 0.045)"),
+                ),
+                (
+                    "retime_captions",
+                    json!({"type":"boolean","description":"also retime caption/text clips auto_captions built from this clip's own words, so they stay in sync with the cut: delete any entirely inside a removed span, trim any straddling a cut, shift any after it left by the removed width. A caption never bound to this clip (a manual title) is never touched. Default true."}),
                 ),
             ],
             &["clip_id"],
@@ -120,6 +264,7 @@ pub fn commands() -> Vec<Command> {
             if !pad.is_finite() || pad < 0.0 {
                 return Err("pad must be a finite number >= 0".into());
             }
+            let retime_captions = bool_arg(a, "retime_captions", true)?;
 
             let mut raw_spans: Vec<(f64, f64)> = vec![];
             if let Some(arr) = a.get("spans").and_then(|v| v.as_array()) {
@@ -144,7 +289,7 @@ pub fn commands() -> Vec<Command> {
             }
 
             if raw_spans.is_empty() {
-                return Ok(json!({"clip_id": clip_id, "clip_ids": [clip_id], "removed_seconds": 0.0, "removed_spans": 0, "words_matched": words_matched, "dropped_spans": []}));
+                return Ok(json!({"clip_id": clip_id, "clip_ids": [clip_id], "removed_seconds": 0.0, "removed_spans": 0, "words_matched": words_matched, "dropped_spans": [], "retime_captions": retime_captions, "captions_shifted": 0, "captions_trimmed": 0, "captions_removed": 0}));
             }
 
             // this clip's own source window, 0-based at in_point (matches auto_captions' coordinate convention)
@@ -169,7 +314,7 @@ pub fn commands() -> Vec<Command> {
                 tl_spans.push((tst, ten));
             }
             if tl_spans.is_empty() {
-                return Ok(json!({"clip_id": clip_id, "clip_ids": [clip_id], "removed_seconds": 0.0, "removed_spans": 0, "words_matched": words_matched, "dropped_spans": dropped}));
+                return Ok(json!({"clip_id": clip_id, "clip_ids": [clip_id], "removed_seconds": 0.0, "removed_spans": 0, "words_matched": words_matched, "dropped_spans": dropped, "retime_captions": retime_captions, "captions_shifted": 0, "captions_trimmed": 0, "captions_removed": 0}));
             }
             tl_spans.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
             let mut merged: Vec<(f64, f64)> = vec![];
@@ -199,6 +344,11 @@ pub fn commands() -> Vec<Command> {
                 crate::commands::dispatch(ss, "lift_range", &json!({"track_id": track_id, "start": st, "end": en, "extract": true}))?;
             }
 
+            // Captions live on their own track, which the lift_range calls above never touched -- `merged` is the
+            // exact same set of (padded, clamped, non-overlapping, ascending) ranges that were removed from THIS
+            // clip's track, so remapping every linked caption through them reproduces the ripple directly.
+            let cap_stats = if retime_captions { retime_linked_captions(ss, &clip_id, &merged) } else { CaptionRetime::default() };
+
             let mut clip_ids: Vec<(f64, String)> = ss
                 .project
                 .tracks
@@ -215,7 +365,7 @@ pub fn commands() -> Vec<Command> {
             clip_ids.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
             let ids: Vec<String> = clip_ids.into_iter().map(|(_, id)| id).collect();
 
-            Ok(json!({"clip_id": clip_id, "clip_ids": ids, "removed_seconds": total_removed, "removed_spans": merged.len(), "words_matched": words_matched, "dropped_spans": dropped}))
+            Ok(json!({"clip_id": clip_id, "clip_ids": ids, "removed_seconds": total_removed, "removed_spans": merged.len(), "words_matched": words_matched, "dropped_spans": dropped, "retime_captions": retime_captions, "captions_shifted": cap_stats.shifted, "captions_trimmed": cap_stats.trimmed, "captions_removed": cap_stats.removed}))
         },
     }]
 }
