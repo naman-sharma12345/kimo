@@ -52,6 +52,12 @@ director mode exists and what it fixed.
   {"name": "add_pip", "arguments": {"source": "clip3", "at_s": 2.0, "duration_s": 4.0, "position": "bottom_right", "shape": "circle", "size": 0.3}}
   ```
 
+- **New tool: `add_keyword_pops(words?, auto?, max_per_minute?, min_gap_s?, style?, position?, color?, accent_color?, animate_in?, sfx?, track_id?, dry_run?)`** pops one big emphasised word or phrase onto the screen as it's spoken, then clears -- the #1 on-screen graphic among top creators (research lane KR2: 6 of 8 sampled use it). `words: [{text, at_s, duration_s?}]` places exact pops; `auto: true` instead picks emphasis words from the loaded transcript's word timings (the same emphasis scorer `auto_captions` uses to bold caption keywords, `speech_words::keywords` -- NOT `add_smart_punch`, which is a purely visual camera punch-in with no word signal), capped at `max_per_minute` (default 4) and spaced at least `min_gap_s` (default 3) apart; with no transcript loaded it errors by name, pointing at `transcribe`/`transcript_import`. `style` is `bold_caps` (default, white caps with a dark outline), `boxed` (an accent box behind the text, built on `add_title(style="hook_box")`), or `typewriter` (character reveal). `position` defaults to `upper_third` so the text clears a selfie-framed face. Built entirely on `add_text`/`add_title`/`add_text_animator`/`set_keyframe` -- no text rendering or easing math reimplemented. Registered in the `text` group next to `add_title`/`add_text_animator`, not on the director-mode list. Does not touch captions, caption defaults, or the caption-ripple code.
+
+  ```json
+  {"name": "add_keyword_pops", "arguments": {"words": [{"text": "HUGE", "at_s": 4.2, "duration_s": 1.2}], "style": "bold_caps"}}
+  ```
+
 ## Tight cut in one command
 
 `demo/run_tight_cut_mcp.py` chains tonight's new tools end to end on a whole clip folder, over
