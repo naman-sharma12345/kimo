@@ -232,6 +232,7 @@ def run(a):
         return s
     finish_at_calls = int(a.max_calls * a.finish_frac); finish_at_wall = a.max_wall * a.finish_frac
     in_finish = False; nudges = 0; finish_entered = None; harness_finished = False; refused = 0; restarts = 0
+    precheck_passes = 0  # design-taste self-critique cap: at most 1 pre-export preview pass, so it can't loop
     autosave = os.path.join(a.out, ".autosave.json")
     while True:
         el = time.time() - t0
@@ -272,6 +273,12 @@ def run(a):
                         else: out += " (the kimo server was restarted; the project in memory is gone)"
                         log.write(json.dumps({"ev": "harness", "what": "kimo restarted", "autosave_loaded": os.path.exists(autosave)}) + "\n")
             if not is_err: out = flag_uncallable_tools(name, out, names)
+            if not is_err and not export_ok() and is_preview(name, args):
+                precheck_passes += 1
+                if precheck_passes > 1:
+                    out += ("\n[harness: that's your one pre-export design-taste check already used. Fix the single worst "
+                            "issue you listed against the taste guide, then call export now -- no further contact_sheet/"
+                            "render_frame calls before export.]")
             dt = time.time() - ts; tool_time += dt; errs += is_err; tool_chars += len(out)
             log.write(json.dumps({"ev": "call", "n": calls_n, "name": name, "args": args, "error": is_err, "dt": round(dt, 2), "chars": len(out), "images": len(imgs), "result": out[:1500]}) + "\n"); log.flush()
             gi = good_images(imgs)
