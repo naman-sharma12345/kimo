@@ -70,6 +70,14 @@ subject, a weak hook.
    any entirely inside a removed span, trims one straddling a cut, shifts ones after it left to close the gap --
    `auto_captions` no longer needs to be re-run after trimming. Pass `retime_captions: false` for the old (untouched,
    drifting) behaviour.
+6. Done: duration fit. The new `fit_clip_duration(clip_id, max_duration, min_silence_ms?, threshold_db?,
+   safety_margin_s?, retime_captions?)` tool (also `timeline`, not yet on the director-mode list) shrinks one clip to
+   a target length in one call by trimming its own quietest pauses first (the `audio_probe` RMS silence rule), largest
+   pause first, partial on only the last pause needed for an exact fit -- a small model no longer has to detect
+   silence, do the arithmetic and call `trim_filler_words` by hand to hit a platform duration cap. It never cuts into
+   detected speech: when there isn't enough silence to reach the target it reports `met_target: false` and
+   `shortfall_seconds` honestly instead of forcing the cut. Built on `audio_speech_intervals` + `trim_filler_words`
+   (so captions retime with it the same way, `retime_captions` default true) rather than new ripple logic.
 
 ## Running it
 

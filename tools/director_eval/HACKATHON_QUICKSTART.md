@@ -1,7 +1,7 @@
 # Hackathon quickstart: director mode over MCP
 
 Kimo cuts a short from raw phone footage. In director mode, a small model drives it through
-about 35 MCP tools instead of the full 446-tool registry. This page is the fastest path from a
+about 35 MCP tools instead of the full 447-tool registry. This page is the fastest path from a
 clone to a real exported short: build, list the tools a small model actually sees, run the demo
 driver on your own clips, and the handful of things that trip people up first.
 
@@ -15,6 +15,12 @@ director mode exists and what it fixed.
   - `text_over_subject` (warning) -- a title or caption sits over the frame's strongest subject (reuses `add_smart_punch`'s own saliency map). The `fix` field gives a new `y` to move it to. **Known limit: it only checks the single strongest subject in frame** -- a hard-edged object can still slip past it, so treat it as a hint, not a guarantee.
   Both are additive and non-mutating like the rest of `lint_edit` -- fix, then run `lint_edit` again to confirm.
 - **New tool: `trim_filler_words(clip_id, spans?, words?, pad?)`** ripple-deletes flagged word spans out of a clip's own footage and closes the gap. It's registered in the `timeline` group, **not yet on the director-mode list** -- call it by name, find it with `search_tools`, or use `mode: "flat"` to see the full registry.
+
+- **New tool: `fit_clip_duration(clip_id, max_duration, min_silence_ms?, threshold_db?, safety_margin_s?, retime_captions?)`** shrinks one clip to a target length by trimming its own quietest pauses (the same RMS silence rule as `audio_probe`), largest pause first, partial on only the last one needed for an exact fit -- no manual silence-detect-then-trim loop. It never cuts into detected speech: if there isn't enough silence to reach the target it says so (`met_target: false`, `shortfall_seconds`) instead of forcing it. Captions retime with the cut, same as `trim_filler_words` (`retime_captions`, default true; it calls `trim_filler_words` internally). Also `timeline` group, not on the director list yet.
+
+  ```json
+  {"name": "fit_clip_duration", "arguments": {"clip_id": "clip2", "max_duration": 20.0}}
+  ```
 
   ```json
   {"name": "trim_filler_words", "arguments": {"clip_id": "clip2", "words": ["um", "uh"]}}
@@ -54,7 +60,7 @@ nothing to run standing-alone. `tools/list` takes a `mode` param that overrides 
 
 This returns **35 tools** -- the recipe tools from `director_mode.md` (`auto_rough_cut`,
 `auto_grade`, `auto_captions`, `caption_from_words`, `finish_audio`, `lint_edit`, `export`, ...)
-with one-line descriptions written for a small model, not the full 446-tool registry. Every tool
+with one-line descriptions written for a small model, not the full 447-tool registry. Every tool
 is still callable by name under any profile. `tools/director_eval/mcp.py` is a ~60-line Python
 MCP stdio client if you want to drive this yourself instead of through a chat client; see
 `list_tools(mode=...)` and `call(name, args)`.
