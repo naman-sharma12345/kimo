@@ -393,6 +393,168 @@ def price(model, usage):
     if not p or p[0] is None: return None
     return (usage["in"] * p[0] + usage["out"] * p[1] + usage["cache_read"] * p[2] + usage["cache_write"] * p[3]) / 1e6
 
+# MT7 constants: the harness's own candidate title-y bands, and how close (pixels, in the same
+# "pixels from centre" convention add_title/set_property use) a candidate has to sit to a live caption
+# clip's y before it's skipped as "the caption band". 140px covers a caption block's own height plus
+# some margin (captions run roughly 150-250px tall with box_width/line wrapping in review); it is not a
+# measured saliency check, just keeping a candidate from sitting ON the caption text.
+LEGIBILITY_Y_CANDIDATES = (-400.0, -300.0, -500.0, 250.0, 350.0)
+CAPTION_BAND_MARGIN = 140.0
+
+
+def _project_state(out_dir):
+    """Best-effort read of the live project as a dict: the autosave kimo writes after every successful
+    change if present (freshest -- mid-run, before any save_project/export), else the exported
+    project.json. None if neither exists or parses."""
+    for name in (".autosave.json", "project.json"):
+        p = os.path.join(out_dir, name)
+        if os.path.exists(p):
+            try:
+                return json.load(open(p))
+            except Exception:
+                continue
+    return None
+
+
+def caption_y_values(proj):
+    """y (props.y.base, pixels from centre -- the same convention add_title/set_property use) of every
+    clip on this project's caption track(s), read straight from the saved project via
+    editorial.captions[*].track_id -> tracks[*].clips. [] when there are no captions yet, or the project
+    can't be read -- find_passing_y treats that the same as 'no caption band known', not as a pass."""
+    if not proj:
+        return []
+    cap_tracks = {g.get("track_id") for g in (proj.get("editorial", {}).get("captions") or {}).values() if g.get("track_id")}
+    if not cap_tracks:
+        return []
+    ys = []
+    for tr in proj.get("tracks", []):
+        if tr.get("id") not in cap_tracks:
+            continue
+        for c in tr.get("clips", []):
+            y = (((c.get("props") or {}).get("y") or {}).get("base"))
+            if y is not None:
+                try:
+                    ys.append(float(y))
+                except (TypeError, ValueError):
+                    pass
+    return ys
+
+
+def _measure_contrast_at_y(k, cid, t_mid, out_dir, title_text_c, tag=""):
+    """The same real-pixel p10-contrast measurement legibility_check does for the live export (real
+    on-screen bbox from compute_text_bounds, clean background from a render with the title hidden),
+    factored out so find_passing_y can reuse it per-candidate without duplicating the maths or drifting
+    from what the actual post-export check measures. Returns a dict; "ratio_p10" is absent (not zero) on
+    any tool or measurement failure, so a failed measurement is never mistaken for a passing one."""
+    detail = {}
+    try:
+        rect_err, rect_out, _ = k.call("compute_text_bounds", {"clip_id": cid, "t": t_mid}, timeout=60)
+        bg_path = os.path.join(out_dir, f".mt7_candidate_bg{tag}.png")
+        bg_err, bg_out, _ = k.call("render_frame", {"time": t_mid, "path": bg_path, "hide": [cid], "inline": "never"}, timeout=60)
+        if rect_err or bg_err:
+            detail["tool_error"] = (rect_out if rect_err else bg_out)[:200]
+            return detail
+        r = json.loads(rect_out)
+        x, y, w, h = r["canvas_rect"]
+        from PIL import Image
+        im = Image.open(bg_path).convert("RGB")
+        iw, ih = im.size
+        x0, y0 = max(0, int(x)), max(0, int(y)); x1, y1 = min(iw, int(x + w)), min(ih, int(y + h))
+        detail["bbox"] = [x0, y0, x1, y1]
+        if x1 <= x0 or y1 <= y0:
+            detail["bbox_error"] = "bbox outside frame bounds"
+            return detail
+        region = im.crop((x0, y0, x1, y1))
+        arr = np.asarray(region, dtype=np.float64) / 255.0
+        flat = arr.reshape(-1, 3)
+        lin = np.where(flat <= 0.03928, flat / 12.92, ((flat + 0.055) / 1.055) ** 2.4)
+        lum = 0.2126 * lin[:, 0] + 0.7152 * lin[:, 1] + 0.0722 * lin[:, 2]
+        la = _rel_luminance(title_text_c)
+        lighter = np.maximum(la, lum); darker = np.minimum(la, lum)
+        ratios = (lighter + 0.05) / (darker + 0.05)
+        detail["ratio_p10"] = round(float(np.percentile(ratios, 10)), 2)
+        detail["ratio_mean"] = round(_wcag_contrast(title_text_c, tuple(flat.mean(axis=0))), 2)
+    except Exception as e:
+        detail["exception"] = f"{e}"[:200]
+    return detail
+
+
+def followup_needs_harness_fix(leg_violations, plc_violations):
+    """MT7 (2): the single, testable signal that the model's corrective round did not actually land --
+    whether that was a y no-op (set_property called with the same value), a garbled turn that produced no
+    tool calls and never re-exported (MT6's unseen run), or a real re-export that still doesn't pass.
+    True means the post-correction legibility/placement re-check still finds a problem, so the harness
+    safety net should apply find_passing_y's own already-measured fix itself. False means whatever the
+    model did (changed y, changed something else, or genuinely left it because it was already fine) is
+    good enough -- a model can pass without touching y (e.g. it picked a different start time instead),
+    so "y changed" is reported for the record but is not itself the pass/fail signal."""
+    return bool(leg_violations or plc_violations)
+
+
+def find_passing_y(k, state, out_dir, candidates=LEGIBILITY_Y_CANDIDATES, pass_threshold=3.0):
+    """MT7 (1): when legibility fails, find a y that actually PASSES the same p10-contrast method
+    legibility_check uses, before telling the model anything -- rather than asking it to guess and hoping
+    the guess works. (MT6: the model's one corrective round re-set the exact same y=-400 that had just
+    failed -- a no-op -- then its next turn produced no tool calls at all, so nothing was ever
+    re-measured.) Tries each candidate band in order, skipping any that sit on top of a live caption clip
+    (read from the project, not guessed) within CAPTION_BAND_MARGIN px. Each non-skipped candidate is
+    actually applied with set_property and actually measured -- this really moves the title clip. Leaves
+    the clip at whichever y it ends on: the first passing candidate (stops there, that's the fix), or, if
+    none pass, back at the ORIGINAL y it had when this was called (MT7 (3): no candidate passing means
+    leave the edit as is, not stranded on a losing guess).
+    Returns (passing_y: float|None, detail: dict). detail always carries candidates_tried (each
+    {y, ratio_p10, ...} or {y, skipped_caption_band: True}), any_passed, best_y/best_ratio_p10 (the
+    highest-contrast candidate tried even when none passed, for an honest best-effort note), and
+    caption_y_values (what was read, so a report can show why a candidate was skipped)."""
+    cid = state.get("title_clip_id")
+    detail = {"candidates_tried": [], "any_passed": False, "best_y": None, "best_ratio_p10": None, "caption_y_values": []}
+    if not cid:
+        return None, detail
+    orig_y = state.get("title_y")
+    if orig_y is None:
+        orig_y = 0.0
+    t_mid = (state.get("title_start") or 0.0) + (state.get("title_duration") or 4.0) / 2.0
+    title_text_c = parse_color(state.get("title_color")) or (1.0, 1.0, 1.0)
+    cap_ys = caption_y_values(_project_state(out_dir))
+    detail["caption_y_values"] = cap_ys
+    passing_y = None
+    best_y, best_ratio = None, None
+    for y in candidates:
+        if cap_ys and any(abs(y - cy) < CAPTION_BAND_MARGIN for cy in cap_ys):
+            detail["candidates_tried"].append({"y": y, "skipped_caption_band": True})
+            continue
+        try:
+            set_err, set_out, _ = k.call("set_property", {"clip_id": cid, "property": "y", "value": y}, timeout=30)
+        except Exception as e:
+            detail["candidates_tried"].append({"y": y, "set_property_error": f"{e}"[:200]})
+            continue
+        if set_err:
+            detail["candidates_tried"].append({"y": y, "set_property_error": set_out[:200]})
+            continue
+        m = _measure_contrast_at_y(k, cid, t_mid, out_dir, title_text_c, tag=f"_{int(y)}")
+        entry = {"y": y, **m}
+        detail["candidates_tried"].append(entry)
+        ratio = m.get("ratio_p10")
+        if ratio is not None and (best_ratio is None or ratio > best_ratio):
+            best_ratio = ratio; best_y = y
+        if ratio is not None and ratio >= pass_threshold and passing_y is None:
+            passing_y = y
+            break  # first passing candidate wins -- leave the clip right here, don't keep testing
+    detail["best_y"] = best_y
+    detail["best_ratio_p10"] = best_ratio
+    if passing_y is not None:
+        detail["any_passed"] = True
+        return passing_y, detail
+    # MT7 (3): no candidate passed -- restore the title to the y it had before this search, rather than
+    # stranding it on whichever losing candidate happened to run last.
+    try:
+        k.call("set_property", {"clip_id": cid, "property": "y", "value": orig_y}, timeout=30)
+    except Exception:
+        pass
+    detail["restored_y"] = orig_y
+    return None, detail
+
+
 def run(a):
     os.makedirs(a.out, exist_ok=True); log = open(os.path.join(a.out, "log.jsonl"), "w")
     env = {"KIMO_SPECTATOR": "off"}
@@ -415,6 +577,7 @@ def run(a):
     taste_banned_words = BANNED_LABEL_WORDS | brief_banned_words(brief)
     taste_corrections_used = 0
     taste_log = {"fired": False, "violations_found": [], "corrective_round": 0}
+    taste_followup = {"pending": False, "snapshot_y": None, "passing_y": None}
 
     if a.adapter == "anthropic":
         m = Anthropic(a.model, os.environ["ANTHROPIC_BASE_URL"], os.environ["ANTHROPIC_API_KEY"], not a.no_vision)
@@ -541,14 +704,33 @@ def run(a):
                 note = ("\n\n[harness: design-taste check on your export found real problems against the hard rules -- "
                         "fix these, then export again. This is your only corrective round, so fix all of them now:\n- "
                         + "\n- ".join(all_violations) + "\nPick one accent colour from the footage and reuse it on the title and the captions.")
+                find_detail = None
                 if leg_violations or plc_violations:
-                    note += (" For legibility/placement specifically: add_title has no stroke/shadow/position arg, so the fix is to "
-                              "keep the title text white (color unset or [1,1,1]) with your one accent only in the `accent` "
-                              "arg, and move the title to the top safe band with set_property (clip_id, property: \"y\", "
-                              "value: -400) rather than changing its colours.")
+                    # MT7 (1): find a y that actually passes BEFORE writing the note, instead of telling the
+                    # model a generic "-400" and hoping (MT6: that hope failed -- the model re-set the exact
+                    # same already-failing -400 and called it fixed).
+                    passing_y, find_detail = find_passing_y(k, taste_state, a.out)
+                    taste_log["find_passing_y"] = find_detail
+                    if passing_y is not None:
+                        note += (f" For legibility/placement specifically: add_title has no stroke/shadow/position arg, so the fix is to "
+                                  "keep the title text white (color unset or [1,1,1]) with your one accent only in the `accent` "
+                                  f"arg, and set the title to this EXACT position -- set_property (clip_id: \"{taste_state.get('title_clip_id')}\", "
+                                  f"property: \"y\", value: {passing_y:g}). The harness already measured that position: "
+                                  f"{find_detail['best_ratio_p10']:.2f}:1 contrast there (your current spot measured below 3:1). "
+                                  "Use this exact value -- don't pick a different one.")
+                    else:
+                        tried = len([c for c in find_detail["candidates_tried"] if "skipped_caption_band" not in c])
+                        note += (" For legibility/placement specifically: add_title has no stroke/shadow/position arg. The harness "
+                                  f"already tried {tried} other vertical positions near the top and bottom safe bands against this "
+                                  "exact background and NONE reached readable contrast -- moving the title up or down will not fix "
+                                  "this one. Try a different start time for the title over a plainer part of this shot, or accept "
+                                  "this is a background the title can't sit on cleanly.")
+                    # MT7 (2): remember exactly what we asked for, so once the model's next turn lands (or
+                    # doesn't) we can verify the fix actually happened rather than trusting its say-so.
+                    taste_followup.update({"pending": True, "snapshot_y": taste_state.get("title_y"), "passing_y": passing_y})
                 note += "]"
                 results[-1][2] += note
-                log.write(json.dumps({"ev": "harness", "what": "taste check failed, corrective round fired", "violations": all_violations, "legibility": leg_detail, "placement": plc_violations}) + "\n")
+                log.write(json.dumps({"ev": "harness", "what": "taste check failed, corrective round fired", "violations": all_violations, "legibility": leg_detail, "placement": plc_violations, "find_passing_y": find_detail}) + "\n")
             else:
                 log.write(json.dumps({"ev": "harness", "what": "taste check passed on first export", "legibility": leg_detail, "placement": plc_violations}) + "\n")
         if not in_finish and not export_ok() and (calls_n >= finish_at_calls or time.time() - t0 >= finish_at_wall):
@@ -556,6 +738,53 @@ def run(a):
             log.write(json.dumps({"ev": "harness", "what": "finish phase", "calls": calls_n, "t": finish_entered}) + "\n")
         results[-1][2] += "\n\n" + budget_line(in_finish and not export_ok())
         msgs += m.tool_results([tuple(r) for r in results])
+    # MT7 (2): verify the one corrective round, if it fired on a legibility/placement violation, actually
+    # landed -- a no-op (the model re-set the identical y) or a turn that ends without a second export both
+    # leave the FIRST, flagged export sitting on disk looking fine to export_ok() (it only checks mtime/size,
+    # not content), exactly what happened on MT6's unseen run: the model's corrective turn produced zero tool
+    # calls (garbled completion), the main loop's own "if not calls: ... break" exited right there, and the
+    # still-bad final.mp4 was never touched again. If the model's fix really worked, this changes nothing.
+    followup_verify = {"checked": False}
+    if taste_followup["pending"]:
+        followup_verify["checked"] = True
+        cur_leg_violations, cur_leg_detail = legibility_check(k, taste_state, a.out)
+        cur_plc_violations = placement_check(taste_state)
+        y_before, y_after = taste_followup["snapshot_y"], taste_state.get("title_y")
+        still_bad = followup_needs_harness_fix(cur_leg_violations, cur_plc_violations)
+        followup_verify.update({
+            "y_before": y_before, "y_after": y_after, "y_changed": y_after != y_before,
+            "legibility_after": cur_leg_detail, "still_violating": cur_leg_violations + cur_plc_violations,
+            "passed": not still_bad,
+        })
+        if still_bad:
+            fix_y = taste_followup.get("passing_y")
+            if fix_y is not None:
+                log.write(json.dumps({"ev": "harness", "what": "corrective round did not land (no-op, garbled turn, or no re-export) -- harness applying the already-verified fix itself", "fix_y": fix_y}) + "\n"); log.flush()
+                try:
+                    he2, ho2, _ = k.call("set_property", {"clip_id": taste_state["title_clip_id"], "property": "y", "value": fix_y}, timeout=30)
+                    if not he2:
+                        taste_state["title_y"] = fix_y
+                    if "output" in names:
+                        k.call("project", {"action": "save_project", "args": {"path": proj}}, timeout=60)
+                        he3, ho3, _ = k.call("output", {"action": "export", "args": {"path": final, "crf": 20}}, timeout=a.call_timeout)
+                    else:
+                        k.call("save_project", {"path": proj}, timeout=60)
+                        he3, ho3, _ = k.call("export", {"path": final, "crf": 20}, timeout=a.call_timeout)
+                    applied_ok = (not he2) and (not he3) and export_ok()
+                    followup_verify.update({"harness_applied_fix": applied_ok, "harness_fix_y": fix_y,
+                                             "harness_set_property_error": ho2[:300] if he2 else None,
+                                             "harness_export_error": ho3[:300] if he3 else None})
+                except Exception as e:
+                    followup_verify.update({"harness_applied_fix": False, "harness_fix_error": f"{e}"[:300]})
+            else:
+                # MT7 (3): find_passing_y already found no candidate that passes -- don't strand the edit on
+                # a losing guess of our own either; say so honestly and leave what the model left.
+                followup_verify.update({"harness_applied_fix": False,
+                                        "harness_fix_note": "no candidate y passed contrast when this was first checked; leaving the edit as the model left it"})
+        else:
+            followup_verify["harness_applied_fix"] = False
+    taste_log["followup_verify"] = followup_verify
+
     # the harness's own export: only when the model never produced final.mp4. Disclosed in run.json, never counted as the model's.
     if not export_ok():
         log.write(json.dumps({"ev": "harness", "what": "harness export start", "stop": stop}) + "\n"); log.flush()
@@ -574,7 +803,7 @@ def run(a):
     run = {"model": a.model, "adapter": a.adapter, "tools_profile": a.tools or "grouped", "stop": stop, "wall_s": round(wall, 1), "tool_s": round(tool_time, 1), "steps": steps, "calls": calls_n, "errors": errs,
            "tokens": tot, "cost_usd": None if cost is None else round(cost, 4), "result_chars": tool_chars, "final_text": final_text[:3000],
            "harness_finished": harness_finished, "kimo_restarts": restarts, "finish_phase_at_s": finish_entered, "nudges": nudges, "previews_refused": refused, "provider_retries": RETRY_LOG,
-           "model_exported": export_ok() and not harness_finished, "taste_check": taste_log}
+           "model_exported": export_ok() and not harness_finished, "taste_check": taste_log, "harness_applied_fix": bool(taste_log.get("followup_verify", {}).get("harness_applied_fix"))}
     json.dump(run, open(os.path.join(a.out, "run.json"), "w"), indent=1); log.write(json.dumps({"ev": "end", **run}) + "\n"); log.close()
     print(json.dumps({k2: v for k2, v in run.items() if k2 != "final_text"}))
     return run
