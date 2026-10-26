@@ -129,3 +129,79 @@ fn rejects_a_non_positive_max_duration() {
     let e2 = dispatch(&mut ss, "fit_clip_duration", &json!({"clip_id": c, "max_duration": -2.0})).unwrap_err();
     assert!(e2.contains("max_duration"), "{e2}");
 }
+
+
+/// A clip with a constant background noise floor across its ENTIRE duration (so even the "pauses" sit
+/// around the measured floor, not true digital silence) plus a much louder gated tone during "speech"
+/// windows -- the shape real phone-mic room tone has, which is why the old -60 default (tuned for
+/// exact_pauses' digital silence above) finds nothing on it. `noise_amp` targets an RMS floor in the
+/// -45..-35 dBFS neighbourhood (uniform noise: RMS = amp/sqrt(3)); `random(0)` is ffmpeg's own
+/// deterministic per-sample pseudo-random eval function, so the fixture is reproducible.
+fn noisy_pauses(name: &str, dur: f64, speech: &[(f64, f64)]) -> String {
+    let p = dir().join(name); if p.exists() { return p.to_string_lossy().into_owned(); }
+    let gate: Vec<String> = speech.iter().map(|(s, e)| format!("between(t,{s},{e})")).collect();
+    let a = format!("aevalsrc='(2*random(0)-1)*0.0173 + ({})*0.5*sin(2*PI*440*t)':s=48000:d={dur}", gate.join("+"));
+    ffmpeg(&["-f", "lavfi", "-i", &format!("testsrc2=s=360x640:r=30:d={dur}"), "-f", "lavfi", "-i", &a,
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", p.to_str().unwrap()]);
+    p.to_string_lossy().into_owned()
+}
+
+/// Same 6.0s / two-2.0s-pause shape as two_pause_clip, but with a constant noise floor under everything
+/// (see noisy_pauses). Built once per process, like two_pause_clip.
+fn two_pause_noisy_clip(ss: &mut Session) -> (String, String) {
+    let t = sid(&call(ss, "add_track", json!({})), "track_id");
+    let path = noisy_pauses("two_pauses_noisy.mp4", 6.0, &[(0.0, 0.8), (2.8, 3.6), (5.6, 6.0)]);
+    let a = sid(&call(ss, "import_media", json!({"path": path})), "asset_id");
+    let c = sid(&call(ss, "add_clip", json!({"track_id": t, "source_type": "media", "asset_id": a, "start": 0, "duration": 6.0, "fit": "cover"})), "clip_id");
+    (t, c)
+}
+
+#[test]
+fn auto_threshold_finds_pauses_the_old_default_cannot_on_noisy_phone_audio() {
+    // the OLD numeric default (-60) must stay UNCHANGED: this clip's noise floor sits well above -60
+    // (same shape as real phone-mic room tone), so it still finds NOTHING, exactly like before KF7.
+    let mut ss_fixed = portrait();
+    let (_t, c1) = two_pause_noisy_clip(&mut ss_fixed);
+    let r_fixed = call(&mut ss_fixed, "fit_clip_duration", json!({"clip_id": c1, "max_duration": 4.0, "threshold_db": -60.0}));
+    assert_eq!(r_fixed["met_target"], json!(false), "the numeric -60 path must be unchanged: still finds nothing on noisy audio: {r_fixed}");
+    assert_eq!(r_fixed["spans_removed"], json!(0), "{r_fixed}");
+    assert_eq!(r_fixed["threshold_db"].as_f64().unwrap(), -60.0, "{r_fixed}");
+    assert_eq!(r_fixed["measured_noise_floor_db"], Value::Null, "a numeric threshold never measures a floor: {r_fixed}");
+
+    // "auto" measures this SAME clip's own floor and finds the real pauses under it.
+    let mut ss_auto = portrait();
+    let (_t2, c2) = two_pause_noisy_clip(&mut ss_auto);
+    let r_auto = call(&mut ss_auto, "fit_clip_duration", json!({"clip_id": c2, "max_duration": 4.0, "threshold_db": "auto"}));
+    assert_eq!(r_auto["met_target"], json!(true), "auto should find the real pauses under the noise floor: {r_auto}");
+    assert!(r_auto["spans_removed"].as_u64().unwrap() >= 1, "{r_auto}");
+    let floor = r_auto["measured_noise_floor_db"].as_f64().expect("auto must report a measured floor");
+    let chosen = r_auto["threshold_db"].as_f64().expect("auto must report the threshold it chose");
+    assert!(floor > -55.0 && floor < -25.0, "measured floor should land near the engineered ~-40dB noise: {r_auto}");
+    assert!(chosen > floor && chosen < -10.0, "the chosen threshold must sit above the floor and well under the ~-9dB speech tone: {r_auto}");
+}
+
+#[test]
+fn auto_never_removes_speech() {
+    let mut ss = portrait();
+    let (_t, c) = two_pause_noisy_clip(&mut ss);
+    // 2.0s of "speech" tone total exists in this 6.0s clip (0.8 + 0.8 + 0.4s); asking for something far
+    // shorter than the clip minus its real silence cannot be met without cutting speech, so auto must say
+    // so honestly (met_target:false) rather than ever trimming into a tone window.
+    let r = call(&mut ss, "fit_clip_duration", json!({"clip_id": c, "max_duration": 1.0, "threshold_db": "auto"}));
+    assert_eq!(r["met_target"], json!(false), "{r}");
+    let new_dur = r["new_duration"].as_f64().unwrap();
+    assert!(new_dur > 1.5, "speech must not have been cut to force the target: {r}");
+    // "auto" must still report what it measured even on a shortfall path -- proves this ran the real
+    // measurement, not just a silent fall-through to the old numeric default.
+    assert!(r["measured_noise_floor_db"].as_f64().is_some(), "auto must report a measured floor even when it can't fully meet the target: {r}");
+}
+
+#[test]
+fn rejects_a_bad_threshold_db_value() {
+    let mut ss = portrait();
+    let (_t, c) = two_pause_clip(&mut ss);
+    for bad in [json!("loud"), json!(true), json!([1, 2]), json!({"x": 1})] {
+        let e = dispatch(&mut ss, "fit_clip_duration", &json!({"clip_id": c, "max_duration": 1.0, "threshold_db": bad.clone()})).unwrap_err();
+        assert!(e.contains("threshold_db"), "bad value {bad}: {e}");
+    }
+}

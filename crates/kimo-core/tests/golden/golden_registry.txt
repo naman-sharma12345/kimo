@@ -143,7 +143,7 @@ export_with_subtitles 824e8be7e0dd374e
 ext_list 83a5db4765dba269
 find 78641da05597f921
 finish_audio 2e6067faa3bb01ce
-fit_clip_duration 3e22f828825adb56
+fit_clip_duration 6448c3fd0df5f3a2
 fit_info adda72ad5a63e40e
 fit_track_homography c5762f693abc9959
 flash_series db43cfc85282cae9
