@@ -58,6 +58,12 @@ director mode exists and what it fixed.
   {"name": "add_keyword_pops", "arguments": {"words": [{"text": "HUGE", "at_s": 4.2, "duration_s": 1.2}], "style": "bold_caps"}}
   ```
 
+- **New tool: `add_arrow(target, from?, at_s, duration_s?, color?, thickness?, label?, curve?, animate?, track_id?, dry_run?)`** draws a bright animated arrow pointing at a spot on screen -- the "look here" callout Johnny Harris/Veritasium/MKBHD-style creators use (research lane KR2). `target` is the normalized `{x,y}` point the arrowhead touches; `from` defaults to auto (continuing the line from the frame center through `target` outward by ~25% of the frame's shorter side). `animate` defaults to `draw`: the shaft grows from tail to head over ~0.3s with a tiny overshoot-and-settle bounce, then the arrowhead pops in (`pop` and `fade` are also available). An optional `label` at the tail is styled like `add_keyword_pops`'s `bold_caps` (Anton heavy caps, dark outline, drop shadow), smaller since it's a secondary annotation. Built on `add_shape` (`line` for the shaft, `polygon sides:3` for the arrowhead) + `add_text` + `set_keyframe` -- no new rasterizer. Registered in the `graphics` group next to `add_shape`/`add_pip`, not on the director-mode list.
+
+  ```json
+  {"name": "add_arrow", "arguments": {"target": {"x": 0.3, "y": 0.4}, "at_s": 3.0, "label": "THIS ONE"}}
+  ```
+
 ## Tight cut in one command
 
 `demo/run_tight_cut_mcp.py` chains tonight's new tools end to end on a whole clip folder, over

@@ -1,5 +1,6 @@
 add_acescct_primaries b41358501d87ee1b
 add_adjustment_layer 1a618920cefd1a66
+add_arrow 7ac2c615598ce04d
 add_audio_clip 7b3d9ad166896234
 add_audio_effect c7ddf7d2fdfd146f
 add_blur_fill a3c4f9944c2d3a14
