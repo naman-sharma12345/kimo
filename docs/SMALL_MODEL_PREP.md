@@ -78,6 +78,10 @@ subject, a weak hook.
    detected speech: when there isn't enough silence to reach the target it reports `met_target: false` and
    `shortfall_seconds` honestly instead of forcing the cut. Built on `audio_speech_intervals` + `trim_filler_words`
    (so captions retime with it the same way, `retime_captions` default true) rather than new ripple logic.
+   `threshold_db` also takes `"auto"`: it measures the clip's own noise floor and sets the threshold a margin above
+   it (capped under the clip's own speech level), so real phone-mic room tone doesn't hide every pause behind the
+   plain -60 default -- the fixed -60 default is unchanged for an explicit number. The result reports the measured
+   floor and the threshold it chose either way.
 
 ## Running it
 
