@@ -112,6 +112,74 @@ fn fade_out(ss: &mut Session, id: &str, duration_s: f64) -> Result<(), String> {
     Ok(())
 }
 
+
+/// Picks a label center that cannot overlap the shaft/arrowhead's own footprint, for ANY `from`/`target`
+/// geometry -- including a `from` that lands at or past a frame edge, which the auto default can do (KF17b
+/// fix: the old "continue past the tail along the arrow direction, then clamp into frame" placement broke
+/// exactly there -- clamping a point that fell off-canvas pulled it back onto the shaft/head instead of
+/// just inside the frame edge, which is what put the label directly on top of the arrow on real footage).
+///
+/// The shaft+head's own footprint is modelled as a finite oriented rectangle along the from->target line:
+/// axis range `[axis_min, axis_max]` (just behind the tail to just past the head's tip) by half-width
+/// `forbid_half_w` (the arrowhead's own radius, plus the shaft's half-thickness, plus AA slop) -- the real
+/// head is a triangle inscribed in that radius rather than a full-width rectangle, so this is conservative
+/// but it guarantees no overlap. Two placements are tried, in order (an axis-aligned label box's own
+/// worst-case half-extent projected onto an arbitrary unit vector is `|v.x|*tw/2 + |v.y|*th/2`):
+///   1. beyond the tail, continuing straight back along -u (the natural "label trails the arrow" look,
+///      and what the tool always used before KF17b) -- kept whenever it actually clears the footprint
+///      once placed, which is the overwhelming majority of real `from`/`target` pairs;
+///   2. failing that (axis_min is negative, so a `from` sitting at/past a frame edge clamps strategy 1
+///      straight back into the footprint -- this is the exact bug), perpendicular to the shaft instead,
+///      on whichever side needs the least clamping to stay fully inside the frame.
+fn label_anchor_px(from_px: (f64, f64), u: (f64, f64), len: f64, thickness: f64, head_r: f64, tw: f64, th: f64, fw: f64, fh: f64, margin: f64) -> (f64, f64) {
+    let (ux, uy) = u;
+    let perp = (-uy, ux);
+    let label_axis_half = ux.abs() * tw / 2.0 + uy.abs() * th / 2.0;
+    let label_perp_half = perp.0.abs() * tw / 2.0 + perp.1.abs() * th / 2.0;
+    let axis_min = -(thickness / 2.0 + 2.0);
+    let axis_max = len + head_r + 2.0;
+    let forbid_half_w = head_r + thickness / 2.0 + 6.0;
+    let gap = 10.0;
+
+    let lo_x = tw / 2.0 + margin;
+    let hi_x = (fw - tw / 2.0 - margin).max(lo_x);
+    let lo_y = th / 2.0 + margin;
+    let hi_y = (fh - th / 2.0 - margin).max(lo_y);
+    let clamp_pt = |p: (f64, f64)| (p.0.clamp(lo_x, hi_x), p.1.clamp(lo_y, hi_y));
+    let in_bounds = |p: (f64, f64)| p.0 >= lo_x && p.0 <= hi_x && p.1 >= lo_y && p.1 <= hi_y;
+    // SAT on the two box axes (u, perp): the label box and the forbidden box overlap only if both their
+    // axis-range and perp-range projections overlap.
+    let overlaps_forbidden = |p: (f64, f64)| -> bool {
+        let t = (p.0 - from_px.0) * ux + (p.1 - from_px.1) * uy;
+        let d = (p.0 - from_px.0) * perp.0 + (p.1 - from_px.1) * perp.1;
+        let axis_overlap = (t - label_axis_half) < axis_max && (t + label_axis_half) > axis_min;
+        let perp_overlap = d.abs() < (forbid_half_w + label_perp_half);
+        axis_overlap && perp_overlap
+    };
+
+    // Strategy 1: beyond the tail, straight back along -u, its near edge placed just past axis_min.
+    let t1 = axis_min - label_axis_half - gap;
+    let c1 = clamp_pt((from_px.0 + ux * t1, from_px.1 + uy * t1));
+    if !overlaps_forbidden(c1) { return c1; }
+
+    // Strategy 2: perpendicular from the tail, either side -- prefer whichever fits unclamped, else
+    // whichever of the two clamped candidates actually clears the footprint, else whichever is farther
+    // from the from->target line (as clear as this frame allows).
+    let offset = forbid_half_w + label_perp_half + gap;
+    let cand_a = (from_px.0 + perp.0 * offset, from_px.1 + perp.1 * offset);
+    let cand_b = (from_px.0 - perp.0 * offset, from_px.1 - perp.1 * offset);
+    if in_bounds(cand_a) && !overlaps_forbidden(cand_a) { return cand_a; }
+    if in_bounds(cand_b) && !overlaps_forbidden(cand_b) { return cand_b; }
+    let a = clamp_pt(cand_a);
+    let b = clamp_pt(cand_b);
+    let a_ok = !overlaps_forbidden(a);
+    let b_ok = !overlaps_forbidden(b);
+    if a_ok && !b_ok { return a; }
+    if b_ok && !a_ok { return b; }
+    let perp_dist = |p: (f64, f64)| ((p.0 - from_px.0) * perp.0 + (p.1 - from_px.1) * perp.1).abs();
+    if perp_dist(a) >= perp_dist(b) { a } else { b }
+}
+
 fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
     const KNOWN: &[&str] = &["target", "from", "at_s", "duration_s", "color", "thickness", "label", "curve", "animate", "track_id", "dry_run"];
     if let Some(o) = a.as_object() { for k in o.keys() { if !KNOWN.contains(&k.as_str()) { return Err(format!("add_arrow: unknown argument '{k}'")); } } } else { return Err("add_arrow: arguments must be an object".into()); }
@@ -239,13 +307,11 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
             let text_upper = text.to_uppercase();
             let size = (fh * 0.05).clamp(18.0, 90.0);
             let (tw, th) = crate::text::measure(&text_upper, "Anton", size, 0.0, 0.0, "center", 0.0)?;
-            // Placed beyond the tail, continuing OUTWARD along the from->target direction reversed, so the
-            // label sits clear of the shaft instead of overlapping it -- then clamped to stay fully inside
-            // the frame (the auto `from` default can land close to an edge, and continuing outward from an
-            // edge point would otherwise push the label off-canvas, invisible).
-            let (raw_lx, raw_ly) = (from_px.0 - ux * (tw * 0.55 + 14.0), from_px.1 - uy * (th * 0.55 + 14.0));
-            let margin = 6.0;
-            let label_px = (raw_lx.clamp(tw / 2.0 + margin, (fw - tw / 2.0 - margin).max(tw / 2.0 + margin)), raw_ly.clamp(th / 2.0 + margin, (fh - th / 2.0 - margin).max(th / 2.0 + margin)));
+            // Placed perpendicular to the shaft from the tail -- see `label_anchor_px`'s own doc for why a
+            // straight "continue past the tail, then clamp into frame" placement broke: the auto `from`
+            // default can land exactly at a frame edge, and clamping a point that landed off-canvas pulled
+            // it back onto the shaft/head instead of just inside the frame edge (KF17b fix).
+            let label_px = label_anchor_px(from_px, (ux, uy), len, thickness, head_r, tw, th, fw, fh, 6.0);
             let stroke_w = (size * 0.09).max(2.0);
             let shadow_px = (size * 0.05).max(2.0);
             let id = call(ss, "add_text", &json!({"track_id": track_id, "text": text_upper, "start": at_s, "duration": duration_s,

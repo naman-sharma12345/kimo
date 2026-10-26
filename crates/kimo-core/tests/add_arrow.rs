@@ -136,6 +136,90 @@ fn top_names(ss: &mut Session, q: &str, limit: usize) -> Vec<String> {
     r["matches"].as_array().unwrap().iter().filter_map(|m| m["name"].as_str().map(str::to_string)).collect()
 }
 
+
+/// Vertical project (width is the shorter side), the same shape as a real 720x1280 phone clip -- the
+/// edge case below only reproduces on a frame where width is the min dimension.
+fn vertical_project() -> Session { let mut s = Session::new(); c(&mut s, "project_set", json!({"width": 360, "height": 640, "fps": FPS})); s }
+
+/// KF17b: reproduces the real-footage bug exactly. With NO explicit `from`, the auto default continues
+/// the center->target ray outward by 0.25 of the frame's shorter side; when `target.x` is exactly 0.25
+/// (and y is centered), that 0.25 cancels algebraically and lands the tail (`from_px`) precisely on the
+/// left edge -- the exact shape of the real clip1.mp4 left-bottle case where the "THIS ONE" label was
+/// clamped back onto the shaft and swallowed the arrowhead.
+fn edge_case_args(label: &str, animate: &str) -> Value {
+    json!({"target": {"x": 0.25, "y": 0.5}, "at_s": 0.0, "duration_s": 2.0, "animate": animate, "label": label})
+}
+
+#[test]
+fn label_bbox_never_overlaps_the_shaft_or_head() {
+    let mut s = vertical_project();
+    let r = c(&mut s, "add_arrow", edge_case_args("THIS ONE", "pop")); // pop: fully in almost immediately
+    let (fx, fy) = (r["from_px"]["x"].as_f64().unwrap(), r["from_px"]["y"].as_f64().unwrap());
+    let (tx, ty) = (r["target_px"]["x"].as_f64().unwrap(), r["target_px"]["y"].as_f64().unwrap());
+    let thickness = r["thickness_px"].as_f64().unwrap();
+    // Same conservative head-radius relationship the tool itself uses (thickness scaled to frame, head
+    // radius ~4.2x it, floor 16px) -- no private helper is exposed to call directly, so this mirrors the
+    // tool's own documented sizing rather than guessing a number.
+    let head_r = (thickness * 4.2_f64).max(16.0);
+    let forbid_half_w = head_r + thickness / 2.0 + 6.0;
+    let (x0, x1) = (fx.min(tx) - forbid_half_w, fx.max(tx) + forbid_half_w);
+    let (y0, y1) = (fy.min(ty) - forbid_half_w, fy.max(ty) + forbid_half_w);
+
+    let f = rendered(&s, 1.0); // well past "pop"'s brief fade-in
+    let is_white_ish = |p: [f32; 4]| p[3] > 0.3 && p[0] > 0.8 && p[1] > 0.8 && p[2] > 0.8; // the label's own white fill
+    let (fw, fh) = (f.w as i64, f.h as i64);
+    let ix0 = x0.floor().max(0.0) as u32;
+    let ix1 = x1.ceil().min(fw as f64 - 1.0).max(0.0) as u32;
+    let iy0 = y0.floor().max(0.0) as u32;
+    let iy1 = y1.ceil().min(fh as f64 - 1.0).max(0.0) as u32;
+
+    let mut overlap = false;
+    for y in iy0..=iy1 { for x in ix0..=ix1 { if is_white_ish(px(&f, x, y)) { overlap = true; } } }
+    assert!(!overlap, "label (white fill) pixels found inside the shaft/head's own bounding region [{ix0}..{ix1}]x[{iy0}..{iy1}] -- the label overlaps the arrow");
+
+    // Sanity: the label must still actually be drawn somewhere, so this isn't vacuously passing because
+    // nothing rendered at all.
+    let mut label_drawn_elsewhere = false;
+    'outer: for y in 0..f.h as u32 {
+        for x in 0..f.w as u32 {
+            let inside_forbidden = (ix0..=ix1).contains(&x) && (iy0..=iy1).contains(&y);
+            if !inside_forbidden && is_white_ish(px(&f, x, y)) { label_drawn_elsewhere = true; break 'outer; }
+        }
+    }
+    assert!(label_drawn_elsewhere, "sanity: label should be visible somewhere outside the forbidden zone");
+}
+
+#[test]
+fn arrowhead_is_visible_and_wider_than_the_shaft_even_with_a_label() {
+    let mut s = vertical_project();
+    let r = c(&mut s, "add_arrow", edge_case_args("THIS ONE", "draw")); // default animate, matches the real-footage check's timing
+    let (fx, _fy) = (r["from_px"]["x"].as_f64().unwrap(), r["from_px"]["y"].as_f64().unwrap());
+    let (tx, ty) = (r["target_px"]["x"].as_f64().unwrap(), r["target_px"]["y"].as_f64().unwrap());
+
+    let f = rendered(&s, 0.6); // at_s(0.0) + 0.6, the same mid-hold offset the real-footage check used
+    let is_yellowish = |p: [f32; 4]| p[3] > 0.3 && p[0] > 0.6 && p[1] > 0.35 && p[2] < 0.35;
+    let target_xy = (tx.round().clamp(0.0, f.w as f64 - 1.0) as u32, ty.round().clamp(0.0, f.h as f64 - 1.0) as u32);
+    assert!(is_yellowish(px(&f, target_xy.0, target_xy.1)), "arrowhead pixels should be visible AT the target by at_s+0.6, not hidden behind the label: {:?}", px(&f, target_xy.0, target_xy.1));
+
+    // "head clearly wider than the shaft": compare the yellow vertical span a few px into the head (back
+    // toward the tail from the target, so still inside the triangle, not past it) against the yellow
+    // vertical span mid-shaft (clear of the head) -- the shaft here is horizontal (target.y == from.y), so
+    // "width" is the vertical extent at a fixed column.
+    let yellow_span = |x: u32| -> u32 {
+        let (mut lo, mut hi): (Option<u32>, Option<u32>) = (None, None);
+        for y in 0..f.h as u32 { if is_yellowish(px(&f, x, y)) { lo.get_or_insert(y); hi = Some(y); } }
+        match (lo, hi) { (Some(a), Some(b)) => b - a + 1, _ => 0 }
+    };
+    let dir_to_tail = if fx < tx { -1.0 } else { 1.0 };
+    let head_col = (tx + dir_to_tail * 6.0).round().clamp(0.0, f.w as f64 - 1.0) as u32;
+    let shaft_col = ((fx + tx) / 2.0).round().clamp(0.0, f.w as f64 - 1.0) as u32;
+    let head_span = yellow_span(head_col);
+    let shaft_span = yellow_span(shaft_col);
+    assert!(head_span > 0, "head column should have some yellow span: {head_span}");
+    assert!(shaft_span > 0, "shaft column should have some yellow span: {shaft_span}");
+    assert!(head_span as f64 > shaft_span as f64 * 1.5, "head should read clearly wider than the shaft: head_span={head_span} shaft_span={shaft_span}");
+}
+
 #[test]
 fn search_tools_ranks_add_arrow_in_the_top_3_for_the_natural_phrasings() {
     let mut ss = Session::new();
