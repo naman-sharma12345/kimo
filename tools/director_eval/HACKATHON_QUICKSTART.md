@@ -3,12 +3,12 @@
 ## DEMO RUNBOOK (read this first)
 
 1. `git checkout muse-tune`
-2. `bash tools/whisper/fetch.sh` **first** -- without it, `auto_captions` silently falls back to plain grey boxes with no keyword colour (no error, just the wrong look).
-3. Build: `export CARGO_TARGET_DIR=/tmp/kimo_build` (fresh, not shared with another checkout -- a shared/stale target dir can fail the vendor cmake cache) `&& cargo build --profile gate --bin kimo-mcp -j2` (~4 min), then `mkdir -p bin && cp "$CARGO_TARGET_DIR/gate/kimo-mcp" bin/kimo-mcp`.
+2. `bash tools/whisper/fetch.sh` **first** -- without it, `auto_captions` silently falls back to plain grey boxes with no keyword colour (no error, just the wrong look). Idempotent and fast (well under a second) once `~/.cache/kimo_models/bin/whisper-cli` already exists -- it only re-checks the model's sha256; safe to run again before every demo.
+3. Build: `export CARGO_TARGET_DIR=/tmp/kimo_build` (fresh, not shared with another checkout -- a shared/stale target dir can fail the vendor cmake cache) `&& cargo build --profile gate --bin kimo-mcp -j2` (~4 min), then `mkdir -p bin && cp "$CARGO_TARGET_DIR/gate/kimo-mcp" bin/kimo-mcp`. Note: pointing `CARGO_TARGET_DIR` at a target already built from a *different* checkout path does not skip the build -- several crates' fingerprints include the absolute source path, so it recompiles from scratch anyway. Each checkout needs its own target dir (or its own first build) for the ~4 min figure to hold.
 4. Run (Meta `meta/muse-spark-1.3-contributor` via OpenRouter, your own key):
-   `OPENAI_BASE_URL=https://openrouter.ai/api/v1 OPENAI_API_KEY=<your OpenRouter key> python3 tools/director_eval/agent.py --kimo bin/kimo-mcp --brief <brief.txt> --footage <clip_dir> --out <out_dir> --model meta/muse-spark-1.3-contributor --adapter openai --system tools/director_eval/system.txt --doc tools/director_eval/director_mode.md --tools director --max-wall 1000`
-5. Fallback if OpenRouter/Meta is unreachable (Fireworks stand-in, same loop): swap in `OPENAI_BASE_URL=https://api.fireworks.ai/inference/v1 OPENAI_API_KEY=<your Fireworks key>` and `--model accounts/fireworks/models/muse-spark-open`.
-6. Expect ~15 min per clip on the stand-in (measured: real_review 16-21 min, real_vlog 13-15 min). Don't kill early -- it exports on its own.
+   `OPENAI_BASE_URL=https://openrouter.ai/api/v1 OPENAI_API_KEY=<your OpenRouter key> python3 tools/director_eval/agent.py --kimo bin/kimo-mcp --brief <brief.txt> --footage <clip_dir> --out <out_dir> --model meta/muse-spark-1.3-contributor --adapter openai --system tools/director_eval/system.txt --doc tools/director_eval/director_mode.md,tools/director_eval/design_taste.md --tools director --max-wall 1000`
+5. Fallback if OpenRouter/Meta is unreachable (Fireworks stand-in, same loop): swap in `OPENAI_BASE_URL=https://api.fireworks.ai/inference/v1 OPENAI_API_KEY=<your Fireworks key>` and `--model accounts/fireworks/models/muse-spark-open` (same `--doc` list).
+6. Expect ~15 min per clip on the stand-in (measured across the taste-rule runs: real_review 13.6-16.2 min, real_vlog 12.9-14.5 min). Don't kill early -- it exports on its own.
 7. Output: `<out_dir>/final.mp4`, plus `run.json` (steps/calls/cost) and `log.jsonl` (every step) in the same `<out_dir>`.
 
 Kimo cuts a short from raw phone footage. In director mode, a small model drives it through
