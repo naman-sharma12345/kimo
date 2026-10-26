@@ -34,6 +34,56 @@ director mode exists and what it fixed.
 
   **Captions now retime automatically.** If you've already run `auto_captions`, cutting filler words with `trim_filler_words` deletes any caption entirely inside a removed span, trims one straddling a cut, and shifts ones after it left to close the gap -- no need to re-run `auto_captions` after. Pass `"retime_captions": false` to get the old behaviour (captions untouched, drifting out of sync) if you want it.
 
+## Tight cut in one command
+
+`demo/run_tight_cut_mcp.py` chains tonight's new tools end to end on a whole clip folder, over
+the same MCP transport `run_demo_mcp.py` uses (modelled on it, same `mcp.py` client; does not
+modify `run_demo_mcp.py` itself). For each clip: import, assemble on the timeline (`auto_rough_cut`,
+same call `run_demo_mcp.py` uses), `auto_captions` (only if a whisper model is configured),
+`trim_filler_words` with a short filler-word list (only if that clip has captions), then
+`fit_clip_duration(threshold_db:"auto", protect_words:true)` targeting ~12% off each clip's own
+on-timeline duration -- then one `export`. Prints a per-clip original/+filler/+fit table and
+writes a JSON summary next to the export.
+
+```
+python3 tools/director_eval/demo/run_tight_cut_mcp.py <clips_dir> out.mp4 --kimo target/release/kimo-mcp
+```
+
+Real 6-clip run on `footage_r/real` (10 rough-cut segments after dead-air removal), measured
+tonight:
+
+Without a whisper model (`trim_filler_words` skipped cleanly, `fit_clip_duration` still runs --
+`protect_words` is then a documented no-op, each row reports why):
+
+```
+clip          orig  +filler    +fit  matched  protected   met  caps s/t
+-----------------------------------------------------------------------
+clip1.mp4     4.03     4.03    3.55        0          0  True       0/0
+...
+TOTAL        48.73    48.73   43.59
+```
+
+With `KIMO_WHISPER_BIN`/`KIMO_WHISPER_MODEL` set: 48.73s -> 44.49s overall (8.7% cut; several
+tiny rough-cut segments have no spare silence to give and honestly report `met_target: false`
+rather than cutting speech). `words_matched` was 0 across every clip for the default filler list
+(um/uh/like/...) -- not a bug: the real transcript (Hinglish/Urdu) genuinely has none of those
+disfluencies on this footage; `fit_clip_duration`'s own silence-based cut still did the work, and
+`protect_words` kept every cut off a transcribed word (`words_protected` > 0 on several clips).
+
+**A real caption-sync gap this script surfaced (not fixed here, no Rust touched):**
+`trim_filler_words`/`fit_clip_duration`'s `retime_captions` only retimes the captions linked to
+the ONE clip passed as `clip_id` -- it does not know that cutting an EARLIER clip on a shared
+track ripples every LATER clip's video left too. Repro: rough-cut two clips onto one track,
+`auto_captions` on both segments, then `fit_clip_duration` a few tenths of a second off the
+FIRST segment. `timeline_summary` shows the dialogue track correctly rippled (the second clip's
+`start` moves left by the cut amount) but that clip's OWN captions (built before the cut) stay
+exactly where they were -- now out of sync with their clip by the cut's width, and every caption
+after that compounds further out of sync with each earlier cut. This is why the with-whisper
+export above came out ~48.2s instead of the ~44.5s the per-clip numbers add up to: a late
+caption, never retimed, is what still reaches past the (now shorter) dialogue track and sets the
+project's overall duration. Call `fit_clip_duration`/`trim_filler_words` back-to-front (last clip
+on the track first) to sidestep it today, or only on the LAST clip on a track.
+
 ## 1. Build kimo-mcp
 
 ```
