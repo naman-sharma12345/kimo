@@ -40,6 +40,12 @@ director mode exists and what it fixed.
   {"name": "pick_thumbnail", "arguments": {"clip_id": "clip3", "count": 1}}
   ```
 
+- **New tool: `drop_short_segments(track_id?, min_duration_s?, dry_run?, keep_first_and_last?)`** deletes clips shorter than `min_duration_s` (default 1.0s) on a track and ripples the later clips left to close the gaps -- the tiny leftover false-start fragments an `auto_rough_cut` pass leaves between real takes (on real phone footage: a handful of sub-1s clips among the keepers). `track_id` defaults to the track with the most media clips. `keep_first_and_last` (default true) protects a genuinely short opening/closing shot from being treated as a false start. `dry_run: true` reports what would be dropped without changing anything. Reuses the existing `ripple_delete` path one clip at a time, so captions get exactly today's handling (none) -- same as before this lane. Registered in the `timeline` group next to `ripple_delete`/`remove_silence_cuts`, not on the director-mode list.
+
+  ```json
+  {"name": "drop_short_segments", "arguments": {"track_id": "track1", "min_duration_s": 1.0}}
+  ```
+
 ## Tight cut in one command
 
 `demo/run_tight_cut_mcp.py` chains tonight's new tools end to end on a whole clip folder, over
