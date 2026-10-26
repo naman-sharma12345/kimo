@@ -215,7 +215,7 @@ fn retime_linked_captions(ss: &mut Session, media_clip_id: &str, removed: &[(f64
 pub fn commands() -> Vec<Command> {
     vec![Command {
         name: "trim_filler_words",
-        description: "Ripple-delete flagged word spans (e.g. filler words) from one media clip's own footage on the timeline, reusing lift_range; later clips on the track shift left to close each gap. Caption/text clips auto_captions built from this clip's own words are retimed to match (retime_captions, default true): deleted if entirely inside a removed span, trimmed if straddling a cut, shifted left if after it.",
+        description: "Ripple-delete flagged word spans (e.g. filler words like \"um\", \"uh\", repeated ums/uhs, stutters and other disfluencies) from one media clip's own footage on the timeline, reusing lift_range; later clips on the track shift left to close each gap. Caption/text clips auto_captions built from this clip's own words are retimed to match (retime_captions, default true): deleted if entirely inside a removed span, trimmed if straddling a cut, shifted left if after it.",
         mutates: true,
         schema: obj(
             vec![
@@ -226,7 +226,7 @@ pub fn commands() -> Vec<Command> {
                 ),
                 (
                     "words",
-                    json!({"type":"array","items":{"type":"string"},"description":"optional: filler words (e.g. [\"um\",\"uh\",\"matlab\"]) to auto-pick spans for from this clip's existing auto_captions/transcript words, case-insensitive; adds to spans when both are given"}),
+                    json!({"type":"array","items":{"type":"string"},"description":"optional: filler words, stutters or other disfluencies (e.g. [\"um\",\"uh\",\"matlab\"]) to auto-pick spans for from this clip's existing auto_captions/transcript words, case-insensitive; adds to spans when both are given"}),
                 ),
                 (
                     "pad",
