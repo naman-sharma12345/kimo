@@ -91,6 +91,34 @@ fn words_from_transcript(ss: &Session, clip_id: &str, words: &[String]) -> Vec<(
     out
 }
 
+/// Every linked transcript word's own `(src_start, src_end)` span for this clip, in the same
+/// "source time since this clip's own in_point" coordinate `words_from_transcript` above uses -- same
+/// Take -> word chain (a `Take` whose `source.clip_id` is this clip, then that take's words by `take_id`),
+/// just without the text filter: every word is returned, not only ones matching a wanted set. Used by
+/// `fit_clip_duration`'s `protect_words` (ext/fit_duration.rs) so its silence cuts never land inside a
+/// transcribed word, reusing this lookup rather than re-deriving it. Read-only; does not touch cue_words
+/// or anything caption-retiming related.
+pub(crate) fn all_word_spans_for_clip(ss: &Session, clip_id: &str) -> Vec<(f64, f64)> {
+    let mut out = vec![];
+    for tr in ss.project.editorial.transcripts.values() {
+        let take_ids: std::collections::HashSet<&str> = tr
+            .takes
+            .iter()
+            .filter(|t| t.source.clip_id.as_deref() == Some(clip_id))
+            .map(|t| t.id.as_str())
+            .collect();
+        if take_ids.is_empty() {
+            continue;
+        }
+        for w in &tr.words {
+            if take_ids.contains(w.take_id.as_str()) {
+                out.push((w.src_start, w.src_end));
+            }
+        }
+    }
+    out
+}
+
 /// Maps a timeline time through a sorted, non-overlapping set of removed `[start, end)` ranges: a time inside a
 /// removed range collapses onto the range's own start; a time at or after a range's end shifts left by that range's
 /// width. This is exactly `lift_range`'s own ripple math, applied directly to a clip that lives on a track

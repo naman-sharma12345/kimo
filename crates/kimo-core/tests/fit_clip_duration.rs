@@ -205,3 +205,125 @@ fn rejects_a_bad_threshold_db_value() {
         assert!(e.contains("threshold_db"), "bad value {bad}: {e}");
     }
 }
+
+// --- protect_words (lane KF9): never let a candidate silence cut land inside a linked transcript word. ---
+
+/// Binds a single-word transcript take to `clip_id`, mirroring the real clip3 bug this lane fixes: a
+/// transcribed word whose timing lands inside what the RMS rule reported as a pause.
+fn bind_one_word(ss: &mut Session, clip_id: &str, word_start: f64, word_end: f64) {
+    use kimo_core::transcript::{Take, TakeSource, TakeStatus, Transcript, Word};
+    let take = Take {
+        id: "take1".into(),
+        source: TakeSource { asset_id: None, clip_id: Some(clip_id.to_string()), path_key: None },
+        src_start: 0.0,
+        src_end: 6.0,
+        timeline_start: Some(0.0),
+        speed: 1.0,
+        order: 0,
+        status: TakeStatus::Chosen,
+        note: String::new(),
+    };
+    let words = vec![Word::new("w1", "take1", "aur", word_start, word_end, Some(0.9))];
+    ss.project.editorial.transcripts.insert(
+        "tr1".into(),
+        Transcript { id: "tr1".into(), name: "t".into(), language: "en".into(), script_text: None, takes: vec![take], words, version: 1 },
+    );
+}
+
+/// This clip's own `source.asset` id, read directly off the project (before any cut), so surviving
+/// fragments of the SAME media after a ripple-delete can be found back by that id.
+fn clip_source_asset(ss: &Session, clip_id: &str) -> String {
+    let p = serde_json::to_value(&ss.project).unwrap();
+    for t in p["tracks"].as_array().unwrap() {
+        for c in t["clips"].as_array().unwrap() {
+            if c["id"] == json!(clip_id) {
+                return c["source"]["asset"].as_str().unwrap_or_else(|| panic!("clip {clip_id} has no source.asset: {c}")).to_string();
+            }
+        }
+    }
+    panic!("clip {clip_id} not found");
+}
+
+/// Every surviving clip fragment's own source-time window `[in_point, in_point + duration*speed)` for a
+/// given asset id -- lets a test check whether a particular source-time span (e.g. a transcript word's
+/// own span) is still intact somewhere on the timeline after a ripple-delete, without assuming which
+/// fragment id it ended up on.
+fn source_windows(ss: &Session, asset_id: &str) -> Vec<(f64, f64)> {
+    let p = serde_json::to_value(&ss.project).unwrap();
+    p["tracks"].as_array().unwrap().iter()
+        .flat_map(|t| t["clips"].as_array().unwrap().iter().cloned())
+        .filter(|c| c["source"]["asset"] == json!(asset_id))
+        .map(|c| {
+            let ip = c["in_point"].as_f64().unwrap();
+            let dur = c["duration"].as_f64().unwrap();
+            let speed = c["speed"].as_f64().unwrap_or(1.0);
+            (ip, ip + dur * speed)
+        })
+        .collect()
+}
+
+/// True when some single surviving fragment's own window fully contains `span` -- i.e. nothing cut
+/// through it.
+fn span_is_intact(windows: &[(f64, f64)], span: (f64, f64)) -> bool {
+    windows.iter().any(|&(ws, we)| ws <= span.0 + 1e-6 && we >= span.1 - 1e-6)
+}
+
+#[test]
+fn protect_words_false_cuts_straight_through_a_linked_word_unchanged_from_today() {
+    // word "aur" at [1.5, 1.6] sits well inside the first pause's own usable range (~[0.85, 2.75] after
+    // the default 0.05 safety margin) -- the same shape as the real clip3 bug this lane exists to fix.
+    let mut ss = portrait();
+    let (_t, c) = two_pause_clip(&mut ss);
+    let asset = clip_source_asset(&ss, &c);
+    bind_one_word(&mut ss, &c, 1.5, 1.6);
+    let r = call(&mut ss, "fit_clip_duration", json!({"clip_id": c, "max_duration": 4.0}));
+    assert_eq!(r["met_target"], json!(true), "{r}");
+    assert_eq!(r["words_protected"], json!(0), "protect_words defaults to off: {r}");
+    let windows = source_windows(&ss, &asset);
+    assert!(!span_is_intact(&windows, (1.5, 1.6)), "today's (pre-protect_words) behaviour must be unchanged: the cut still swallows the word: {r} windows={windows:?}");
+}
+
+#[test]
+fn protect_words_true_shrinks_the_cut_so_the_same_word_survives_and_still_meets_target() {
+    let mut ss = portrait();
+    let (_t, c) = two_pause_clip(&mut ss);
+    let asset = clip_source_asset(&ss, &c);
+    bind_one_word(&mut ss, &c, 1.5, 1.6);
+    let r = call(&mut ss, "fit_clip_duration", json!({"clip_id": c, "max_duration": 4.0, "protect_words": true}));
+    assert_eq!(r["protect_words"], json!(true), "{r}");
+    assert!(r["words_protected"].as_u64().unwrap() >= 1, "the overlapping pause should be reported shrunk or dropped: {r}");
+    assert_eq!(r["met_target"], json!(true), "the other whole pause plus the shrunk remainder is still enough: {r}");
+    let new_dur = r["new_duration"].as_f64().unwrap();
+    assert!((new_dur - 4.0).abs() < 0.15, "{r}");
+    let windows = source_windows(&ss, &asset);
+    assert!(span_is_intact(&windows, (1.5, 1.6)), "protect_words must keep the whole word intact: {r} windows={windows:?}");
+}
+
+#[test]
+fn protect_words_true_with_no_linked_words_behaves_exactly_like_today_and_says_so() {
+    let mut ss_plain = portrait();
+    let (_t1, c1) = two_pause_clip(&mut ss_plain);
+    let r_plain = call(&mut ss_plain, "fit_clip_duration", json!({"clip_id": c1, "max_duration": 4.0}));
+
+    let mut ss_pw = portrait();
+    let (_t2, c2) = two_pause_clip(&mut ss_pw);
+    // no bind_one_word call: this clip has no linked transcript at all.
+    let r_pw = call(&mut ss_pw, "fit_clip_duration", json!({"clip_id": c2, "max_duration": 4.0, "protect_words": true}));
+
+    assert_eq!(r_pw["met_target"], r_plain["met_target"], "{r_pw} vs {r_plain}");
+    assert_eq!(r_pw["spans_removed"], r_plain["spans_removed"], "{r_pw} vs {r_plain}");
+    assert_eq!(r_pw["removed_seconds"].as_f64(), r_plain["removed_seconds"].as_f64(), "{r_pw} vs {r_plain}");
+    assert_eq!(r_pw["new_duration"].as_f64(), r_plain["new_duration"].as_f64(), "{r_pw} vs {r_plain}");
+    assert_eq!(r_pw["words_protected"], json!(0), "{r_pw}");
+    assert!(r_pw["note"].as_str().is_some(), "a protect_words:true run with no linked words should say so: {r_pw}");
+}
+
+#[test]
+fn rejects_a_bad_protect_words_value() {
+    let mut ss = portrait();
+    let (_t, c) = two_pause_clip(&mut ss);
+    for bad in [json!("yes"), json!(1), json!([true])] {
+        let e = dispatch(&mut ss, "fit_clip_duration", &json!({"clip_id": c, "max_duration": 1.0, "protect_words": bad.clone()})).unwrap_err();
+        assert!(e.contains("protect_words"), "bad value {bad}: {e}");
+    }
+}

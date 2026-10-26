@@ -30,6 +30,16 @@
 //! / speech frames) so the threshold can never climb into actual speech even on a clip with little
 //! dynamic range. This file does not touch audio_probe.rs or perception/vad.rs: it only reads back data
 //! they already compute and expose.
+//!
+//! `protect_words` (KF9, additive, default false): the RMS silence rule can still return a candidate
+//! pause whose detected edge runs a little past where speech (a transcribed word) actually starts -- on
+//! real clip3 the second "auto" cut [12.65, 13.95] overlapped the whisper word "aur", which starts at
+//! 13.486. `protect_words` shrinks (see `shrink_away_from_words` below) every candidate pause so it never
+//! overlaps a linked word's own `[src_start - word_pad_s, src_end + word_pad_s]`, dropping it if that
+//! leaves less than `min_silence_ms`, before the existing largest-first/partial-fit selection runs
+//! unchanged. The word lookup reuses filler_trim.rs's own Take -> word chain
+//! (`all_word_spans_for_clip`, the same linkage `words_from_transcript` already walks for its `words`
+//! param) rather than re-deriving it here.
 use super::kit::*;
 use crate::commands::dispatch_nested as call;
 use crate::model::{Project, Source, TimeMode};
@@ -130,6 +140,18 @@ fn floor_json(floor: Option<f64>) -> Value {
     }
 }
 
+/// Inserts a `"note"` string field into an already-built result object, only when `note` is `Some` --
+/// used for the one protect_words case worth a sentence (no linked transcript words found), so a plain
+/// run (protect_words off, or on with words found) carries no empty/null note field.
+fn with_note(mut v: Value, note: Option<&str>) -> Value {
+    if let Some(n) = note {
+        if let Some(obj) = v.as_object_mut() {
+            obj.insert("note".to_string(), json!(n));
+        }
+    }
+    v
+}
+
 fn loc(p: &Project, id: &str) -> Result<(usize, usize), String> {
     for (ti, t) in p.tracks.iter().enumerate() {
         if let Some(ci) = t.clips.iter().position(|c| c.id == id) {
@@ -137,6 +159,42 @@ fn loc(p: &Project, id: &str) -> Result<(usize, usize), String> {
         }
     }
     Err(format!("no such clip '{id}'"))
+}
+
+/// `protect_words` helper: shrinks `span` to the single largest contiguous sub-interval that overlaps
+/// none of `words_padded` (each entry already padded by word_pad_s on both sides). Returns `None` when
+/// a word interval covers the whole span, leaving nothing free. This literally shrinks -- even a word
+/// landing in the middle of the span yields two free fragments, and only the larger is kept, rather than
+/// turning one candidate pause into two -- the largest-first/partial-fit logic downstream still expects
+/// one span in, at most one span out.
+fn shrink_away_from_words(span: (f64, f64), words_padded: &[(f64, f64)]) -> Option<(f64, f64)> {
+    let (s, e) = span;
+    let mut frags: Vec<(f64, f64)> = vec![(s, e)];
+    for &(ws, we) in words_padded {
+        if we <= s || ws >= e {
+            continue; // this word doesn't touch the original span at all; nothing to do.
+        }
+        let mut next = Vec::with_capacity(frags.len() + 1);
+        for (fs, fe) in frags {
+            if we <= fs || ws >= fe {
+                next.push((fs, fe)); // word doesn't touch this fragment.
+                continue;
+            }
+            if ws > fs {
+                next.push((fs, ws)); // the part of the fragment before the word.
+            }
+            if we < fe {
+                next.push((we, fe)); // the part of the fragment after the word.
+            }
+        }
+        frags = next;
+        if frags.is_empty() {
+            break;
+        }
+    }
+    frags
+        .into_iter()
+        .max_by(|a, b| (a.1 - a.0).partial_cmp(&(b.1 - b.0)).unwrap())
 }
 
 fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
@@ -175,6 +233,15 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
         Some(Value::Bool(b)) => *b,
         _ => return Err("retime_captions must be a boolean".into()),
     };
+    let protect_words = match a.get("protect_words") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(b)) => *b,
+        _ => return Err("protect_words must be a boolean".into()),
+    };
+    let word_pad_s = opt_num(a, "word_pad_s", 0.05);
+    if !word_pad_s.is_finite() || word_pad_s < 0.0 {
+        return Err("word_pad_s must be a finite number >= 0".into());
+    }
 
     // Resolved once, ahead of the already-fits check below, so "auto"'s threshold_db and
     // measured_noise_floor_db are reported the same way on every return path (a no-op clip still
@@ -188,7 +255,8 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
             "spans_removed": 0, "removed_seconds": 0.0, "new_duration": original_duration,
             "met_target": true, "shortfall_seconds": 0.0, "retime_captions": retime_captions,
             "captions_shifted": 0, "captions_trimmed": 0, "captions_removed": 0,
-            "threshold_db": threshold_db, "measured_noise_floor_db": floor_json(measured_noise_floor_db)
+            "threshold_db": threshold_db, "measured_noise_floor_db": floor_json(measured_noise_floor_db),
+            "protect_words": protect_words, "word_pad_s": word_pad_s, "words_protected": 0
         }));
     }
 
@@ -208,6 +276,45 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
         .map(|(s, e)| (s + safety_margin_s, e - safety_margin_s))
         .filter(|(s, e)| e - s > 1e-6)
         .collect();
+
+    // protect_words: shrink (never split into more than one span) every candidate pause so it doesn't
+    // overlap any linked transcript word, padded by word_pad_s on each side, then drop anything that
+    // becomes shorter than min_silence_ms -- so a pause the RMS rule detected, but whose edge timing
+    // was a little off, can never carry a cut into a spoken word. Reuses filler_trim.rs's own
+    // Take -> word lookup (all_word_spans_for_clip) rather than re-deriving the link chain here.
+    let mut words_protected: u32 = 0;
+    let mut protect_words_note: Option<String> = None;
+    if protect_words {
+        let word_spans = super::filler_trim::all_word_spans_for_clip(ss, &clip_id);
+        if word_spans.is_empty() {
+            protect_words_note = Some(
+                "protect_words was on but this clip has no linked transcript words (no take bound to it); behaving exactly as if protect_words were off".to_string(),
+            );
+        } else {
+            let words_padded: Vec<(f64, f64)> = word_spans
+                .iter()
+                .map(|(ws, we)| (ws - word_pad_s, we + word_pad_s))
+                .collect();
+            let min_silence_s = min_silence_ms / 1000.0;
+            let mut kept = Vec::with_capacity(silences.len());
+            for span in silences.drain(..) {
+                match shrink_away_from_words(span, &words_padded) {
+                    Some(shrunk) if shrunk.1 - shrunk.0 >= min_silence_s - 1e-9 => {
+                        if (shrunk.0 - span.0).abs() > 1e-9 || (shrunk.1 - span.1).abs() > 1e-9 {
+                            words_protected += 1;
+                        }
+                        kept.push(shrunk);
+                    }
+                    _ => {
+                        // either consumed entirely by a word, or shrunk below the usable minimum -- drop it.
+                        words_protected += 1;
+                    }
+                }
+            }
+            silences = kept;
+        }
+    }
+
     silences.sort_by(|x, y| (y.1 - y.0).partial_cmp(&(x.1 - x.0)).unwrap());
 
     let silence_candidates = silences.len();
@@ -233,15 +340,16 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
     spans.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
 
     if spans.is_empty() {
-        return Ok(json!({
+        return Ok(with_note(json!({
             "clip_id": clip_id, "original_duration": original_duration, "max_duration": max_duration,
             "needed_seconds": needed, "silence_candidates": silence_candidates,
             "silence_available_seconds": silence_available, "spans_removed": 0, "removed_seconds": 0.0,
             "new_duration": original_duration, "met_target": false,
             "shortfall_seconds": needed / c.speed,
             "retime_captions": retime_captions, "captions_shifted": 0, "captions_trimmed": 0, "captions_removed": 0,
-            "threshold_db": threshold_db, "measured_noise_floor_db": floor_json(measured_noise_floor_db)
-        }));
+            "threshold_db": threshold_db, "measured_noise_floor_db": floor_json(measured_noise_floor_db),
+            "protect_words": protect_words, "word_pad_s": word_pad_s, "words_protected": words_protected
+        }), protect_words_note.as_deref()));
     }
 
     let trim = call(ss, "trim_filler_words", &json!({
@@ -258,7 +366,7 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let new_duration = (original_duration - removed_seconds_timeline).max(0.0);
     let shortfall = (new_duration - max_duration).max(0.0);
 
-    Ok(json!({
+    Ok(with_note(json!({
         "clip_id": clip_id, "original_duration": original_duration, "max_duration": max_duration,
         "needed_seconds": needed, "silence_candidates": silence_candidates,
         "silence_available_seconds": silence_available,
@@ -269,14 +377,15 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
         "captions_shifted": trim.get("captions_shifted").cloned().unwrap_or(json!(0)),
         "captions_trimmed": trim.get("captions_trimmed").cloned().unwrap_or(json!(0)),
         "captions_removed": trim.get("captions_removed").cloned().unwrap_or(json!(0)),
-        "threshold_db": threshold_db, "measured_noise_floor_db": floor_json(measured_noise_floor_db)
-    }))
+        "threshold_db": threshold_db, "measured_noise_floor_db": floor_json(measured_noise_floor_db),
+        "protect_words": protect_words, "word_pad_s": word_pad_s, "words_protected": words_protected
+    }), protect_words_note.as_deref()))
 }
 
 pub fn commands() -> Vec<Command> {
     vec![Command {
         name: "fit_clip_duration",
-        description: "Shrink one media clip to at most max_duration seconds by trimming its own quietest pauses. Largest pause first, the audio_probe RMS silence rule, partial on only the last pause needed for an exact fit -- never cuts into detected speech. threshold_db also accepts \"auto\": it measures this clip's own noise floor (a low percentile of its window RMS, the exact measurement the silence rule itself compares against) and sets the threshold a fixed margin above it, capped below the clip's own speech level, so a noisy phone recording's room tone doesn't hide every pause behind the -60 default; the chosen threshold_db and measured_noise_floor_db ride the result either way. Caption/text clips auto_captions built from this clip retime with it (retime_captions, default true), same as trim_filler_words. No-op if the clip already fits. Reports met_target and shortfall_seconds honestly when there isn't enough silence to reach the target -- never cuts speech to force it.",
+        description: "Shrink one media clip to at most max_duration seconds by trimming its own quietest pauses. Largest pause first, the audio_probe RMS silence rule, partial on only the last pause needed for an exact fit -- never cuts into detected speech. threshold_db also accepts \"auto\": it measures this clip's own noise floor (a low percentile of its window RMS, the exact measurement the silence rule itself compares against) and sets the threshold a fixed margin above it, capped below the clip's own speech level, so a noisy phone recording's room tone doesn't hide every pause behind the -60 default; the chosen threshold_db and measured_noise_floor_db ride the result either way. Caption/text clips auto_captions built from this clip retime with it (retime_captions, default true), same as trim_filler_words. protect_words (default false) shrinks or drops any candidate pause that would overlap a linked transcript word, padded by word_pad_s (default 0.05s) on each side, so a cut never lands inside a word even when a pause's detected edge runs a little long; words_protected on the result counts how many pauses that touched. No-op if the clip already fits. Reports met_target and shortfall_seconds honestly when there isn't enough silence to reach the target -- never cuts speech to force it.",
         mutates: true,
         schema: obj(vec![
             ("clip_id", s("the media clip to shrink")),
@@ -285,6 +394,8 @@ pub fn commands() -> Vec<Command> {
             ("threshold_db", json!({"description":"RMS silence threshold in dBFS, default -60. Or the string \"auto\": measures this clip's own noise floor (a low percentile of its own window RMS) and sets the threshold a fixed margin above that floor, capped below the clip's own speech level, instead of a fixed guess -- useful for phone-mic room tone the -60 default can't see pauses under."})),
             ("safety_margin_s", n("seconds shaved off each end of every detected pause before it's used, so a trim never lands right at speech's edge; default 0.05")),
             ("retime_captions", json!({"type":"boolean","description":"also retime caption/text clips auto_captions built from this clip's own words, same as trim_filler_words. Default true."})),
+            ("protect_words", json!({"type":"boolean","description":"shrink or drop any candidate pause that would overlap a linked transcript word (padded by word_pad_s), so a cut never lands inside a word. Default false, so existing behaviour is unchanged unless asked for. Reports words_protected (count of pauses shrunk or dropped) and, if the clip has no linked transcript words, a note that it had no effect."})),
+            ("word_pad_s", n("seconds of padding added to each side of a linked word's own span before protect_words checks pause overlap against it; default 0.05")),
         ], &["clip_id", "max_duration"]),
         run,
     }]
