@@ -178,6 +178,124 @@ def check_mt7():
     print(f"\nall {13} MT7 checks passed")
 
 
+# ---------------------------------------------------------------------------
+# MT8: (1) don't invite retitle/restyle when no position fixes legibility,
+# (2) safe-area check via compute_text_bounds + query_safe_margins,
+# (3) accent consistency read across every caption clip at final export,
+# (4) a minimum accent luminance so a dark "matching" accent still fails.
+# Still no kimo-mcp binary or network needed: tool calls are faked.
+# ---------------------------------------------------------------------------
+
+def check_mt8():
+    failures = []
+
+    def expect(label, cond):
+        print(("PASS " if cond else "FAIL ") + label)
+        if not cond:
+            failures.append(label)
+
+    # --- (1) legibility_notable_violations: the pure decision the corrective note is built from.
+    expect("no position violations -> nothing to exclude, returns them unchanged (empty)",
+           agent.legibility_notable_violations([], None) == [])
+    expect("position violations + a passing y found -> kept in the note",
+           agent.legibility_notable_violations(["contrast too low"], -300.0) == ["contrast too low"])
+    expect("position violations + NO passing y -> dropped from the note entirely (no retitle/restyle invite)",
+           agent.legibility_notable_violations(["contrast too low"], None) == [])
+    expect("placement-only violation + no passing y -> also dropped",
+           agent.legibility_notable_violations(["title sits near centre"], None) == [])
+
+    # --- (4) accent luminance floor, exercised through taste_check (rule 4), same entry point the
+    # harness actually calls. A state that is otherwise fully compliant (matching accent everywhere)
+    # should only fail on luminance when the colour itself is too dark.
+    def state_with_accent(accent):
+        return {"title_text": "NOT THAT BAD", "title_style": "impact", "title_accent": accent, "title_color": None,
+                "caption_tool": "auto_captions", "caption_keywords": True, "caption_keyword_color": accent, "caption_active_color": accent}
+
+    dark_navy = (0.2, 0.35, 0.65)  # the unseen2 re-run's actual pick
+    v_dark = agent.taste_check(state_with_accent(dark_navy), agent.BANNED_LABEL_WORDS)
+    expect(f"dark navy {dark_navy} (luminance {agent._rel_luminance(dark_navy):.2f}) fails the luminance rule",
+           any("luminance" in x for x in v_dark))
+
+    bright_orange = (0.98, 0.55, 0.18)  # real_vlog's accent, already shipped and known-good
+    v_bright = agent.taste_check(state_with_accent(bright_orange), agent.BANNED_LABEL_WORDS)
+    expect(f"bright orange {bright_orange} (luminance {agent._rel_luminance(bright_orange):.2f}) passes the luminance rule",
+           not any("luminance" in x for x in v_bright))
+
+    lavender = (0.76, 0.52, 0.99)  # real_review's accent, already shipped and known-good
+    v_lav = agent.taste_check(state_with_accent(lavender), agent.BANNED_LABEL_WORDS)
+    expect(f"the already-shipped lavender accent {lavender} still passes (no regression on existing clips)",
+           not any("luminance" in x for x in v_lav))
+
+    # --- (2) safe_area_check: a fake Kimo returns a fixed compute_text_bounds/query_safe_margins pair.
+    class _FakeKimoSafe:
+        def __init__(self, rect, sm_result):
+            self.rect = rect; self.sm_result = sm_result; self.calls = []
+
+        def call(self, name, args, timeout=600):
+            self.calls.append((name, args))
+            if name == "compute_text_bounds":
+                return False, _json.dumps({"canvas_rect": self.rect}), []
+            if name == "query_safe_margins":
+                return False, _json.dumps(self.sm_result), []
+            raise AssertionError(f"unexpected call: {name}")
+
+    title_state = {"title_clip_id": "clip35", "title_start": 0.0, "title_duration": 1.8, "title_x": 80.0}
+    # clipped off the right edge -- the exact numbers measured on MT7's unseen2 run.
+    # the real shape query_safe_margins actually returns (verified live against the kimo-mcp binary on
+    # MT7's unseen2 project): suggested_shift lives per-zone, not directly on the overlap.
+    sm_clipped = {"rects_outside_safe_max_pct": 11.91, "worst_edge": "right", "worst_edge_px": 76.0,
+                  "overlaps": [{"outside_canvas_pct": 6.27, "zones": [{"suggested_shift": {"dx": -76.0, "dy": 0.0}}]}]}
+    kf = _FakeKimoSafe([122.0, 263.0, 638.0, 53.0], sm_clipped)
+    v_safe, d_safe = agent.safe_area_check(kf, title_state, "/tmp")
+    expect("safe_area_check flags a title box that query_safe_margins says is outside the safe area", len(v_safe) == 1)
+    expect("the violation names the measured suggested x (80 + -76 = 4)", "value: 4" in v_safe[0] or "value: 4.0" in v_safe[0])
+    expect("detail carries the raw query_safe_margins result for the report", d_safe.get("query_safe_margins") == sm_clipped)
+
+    sm_clean = {"rects_outside_safe_max_pct": 0.0, "overlaps": [{"outside_canvas_pct": 0.0, "suggested_shift": {"dx": 0.0, "dy": 0.0}}]}
+    kf2 = _FakeKimoSafe([36.0, 213.0, 400.0, 53.0], sm_clean)
+    v_safe2, _ = agent.safe_area_check(kf2, title_state, "/tmp")
+    expect("safe_area_check passes a title box fully inside the safe area", v_safe2 == [])
+
+    # --- (3) accent_consistency_check: reads caption clip colours from a fake project state
+    # (_project_state monkeypatched), independent of whatever taste_state's own last-call tracking saw.
+    orig_project_state = agent._project_state
+    title_accent = (0.2, 0.55, 0.95)  # a blue accent, clearly unlike red on every channel
+    stale_red = [1.0, 0.0, 0.0]  # "NEXT" stayed on the OLD accent -- MT8 bug (c)
+    fake_project = {
+        "editorial": {"captions": {"g1": {"track_id": "track36"}}},
+        "tracks": [{"id": "track36", "clips": [
+            {"id": "clip37", "source": {"text": "Hi I'm Maya"}, "text_fx": {"animators": [
+                {"id": "kw0", "fill": list(title_accent)}, {"id": "active", "fill": list(title_accent)}]}},
+            {"id": "clip44", "source": {"text": "NEXT"}, "text_fx": {"animators": [
+                {"id": "kw0", "fill": stale_red}, {"id": "active", "fill": stale_red}]}},
+        ]}],
+    }
+    agent._project_state = lambda out_dir: fake_project
+    try:
+        state_match = {"title_accent": title_accent, "title_color": None}
+        v_acc, d_acc = agent.accent_consistency_check(state_match, "/tmp")
+        expect("accent_consistency_check catches the one caption clip left on the old red accent", len(v_acc) == 1 and "clip44" in v_acc[0])
+        expect("detail lists both clips read from the project", set(d_acc["clips"].keys()) == {"clip37", "clip44"})
+
+        fake_project_fixed = {**fake_project, "tracks": [{"id": "track36", "clips": [
+            {"id": "clip37", "source": {"text": "Hi I'm Maya"}, "text_fx": {"animators": [
+                {"id": "kw0", "fill": list(title_accent)}, {"id": "active", "fill": list(title_accent)}]}},
+            {"id": "clip44", "source": {"text": "NEXT"}, "text_fx": {"animators": [
+                {"id": "kw0", "fill": list(title_accent)}, {"id": "active", "fill": list(title_accent)}]}},
+        ]}]}
+        agent._project_state = lambda out_dir: fake_project_fixed
+        v_acc_ok, _ = agent.accent_consistency_check(state_match, "/tmp")
+        expect("accent_consistency_check passes once every caption clip matches the title accent", v_acc_ok == [])
+    finally:
+        agent._project_state = orig_project_state
+
+    if failures:
+        print(f"\n{len(failures)} FAILED")
+        sys.exit(1)
+    print(f"\nall {13} MT8 checks passed")
+
+
 if __name__ == "__main__":
     check()
     check_mt7()
+    check_mt8()

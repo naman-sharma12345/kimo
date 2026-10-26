@@ -187,6 +187,11 @@ def strip_images(msgs):
 _TITLE_WORD_RE = re.compile(r"[A-Za-z']+")
 BANNED_LABEL_WORDS = {"REVIEW", "REVIEWS", "VLOG", "VLOGS", "UNBOXING", "UNBOX", "TUTORIAL", "HAUL", "DIARY", "TOUR"}
 
+# MT8 rule 4: minimum relative luminance for the one accent colour, so a dark accent (e.g. the
+# (0.2,0.35,0.65) navy the unseen2 re-run picked) does not get waved through just because it matched
+# across title/keyword_color/active_color -- matching each other is necessary but not sufficient.
+ACCENT_MIN_LUMINANCE = 0.25
+
 def brief_banned_words(brief_text):
     """Genre/category label from any quoted example title in the brief (e.g. 'BOTTLE REVIEW') -- the brief's
     example is always "<description> <GENRE>" (BOTTLE REVIEW, DESK VLOG), so only the trailing word is a
@@ -261,6 +266,14 @@ def taste_check(state, banned_words):
             v.append("auto_captions was called without active_color, so the spoken-word highlight stays at the tool's default yellow -- set active_color to the same accent as keyword_color (or to white)")
         elif active_c and title_c and colors_differ(active_c, title_c) and colors_differ(active_c, white):
             v.append(f"auto_captions active_color {active_v} is neither the accent {state.get('title_' + title_c_src)} nor white -- captions show a third colour mixed in")
+    # MT8 rule 4: an accent too dark reads poorly as a keyword highlight against the black stroke every
+    # caption already has (stroke_width 9 vs the title's own none) -- e.g. (0.2,0.35,0.65) measured
+    # relative luminance ~0.07 on the unseen2 re-run and was flagged by nobody. Require >=0.25 so the
+    # accent itself stays legible, independent of where the title sits.
+    if title_c:
+        lum = _rel_luminance(title_c)
+        if lum < ACCENT_MIN_LUMINANCE:
+            v.append(f"the chosen accent {state.get('title_' + title_c_src)} has relative luminance {lum:.2f} (rule 4 wants >= {ACCENT_MIN_LUMINANCE:g}) -- too dark to read clearly as a keyword highlight with a black stroke; pick a brighter colour from the footage")
     return v
 
 
@@ -388,6 +401,119 @@ def placement_check(state):
     return v
 
 
+
+# MT8 (2): safe-area check. compute_text_bounds gives the title's real on-screen bbox; query_safe_margins
+# (ext/safe_margins.rs, a real read-only kimo tool -- "nothing is moved or rejected" per its own schema,
+# not on the director tool list the model sees but reachable the same way compute_text_bounds/lint_edit
+# already are) compares that bbox to the documented title-safe zone (90% inset) and the canvas itself, and
+# hands back a suggested_shift. MT7's unseen2 case: the model moved the title to x=80 on its own after a
+# legibility note, pushing bbox x1 to 760 against a 720px canvas -- compute_text_bounds/query_safe_margins
+# together say so in numbers (worst_edge "right", worst_edge_px 76, outside_canvas_pct ~6%) instead of this
+# only being caught by eye in a strip.
+def safe_area_check(k, state, out_dir):
+    """Returns (violations: list[str], detail: dict)."""
+    detail = {"ran": False}
+    cid = state.get("title_clip_id")
+    if not cid:
+        return [], detail
+    t_mid = (state.get("title_start") or 0.0) + (state.get("title_duration") or 4.0) / 2.0
+    v = []
+    try:
+        rect_err, rect_out, _ = k.call("compute_text_bounds", {"clip_id": cid, "t": t_mid}, timeout=60)
+        if rect_err:
+            detail["tool_error"] = rect_out[:200]
+            return [], detail
+        rect = json.loads(rect_out)["canvas_rect"]
+        detail["ran"] = True; detail["canvas_rect"] = rect
+        sm_err, sm_out, _ = k.call("query_safe_margins", {"profile": "title_safe", "rects": [{"name": "title", "rect": rect}]}, timeout=60)
+        if sm_err:
+            detail["tool_error"] = sm_out[:200]
+            return [], detail
+        sm = json.loads(sm_out)
+        detail["query_safe_margins"] = sm
+        outside_pct = sm.get("rects_outside_safe_max_pct") or 0.0
+        overlap = (sm.get("overlaps") or [{}])[0]
+        outside_canvas_pct = overlap.get("outside_canvas_pct") or 0.0
+        if outside_pct > 0 or outside_canvas_pct > 0:
+            # suggested_shift lives per-zone (overlap["zones"][*]["suggested_shift"]), not on the
+            # overlap itself -- confirmed against the live tool's actual output, not assumed from its name.
+            zones = overlap.get("zones") or []
+            suggested = (zones[0].get("suggested_shift") if zones else None) or {}
+            cur_x = state.get("title_x") or 0.0
+            suggested_x = round(cur_x + (suggested.get("dx") or 0.0))
+            detail["suggested_x"] = suggested_x
+            off_canvas = f", {outside_canvas_pct:.1f}% of it off the canvas entirely" if outside_canvas_pct > 0 else ""
+            v.append(f"the title's on-screen box {[round(c) for c in rect]} is {outside_pct:.1f}% outside the title-safe area{off_canvas} "
+                     f"(worst edge: {sm.get('worst_edge')}, {sm.get('worst_edge_px', 0):.0f}px over) -- bring it back in frame, e.g. "
+                     f"set_property (clip_id: \"{cid}\", property: \"x\", value: {suggested_x})")
+    except Exception as e:
+        detail["exception"] = f"{e}"[:200]
+    return v, detail
+
+
+# MT8 (3): accent consistency across every caption clip at final export, not just the args of whatever
+# auto_captions call the harness happened to see last. keyword_color/active_color are not stored as a
+# clip arg kimo echoes back -- they land as the "fill" of a text_fx animator (id starting "kw" for the
+# keyword pop, id == "active" for the spoken-word highlight) baked into the saved project -- so this reads
+# every clip on the caption track(s) straight from the live project the same way caption_y_values does.
+# (MT8 unseen_fix.jpg: the last frame's "NEXT" was still red because an earlier auto_captions call's
+# clip was never touched when a later call set a different colour elsewhere -- taste_state's own
+# "last call wins" tracking could not see that.)
+def caption_clip_colors(out_dir):
+    proj = _project_state(out_dir)
+    if not proj:
+        return {}
+    cap_tracks = {g.get("track_id") for g in (proj.get("editorial", {}).get("captions") or {}).values() if g.get("track_id")}
+    if not cap_tracks:
+        return {}
+    out = {}
+    for tr in proj.get("tracks", []):
+        if tr.get("id") not in cap_tracks:
+            continue
+        for c in tr.get("clips", []):
+            anims = ((c.get("text_fx") or {}).get("animators")) or []
+            kw_fill = next((a.get("fill") for a in anims if isinstance(a.get("id"), str) and a["id"].startswith("kw") and a.get("fill")), None)
+            active_fill = next((a.get("fill") for a in anims if a.get("id") == "active" and a.get("fill")), None)
+            if kw_fill or active_fill:
+                out[c.get("id")] = {"text": ((c.get("source") or {}).get("text") or "")[:24], "keyword_color": kw_fill, "active_color": active_fill}
+    return out
+
+
+def accent_consistency_check(state, out_dir):
+    """Returns (violations: list[str], detail: dict). No live tool can recolour an existing caption
+    clip's keyword/active fill after creation (set_property's PROPS are opacity/x/y/scale/rotation/
+    rot_x/rot_y/pos_z/backface/fill_alpha/stroke_alpha only, set_text_style has no fill-colour arg,
+    add_text_animator only appends a new animator, set_animator_keyframe's prop list has no "fill" --
+    confirmed against this binary's live schemas, not assumed) -- so unlike the y/x position checks this
+    one can only be flagged for the model to fix (by redoing the mismatched clip), never silently
+    corrected by the harness."""
+    detail = {"ran": False}
+    title_c = parse_color(state.get("title_accent")) or parse_color(state.get("title_color"))
+    if not title_c:
+        return [], detail
+    detail["ran"] = True
+    clips = caption_clip_colors(out_dir)
+    detail["clips"] = clips
+    white = (1.0, 1.0, 1.0)
+    mismatched = []
+    for cid, c in clips.items():
+        kw = parse_color(c.get("keyword_color"))
+        if kw and colors_differ(kw, title_c):
+            mismatched.append((cid, "keyword_color", c.get("keyword_color"), c.get("text")))
+        act = parse_color(c.get("active_color"))
+        if act and colors_differ(act, title_c) and colors_differ(act, white):
+            mismatched.append((cid, "active_color", c.get("active_color"), c.get("text")))
+    detail["mismatched"] = mismatched
+    v = []
+    if mismatched:
+        sample = "; ".join(f'{cid} ("{txt}") {prop}={val}' for cid, prop, val, txt in mismatched[:5])
+        more = f" (+{len(mismatched) - 5} more)" if len(mismatched) > 5 else ""
+        v.append(f"{len(mismatched)} caption clip property/ies still do not match the one accent {state.get('title_accent') or state.get('title_color')} "
+                 f"at final export -- {sample}{more} -- no tool can recolour an existing caption clip, so delete_clip + redo auto_captions for "
+                 f"just that span with the same accent")
+    return v, detail
+
+
 def price(model, usage):
     p = PRICES.get(model)
     if not p or p[0] is None: return None
@@ -491,6 +617,18 @@ def followup_needs_harness_fix(leg_violations, plc_violations):
     return bool(leg_violations or plc_violations)
 
 
+def legibility_notable_violations(position_violations, passing_y):
+    """MT8 (1): which position (legibility/placement) violations actually belong in the corrective note.
+    All of them when there either were none, or a passing y was actually found for the model to use --
+    [] when there WERE position violations but find_passing_y proved none of the tried positions fix it,
+    so there is nothing real to tell the model to do and no reason to leave the door open for it to
+    improvise a retitle/restyle instead (MT7's unseen2 case: an open-ended "try something else" note led
+    the model to delete the title, write a new one, shift it off-screen, and switch the whole accent)."""
+    if position_violations and passing_y is None:
+        return []
+    return position_violations
+
+
 def find_passing_y(k, state, out_dir, candidates=LEGIBILITY_Y_CANDIDATES, pass_threshold=3.0):
     """MT7 (1): when legibility fails, find a y that actually PASSES the same p10-contrast method
     legibility_check uses, before telling the model anything -- rather than asking it to guess and hoping
@@ -572,12 +710,12 @@ def run(a):
         for d in a.doc.split(","): system += "\n\n# Reference\n\n" + open(d).read().replace("{footage_list}", ", ".join(os.path.join(a.footage, f) for f in sorted(os.listdir(a.footage)) if f.lower().endswith((".mp4", ".mov", ".m4a", ".wav", ".mp3")))).replace("{footage}", a.footage).replace("{out}", a.out)
     brief = open(a.brief).read().replace("{footage}", a.footage).replace("{out}", a.out)
     taste_state = {"title_text": None, "title_style": None, "title_color": None, "title_accent": None,
-                   "title_clip_id": None, "title_start": None, "title_duration": None, "title_y": None,
+                   "title_clip_id": None, "title_start": None, "title_duration": None, "title_y": None, "title_x": None,
                    "caption_tool": None, "caption_keywords": False, "caption_keyword_color": None, "caption_active_color": None}
     taste_banned_words = BANNED_LABEL_WORDS | brief_banned_words(brief)
     taste_corrections_used = 0
     taste_log = {"fired": False, "violations_found": [], "corrective_round": 0}
-    taste_followup = {"pending": False, "snapshot_y": None, "passing_y": None}
+    taste_followup = {}  # MT8: "position" (y-axis legibility/placement) and/or "safe_area" (x-axis) pending fixups
 
     if a.adapter == "anthropic":
         m = Anthropic(a.model, os.environ["ANTHROPIC_BASE_URL"], os.environ["ANTHROPIC_API_KEY"], not a.no_vision)
@@ -654,6 +792,7 @@ def run(a):
                     taste_state["title_text"] = args.get("text"); taste_state["title_style"] = args.get("style")
                     taste_state["title_color"] = args.get("color"); taste_state["title_accent"] = args.get("accent")
                     taste_state["title_start"] = args.get("start", 0.0); taste_state["title_duration"] = args.get("duration", 4.0)
+                    taste_state["title_x"] = args.get("x", 0.0)
                     try:
                         cids = json.loads(out).get("clip_ids") if not is_err else None
                         if cids: taste_state["title_clip_id"] = cids[0]
@@ -668,6 +807,9 @@ def run(a):
                     taste_state["caption_tool"] = "caption_from_words"
                 elif name == "set_property" and taste_state.get("title_clip_id") and args.get("clip_id") == taste_state["title_clip_id"] and args.get("property") == "y":
                     try: taste_state["title_y"] = float(args.get("value"))
+                    except (TypeError, ValueError): pass
+                elif name == "set_property" and taste_state.get("title_clip_id") and args.get("clip_id") == taste_state["title_clip_id"] and args.get("property") == "x":
+                    try: taste_state["title_x"] = float(args.get("value"))
                     except (TypeError, ValueError): pass
                 if is_export(name, args): just_exported = True
             if not is_err and not export_ok() and is_preview(name, args) and taste_state.get("title_text"):
@@ -696,43 +838,67 @@ def run(a):
             violations = taste_check(taste_state, taste_banned_words)
             leg_violations, leg_detail = legibility_check(k, taste_state, a.out)
             plc_violations = placement_check(taste_state)
+            safe_violations, safe_detail = safe_area_check(k, taste_state, a.out)
+            accent_violations, accent_detail = accent_consistency_check(taste_state, a.out)
             taste_log["legibility"] = leg_detail
-            all_violations = violations + leg_violations + plc_violations
-            taste_log["violations_found"] = all_violations
-            if all_violations:
+            taste_log["safe_area"] = safe_detail
+            taste_log["accent_consistency"] = accent_detail
+            position_violations = leg_violations + plc_violations  # the y-axis issues find_passing_y can fix
+            taste_log["violations_found"] = violations + position_violations + safe_violations + accent_violations
+            find_detail = None
+            passing_y = None
+            if position_violations:
+                # MT7 (1): find a y that actually passes BEFORE writing the note, instead of telling the
+                # model a generic "-400" and hoping (MT6: that hope failed -- the model re-set the exact
+                # same already-failing -400 and called it fixed).
+                passing_y, find_detail = find_passing_y(k, taste_state, a.out)
+                taste_log["find_passing_y"] = find_detail
+            position_fixable = (passing_y is not None) if position_violations else True
+            position_violations_for_note = legibility_notable_violations(position_violations, passing_y)
+            if position_violations and not position_fixable:
+                # MT8 (1): no candidate y reaches readable contrast on this background -- do NOT invite the
+                # model to "fix" this by retitling or restyling (MT7's unseen2 case: the note left the door
+                # open with "try a different start time... or accept this", and the model instead deleted
+                # the title, wrote a new one, moved it off-screen (x=80) and switched the whole accent to an
+                # unreadable navy -- none of which find_passing_y had found would help, and the corrective
+                # round was spent reacting to that instead of anything real). The title/position the model
+                # already has is left exactly as is (find_passing_y already restored title_y to what it was
+                # before this search), and that is recorded honestly instead of pretending there is a fix.
+                tried = len([c for c in find_detail["candidates_tried"] if "skipped_caption_band" not in c])
+                taste_log["legibility_unfixable"] = {"reason": f"{tried} candidate title position(s) tried near the top/bottom safe bands; "
+                                                                "none reached readable contrast against this background -- kept the original "
+                                                                "title text and position rather than asking the model to retitle/restyle for it",
+                                                      "violations_excluded_from_note": position_violations, "find_passing_y": find_detail}
+            all_violations_for_note = violations + position_violations_for_note + safe_violations + accent_violations
+            if all_violations_for_note:
                 taste_corrections_used += 1; taste_log["corrective_round"] = taste_corrections_used
                 note = ("\n\n[harness: design-taste check on your export found real problems against the hard rules -- "
                         "fix these, then export again. This is your only corrective round, so fix all of them now:\n- "
-                        + "\n- ".join(all_violations) + "\nPick one accent colour from the footage and reuse it on the title and the captions.")
-                find_detail = None
-                if leg_violations or plc_violations:
-                    # MT7 (1): find a y that actually passes BEFORE writing the note, instead of telling the
-                    # model a generic "-400" and hoping (MT6: that hope failed -- the model re-set the exact
-                    # same already-failing -400 and called it fixed).
-                    passing_y, find_detail = find_passing_y(k, taste_state, a.out)
-                    taste_log["find_passing_y"] = find_detail
-                    if passing_y is not None:
-                        note += (f" For legibility/placement specifically: add_title has no stroke/shadow/position arg, so the fix is to "
-                                  "keep the title text white (color unset or [1,1,1]) with your one accent only in the `accent` "
-                                  f"arg, and set the title to this EXACT position -- set_property (clip_id: \"{taste_state.get('title_clip_id')}\", "
-                                  f"property: \"y\", value: {passing_y:g}). The harness already measured that position: "
-                                  f"{find_detail['best_ratio_p10']:.2f}:1 contrast there (your current spot measured below 3:1). "
-                                  "Use this exact value -- don't pick a different one.")
-                    else:
-                        tried = len([c for c in find_detail["candidates_tried"] if "skipped_caption_band" not in c])
-                        note += (" For legibility/placement specifically: add_title has no stroke/shadow/position arg. The harness "
-                                  f"already tried {tried} other vertical positions near the top and bottom safe bands against this "
-                                  "exact background and NONE reached readable contrast -- moving the title up or down will not fix "
-                                  "this one. Try a different start time for the title over a plainer part of this shot, or accept "
-                                  "this is a background the title can't sit on cleanly.")
+                        + "\n- ".join(all_violations_for_note) + "\nPick one accent colour from the footage and reuse it on the title and the captions.")
+                if position_violations_for_note:
+                    note += (f" For legibility/placement specifically: add_title has no stroke/shadow/position arg, so the fix is to "
+                              "keep the title text white (color unset or [1,1,1]) with your one accent only in the `accent` "
+                              f"arg, and set the title to this EXACT position -- set_property (clip_id: \"{taste_state.get('title_clip_id')}\", "
+                              f"property: \"y\", value: {passing_y:g}). The harness already measured that position: "
+                              f"{find_detail['best_ratio_p10']:.2f}:1 contrast there (your current spot measured below 3:1). "
+                              "Use this exact value -- don't pick a different one.")
                     # MT7 (2): remember exactly what we asked for, so once the model's next turn lands (or
                     # doesn't) we can verify the fix actually happened rather than trusting its say-so.
-                    taste_followup.update({"pending": True, "snapshot_y": taste_state.get("title_y"), "passing_y": passing_y})
+                    taste_followup["position"] = {"snapshot_y": taste_state.get("title_y"), "passing_y": passing_y}
+                if safe_violations:
+                    # MT8 (2): same verify-then-apply pattern as position, on the x axis. A plain x=0 is
+                    # the harness's own deterministic fallback if the model's turn doesn't land; the note
+                    # itself offers the more precise measured suggested_x first.
+                    taste_followup["safe_area"] = {"snapshot_x": taste_state.get("title_x")}
                 note += "]"
                 results[-1][2] += note
-                log.write(json.dumps({"ev": "harness", "what": "taste check failed, corrective round fired", "violations": all_violations, "legibility": leg_detail, "placement": plc_violations, "find_passing_y": find_detail}) + "\n")
+                log.write(json.dumps({"ev": "harness", "what": "taste check failed, corrective round fired", "violations": all_violations_for_note,
+                                       "legibility": leg_detail, "placement": plc_violations, "safe_area": safe_detail, "accent_consistency": accent_detail,
+                                       "find_passing_y": find_detail, "legibility_unfixable": taste_log.get("legibility_unfixable")}) + "\n")
             else:
-                log.write(json.dumps({"ev": "harness", "what": "taste check passed on first export", "legibility": leg_detail, "placement": plc_violations}) + "\n")
+                log.write(json.dumps({"ev": "harness", "what": "taste check passed, or only an unfixable legibility/placement issue remained (no corrective round)",
+                                       "legibility": leg_detail, "placement": plc_violations, "safe_area": safe_detail, "accent_consistency": accent_detail,
+                                       "legibility_unfixable": taste_log.get("legibility_unfixable")}) + "\n")
         if not in_finish and not export_ok() and (calls_n >= finish_at_calls or time.time() - t0 >= finish_at_wall):
             in_finish = True; finish_entered = round(time.time() - t0, 1)
             log.write(json.dumps({"ev": "harness", "what": "finish phase", "calls": calls_n, "t": finish_entered}) + "\n")
@@ -745,42 +911,70 @@ def run(a):
     # calls (garbled completion), the main loop's own "if not calls: ... break" exited right there, and the
     # still-bad final.mp4 was never touched again. If the model's fix really worked, this changes nothing.
     followup_verify = {"checked": False}
-    if taste_followup["pending"]:
+    if taste_followup.get("position") or taste_followup.get("safe_area"):
         followup_verify["checked"] = True
         cur_leg_violations, cur_leg_detail = legibility_check(k, taste_state, a.out)
         cur_plc_violations = placement_check(taste_state)
-        y_before, y_after = taste_followup["snapshot_y"], taste_state.get("title_y")
-        still_bad = followup_needs_harness_fix(cur_leg_violations, cur_plc_violations)
-        followup_verify.update({
-            "y_before": y_before, "y_after": y_after, "y_changed": y_after != y_before,
-            "legibility_after": cur_leg_detail, "still_violating": cur_leg_violations + cur_plc_violations,
-            "passed": not still_bad,
-        })
-        if still_bad:
-            fix_y = taste_followup.get("passing_y")
-            if fix_y is not None:
-                log.write(json.dumps({"ev": "harness", "what": "corrective round did not land (no-op, garbled turn, or no re-export) -- harness applying the already-verified fix itself", "fix_y": fix_y}) + "\n"); log.flush()
+        cur_safe_violations, cur_safe_detail = safe_area_check(k, taste_state, a.out)
+        cur_accent_violations, cur_accent_detail = accent_consistency_check(taste_state, a.out)
+        followup_verify["legibility_after"] = cur_leg_detail
+        followup_verify["safe_area_after"] = cur_safe_detail
+        followup_verify["accent_consistency_after"] = cur_accent_detail
+        any_applied = False
+        # --- position (y axis): unchanged MT7 behaviour, now gated on taste_followup["position"] specifically.
+        if taste_followup.get("position"):
+            y_before, y_after = taste_followup["position"]["snapshot_y"], taste_state.get("title_y")
+            still_bad_pos = followup_needs_harness_fix(cur_leg_violations, cur_plc_violations)
+            followup_verify.update({"y_before": y_before, "y_after": y_after, "y_changed": y_after != y_before,
+                                     "still_violating": cur_leg_violations + cur_plc_violations, "position_passed": not still_bad_pos})
+            if still_bad_pos:
+                fix_y = taste_followup["position"].get("passing_y")
+                if fix_y is not None:
+                    log.write(json.dumps({"ev": "harness", "what": "corrective round did not land on position (no-op, garbled turn, or no re-export) -- harness applying the already-verified fix itself", "fix_y": fix_y}) + "\n"); log.flush()
+                    try:
+                        he2, ho2, _ = k.call("set_property", {"clip_id": taste_state["title_clip_id"], "property": "y", "value": fix_y}, timeout=30)
+                        if not he2:
+                            taste_state["title_y"] = fix_y; any_applied = True
+                        followup_verify.update({"harness_fix_y": fix_y, "harness_set_property_error_y": ho2[:300] if he2 else None})
+                    except Exception as e:
+                        followup_verify["harness_fix_error_y"] = f"{e}"[:300]
+                else:
+                    # MT7 (3): find_passing_y already found no candidate that passes -- don't strand the edit on
+                    # a losing guess of our own either; say so honestly and leave what the model left.
+                    followup_verify["harness_fix_note_y"] = "no candidate y passed contrast when this was first checked; leaving the edit as the model left it"
+        # --- safe area (x axis): MT8 (2). Re-check with the SAME tool (query_safe_margins); if still
+        # outside, apply x=0 ourselves -- a plain, always-available centred fallback -- rather than the
+        # measured suggested_x (which assumes the model didn't also change the title text/duration/clip
+        # since the note was written, and a plain centre is the safer deterministic default here).
+        if taste_followup.get("safe_area"):
+            x_before, x_after = taste_followup["safe_area"]["snapshot_x"], taste_state.get("title_x")
+            still_bad_safe = bool(cur_safe_violations)
+            followup_verify.update({"x_before": x_before, "x_after": x_after, "x_changed": x_after != x_before, "safe_area_passed": not still_bad_safe})
+            if still_bad_safe:
+                log.write(json.dumps({"ev": "harness", "what": "corrective round did not land on safe-area (title still outside the safe area/canvas) -- harness setting x=0 itself"}) + "\n"); log.flush()
                 try:
-                    he2, ho2, _ = k.call("set_property", {"clip_id": taste_state["title_clip_id"], "property": "y", "value": fix_y}, timeout=30)
-                    if not he2:
-                        taste_state["title_y"] = fix_y
-                    if "output" in names:
-                        k.call("project", {"action": "save_project", "args": {"path": proj}}, timeout=60)
-                        he3, ho3, _ = k.call("output", {"action": "export", "args": {"path": final, "crf": 20}}, timeout=a.call_timeout)
-                    else:
-                        k.call("save_project", {"path": proj}, timeout=60)
-                        he3, ho3, _ = k.call("export", {"path": final, "crf": 20}, timeout=a.call_timeout)
-                    applied_ok = (not he2) and (not he3) and export_ok()
-                    followup_verify.update({"harness_applied_fix": applied_ok, "harness_fix_y": fix_y,
-                                             "harness_set_property_error": ho2[:300] if he2 else None,
-                                             "harness_export_error": ho3[:300] if he3 else None})
+                    he4, ho4, _ = k.call("set_property", {"clip_id": taste_state["title_clip_id"], "property": "x", "value": 0}, timeout=30)
+                    if not he4:
+                        taste_state["title_x"] = 0.0; any_applied = True
+                    followup_verify.update({"harness_fix_x": 0, "harness_set_property_error_x": ho4[:300] if he4 else None})
                 except Exception as e:
-                    followup_verify.update({"harness_applied_fix": False, "harness_fix_error": f"{e}"[:300]})
-            else:
-                # MT7 (3): find_passing_y already found no candidate that passes -- don't strand the edit on
-                # a losing guess of our own either; say so honestly and leave what the model left.
-                followup_verify.update({"harness_applied_fix": False,
-                                        "harness_fix_note": "no candidate y passed contrast when this was first checked; leaving the edit as the model left it"})
+                    followup_verify["harness_fix_error_x"] = f"{e}"[:300]
+        # --- accent consistency: MT8 (3). No live tool can recolour an existing caption clip's keyword/
+        # active fill (checked against this binary's real schemas -- see accent_consistency_check's own
+        # docstring), so there is nothing for the harness to apply here; record the honest after-state only.
+        followup_verify["accent_consistency_still_violating"] = cur_accent_violations
+        if any_applied:
+            try:
+                if "output" in names:
+                    k.call("project", {"action": "save_project", "args": {"path": proj}}, timeout=60)
+                    he3, ho3, _ = k.call("output", {"action": "export", "args": {"path": final, "crf": 20}}, timeout=a.call_timeout)
+                else:
+                    k.call("save_project", {"path": proj}, timeout=60)
+                    he3, ho3, _ = k.call("export", {"path": final, "crf": 20}, timeout=a.call_timeout)
+                applied_ok = (not he3) and export_ok()
+                followup_verify.update({"harness_applied_fix": applied_ok, "harness_export_error": ho3[:300] if he3 else None})
+            except Exception as e:
+                followup_verify.update({"harness_applied_fix": False, "harness_fix_error": f"{e}"[:300]})
         else:
             followup_verify["harness_applied_fix"] = False
     taste_log["followup_verify"] = followup_verify
