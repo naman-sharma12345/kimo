@@ -145,6 +145,53 @@ is still callable by name under any profile. `tools/director_eval/mcp.py` is a ~
 MCP stdio client if you want to drive this yourself instead of through a chat client; see
 `list_tools(mode=...)` and `call(name, args)`.
 
+## 2b. Model preset: Meta Muse Spark 1.3 Contributor
+
+`tools/director_eval/agent.py` already speaks plain OpenAI-compatible tool calling (`--adapter openai`), which
+is exactly Muse Spark 1.3 Contributor's format on both OpenRouter and Meta's own API -- no adapter changes
+needed. Facts read off OpenRouter (`openrouter.ai/meta/muse-spark-1.3-contributor`, permaslug
+`meta/muse-spark-1.3-contributor-20260902`, 2026-10-26): 1,048,576 token context; input text+image+video+file,
+output text only; **mandatory reasoning** -- every response includes a separate `reasoning_content` field
+alongside `content`/`tool_calls` that the adapter correctly ignores for the loop but that still spends real
+output-token budget before the actual call (watch `run.json`'s `tokens.out` against `--max-tokens`-equivalent
+4096 hardcoded in `agent.py`'s `OpenAICompat.step`, if you raise it); supported_parameters include
+`tools`/`tool_choice`/`structured_outputs` -- standard function calling, no quirks seen in the tool-call shape
+itself. Pricing (OpenRouter list, 2026-10-26): input $0.10/M, output $0.20/M, cache_read $0.002/M tokens (see
+`PRICES["meta/muse-spark-1.3-contributor"]` in `agent.py`).
+
+With your own OpenRouter key (replace the key; add `HTTP-Referer`/`X-Title` headers if OpenRouter asks for
+them):
+
+```
+export OPENAI_BASE_URL=https://openrouter.ai/api/v1
+export OPENAI_API_KEY=sk-or-...
+python3 tools/director_eval/agent.py --kimo target/release/kimo-mcp \
+    --brief tools/director_eval/briefs/talk.txt --footage FOOTAGE/talk --out out/talk \
+    --model meta/muse-spark-1.3-contributor --adapter openai --tools director \
+    --system tools/director_eval/system.txt --doc tools/director_eval/director_mode.md
+```
+
+With Meta's own Contributor API key directly (once issued), the same command with
+`OPENAI_BASE_URL` pointed at Meta's endpoint and `--model` set to whatever model id Meta's API expects --
+check Meta's key-issuance email/dashboard for the exact base URL and model id, both of which were not
+available while writing this.
+
+Without a Contributor key yet, the closest stand-in on this box is Fireworks' open release,
+through Tab's vendor proxy (`OPENAI_BASE_URL=<proxy base>/fireworks/inference/v1`,
+`--model accounts/fireworks/models/muse-spark-open`) -- same adapter, same `--tools director`, substantially
+cheaper, and close enough on tool-calling behavior to tune the harness against before a real key lands.
+
+**Known failure mode on this family (confirmed on the Fireworks stand-in, real footage, both of two briefs):**
+`lint_edit`'s own `fix.tool` field and `search_tools`'s matches are generated against the full ~447-tool
+registry, not your ~35-tool director profile -- so they can name a tool (`set_text_style`,
+`set_caption_style`) the model was never given as a callable function and therefore cannot actually invoke
+through tool-calling, however many times it re-describes or re-searches it. Seen costing 26-63% of a run's
+tool calls before the model gave up and used the real fix (`delete_clip` + recreate via `add_title`/
+`add_text`'s own style args) on its own. `agent.py` now flags this inline the moment it happens
+(`flag_uncallable_tools`, right where tool results are read) and `director_mode.md` has the same note for the
+model itself -- if you see repeated `kimo_describe`/`search_tools` calls on the same name with no actual
+`tools/call` for it ever appearing in `log.jsonl`, this is why.
+
 ## 3. Run the demo on a clip folder
 
 `run_demo_mcp.py` makes the exact director-mode call sequence over real `tools/call` JSON-RPC

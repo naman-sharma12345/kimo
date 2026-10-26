@@ -36,3 +36,20 @@ Hackathon quickstart (build, run, env knobs, known limits): [HACKATHON_QUICKSTAR
 
 `timeline_summary {}` shows the edit at any time. `undo {}` reverts the last call (a whole recipe call is one step).
 Times are seconds on the timeline. Don't guess clip ids: use the ones returned to you.
+
+## A note on `lint_edit`'s `fix.tool` and `search_tools`
+
+Director mode gives you about 35 tools, declared to you up front. `lint_edit`'s own `fix` field and
+`search_tools`'s matches are generated against kimo's **full** ~447-tool registry, not this curated list --
+so they can and do name a tool (seen in practice: `set_text_style`, `set_caption_style`) that isn't one of
+your 35. If your tool-calling runs through a function-calling API (the usual way), you can only ever emit a
+call for a function that was declared to you -- a name outside this list is real and `kimo_describe` will
+happily explain it, but you cannot actually call it here, no matter how many times you look it up.
+
+If you hit `text_outside_safe_area`, `text_over_subject`, or a font/style complaint from `lint_edit` whose
+fix names a tool not in your list: don't keep searching or describing it. Instead, `delete_clip` the
+offending text/title clip and recreate it with `add_title`'s or `add_text`'s own styling args (`font`,
+`color`, `size`, `shadow`, `letter_spacing`, shorter `text` for width) at creation time, then use
+`set_property` only for position/scale/opacity/rotation afterward. `font_substituted` on its own is
+informational (a safe fallback font is already drawing) -- nothing to fix unless you were asked for an exact
+font.
