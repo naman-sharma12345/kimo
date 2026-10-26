@@ -6,7 +6,7 @@ Two adapters, so the same loop runs a frontier model and a small one:
   openai     any OpenAI-compatible chat/completions endpoint (OPENAI_BASE_URL / OPENAI_API_KEY), e.g. Llama / Muse hosts
 Everything is logged to <out>/log.jsonl (one line per model step and per tool call) and <out>/run.json (totals).
 """
-import argparse, base64, json, os, sys, time
+import argparse, base64, json, os, re, sys, time
 import requests
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mcp import Kimo
@@ -17,6 +17,9 @@ PRICES = {
     # Muse Spark Open: the OpenRouter list price (2026-10-21); the Fireworks bill itself was not read
     "accounts/fireworks/models/muse-spark-open": (1.25, 4.25, 0.15, 1.25),
     "accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b": (None, None, None, None),
+    # Muse Spark 1.3 Contributor, via OpenRouter: list price read 2026-10-26 off openrouter.ai/meta/muse-spark-1.3-contributor
+    # (permaslug meta/muse-spark-1.3-contributor-20260902). cache_write not published there; priced at the input rate as a floor, not billed.
+    "meta/muse-spark-1.3-contributor": (0.10, 0.20, 0.002, 0.10),
 }
 RESULT_CAP = int(os.environ.get("DIRECTOR_RESULT_CAP", "12000"))  # characters of a tool result the model sees
 KEEP_IMAGES = 2  # only the newest images stay in the context
@@ -33,6 +36,35 @@ def good_images(imgs):
 
 def cap(t):
     return t if len(t) <= RESULT_CAP else t[:RESULT_CAP] + f"\n[... {len(t) - RESULT_CAP} more characters cut by the client]"
+
+
+_UNCALLABLE_RE_TOOL = re.compile(r'"tool"\s*:\s*"([a-zA-Z_][a-zA-Z0-9_]*)"')
+_UNCALLABLE_RE_NAME = re.compile(r'"name"\s*:\s*"([a-zA-Z_][a-zA-Z0-9_]*)"')
+_UNCALLABLE_RE_ACTION = re.compile(r'"action"\s*:\s*"([a-zA-Z_][a-zA-Z0-9_]*)"')
+_UNCALLABLE_NOTE = (" For text/caption style after creation (font, color, size, stroke, box), delete_clip the clip and "
+                    "recreate it with add_title's or add_text's own style args, then set_property for position/scale/"
+                    "opacity/rotation only -- do not keep searching or describing it, you cannot call it here.")
+
+def flag_uncallable_tools(name, out, names):
+    """A curated tool profile (e.g. director mode's ~35 tools) only lets the model emit tool_calls for the
+    functions declared in its own `tools` request array. lint_edit's own `fix.tool` field and search_tools'
+    full-447-tool-registry matches can both name a real tool that is outside this profile -- the schema the
+    model was given has no such function, so it cannot actually invoke it (confirmed: tools/call still
+    dispatches it server-side, but the model's own tool-calling API blocks emitting an undeclared call), and
+    a model driven this way (seen repeatedly on Muse Spark Open/1.3 Contributor) loops calling kimo_describe
+    and search_tools on that name over and over instead of using the real, reachable fix. This flags exactly
+    that case right where it would otherwise start a loop, rather than relying on the model to notice."""
+    try:
+        mentioned = set(_UNCALLABLE_RE_TOOL.findall(out))
+        if name == "search_tools": mentioned |= set(_UNCALLABLE_RE_NAME.findall(out))
+        if name == "kimo_describe":
+            m = _UNCALLABLE_RE_ACTION.search(out)
+            if m: mentioned.add(m.group(1))
+    except Exception:
+        return out
+    missing = sorted(t for t in mentioned if t and t not in names)
+    if not missing: return out
+    return out + f"\n[harness: {', '.join(missing)} named above is not callable in this tool profile (not in your tools list)." + _UNCALLABLE_NOTE + "]"
 
 
 RETRY_LOG = []  # provider retries this run, written to run.json
@@ -239,6 +271,7 @@ def run(a):
                             out += (" (the kimo server crashed and was restarted; the harness reloaded your project as of your last successful call. Clip ids are unchanged. Retry this call.)" if not le else f" (the kimo server was restarted; reloading your project failed: {lo[:200]})")
                         else: out += " (the kimo server was restarted; the project in memory is gone)"
                         log.write(json.dumps({"ev": "harness", "what": "kimo restarted", "autosave_loaded": os.path.exists(autosave)}) + "\n")
+            if not is_err: out = flag_uncallable_tools(name, out, names)
             dt = time.time() - ts; tool_time += dt; errs += is_err; tool_chars += len(out)
             log.write(json.dumps({"ev": "call", "n": calls_n, "name": name, "args": args, "error": is_err, "dt": round(dt, 2), "chars": len(out), "images": len(imgs), "result": out[:1500]}) + "\n"); log.flush()
             gi = good_images(imgs)
