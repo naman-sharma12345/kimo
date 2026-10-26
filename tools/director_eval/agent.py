@@ -8,6 +8,7 @@ Everything is logged to <out>/log.jsonl (one line per model step and per tool ca
 """
 import argparse, base64, json, os, re, sys, time
 import requests
+import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mcp import Kimo
 
@@ -302,14 +303,31 @@ def legibility_check(k, state, out_dir):
             detail["bbox"] = [x0, y0, x1, y1]
             if x1 > x0 and y1 > y0:
                 region = im.crop((x0, y0, x1, y1))
-                px = region.resize((1, 1)).getpixel((0, 0))
-                bg_rgb01 = tuple(c / 255.0 for c in px)
-                detail["bg_rgb"] = [round(c, 3) for c in bg_rgb01]
+                arr = np.asarray(region, dtype=np.float64) / 255.0  # H,W,3 sRGB 0..1
+                flat = arr.reshape(-1, 3)
+                mean_rgb01 = tuple(flat.mean(axis=0))
+                detail["bg_rgb_mean"] = [round(c, 3) for c in mean_rgb01]
                 title_text_c = parse_color(state.get("title_color")) or (1.0, 1.0, 1.0)  # add_title's own text fill; white if unset (the tool's default)
-                ratio = _wcag_contrast(title_text_c, bg_rgb01)
-                detail["title_text_color"] = [round(c, 3) for c in title_text_c]; detail["contrast_ratio"] = round(ratio, 2)
+                # MT4 fix: the bbox mean passed real_review's title at 9.98:1 even though the title visibly
+                # crossed the lavender bottle, because most of the bbox sampled the dark wall beside the
+                # bottle -- one average hid the worst patch. Take the 10th percentile of per-pixel contrast
+                # across the whole bbox instead, so a bbox that is only PART light/dark still fails.
+                lin = np.where(flat <= 0.03928, flat / 12.92, ((flat + 0.055) / 1.055) ** 2.4)
+                lum = 0.2126 * lin[:, 0] + 0.7152 * lin[:, 1] + 0.0722 * lin[:, 2]
+                la = _rel_luminance(title_text_c)
+                lighter = np.maximum(la, lum); darker = np.minimum(la, lum)
+                pixel_ratios = (lighter + 0.05) / (darker + 0.05)
+                ratio_p10 = float(np.percentile(pixel_ratios, 10))
+                ratio_mean = _wcag_contrast(title_text_c, mean_rgb01)
+                detail["title_text_color"] = [round(c, 3) for c in title_text_c]
+                detail["contrast_ratio_p10"] = round(ratio_p10, 2); detail["contrast_ratio_mean"] = round(ratio_mean, 2)
+                ratio = ratio_p10
                 if ratio < 3.0:
-                    v.append(f"title text colour {state.get('title_color') or '[white, default]'} against the mean background behind it ({[round(c,2) for c in bg_rgb01]}) is only {ratio:.2f}:1 contrast (WCAG wants >=3:1 for large text) -- it will be hard to read at a glance")
+                    v.append(f"title text colour {state.get('title_color') or '[white, default]'} against the "
+                             f"background under it is only {ratio:.2f}:1 contrast at the 10th percentile of the "
+                             f"bbox (mean was {ratio_mean:.2f}:1 -- part of the background behind this title is "
+                             f"much lighter/darker than the average; WCAG wants >=3:1 for large text everywhere "
+                             f"under it, not just on average) -- it will be hard to read at a glance")
             else:
                 detail["bbox_error"] = "bbox outside frame bounds"
         else:
@@ -331,6 +349,38 @@ def legibility_check(k, state, out_dir):
     except Exception as e:
         detail.setdefault("exception", f"{e}"[:200])
     return v, detail
+
+
+# MT4 rule: the title's vertical position has to be deterministic, not left to chance on a given run.
+# real_review's "MY TWO BOTTLES" sat at add_title's own default position (vertical centre, y unset == 0
+# pixels from centre per toolgroups.rs: "x/y in pixels from centre") and crossed the lavender bottle even
+# though legibility_check's contrast measured fine (9.98:1 at the mean) and text_over_subject missed the
+# overlap -- centre is where the subject/product usually is, colour was never the actual problem here. The
+# vlog's title, moved to y=-400 (the top safe band, a clear/dark strip above the subject), read clean. This
+# checks only the y coordinate; it does not judge whether the top band is actually clearer in a given shot
+# (that needs a saliency read of the top band itself, which text_over_subject's reuse doesn't give us) --
+# the smallest deterministic fix is: if the title is still near centre, push it to the same top band that
+# already worked, and let the model's own judgement (and the next legibility/overlap check) override that
+# only when render_frame actually shows the top band is busier.
+TOP_BAND_Y = -400.0
+NEAR_CENTER_Y = 250.0
+
+def placement_check(state):
+    """Returns a list of violations (empty = compliant). Fires independently of legibility_check's
+    contrast/overlap result -- taste3 passed both of those for a title that still visibly crossed the
+    bottle, because centring, not colour or overlap-detection, was the actual defect."""
+    v = []
+    if not state.get("title_clip_id"):
+        return v
+    y = state.get("title_y")
+    if y is None:
+        y = 0.0  # add_title's own default, never moved by set_property
+    if abs(y) < NEAR_CENTER_Y:
+        v.append(f"the title sits near vertical centre (y={y:g} pixels from centre, default/unmoved) -- "
+                 f"that is usually where the subject/product is; move it to the top safe band with "
+                 f"set_property (clip_id, property: \"y\", value: {TOP_BAND_Y:g}) unless render_frame shows "
+                 f"the top band is busier than the centre in this shot")
+    return v
 
 
 def price(model, usage):
@@ -355,7 +405,7 @@ def run(a):
         for d in a.doc.split(","): system += "\n\n# Reference\n\n" + open(d).read().replace("{footage_list}", ", ".join(os.path.join(a.footage, f) for f in sorted(os.listdir(a.footage)) if f.lower().endswith((".mp4", ".mov", ".m4a", ".wav", ".mp3")))).replace("{footage}", a.footage).replace("{out}", a.out)
     brief = open(a.brief).read().replace("{footage}", a.footage).replace("{out}", a.out)
     taste_state = {"title_text": None, "title_style": None, "title_color": None, "title_accent": None,
-                   "title_clip_id": None, "title_start": None, "title_duration": None,
+                   "title_clip_id": None, "title_start": None, "title_duration": None, "title_y": None,
                    "caption_tool": None, "caption_keywords": False, "caption_keyword_color": None, "caption_active_color": None}
     taste_banned_words = BANNED_LABEL_WORDS | brief_banned_words(brief)
     taste_corrections_used = 0
@@ -448,6 +498,9 @@ def run(a):
                     taste_state["caption_active_color"] = args.get("active_color")
                 elif name == "caption_from_words" and taste_state["caption_tool"] != "auto_captions":
                     taste_state["caption_tool"] = "caption_from_words"
+                elif name == "set_property" and taste_state.get("title_clip_id") and args.get("clip_id") == taste_state["title_clip_id"] and args.get("property") == "y":
+                    try: taste_state["title_y"] = float(args.get("value"))
+                    except (TypeError, ValueError): pass
                 if is_export(name, args): just_exported = True
             if not is_err and not export_ok() and is_preview(name, args) and taste_state.get("title_text"):
                 # Only counts once a title exists -- an early render_frame/contact_sheet used to sample an
@@ -474,24 +527,25 @@ def run(a):
             taste_log["fired"] = True
             violations = taste_check(taste_state, taste_banned_words)
             leg_violations, leg_detail = legibility_check(k, taste_state, a.out)
+            plc_violations = placement_check(taste_state)
             taste_log["legibility"] = leg_detail
-            all_violations = violations + leg_violations
+            all_violations = violations + leg_violations + plc_violations
             taste_log["violations_found"] = all_violations
             if all_violations:
                 taste_corrections_used += 1; taste_log["corrective_round"] = taste_corrections_used
                 note = ("\n\n[harness: design-taste check on your export found real problems against the hard rules -- "
                         "fix these, then export again. This is your only corrective round, so fix all of them now:\n- "
                         + "\n- ".join(all_violations) + "\nPick one accent colour from the footage and reuse it on the title and the captions.")
-                if leg_violations:
-                    note += (" For legibility specifically: add_title has no stroke/shadow/position arg, so the fix is to "
+                if leg_violations or plc_violations:
+                    note += (" For legibility/placement specifically: add_title has no stroke/shadow/position arg, so the fix is to "
                               "keep the title text white (color unset or [1,1,1]) with your one accent only in the `accent` "
-                              "arg, and move the title clear with set_property (clip_id, property: \"y\", a value like "
-                              "-500 for a top-safe area or +500 for a bottom-safe area) rather than changing its colours.")
+                              "arg, and move the title to the top safe band with set_property (clip_id, property: \"y\", "
+                              "value: -400) rather than changing its colours.")
                 note += "]"
                 results[-1][2] += note
-                log.write(json.dumps({"ev": "harness", "what": "taste check failed, corrective round fired", "violations": all_violations, "legibility": leg_detail}) + "\n")
+                log.write(json.dumps({"ev": "harness", "what": "taste check failed, corrective round fired", "violations": all_violations, "legibility": leg_detail, "placement": plc_violations}) + "\n")
             else:
-                log.write(json.dumps({"ev": "harness", "what": "taste check passed on first export", "legibility": leg_detail}) + "\n")
+                log.write(json.dumps({"ev": "harness", "what": "taste check passed on first export", "legibility": leg_detail, "placement": plc_violations}) + "\n")
         if not in_finish and not export_ok() and (calls_n >= finish_at_calls or time.time() - t0 >= finish_at_wall):
             in_finish = True; finish_entered = round(time.time() - t0, 1)
             log.write(json.dumps({"ev": "harness", "what": "finish phase", "calls": calls_n, "t": finish_entered}) + "\n")
