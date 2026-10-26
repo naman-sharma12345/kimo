@@ -15,7 +15,7 @@
   <a href="https://github.com/naman-sharma12345/kimo/actions/workflows/release.yml"><img alt="release build" src="https://github.com/naman-sharma12345/kimo/actions/workflows/release.yml/badge.svg"></a>
   <a href="https://github.com/naman-sharma12345/kimo/releases"><img alt="release" src="https://img.shields.io/github/v/release/naman-sharma12345/kimo?include_prereleases&label=release&labelColor=0E0E12&color=FF5C28"></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/github/license/naman-sharma12345/kimo?labelColor=0E0E12&color=F4F0E8"></a>
-  <img alt="MCP tools" src="https://img.shields.io/badge/MCP%20tools-431%2F447%20live%20%2B%2016%20gated-F4F0E8?labelColor=0E0E12">
+  <img alt="MCP tools" src="https://img.shields.io/badge/MCP%20tools-432%2F448%20live%20%2B%2016%20gated-F4F0E8?labelColor=0E0E12">
 </p>
 
 <p align="center">
@@ -85,13 +85,13 @@ More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/EXTENDING.md](docs/EXT
 
 New: [search transcript phrases and apply reversible picture/audio cuts](docs/TRANSCRIPT_EDITING.md), with revision checks, dry runs, caption updates and all-track ripple.
 
-**431/447 live in the default build + 16 feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah).**
+**432/448 live in the default build + 16 feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah).**
 
-A default `tools/list` shows 17 grouped entries; set `KIMO_TOOLS=flat` to list all 447 (see [Tool list profiles](#tool-list-profiles)).
+A default `tools/list` shows 17 grouped entries; set `KIMO_TOOLS=flat` to list all 448 (see [Tool list profiles](#tool-list-profiles)).
 
-How the numbers fit: `kimo_info` and the golden registry (`crates/kimo-core/tests/golden/golden_registry.txt`) count 447 tools in 14 groups. A flat `tools/list` (`KIMO_TOOLS=flat`) lists 449: those 447 plus the two meta tools `search_tools` and `kimo_describe`. Of the 449, 433 are live in the default build and 16 are feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah); the gated ones stay in the list and answer with a clear refusal until their feature is built in.
+How the numbers fit: `kimo_info` and the golden registry (`crates/kimo-core/tests/golden/golden_registry.txt`) count 448 tools in 14 groups. A flat `tools/list` (`KIMO_TOOLS=flat`) lists 450: those 448 plus the two meta tools `search_tools` and `kimo_describe`. Of the 450, 434 are live in the default build and 16 are feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah); the gated ones stay in the list and answer with a clear refusal until their feature is built in.
 
-447 registered tools sit in 14 groups (full list [below](#tool-listing-447-tools)):
+448 registered tools sit in 14 groups (full list [below](#tool-listing-448-tools)):
 
 | Area | Groups | Examples |
 |---|---|
@@ -462,9 +462,9 @@ Call a group with `{"action": "<tool name>", "args": {...}}`, for example `{"nam
 
 See [preview proxies](docs/PROXY_WORKFLOW.md) for lighter editing media with original-media exports, integrity checks and recovery.
 
-## Tool listing (447 tools)
+## Tool listing (448 tools)
 
-This is the list this checkout registers (read from `tools/list` of the grouped server plus `kimo_describe group=<name>`, 447 tools in 14 groups; the grouped `tools/list` itself shows 14 group tools plus `search_tools`, `kimo_describe`, `kimo_enable_group`). `kimo --version` and `kimo_info` report the workspace version, which is 5.0.0 from this release. Get any tool's arguments with `kimo tools describe <name>` or `kimo_describe`, and find tools by words with `search_tools`.
+This is the list this checkout registers (read from `tools/list` of the grouped server plus `kimo_describe group=<name>`, 448 tools in 14 groups; the grouped `tools/list` itself shows 14 group tools plus `search_tools`, `kimo_describe`, `kimo_enable_group`). `kimo --version` and `kimo_info` report the workspace version, which is 5.0.0 from this release. Get any tool's arguments with `kimo tools describe <name>` or `kimo_describe`, and find tools by words with `search_tools`.
 
 | Group | Tools |
 |---|---|
@@ -481,11 +481,11 @@ This is the list this checkout registers (read from `tools/list` of the grouped 
 | `color_science` (18) | `inspect_color_frame_metadata`, `inspect_color_delivery`, `inspect_color_pipeline`, `compare_aces2_reference`, `sample_linear_neutral`, `audit_color_output`, `inspect_float_media`, `set_hdr_mastering`, `set_color_pipeline`, `set_clip_input_color`, `validate_hdr_transfer_math`, `evaluate_hlg_reference_display`, `add_acescct_primaries`, `inspect_high_bit_delivery_contract`, `inspect_film_response`, `inspect_ocio_config`, `transform_ocio_samples`, `transform_ocio_view_samples` |
 | `scopes` (15) | `get_scopes`, `compare_linear_exposure`, `render_gamut_excursions`, `analyze_exposure_sequence`, `render_exposure_false_color`, `analyze_exposure`, `analyze_color`, `render_scope`, `render_display_scope`, `measure_loudness`, `inspect_grade_scopes`, `set_grade_scopes`, `flash_series`, `contrast_ratio`, `text_contrast_series` |
 | `audio` (20) | `finish_audio`, `add_audio_clip`, `set_audio`, `set_audio_volume_key`, `detect_beats`, `set_audio_effect_key`, `audio_filter_response`, `audio_effect_describe`, `audio_probe`, `read_samples`, `import_samples`, `audio_transients`, `add_audio_effect`, `remove_audio_effect`, `set_audio_pan`, `normalize_loudness`, `auto_duck`, `audio_speech_intervals`, `audio_spectrum`, `av_offset` |
-| `output` (48) | `lint_edit`, `review_export`, `export_audio`, `export_gif`, `render_frame`, `export`, `join_export`, `export_alpha`, `export_aces2_reference_video`, `render_aces2_reference`, `render_float_tiff`, `render_float_exr`, `render_high_bit_still`, `export_high_bit`, `export_grade_lut`, `export_camera_solve`, `export_asc_cdl`, `export_color_pipeline_lut`, `contact_sheet`, `describe_frame`, `detect_cuts`, `diff_frames`, `burn_in`, `export_job_start`, `job_status`, `cancel_job`, `resume_job`, `export_manifest`, `explain_invalidation`, `inspect_export_preset`, `export_preset`, `lint_frame`, `match_events`, `render_ocio_display_view`, `preview_range`, `query_safe_margins`, `session_stats`, `solve_constraints`, `export_with_subtitles`, `compute_text_bounds`, `set_ocio_view_delivery`, `export_ocio_view_video`, `compare_ranges`, `edit_check`, `saliency_map`, `frozen_frames`, `black_frames`, `focus_series` |
+| `output` (49) | `lint_edit`, `review_export`, `export_audio`, `export_gif`, `render_frame`, `export`, `join_export`, `export_alpha`, `export_aces2_reference_video`, `render_aces2_reference`, `render_float_tiff`, `render_float_exr`, `render_high_bit_still`, `export_high_bit`, `export_grade_lut`, `export_camera_solve`, `export_asc_cdl`, `export_color_pipeline_lut`, `contact_sheet`, `describe_frame`, `pick_thumbnail`, `detect_cuts`, `diff_frames`, `burn_in`, `export_job_start`, `job_status`, `cancel_job`, `resume_job`, `export_manifest`, `explain_invalidation`, `inspect_export_preset`, `export_preset`, `lint_frame`, `match_events`, `render_ocio_display_view`, `preview_range`, `query_safe_margins`, `session_stats`, `solve_constraints`, `export_with_subtitles`, `compute_text_bounds`, `set_ocio_view_delivery`, `export_ocio_view_video`, `compare_ranges`, `edit_check`, `saliency_map`, `frozen_frames`, `black_frames`, `focus_series` |
 
 ## Verification status
 
-- Registry: 447 tools (`crates/kimo-core/tests/golden/golden_registry.txt`, 447 lines). A default-feature `kimo-mcp` lists 449 entries in `flat` mode: those 447 plus `search_tools` and `kimo_describe`. Of the 449, 433/449 live in the default build + 16 feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah).
+- Registry: 448 tools (`crates/kimo-core/tests/golden/golden_registry.txt`, 448 lines). A default-feature `kimo-mcp` lists 450 entries in `flat` mode: those 448 plus `search_tools` and `kimo_describe`. Of the 450, 434/450 live in the default build + 16 feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah).
 - `flash_series` on the jaja ad (v6, unreleased): the 30.542 s luminance stamp is a slow fall (0.894 to 0.794 as the logo fades in), not a hard cut. Under rule (a) a transition is stamped at the first frame whose luminance has moved 0.1 from the swing start, so this stamp is expected behaviour, not a bug.
 - Fuzz: 6497 calls, 0 failures, as recorded in the v3 notes at 327 tools. Not re-run for this README.
 - Linux spectator installers (`.deb`, `.AppImage`): built on CI runners (dry run at `ca0334f`, then version `0.1.0`; the `5.0.0` files come from the same steps in the `v5.0.0` tag build), downloaded and smoke-tested on Debian 12 x86_64 on 2026-10-17: sha256 matches, the `.deb` installs (`Depends: libwebkit2gtk-4.1-0, libgtk-3-0`) and uninstalls cleanly, and both the `.deb` and the AppImage (`--appimage-extract-and-run`) launch under Xvfb, listen on 127.0.0.1:7421 and draw the `frame_rendered` frames a real `kimo-mcp` (commit `af615ca`) sends after `project_set`, `add_track`, `add_text`. Unsigned draft; other distributions not tested.

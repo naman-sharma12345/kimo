@@ -230,6 +230,7 @@ particle_simulate_raw 13a7503832a95aad
 paste_attributes 836988433eac2c08
 path_info bd40d934b727ca02
 pick_key_color a8a3ff81f7ed7011
+pick_thumbnail a48ee1f3ca782e9e
 pick_white_balance 4e36686f25fac6d1
 pin_layer 141a292e07c94a12
 place_at_track e69bc7f50736dc25

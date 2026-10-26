@@ -34,6 +34,12 @@ director mode exists and what it fixed.
 
   **Captions now retime automatically.** If you've already run `auto_captions`, cutting filler words with `trim_filler_words` deletes any caption entirely inside a removed span, trims one straddling a cut, and shifts ones after it left to close the gap -- no need to re-run `auto_captions` after. Pass `"retime_captions": false` to get the old behaviour (captions untouched, drifting out of sync) if you want it.
 
+- **New tool: `pick_thumbnail(clip_id?, count?, min_gap_s?, out_dir?, sample_fps?)`** samples a clip or the whole timeline (default) at `sample_fps` (default 4/s), scores each candidate on sharpness (`focus_series`' own measure), exposure and a cheap subject-centred saliency signal, excludes black/frozen/transition frames, and writes the top `count` (default 3) picks -- at least `min_gap_s` apart -- as PNGs at project resolution. Registered in the `output` group next to `contact_sheet`/`describe_frame`, not on the director-mode list.
+
+  ```json
+  {"name": "pick_thumbnail", "arguments": {"clip_id": "clip3", "count": 1}}
+  ```
+
 ## Tight cut in one command
 
 `demo/run_tight_cut_mcp.py` chains tonight's new tools end to end on a whole clip folder, over
