@@ -188,12 +188,17 @@ _TITLE_WORD_RE = re.compile(r"[A-Za-z']+")
 BANNED_LABEL_WORDS = {"REVIEW", "REVIEWS", "VLOG", "VLOGS", "UNBOXING", "UNBOX", "TUTORIAL", "HAUL", "DIARY", "TOUR"}
 
 def brief_banned_words(brief_text):
-    """Words from any quoted example title in the brief (e.g. 'BOTTLE REVIEW') -- the brief itself hands
-    the model a category-label example, so the banned list has to include whatever words it used, not just
-    a fixed list, or a model that copies the brief's own example verbatim slips through."""
+    """Genre/category label from any quoted example title in the brief (e.g. 'BOTTLE REVIEW') -- the brief's
+    example is always "<description> <GENRE>" (BOTTLE REVIEW, DESK VLOG), so only the trailing word is a
+    category label; the rest is a product noun or description actually spoken in the clip. MT5 fix: this used
+    to ban every word in the quoted example, which rejected an honest, on-brand title like "THE BEST BOTTLE"
+    just because the brief's own instructional example happened to contain "BOTTLE" -- the banned list is for
+    labels copied from the category/brief (REVIEW, VLOG, ...), not for nouns the clip is actually about."""
     words = set()
     for m in re.finditer(r'e\.g\.,?\s*"([^"]+)"', brief_text, re.IGNORECASE):
-        words |= {w.upper() for w in _TITLE_WORD_RE.findall(m.group(1))}
+        example_words = _TITLE_WORD_RE.findall(m.group(1))
+        if example_words:
+            words.add(example_words[-1].upper())
     return words
 
 def parse_color(v):
