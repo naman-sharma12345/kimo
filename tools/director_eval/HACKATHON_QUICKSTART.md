@@ -46,6 +46,12 @@ director mode exists and what it fixed.
   {"name": "drop_short_segments", "arguments": {"track_id": "track1", "min_duration_s": 1.0}}
   ```
 
+- **New tool: `add_pip(source, at_s, duration_s, position?, size?, shape?, border_px?, border_color?, shadow?, animate_in?, animate_out?, source_in_s?, mute_source?)`** composites a second video as a picture-in-picture inset -- a corner webcam bubble, a floating avatar, or a TV-frame cutaway -- in one call instead of `add_clip` + `set_property` x3 + `add_mask` + `add_shape` by hand. `source` is a media path or an existing clip id (its asset is reused). `size` is a fraction of frame width (default 0.3); `shape` is `rect`/`rounded` (default)/`circle`; `animate_in` defaults to `pop` (~0.25s scale-overshoot), `animate_out` to `fade`. Registered in the `graphics` group next to `add_shape`, not on the director-mode list.
+
+  ```json
+  {"name": "add_pip", "arguments": {"source": "clip3", "at_s": 2.0, "duration_s": 4.0, "position": "bottom_right", "shape": "circle", "size": 0.3}}
+  ```
+
 ## Tight cut in one command
 
 `demo/run_tight_cut_mcp.py` chains tonight's new tools end to end on a whole clip folder, over

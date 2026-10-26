@@ -32,6 +32,7 @@ add_particles3d 12b4473cad931dfb
 add_path_key cf58f43b9b5a2a16
 add_path_operator 196bd4ba39ae182d
 add_path_shape 7a38d9af75a4a47f
+add_pip 1e76155401cd8c73
 add_prompt_box 1f7b236e95633eb0
 add_punch_ins 9d853586d3ec64b1
 add_push_wipe 4869e61f95c4c704
