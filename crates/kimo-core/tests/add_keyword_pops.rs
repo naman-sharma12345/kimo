@@ -130,3 +130,30 @@ fn bright_any(ss: &Session, t: f64) -> bool {
     assert!(err(&mut ss, "add_keyword_pops", json!({"words": [{"text": "HI", "at_s": 1.0}], "position": "bogus"})).contains("position"));
     assert!(err(&mut ss, "add_keyword_pops", json!({"words": [{"text": "HI", "at_s": 1.0}], "track_id": "no_such_track"})).contains("track"));
 }
+
+#[test] fn bold_caps_fills_at_least_45_percent_of_frame_width_for_a_short_word() {
+    // KF16: the complaint was a subtitle-sized word; bold_caps now targets ~60% of frame width
+    // (TARGET_WIDTH_FRAC) -- assert comfortably below that at 45%, scale-at-1.0 mid-hold.
+    let mut ss = setup(); // 720x1280
+    let r = call(&mut ss, "add_keyword_pops", json!({"words": [{"text": "WOW", "at_s": 1.0, "duration_s": 1.5}], "style": "bold_caps"}));
+    let id = r["pops"][0]["clip_ids"][0].as_str().unwrap().to_string();
+    let b = call(&mut ss, "compute_text_bounds", json!({"clip_id": id, "t": 1.6})); // at_s + 0.6s: well past the 0.3s pop-in, scale settled at 1.0
+    let w = b["canvas_rect"][2].as_f64().unwrap();
+    assert!(w >= 0.45 * 720.0, "bold_caps 'WOW' bbox width {w} should be >= 45% of 720px frame width, got canvas_rect {}", b["canvas_rect"]);
+}
+
+#[test] fn boxed_style_box_hugs_the_text_instead_of_spanning_the_frame() {
+    // KF16: the complaint was a box ~86% of frame width for one word; the box is now built to the
+    // text's own measured bounds + generous (but bounded) padding, never a near-full-frame bar.
+    let mut ss = setup(); // 720x1280
+    let r = call(&mut ss, "add_keyword_pops", json!({"words": [{"text": "WOW", "at_s": 1.0, "duration_s": 1.5}], "style": "boxed"}));
+    let ids = r["pops"][0]["clip_ids"].as_array().unwrap().clone();
+    assert_eq!(ids.len(), 2, "boxed should still place a box clip then a text clip");
+    let box_id = ids[0].as_str().unwrap();
+    let text_id = ids[1].as_str().unwrap();
+    let box_w = match &ss.project.find_clip(box_id).unwrap().source { kimo_core::model::Source::Shape { width, .. } => *width, _ => panic!("clip_ids[0] should be a shape (the box)") };
+    let tb = call(&mut ss, "compute_text_bounds", json!({"clip_id": text_id, "t": 1.6}));
+    let text_w = tb["canvas_rect"][2].as_f64().unwrap();
+    assert!(box_w <= text_w + 400.0, "box width {box_w} should be within generous padding of the text width {text_w}, not a near-frame-width bar");
+    assert!(box_w < 720.0 * 0.5, "box width {box_w} should not span half the 720px frame for one short word (old bug: a fixed 0.86*frame-width bar)");
+}
