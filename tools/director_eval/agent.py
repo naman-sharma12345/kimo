@@ -183,6 +183,67 @@ def strip_images(msgs):
                 nc.append(x)
             m["content"] = nc
 
+_TITLE_WORD_RE = re.compile(r"[A-Za-z']+")
+BANNED_LABEL_WORDS = {"REVIEW", "REVIEWS", "VLOG", "VLOGS", "UNBOXING", "UNBOX", "TUTORIAL", "HAUL", "DIARY", "TOUR"}
+
+def brief_banned_words(brief_text):
+    """Words from any quoted example title in the brief (e.g. 'BOTTLE REVIEW') -- the brief itself hands
+    the model a category-label example, so the banned list has to include whatever words it used, not just
+    a fixed list, or a model that copies the brief's own example verbatim slips through."""
+    words = set()
+    for m in re.finditer(r'e\.g\.,?\s*"([^"]+)"', brief_text, re.IGNORECASE):
+        words |= {w.upper() for w in _TITLE_WORD_RE.findall(m.group(1))}
+    return words
+
+def parse_color(v):
+    """Best-effort normalize an add_title/auto_captions colour arg (hex string or [r,g,b(,a)] 0..1) to an
+    (r,g,b) tuple 0..1, or None if it isn't one of those shapes."""
+    if v is None: return None
+    if isinstance(v, str):
+        h = v.lstrip("#")
+        if len(h) in (3, 4): h = "".join(c * 2 for c in h[:3])
+        if len(h) >= 6:
+            try: return tuple(int(h[i:i+2], 16) / 255.0 for i in (0, 2, 4))
+            except ValueError: return None
+        return None
+    if isinstance(v, (list, tuple)) and len(v) >= 3:
+        try: return tuple(float(x) for x in v[:3])
+        except (TypeError, ValueError): return None
+    return None
+
+def colors_differ(a, b, tol=0.25):
+    """True when two normalized colours are clearly not 'the same accent' (per-channel distance > tol)."""
+    if a is None or b is None: return False  # can't compare -- not flagged as a mismatch, flagged as missing instead
+    return any(abs(x - y) > tol for x, y in zip(a, b))
+
+def taste_check(state, banned_words):
+    """The Stage C harness-enforced check: did this export actually follow the 5 hard rules? Returns a list
+    of plain-English violations (empty = compliant). Reads only the tool-call args the agent itself already
+    captured as calls happened -- no project.json re-parse needed."""
+    v = []
+    title = state.get("title_text")
+    if not title:
+        v.append("no add_title call was made -- the short has no hook title at all")
+    else:
+        bad = {w for w in _TITLE_WORD_RE.findall(title.upper())} & banned_words
+        if bad:
+            v.append(f'the title "{title}" uses banned category word(s) {sorted(bad)} -- that\'s a label copied from the brief/category, not a claim or question taken from what was actually said')
+        if state.get("title_style") not in ("impact", "kinetic"):
+            v.append(f'add_title style is "{state.get("title_style")}", not "impact" or "kinetic"')
+    if state.get("caption_tool") != "auto_captions":
+        v.append("captions were set with caption_from_words, which has no keyword_color at all -- use auto_captions instead (pass words:[{text,start,end}] yourself if you do not trust recognition) so keyword styling actually exists")
+    else:
+        if not state.get("caption_keywords"):
+            v.append("auto_captions was called without keywords:true -- no stress words are highlighted")
+        if not state.get("caption_keyword_color"):
+            v.append("auto_captions was called without a keyword_color -- the highlighted words have no accent colour")
+    title_c = parse_color(state.get("title_color")) or parse_color(state.get("title_accent"))
+    cap_c = parse_color(state.get("caption_keyword_color"))
+    if title_c and cap_c and colors_differ(title_c, cap_c):
+        v.append(f"the title's colour {state.get('title_color') or state.get('title_accent')} and the caption keyword_color {state.get('caption_keyword_color')} are not the same accent -- pick one colour from the footage and reuse it on both")
+    return v
+
+
 def price(model, usage):
     p = PRICES.get(model)
     if not p or p[0] is None: return None
@@ -204,6 +265,12 @@ def run(a):
     if a.doc:
         for d in a.doc.split(","): system += "\n\n# Reference\n\n" + open(d).read().replace("{footage_list}", ", ".join(os.path.join(a.footage, f) for f in sorted(os.listdir(a.footage)) if f.lower().endswith((".mp4", ".mov", ".m4a", ".wav", ".mp3")))).replace("{footage}", a.footage).replace("{out}", a.out)
     brief = open(a.brief).read().replace("{footage}", a.footage).replace("{out}", a.out)
+    taste_state = {"title_text": None, "title_style": None, "title_color": None, "title_accent": None,
+                   "caption_tool": None, "caption_keywords": False, "caption_keyword_color": None}
+    taste_banned_words = BANNED_LABEL_WORDS | brief_banned_words(brief)
+    taste_corrections_used = 0
+    taste_log = {"fired": False, "violations_found": [], "corrective_round": 0}
+
     if a.adapter == "anthropic":
         m = Anthropic(a.model, os.environ["ANTHROPIC_BASE_URL"], os.environ["ANTHROPIC_API_KEY"], not a.no_vision)
     else:
@@ -257,6 +324,7 @@ def run(a):
             msgs.append({"role": "user", "content": f"You stopped without exporting. {final} does not exist yet, so there is no video. " + budget_line(True)})
             log.write(json.dumps({"ev": "harness", "what": "nudge: ended without export", "n": nudges}) + "\n"); continue
         results = []
+        just_exported = False
         for cid, name, args in calls:
             calls_n += 1; ts = time.time()
             if in_finish and not export_ok() and is_preview(name, args):
@@ -273,7 +341,22 @@ def run(a):
                         else: out += " (the kimo server was restarted; the project in memory is gone)"
                         log.write(json.dumps({"ev": "harness", "what": "kimo restarted", "autosave_loaded": os.path.exists(autosave)}) + "\n")
             if not is_err: out = flag_uncallable_tools(name, out, names)
-            if not is_err and not export_ok() and is_preview(name, args):
+            if not is_err and isinstance(args, dict):
+                if name == "add_title":
+                    taste_state["title_text"] = args.get("text"); taste_state["title_style"] = args.get("style")
+                    taste_state["title_color"] = args.get("color"); taste_state["title_accent"] = args.get("accent")
+                elif name == "auto_captions":
+                    taste_state["caption_tool"] = "auto_captions"
+                    taste_state["caption_keywords"] = bool(args.get("keywords"))
+                    taste_state["caption_keyword_color"] = args.get("keyword_color")
+                elif name == "caption_from_words" and taste_state["caption_tool"] != "auto_captions":
+                    taste_state["caption_tool"] = "caption_from_words"
+                if is_export(name, args): just_exported = True
+            if not is_err and not export_ok() and is_preview(name, args) and taste_state.get("title_text"):
+                # Only counts once a title exists -- an early render_frame/contact_sheet used to sample an
+                # accent colour off the raw footage (hard rule 4) is shot-selection, not the design-taste
+                # self-critique pass design_taste.md section 8 describes; gating on title_text keeps that
+                # early colour-pick free while still capping the real pre-export check at one.
                 precheck_passes += 1
                 if precheck_passes > 1:
                     out += ("\n[harness: that's your one pre-export design-taste check already used. Fix the single worst "
@@ -290,6 +373,20 @@ def run(a):
                 if "output" in names: k.call("project", {"action": "save_project", "args": {"path": autosave}}, timeout=60)
                 else: k.call("save_project", {"path": autosave}, timeout=60)
             except Exception: pass
+        if just_exported and export_ok() and taste_corrections_used < 1:
+            taste_log["fired"] = True
+            violations = taste_check(taste_state, taste_banned_words)
+            taste_log["violations_found"] = violations
+            if violations:
+                taste_corrections_used += 1; taste_log["corrective_round"] = taste_corrections_used
+                note = ("\n\n[harness: design-taste check on your export found real problems against the hard rules -- "
+                        "fix these, then export again. This is your only corrective round, so fix all of them now:\n- "
+                        + "\n- ".join(violations) +
+                        "\nPick one accent colour from the footage and reuse it on the title and the captions.]")
+                results[-1][2] += note
+                log.write(json.dumps({"ev": "harness", "what": "taste check failed, corrective round fired", "violations": violations}) + "\n")
+            else:
+                log.write(json.dumps({"ev": "harness", "what": "taste check passed on first export"}) + "\n")
         if not in_finish and not export_ok() and (calls_n >= finish_at_calls or time.time() - t0 >= finish_at_wall):
             in_finish = True; finish_entered = round(time.time() - t0, 1)
             log.write(json.dumps({"ev": "harness", "what": "finish phase", "calls": calls_n, "t": finish_entered}) + "\n")
@@ -313,7 +410,7 @@ def run(a):
     run = {"model": a.model, "adapter": a.adapter, "tools_profile": a.tools or "grouped", "stop": stop, "wall_s": round(wall, 1), "tool_s": round(tool_time, 1), "steps": steps, "calls": calls_n, "errors": errs,
            "tokens": tot, "cost_usd": None if cost is None else round(cost, 4), "result_chars": tool_chars, "final_text": final_text[:3000],
            "harness_finished": harness_finished, "kimo_restarts": restarts, "finish_phase_at_s": finish_entered, "nudges": nudges, "previews_refused": refused, "provider_retries": RETRY_LOG,
-           "model_exported": export_ok() and not harness_finished}
+           "model_exported": export_ok() and not harness_finished, "taste_check": taste_log}
     json.dump(run, open(os.path.join(a.out, "run.json"), "w"), indent=1); log.write(json.dumps({"ev": "end", **run}) + "\n"); log.close()
     print(json.dumps({k2: v for k2, v in run.items() if k2 != "final_text"}))
     return run
