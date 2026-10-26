@@ -237,11 +237,100 @@ def taste_check(state, banned_words):
             v.append("auto_captions was called without keywords:true -- no stress words are highlighted")
         if not state.get("caption_keyword_color"):
             v.append("auto_captions was called without a keyword_color -- the highlighted words have no accent colour")
-    title_c = parse_color(state.get("title_color")) or parse_color(state.get("title_accent"))
+    # MT3 fix (false positive): add_title's `accent` is the intentional one-accent arg (rule 4);
+    # `color` is the base text fill, which rule 4 now asks to leave white/default. Prefer accent
+    # when both are present so a model that correctly left color=white/default is not flagged.
+    title_c = parse_color(state.get("title_accent")) or parse_color(state.get("title_color"))
+    title_c_src = "accent" if parse_color(state.get("title_accent")) else "color"
     cap_c = parse_color(state.get("caption_keyword_color"))
     if title_c and cap_c and colors_differ(title_c, cap_c):
-        v.append(f"the title's colour {state.get('title_color') or state.get('title_accent')} and the caption keyword_color {state.get('caption_keyword_color')} are not the same accent -- pick one colour from the footage and reuse it on both")
+        v.append(f"the title's {title_c_src} {state.get('title_' + title_c_src)} and the caption keyword_color {state.get('caption_keyword_color')} are not the same accent -- pick one colour from the footage and reuse it on both")
+    # MT3 rule (a): active_color (the currently-spoken-word highlight) must equal the one accent too, or be
+    # white -- left unset it silently falls back to auto_captions' own yellow, mixing a second colour in.
+    if state.get("caption_tool") == "auto_captions" and cap_c:
+        active_v = state.get("caption_active_color")
+        active_c = parse_color(active_v)
+        white = (1.0, 1.0, 1.0)
+        if active_v is None:
+            v.append("auto_captions was called without active_color, so the spoken-word highlight stays at the tool's default yellow -- set active_color to the same accent as keyword_color (or to white)")
+        elif active_c and title_c and colors_differ(active_c, title_c) and colors_differ(active_c, white):
+            v.append(f"auto_captions active_color {active_v} is neither the accent {state.get('title_' + title_c_src)} nor white -- captions show a third colour mixed in")
     return v
+
+
+def _rel_luminance(rgb01):
+    """WCAG relative luminance from (r,g,b) each 0..1 (treated as sRGB, the common convention for UI/graphics colours)."""
+    def lin(c):
+        c = max(0.0, min(1.0, c))
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = (lin(c) for c in rgb01)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+def _wcag_contrast(rgb_a, rgb_b):
+    la, lb = _rel_luminance(rgb_a), _rel_luminance(rgb_b)
+    lighter, darker = max(la, lb), min(la, lb)
+    return (lighter + 0.05) / (darker + 0.05)
+
+def legibility_check(k, state, out_dir):
+    """MT3 rule (c): after export, sample the title's real on-screen frame region and check (1) contrast of
+    the title's text colour against the mean background under it, and (2) overlap with the frame's strongest
+    subject via lint_edit's own text_over_subject finding (ext/saliency_map.rs) -- no new Rust, just two
+    existing MCP calls (compute_text_bounds, lint_edit) that are not on the director tool list the model
+    sees but are still reachable directly from the harness, plus one render_frame with the title hidden so
+    the sampled region is the true background, not a mix of background and the title's own pixels.
+    Returns (violations: list[str], detail: dict) -- detail is for the report, not the model."""
+    detail = {"ran": False}
+    cid = state.get("title_clip_id")
+    if not cid:
+        return [], detail  # no title clip -- taste_check already flags "no add_title call"
+    t_mid = (state.get("title_start") or 0.0) + (state.get("title_duration") or 4.0) / 2.0
+    detail["ran"] = True; detail["clip_id"] = cid; detail["t"] = round(t_mid, 2)
+    v = []
+    # (1) contrast: real on-screen bbox from compute_text_bounds, real background pixels from a render with
+    # the title hidden (so no text pixels are averaged into "background").
+    try:
+        rect_err, rect_out, _ = k.call("compute_text_bounds", {"clip_id": cid, "t": t_mid}, timeout=60)
+        bg_path = os.path.join(out_dir, ".mt3_legibility_bg.png")
+        bg_err, bg_out, _ = k.call("render_frame", {"time": t_mid, "path": bg_path, "hide": [cid], "inline": "never"}, timeout=60)
+        if not rect_err and not bg_err:
+            r = json.loads(rect_out)
+            x, y, w, h = r["canvas_rect"]
+            from PIL import Image
+            im = Image.open(bg_path).convert("RGB")
+            iw, ih = im.size
+            x0, y0 = max(0, int(x)), max(0, int(y)); x1, y1 = min(iw, int(x + w)), min(ih, int(y + h))
+            detail["bbox"] = [x0, y0, x1, y1]
+            if x1 > x0 and y1 > y0:
+                region = im.crop((x0, y0, x1, y1))
+                px = region.resize((1, 1)).getpixel((0, 0))
+                bg_rgb01 = tuple(c / 255.0 for c in px)
+                detail["bg_rgb"] = [round(c, 3) for c in bg_rgb01]
+                title_text_c = parse_color(state.get("title_color")) or (1.0, 1.0, 1.0)  # add_title's own text fill; white if unset (the tool's default)
+                ratio = _wcag_contrast(title_text_c, bg_rgb01)
+                detail["title_text_color"] = [round(c, 3) for c in title_text_c]; detail["contrast_ratio"] = round(ratio, 2)
+                if ratio < 3.0:
+                    v.append(f"title text colour {state.get('title_color') or '[white, default]'} against the mean background behind it ({[round(c,2) for c in bg_rgb01]}) is only {ratio:.2f}:1 contrast (WCAG wants >=3:1 for large text) -- it will be hard to read at a glance")
+            else:
+                detail["bbox_error"] = "bbox outside frame bounds"
+        else:
+            detail["tool_error"] = (rect_out if rect_err else bg_out)[:200]
+    except Exception as e:
+        detail["exception"] = f"{e}"[:200]
+    # (2) subject overlap: lint_edit already computes this (ext/saliency_map.rs) -- just read its finding.
+    try:
+        le_err, le_out, _ = k.call("lint_edit", {}, timeout=120)
+        if not le_err:
+            probs = json.loads(le_out).get("problems", [])
+            hit = next((p for p in probs if p.get("code") == "text_over_subject" and p.get("clip_id") == cid), None)
+            detail["text_over_subject"] = hit
+            if hit:
+                fix = hit.get("fix") or {}
+                suggested_y = (fix.get("args") or {}).get("value") if fix.get("tool") == "set_property" else (fix.get("then") or {}).get("args", {}).get("value")
+                detail["suggested_y"] = suggested_y
+                v.append(f"the title overlaps the frame's strongest subject (lint_edit text_over_subject: {hit.get('message')}) -- move it clear" + (f", e.g. set_property y={suggested_y}" if suggested_y is not None else ""))
+    except Exception as e:
+        detail.setdefault("exception", f"{e}"[:200])
+    return v, detail
 
 
 def price(model, usage):
@@ -266,7 +355,8 @@ def run(a):
         for d in a.doc.split(","): system += "\n\n# Reference\n\n" + open(d).read().replace("{footage_list}", ", ".join(os.path.join(a.footage, f) for f in sorted(os.listdir(a.footage)) if f.lower().endswith((".mp4", ".mov", ".m4a", ".wav", ".mp3")))).replace("{footage}", a.footage).replace("{out}", a.out)
     brief = open(a.brief).read().replace("{footage}", a.footage).replace("{out}", a.out)
     taste_state = {"title_text": None, "title_style": None, "title_color": None, "title_accent": None,
-                   "caption_tool": None, "caption_keywords": False, "caption_keyword_color": None}
+                   "title_clip_id": None, "title_start": None, "title_duration": None,
+                   "caption_tool": None, "caption_keywords": False, "caption_keyword_color": None, "caption_active_color": None}
     taste_banned_words = BANNED_LABEL_WORDS | brief_banned_words(brief)
     taste_corrections_used = 0
     taste_log = {"fired": False, "violations_found": [], "corrective_round": 0}
@@ -345,10 +435,17 @@ def run(a):
                 if name == "add_title":
                     taste_state["title_text"] = args.get("text"); taste_state["title_style"] = args.get("style")
                     taste_state["title_color"] = args.get("color"); taste_state["title_accent"] = args.get("accent")
+                    taste_state["title_start"] = args.get("start", 0.0); taste_state["title_duration"] = args.get("duration", 4.0)
+                    try:
+                        cids = json.loads(out).get("clip_ids") if not is_err else None
+                        if cids: taste_state["title_clip_id"] = cids[0]
+                    except Exception:
+                        pass
                 elif name == "auto_captions":
                     taste_state["caption_tool"] = "auto_captions"
                     taste_state["caption_keywords"] = bool(args.get("keywords"))
                     taste_state["caption_keyword_color"] = args.get("keyword_color")
+                    taste_state["caption_active_color"] = args.get("active_color")
                 elif name == "caption_from_words" and taste_state["caption_tool"] != "auto_captions":
                     taste_state["caption_tool"] = "caption_from_words"
                 if is_export(name, args): just_exported = True
@@ -376,17 +473,25 @@ def run(a):
         if just_exported and export_ok() and taste_corrections_used < 1:
             taste_log["fired"] = True
             violations = taste_check(taste_state, taste_banned_words)
-            taste_log["violations_found"] = violations
-            if violations:
+            leg_violations, leg_detail = legibility_check(k, taste_state, a.out)
+            taste_log["legibility"] = leg_detail
+            all_violations = violations + leg_violations
+            taste_log["violations_found"] = all_violations
+            if all_violations:
                 taste_corrections_used += 1; taste_log["corrective_round"] = taste_corrections_used
                 note = ("\n\n[harness: design-taste check on your export found real problems against the hard rules -- "
                         "fix these, then export again. This is your only corrective round, so fix all of them now:\n- "
-                        + "\n- ".join(violations) +
-                        "\nPick one accent colour from the footage and reuse it on the title and the captions.]")
+                        + "\n- ".join(all_violations) + "\nPick one accent colour from the footage and reuse it on the title and the captions.")
+                if leg_violations:
+                    note += (" For legibility specifically: add_title has no stroke/shadow/position arg, so the fix is to "
+                              "keep the title text white (color unset or [1,1,1]) with your one accent only in the `accent` "
+                              "arg, and move the title clear with set_property (clip_id, property: \"y\", a value like "
+                              "-500 for a top-safe area or +500 for a bottom-safe area) rather than changing its colours.")
+                note += "]"
                 results[-1][2] += note
-                log.write(json.dumps({"ev": "harness", "what": "taste check failed, corrective round fired", "violations": violations}) + "\n")
+                log.write(json.dumps({"ev": "harness", "what": "taste check failed, corrective round fired", "violations": all_violations, "legibility": leg_detail}) + "\n")
             else:
-                log.write(json.dumps({"ev": "harness", "what": "taste check passed on first export"}) + "\n")
+                log.write(json.dumps({"ev": "harness", "what": "taste check passed on first export", "legibility": leg_detail}) + "\n")
         if not in_finish and not export_ok() and (calls_n >= finish_at_calls or time.time() - t0 >= finish_at_wall):
             in_finish = True; finish_entered = round(time.time() - t0, 1)
             log.write(json.dumps({"ev": "harness", "what": "finish phase", "calls": calls_n, "t": finish_entered}) + "\n")
