@@ -128,7 +128,7 @@ Use `tools/list` / `list_effects` for live schemas. Read the source parameter na
 
 ### Limits
 
-- [~] denoise (temporal/spatial, bilateral in its spatial pass) [x], sharpen [x] unsharp, dehaze [x] (verified, dehaze.rs tests), clarity [x] (= `midtone_detail`, Resolve-style local contrast in midtones, verified); pending: lens profile correction (no lens/camera database), and bilateral/compound/smart/channel blur as their own standalone effect kinds (bilateral exists only inside denoise today)
+- [~] denoise (temporal/spatial, bilateral in its spatial pass) [x], sharpen [x] unsharp, dehaze [x] (verified, dehaze.rs tests), clarity [x] (= `midtone_detail`, Resolve-style local contrast in midtones, verified), bilateral_blur [x new in v7 -- its own registered effect kind, Resolve Surface Blur / Premiere Bilateral Blur style, radius capped 0..10px for CPU cost; distinct from denoise's internal noise-tuned bilateral pass]; pending: lens profile correction (no lens/camera database), and compound/smart/channel blur as their own standalone effect kinds
 
 ### Proof level
 

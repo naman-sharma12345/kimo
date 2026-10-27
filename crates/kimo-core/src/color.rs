@@ -38,6 +38,7 @@ pub mod node_graph;
 pub mod grade_scopes;
 pub mod printstock;
 pub mod denoise;
+pub mod bilateral_blur;
 pub mod subject_match;
 pub mod neutral;
 pub mod adaptation;
@@ -105,6 +106,7 @@ pub fn catalog3() -> &'static [Entry] {
         v.extend(cct_grade::catalog());
         v.extend(printstock::catalog());
         v.extend(denoise::catalog());
+        v.extend(bilateral_blur::catalog());
         v.extend(adaptation::catalog());
         v.extend(gamut_ray::catalog());
         v.extend(boost_detail::catalog());
@@ -168,6 +170,7 @@ pub fn apply3(kind: &str, pr: &Params, f: &mut Frame, t: f64, _seed: u64) -> Res
         "luminance_shoulder" => return shoulder::apply(pr,f,t),
         "print_stock" => return printstock::apply(pr,f,t),
         "denoise" => return denoise::apply(pr,f,t),
+        "bilateral_blur" => return bilateral_blur::apply(pr,f,t),
         "white_adaptation" => return adaptation::apply(pr,f,t),
         "soft_gamut_ray" => return gamut_ray::apply(pr,f,t),
         "color_boost" | "midtone_detail" => return boost_detail::apply(kind, pr, f, t),
