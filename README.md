@@ -479,16 +479,18 @@ $K tools search "color grade"
 
 ## ✦ Made with kimo
 
+Frames from short films rendered end to end by kimo. Each one started as a prompt, and an agent built every frame through MCP tool calls.
+
 <table>
 <tr>
-<td width="33%"><img src="docs/media/film-02-relit-title.jpg" alt="Relit title over a lens flare"><br><sub><b>Relit titles</b> over real footage</sub></td>
-<td width="33%"><img src="docs/media/title-embers.jpg" alt="Title over a city at night"><br><sub><b>Motion titles</b> on drone plates</sub></td>
-<td width="33%"><img src="docs/media/frosted-glass.jpg" alt="Frosted glass panel"><br><sub><b>Frosted glass</b> UI over video</sub></td>
+<td width="33%"><img src="docs/media/made-sticker-series.jpg" alt="An agent built every frame"><br><sub><b>Sticker series.</b> Die-cut cards, foil and holo finishes</sub></td>
+<td width="33%"><img src="docs/media/made-no-timeline.jpg" alt="kimo draws them all"><br><sub><b>No timeline.</b> Ask, plan, render, ship</sub></td>
+<td width="33%"><img src="docs/media/made-how-this-film.jpg" alt="It drives kimo tool by tool"><br><sub><b>How this film was made.</b> The agent, tool by tool</sub></td>
 </tr>
 <tr>
-<td><img src="docs/media/film-01-road.jpg" alt="Graded road footage"><br><sub><b>Color grading</b> with grade graphs</sub></td>
-<td><img src="docs/media/matte-real-plate.jpg" alt="Keyed subject"><br><sub><b>Mattes and keying</b> on a real plate</sub></td>
-<td><img src="docs/media/film-03-lockup.jpg" alt="Logo lockup"><br><sub><b>Brand lockups</b> and end cards</sub></td>
+<td><img src="docs/media/made-isometric-build.jpg" alt="Isometric timeline"><br><sub><b>Isometric build.</b> Layers, motion and render in 3D</sub></td>
+<td><img src="docs/media/made-flat-vector.jpg" alt="The agent does the rest"><br><sub><b>Flat vector.</b> One sentence in, the agent does the rest</sub></td>
+<td><img src="docs/media/made-beat-cut.jpg" alt="Cut on the beat"><br><sub><b>No cursor needed.</b> <code>beat_cut</code> and auto captions</sub></td>
 </tr>
 </table>
 
