@@ -81,7 +81,7 @@ Use `tools/list` / `list_effects` for live schemas. Read the source parameter na
 - [ ] insert vs overwrite with auto-ripple on add_clip, three/four-point edit, source in/out marks
 - [ ] multicam: sync by audio/timecode, angle switching, multicam to flat
 - [ ] subclips, clip labels/colors, bins and metadata, search
-- [ ] replace clip (keep effects), paste attributes, effect presets (save/apply), copy/paste keyframes
+- [x] replace clip (keep effects): `replace_clip_media`; paste attributes: `paste_attributes` (already shipped, verified); effect presets (save/apply): the `template_define`/`template_apply`/`template_list`/`template_describe` system (already shipped, general-purpose -- covers a saved, reusable effect preset); copy/paste keyframes: `copy_keyframes` (property or effect-param keys, optional time offset, replace or merge)
 - [ ] auto reframe (cover-fit decode), scene edit detection, auto-cut to beats / to speech
 - [ ] proxy workflow (generate proxy, toggle), offline media relink
 - [x] rolling/regular edit by timecode text ("+10", "-5 frames") helpers: `ripple_trim`, `roll_edit`, `slip_clip` and `slide_clip`'s `delta` takes a number (unchanged) or a string like "+10", "-5 frames", "3f" (unit defaults to seconds, converted via project fps for frames)
