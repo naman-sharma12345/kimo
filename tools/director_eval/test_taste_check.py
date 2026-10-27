@@ -295,7 +295,154 @@ def check_mt8():
     print(f"\nall {13} MT8 checks passed")
 
 
+
+# ---------------------------------------------------------------------------
+# OUT1: add_title's own outline_width/outline_color (stroke, off by default, same Source::Text path
+# auto_captions already draws with), and the harness that applies it itself once find_passing_y has
+# proved no title position fixes contrast against this background.
+# Still no kimo-mcp binary or network needed: tool calls are faked.
+# ---------------------------------------------------------------------------
+
+
+class _FakeKimoOutline:
+    """Stands in for mcp.Kimo for apply_outline_fix: records delete_clip/add_title/set_property/
+    save_project/export calls in order, returns a fresh clip id from add_title, and lets a test force
+    any one call to fail by name."""
+
+    def __init__(self, fail_on=None, new_clip_id="clip99"):
+        self.calls = []
+        self.fail_on = fail_on or set()
+        self.new_clip_id = new_clip_id
+
+    def call(self, name, args, timeout=600):
+        self.calls.append((name, args))
+        if name in self.fail_on:
+            return True, f"{name} failed (forced)", []
+        if name == "delete_clip":
+            return False, "{}", []
+        if name == "add_title":
+            return False, _json.dumps({"clip_ids": [self.new_clip_id], "style": args.get("style")}), []
+        if name == "set_property":
+            return False, "{}", []
+        if name == "save_project":
+            return False, "{}", []
+        if name == "export":
+            return False, "{}", []
+        raise AssertionError(f"_FakeKimoOutline got an unexpected call: {name}")
+
+
+def _outline_state(**over):
+    s = {"title_clip_id": "clip18", "title_track_id": "track1", "title_text": "BEST BOWL THIS YEAR?",
+         "title_style": "impact", "title_color": None, "title_accent": None, "title_subtitle": None,
+         "title_font": None, "title_start": 0.0, "title_duration": 4.0, "title_y": -400.0, "title_x": 0.0}
+    s.update(over)
+    return s
+
+
+def check_out1():
+    failures = []
+
+    def expect(label, cond):
+        print(("PASS " if cond else "FAIL ") + label)
+        if not cond:
+            failures.append(label)
+
+    orig_measure = agent._measure_contrast_at_y
+
+    # --- (a) the Rust contract this harness change leans on: add_title's new args default to
+    # no outline, so this lane never changes default renders -- just records intent here since the
+    # Rust side is exercised by the Rust test suite, not this Python one.
+    expect("HARNESS_OUTLINE_WIDTH_AT_1280H is a small positive px value, not accidentally 0",
+           agent.HARNESS_OUTLINE_WIDTH_AT_1280H > 0)
+    expect("HARNESS_OUTLINE_COLOR defaults to black, same as auto_captions' own stroke",
+           tuple(agent.HARNESS_OUTLINE_COLOR) == (0.0, 0.0, 0.0))
+
+    # --- (b) happy path: deletes the old title, recreates it with outline_width/outline_color on the
+    # SAME text/style/position/accent, restores y/x, re-measures, re-exports -- and updates the
+    # harness's own state to the new clip id (so a later followup step doesn't touch a deleted clip).
+    agent._measure_contrast_at_y = lambda k_, cid, t, out, c, tag="", stroke_c=None: {"ratio_p10": 4.1, "ratio_mean": 5.0}
+    try:
+        k = _FakeKimoOutline(new_clip_id="clip99")
+        state = _outline_state()
+        detail = agent.apply_outline_fix(k, state, "/tmp")
+    finally:
+        agent._measure_contrast_at_y = orig_measure
+    expect("apply_outline_fix reports attempted", detail["attempted"] is True)
+    expect("apply_outline_fix deletes the old title clip first", k.calls[0] == ("delete_clip", {"clip_id": "clip18"}))
+    add_call = next(c for c in k.calls if c[0] == "add_title")
+    expect("add_title is called with the SAME text/style", add_call[1]["text"] == "BEST BOWL THIS YEAR?" and add_call[1]["style"] == "impact")
+    expect("add_title is called with a non-zero outline_width and a colour", add_call[1]["outline_width"] > 0 and "outline_color" in add_call[1])
+    expect("apply_outline_fix restores the original y/x on the new clip",
+           any(c == ("set_property", {"clip_id": "clip99", "property": "y", "value": -400.0}) for c in k.calls)
+           and any(c == ("set_property", {"clip_id": "clip99", "property": "x", "value": 0.0}) for c in k.calls))
+    expect("apply_outline_fix updates the harness's own state to the new clip id", state["title_clip_id"] == "clip99")
+    expect("apply_outline_fix records the new clip id in its own detail", detail["new_clip_id"] == "clip99")
+    expect("apply_outline_fix records the stroke-aware measurement", detail["ratio_p10_with_outline"] == 4.1)
+    expect("apply_outline_fix re-exports after applying the outline", any(c[0] == "export" for c in k.calls))
+    expect("apply_outline_fix saves the project after applying the outline", any(c[0] == "save_project" for c in k.calls))
+
+    # --- (c) missing state (no title_clip_id/track_id/text/style) refuses rather than guessing.
+    k2 = _FakeKimoOutline()
+    detail2 = agent.apply_outline_fix(k2, {"title_clip_id": None, "title_track_id": "track1"}, "/tmp")
+    expect("apply_outline_fix skips cleanly when the title's own state is incomplete", detail2["attempted"] is False and "skipped_reason" in detail2)
+    expect("apply_outline_fix makes no calls at all when it skips", k2.calls == [])
+
+    # --- (d) a delete_clip failure stops before add_title ever runs (never creates a second title).
+    k3 = _FakeKimoOutline(fail_on={"delete_clip"})
+    detail3 = agent.apply_outline_fix(k3, _outline_state(), "/tmp")
+    expect("a delete_clip failure is reported and not attempted", detail3["attempted"] is False and "delete_error" in detail3)
+    expect("a delete_clip failure never calls add_title", not any(c[0] == "add_title" for c in k3.calls))
+
+    # --- (e) an add_title failure after a successful delete is reported, not swallowed.
+    k4 = _FakeKimoOutline(fail_on={"add_title"})
+    detail4 = agent.apply_outline_fix(k4, _outline_state(), "/tmp")
+    expect("an add_title failure is reported with the tool's own error", "add_title_error" in detail4)
+
+    # --- (f) the stroke-aware contrast measurement itself: a light background where the plain WHITE
+    # fill reads poorly but a BLACK outline reads well must report the BETTER of the two, not the fill
+    # alone -- this is the actual perceptual claim an outline makes. Built on a real tiny PNG + a fake
+    # compute_text_bounds/render_frame, the same style the MT8 safe-area tests already use (no kimo
+    # binary needed).
+    import tempfile
+    from PIL import Image
+    bg_path_holder = {}
+
+    class _FakeKimoMeasure:
+        def __init__(self, rect):
+            self.rect = rect
+
+        def call(self, name, args, timeout=600):
+            if name == "compute_text_bounds":
+                return False, _json.dumps({"canvas_rect": self.rect}), []
+            if name == "render_frame":
+                im = Image.new("RGB", (20, 20), (235, 235, 235))  # light grey background, fails on white fill
+                im.save(args["path"])
+                bg_path_holder["path"] = args["path"]
+                return False, "{}", []
+            raise AssertionError(f"unexpected call: {name}")
+
+    with tempfile.TemporaryDirectory() as td:
+        kmeasure = _FakeKimoMeasure([0.0, 0.0, 20.0, 20.0])
+        white = (1.0, 1.0, 1.0)
+        fill_only = agent._measure_contrast_at_y(kmeasure, "clip1", 0.5, td, white, tag="_fillonly")
+        with_stroke = agent._measure_contrast_at_y(kmeasure, "clip1", 0.5, td, white, tag="_stroke", stroke_c=(0.0, 0.0, 0.0))
+        fill_only_again = agent._measure_contrast_at_y(kmeasure, "clip1", 0.5, td, white, tag="_again")
+    expect("a white fill alone on a light-grey background measures poor contrast", fill_only["ratio_p10"] < 2.0)
+    expect("adding a black stroke raises the measured ratio (the better of fill/stroke per sampled point)",
+           with_stroke["ratio_p10"] > fill_only["ratio_p10"])
+    expect("a black stroke's own high-contrast number is what's reported once added",
+           with_stroke["ratio_p10"] > 10.0)
+    expect("without a stroke_c argument, the measurement is UNCHANGED from before this lane (default None)",
+           "ratio_p10" in fill_only and fill_only == fill_only_again)
+
+    if failures:
+        print(f"\n{len(failures)} FAILED")
+        sys.exit(1)
+    print(f"\nall {11} OUT1 checks passed")
+
+
 if __name__ == "__main__":
     check()
     check_mt7()
     check_mt8()
+    check_out1()

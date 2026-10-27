@@ -31,7 +31,7 @@ pub fn add_title(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let tid = a.get("track_id").and_then(|v| v.as_str()).ok_or("missing track_id")?.to_string(); let style = a.get("style").and_then(|v| v.as_str()).ok_or("missing style")?.to_string();
     let text = a.get("text").and_then(|v| v.as_str()).ok_or("missing text")?.replace("\\n", "\n"); let sub = a.get("subtitle").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let (start, dur) = (num(a, "start", 0.0), num(a, "duration", 4.0)); let k = ss.project.height.min(ss.project.width) as f64 / 1080.0; /* the short side: a 9:16 frame sizes like 16:9 turned on end */ let wpx = ss.project.width as f64;
-    let accent = rgb(a, "accent", [0.95, 0.72, 0.35]); let color = rgb(a, "color", [1.0; 3]); let font_o = a.get("font").and_then(|v| v.as_str());
+    let accent = rgb(a, "accent", [0.95, 0.72, 0.35]); let color = rgb(a, "color", [1.0; 3]); let font_o = a.get("font").and_then(|v| v.as_str()); let outline_width = num(a, "outline_width", 0.0).max(0.0); let outline_color = rgb(a, "outline_color", [0.0, 0.0, 0.0]); // optional stroke so a title stays legible over a busy background; default 0 = no outline, byte-identical to before this arg existed
     // a reveal paced for the 4 s default ends by mid-title on a short one, so a 1 s title is on screen for its second half
     let intro = |t0: f64, natural_end: f64| -> f64 { natural_end.min((dur * 0.5).max(t0 + 0.05)) };
     let mut clips: Vec<Clip> = vec![];
@@ -98,6 +98,10 @@ pub fn add_title(ss: &mut Session, a: &Value) -> Result<Value, String> {
         }
         o => return Err(format!("unknown style {o}; styles: {:?}", STYLES)),
     }
+    // Reuses the same Source::Text stroke_width/stroke_color fields auto_captions already draws with (see
+    // ext/auto_captions.rs); applies to every text clip this call made (title + subtitle, when present), never to
+    // the shape decorations (pills/bars/boxes), which have their own separate stroke fields. Off by default.
+    if outline_width > 0.0 { for c in clips.iter_mut() { if let Source::Text { stroke_width, stroke_color, .. } = &mut c.source { *stroke_width = outline_width; *stroke_color = outline_color; } } }
     for c in clips.iter_mut() { fit_width(c, wpx)?; }
     // a preset font that is not installed is drawn in a fallback sans, which changes the whole look: say so in the result
     let mut warnings: Vec<String> = vec![];

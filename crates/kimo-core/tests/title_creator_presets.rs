@@ -44,3 +44,76 @@ fn title_unknown_style_still_errors() {
     let err = e(&mut s, "add_title", json!({"track_id": t, "style": "not_a_real_style", "text": "x"}));
     assert!(err.contains("unknown style"), "{err}");
 }
+
+
+#[test]
+fn title_outline_default_is_zero_no_stroke() {
+    let (mut s, t) = scene();
+    let r = c(&mut s, "add_title", json!({"track_id": t, "style": "cinematic", "text": "HELLO", "subtitle": "world", "start": 0.0, "duration": 2.5}));
+    let ids: Vec<String> = r["clip_ids"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
+    for cl in s.project.tracks[0].clips.iter().filter(|cl| ids.contains(&cl.id)) {
+        if let kimo_core::model::Source::Text { stroke_width, stroke_color, .. } = &cl.source {
+            assert_eq!(*stroke_width, 0.0, "default add_title must draw text with no stroke (byte-identical to before outline_width existed)");
+            assert_eq!(*stroke_color, [0.0, 0.0, 0.0]);
+        }
+    }
+}
+
+#[test]
+fn title_outline_width_applies_to_every_style_title_text() {
+    for style in kimo_core::titles::STYLES {
+        let (mut s, t) = scene();
+        let r = c(&mut s, "add_title", json!({"track_id": t, "style": style, "text": "BEST BOWL THIS YEAR?", "start": 0.0, "duration": 2.5, "outline_width": 6.0, "outline_color": [0.1, 0.2, 0.3]}));
+        let ids: Vec<String> = r["clip_ids"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
+        let mut saw_text = false;
+        for cl in s.project.tracks[0].clips.iter().filter(|cl| ids.contains(&cl.id)) {
+            if let kimo_core::model::Source::Text { stroke_width, stroke_color, .. } = &cl.source {
+                saw_text = true;
+                assert_eq!(*stroke_width, 6.0, "{style}: outline_width should set the title's stroke_width");
+                assert_eq!(*stroke_color, [0.1, 0.2, 0.3], "{style}: outline_color should set the title's stroke_color");
+            }
+        }
+        assert!(saw_text, "{style}: add_title made no Source::Text clip to check");
+    }
+}
+
+#[test]
+fn title_outline_never_touches_shape_decorations() {
+    // hook_box and subscribe_pop both draw a Source::Shape decoration alongside the title text; the outline
+    // must only touch Source::Text (auto_captions' own stroke path), never a shape's separate stroke fields.
+    for style in ["hook_box", "subscribe_pop", "lower_third"] {
+        let (mut s, t) = scene();
+        let r = c(&mut s, "add_title", json!({"track_id": t, "style": style, "text": "WAIT FOR IT", "start": 0.0, "duration": 2.5, "outline_width": 6.0}));
+        let ids: Vec<String> = r["clip_ids"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
+        let mut saw_shape = false;
+        for cl in s.project.tracks[0].clips.iter().filter(|cl| ids.contains(&cl.id)) {
+            if let kimo_core::model::Source::Shape { stroke_width, .. } = &cl.source {
+                saw_shape = true;
+                assert_eq!(*stroke_width, 0.0, "{style}: outline_width must not touch a shape decoration's own stroke");
+            }
+        }
+        assert!(saw_shape, "{style}: expected at least one Source::Shape decoration clip");
+    }
+}
+
+#[test]
+fn title_outline_renders_without_panicking() {
+    let (mut s, t) = scene();
+    c(&mut s, "add_title", json!({"track_id": t, "style": "kinetic", "text": "BEST BOWL THIS YEAR?", "start": 0.0, "duration": 2.5, "outline_width": 6.0, "outline_color": [0.0, 0.0, 0.0]}));
+    let tm = 1.25; let mut cache = render::Cache::new();
+    render::prepare_at(&s.project, &mut cache, Some(tm)).unwrap_or_else(|e| panic!("prepare: {e}"));
+    let f = render::render_frame(&s.project, tm, &cache);
+    assert!(f.is_ok(), "{:?}", f.err());
+}
+
+#[test]
+fn title_outline_width_negative_is_clamped_to_no_outline() {
+    let (mut s, t) = scene();
+    let r = c(&mut s, "add_title", json!({"track_id": t, "style": "kinetic", "text": "X", "start": 0.0, "duration": 2.5, "outline_width": -5.0}));
+    let ids: Vec<String> = r["clip_ids"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
+    for cl in s.project.tracks[0].clips.iter().filter(|cl| ids.contains(&cl.id)) {
+        if let kimo_core::model::Source::Text { stroke_width, .. } = &cl.source {
+            assert_eq!(*stroke_width, 0.0, "a negative outline_width must not produce a negative stroke");
+        }
+    }
+}

@@ -46,7 +46,7 @@ add_smart_punch 841bcd969ba8ab27
 add_speed_lines 0db4bddd46e7a057
 add_text e504fc3dce60034a
 add_text_animator 7c837530f3da76ca
-add_title ef78e3db77ecd193
+add_title 8d5843bfb82e6279
 add_track cf1da67768a18dbb
 add_transition 206007cccc65ed1e
 analyze_color 34563f36b4186ca4

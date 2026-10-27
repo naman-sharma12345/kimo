@@ -566,7 +566,7 @@ def caption_y_values(proj):
     return ys
 
 
-def _measure_contrast_at_y(k, cid, t_mid, out_dir, title_text_c, tag=""):
+def _measure_contrast_at_y(k, cid, t_mid, out_dir, title_text_c, tag="", stroke_c=None):
     """The same real-pixel p10-contrast measurement legibility_check does for the live export (real
     on-screen bbox from compute_text_bounds, clean background from a render with the title hidden),
     factored out so find_passing_y can reuse it per-candidate without duplicating the maths or drifting
@@ -598,8 +598,18 @@ def _measure_contrast_at_y(k, cid, t_mid, out_dir, title_text_c, tag=""):
         la = _rel_luminance(title_text_c)
         lighter = np.maximum(la, lum); darker = np.minimum(la, lum)
         ratios = (lighter + 0.05) / (darker + 0.05)
+        mean_ratio = _wcag_contrast(title_text_c, tuple(flat.mean(axis=0)))
+        if stroke_c is not None:
+            # OUT1: with a stroke, a viewer reads the letter off whichever edge stands out more at that
+            # local patch of background -- the fill colour or its outline -- so the controlling ratio per
+            # sampled point is the BETTER of the two, not the fill alone (the add_title outline_width/
+            # outline_color args; same Source::Text stroke path auto_captions already draws with).
+            ls = _rel_luminance(stroke_c)
+            lighter_s = np.maximum(ls, lum); darker_s = np.minimum(ls, lum)
+            ratios = np.maximum(ratios, (lighter_s + 0.05) / (darker_s + 0.05))
+            mean_ratio = max(mean_ratio, _wcag_contrast(stroke_c, tuple(flat.mean(axis=0))))
         detail["ratio_p10"] = round(float(np.percentile(ratios, 10)), 2)
-        detail["ratio_mean"] = round(_wcag_contrast(title_text_c, tuple(flat.mean(axis=0))), 2)
+        detail["ratio_mean"] = round(mean_ratio, 2)
     except Exception as e:
         detail["exception"] = f"{e}"[:200]
     return detail
@@ -693,6 +703,67 @@ def find_passing_y(k, state, out_dir, candidates=LEGIBILITY_Y_CANDIDATES, pass_t
     return None, detail
 
 
+HARNESS_OUTLINE_WIDTH_AT_1280H = 6.0  # px of stroke at the preset's own k-scale; see titles.rs::add_title
+HARNESS_OUTLINE_COLOR = (0.0, 0.0, 0.0)  # black, same default auto_captions draws its own stroke with
+
+
+def apply_outline_fix(k, state, out_dir, outline_width=HARNESS_OUTLINE_WIDTH_AT_1280H, outline_color=HARNESS_OUTLINE_COLOR):
+    """OUT1: find_passing_y already proved no y position reaches readable contrast against this
+    background -- moving the title can't fix it, but an outline can. Deletes the title clip (add_title
+    is a one-shot preset; there is no existing tool that adds a stroke to a clip after creation -- see
+    MT8's note on set_property/set_text_style, same story here) and recreates it at the exact
+    text/style/position/accent it already had, this time with add_title's own outline_width/outline_color
+    (the same Source::Text stroke_width/stroke_color path auto_captions already draws every caption
+    with), then re-exports and re-measures. Always returns a dict with "attempted"; when attempted,
+    "ratio_p10_with_outline" is the stroke-aware measurement (_measure_contrast_at_y's own ratio, taking
+    whichever of fill/stroke contrasts better against each sampled background patch -- the real
+    perceptual claim an outline makes, not a guarantee the plain WCAG number itself crosses the
+    threshold, since that number is defined on the fill colour alone and a stroke is a shape change, not
+    a colour change)."""
+    detail = {"attempted": False}
+    cid = state.get("title_clip_id"); track_id = state.get("title_track_id")
+    if not cid or not track_id or not state.get("title_text") or not state.get("title_style"):
+        detail["skipped_reason"] = "missing title_clip_id/track_id/text/style in harness state; cannot safely recreate the title"
+        return detail
+    args = {"track_id": track_id, "style": state["title_style"], "text": state["title_text"],
+            "start": state.get("title_start") or 0.0, "duration": state.get("title_duration") or 4.0,
+            "outline_width": outline_width, "outline_color": list(outline_color)}
+    if state.get("title_color"): args["color"] = state["title_color"]
+    if state.get("title_accent"): args["accent"] = state["title_accent"]
+    if state.get("title_subtitle"): args["subtitle"] = state["title_subtitle"]
+    if state.get("title_font"): args["font"] = state["title_font"]
+    try:
+        de, do, _ = k.call("delete_clip", {"clip_id": cid}, timeout=30)
+        if de:
+            detail["delete_error"] = do[:300]; return detail
+        detail["attempted"] = True
+        ae, ao, _ = k.call("add_title", args, timeout=60)
+        if ae:
+            detail["add_title_error"] = ao[:300]; return detail
+        new_cids = (json.loads(ao).get("clip_ids") or [])
+        if not new_cids:
+            detail["add_title_error"] = "no clip_ids returned"; return detail
+        new_cid = new_cids[0]
+        for prop, val in (("y", state.get("title_y")), ("x", state.get("title_x"))):
+            if val is not None:
+                k.call("set_property", {"clip_id": new_cid, "property": prop, "value": val}, timeout=30)
+        state["title_clip_id"] = new_cid
+        detail["new_clip_id"] = new_cid
+        t_mid = (state.get("title_start") or 0.0) + (state.get("title_duration") or 4.0) / 2.0
+        title_text_c = parse_color(state.get("title_color")) or (1.0, 1.0, 1.0)
+        m = _measure_contrast_at_y(k, new_cid, t_mid, out_dir, title_text_c, tag="_outline", stroke_c=outline_color)
+        detail["measurement"] = m
+        detail["ratio_p10_with_outline"] = m.get("ratio_p10")
+        se, so, _ = k.call("save_project", {"path": os.path.join(out_dir, "project.json")}, timeout=60)
+        if se: detail["save_error"] = so[:300]
+        ee, eo, _ = k.call("export", {"path": os.path.join(out_dir, "final.mp4"), "crf": 20}, timeout=180)
+        detail["re_exported"] = not ee
+        if ee: detail["export_error"] = eo[:300]
+    except Exception as e:
+        detail["exception"] = f"{e}"[:300]
+    return detail
+
+
 def run(a):
     os.makedirs(a.out, exist_ok=True); log = open(os.path.join(a.out, "log.jsonl"), "w")
     env = {"KIMO_SPECTATOR": "off"}
@@ -711,6 +782,7 @@ def run(a):
     brief = open(a.brief).read().replace("{footage}", a.footage).replace("{out}", a.out)
     taste_state = {"title_text": None, "title_style": None, "title_color": None, "title_accent": None,
                    "title_clip_id": None, "title_start": None, "title_duration": None, "title_y": None, "title_x": None,
+                   "title_track_id": None, "title_subtitle": None, "title_font": None,
                    "caption_tool": None, "caption_keywords": False, "caption_keyword_color": None, "caption_active_color": None}
     taste_banned_words = BANNED_LABEL_WORDS | brief_banned_words(brief)
     taste_corrections_used = 0
@@ -793,6 +865,8 @@ def run(a):
                     taste_state["title_color"] = args.get("color"); taste_state["title_accent"] = args.get("accent")
                     taste_state["title_start"] = args.get("start", 0.0); taste_state["title_duration"] = args.get("duration", 4.0)
                     taste_state["title_x"] = args.get("x", 0.0)
+                    taste_state["title_track_id"] = args.get("track_id"); taste_state["title_subtitle"] = args.get("subtitle")
+                    taste_state["title_font"] = args.get("font")
                     try:
                         cids = json.loads(out).get("clip_ids") if not is_err else None
                         if cids: taste_state["title_clip_id"] = cids[0]
@@ -869,6 +943,11 @@ def run(a):
                                                                 "none reached readable contrast against this background -- kept the original "
                                                                 "title text and position rather than asking the model to retitle/restyle for it",
                                                       "violations_excluded_from_note": position_violations, "find_passing_y": find_detail}
+                # OUT1: moving the title can't fix this background -- but add_title's own outline can
+                # (same stroke path auto_captions already draws with). The harness applies it itself, right
+                # here, rather than waiting on a corrective round the model was never even told about.
+                outline_detail = apply_outline_fix(k, taste_state, a.out)
+                taste_log["legibility_unfixable"]["outline_fix"] = outline_detail
             all_violations_for_note = violations + position_violations_for_note + safe_violations + accent_violations
             if all_violations_for_note:
                 taste_corrections_used += 1; taste_log["corrective_round"] = taste_corrections_used
@@ -997,7 +1076,7 @@ def run(a):
     run = {"model": a.model, "adapter": a.adapter, "tools_profile": a.tools or "grouped", "stop": stop, "wall_s": round(wall, 1), "tool_s": round(tool_time, 1), "steps": steps, "calls": calls_n, "errors": errs,
            "tokens": tot, "cost_usd": None if cost is None else round(cost, 4), "result_chars": tool_chars, "final_text": final_text[:3000],
            "harness_finished": harness_finished, "kimo_restarts": restarts, "finish_phase_at_s": finish_entered, "nudges": nudges, "previews_refused": refused, "provider_retries": RETRY_LOG,
-           "model_exported": export_ok() and not harness_finished, "taste_check": taste_log, "harness_applied_fix": bool(taste_log.get("followup_verify", {}).get("harness_applied_fix"))}
+           "model_exported": export_ok() and not harness_finished, "taste_check": taste_log, "harness_applied_fix": bool(taste_log.get("followup_verify", {}).get("harness_applied_fix")) or bool(taste_log.get("legibility_unfixable", {}).get("outline_fix", {}).get("attempted"))}
     json.dump(run, open(os.path.join(a.out, "run.json"), "w"), indent=1); log.write(json.dumps({"ev": "end", **run}) + "\n"); log.close()
     print(json.dumps({k2: v for k2, v in run.items() if k2 != "final_text"}))
     return run
