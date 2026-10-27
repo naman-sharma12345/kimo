@@ -3,8 +3,6 @@
 Kimo does the hard parts in one call each. You decide the story: clip order, which takes to drop, the hook title,
 the caption words and any labels. Do the steps in this order and keep every path absolute.
 
-Hackathon quickstart (build, run, env knobs, known limits): [HACKATHON_QUICKSTART.md](HACKATHON_QUICKSTART.md).
-
 1. `project_set {width: 720, height: 1280, fps: 30}`
 2. `import_media {path}` for each clip, with these exact paths (copy them, do not shorten them):
    {footage_list}

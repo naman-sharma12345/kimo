@@ -1,4 +1,4 @@
-//! Director-mode open items before the Oct 26 hackathon (DIRECTOR_DRYRUN items 11-12, SMALL_MODEL_PREP): each test was written
+//! Director-mode open items before the Oct 26 demo (DIRECTOR_DRYRUN items 11-12, SMALL_MODEL_PREP): each test was written
 //! red against the behaviour a director agent or the demo machine hit.
 use kimo_core::commands::{dispatch, Session};
 use serde_json::{json, Value};

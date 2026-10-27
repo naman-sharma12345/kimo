@@ -200,7 +200,7 @@ fn stub_said(tag: &str, said: &[&str]) -> PathBuf {
 }
 
 #[test] fn no_recognizer_at_all_names_the_real_situation_and_a_real_fallback() { let _env_guard = env_guard();
-    // The real hackathon-box scenario: no whisper-cli anywhere, no model, nothing overridden --
+    // The real no-setup-box scenario: no whisper-cli anywhere, no model, nothing overridden --
     // the exact shape director_mode.md's own small model hits when it calls auto_captions with no
     // speech model installed. The old message led with a shell script and an env var the caller
     // can't run/set itself, and buried "skip captions, or use caption_from_words" behind "Or pass

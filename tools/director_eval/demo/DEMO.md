@@ -31,8 +31,6 @@ mode would emit. A different footage set needs its own recipe file
 it does **not** need its own captions -- captions come from kimo's own speech
 recognition, not a hand-typed transcript (see below).
 
-Hackathon quickstart (build, run, env knobs, known limits): [../HACKATHON_QUICKSTART.md](../HACKATHON_QUICKSTART.md).
-
 ## What it runs, one call per step
 
 1. `project_set` -- 720x1280, 30fps.

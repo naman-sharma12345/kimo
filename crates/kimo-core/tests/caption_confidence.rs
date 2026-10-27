@@ -1,4 +1,4 @@
-//! Caption confidence (KA1, hackathon ASR robustness): caption_from_words is told words by the caller, not recognized by
+//! Caption confidence (KA1, ASR robustness): caption_from_words is told words by the caller, not recognized by
 //! kimo - on Naman's real accented/informal clips the words it was given (an outside auto-transcript) turned out to be
 //! whisper hallucinations ("bohozhada", "kettlebanyan") that a small director-mode model had to hand-fix after the fact,
 //! with nothing to tell it which cues were suspect. This best-effort cross-checks each cue's given words against what
