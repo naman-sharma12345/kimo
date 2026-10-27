@@ -1,195 +1,162 @@
-<p align="center">
-  <a href="https://getkimo.tech"><img src="docs/assets/kimo-logo.png" alt="kimo" width="140"></a>
-</p>
+<div align="center">
 
-<h1 align="center">kimo</h1>
+<a href="https://getkimo.tech"><img src="docs/assets/kimo-logo.png" alt="kimo" width="120"></a>
 
-<p align="center">
-  <b>A video editor an AI can drive.</b><br>
-  Headless Rust engine. Every edit is an MCP tool call. A live spectator app shows you what the agent is doing.<br>
-  <a href="https://getkimo.tech"><b>getkimo.tech</b></a>
-</p>
+# kimo
 
-<p align="center">
-  <a href="https://github.com/naman-sharma12345/kimo/actions/workflows/kimo-validation.yml"><img alt="CI" src="https://github.com/naman-sharma12345/kimo/actions/workflows/kimo-validation.yml/badge.svg"></a>
-  <a href="https://github.com/naman-sharma12345/kimo/actions/workflows/release.yml"><img alt="release build" src="https://github.com/naman-sharma12345/kimo/actions/workflows/release.yml/badge.svg"></a>
-  <a href="https://github.com/naman-sharma12345/kimo/releases"><img alt="release" src="https://img.shields.io/github/v/release/naman-sharma12345/kimo?include_prereleases&label=release&labelColor=0E0E12&color=FF5C28"></a>
-  <a href="LICENSE"><img alt="license" src="https://img.shields.io/github/license/naman-sharma12345/kimo?labelColor=0E0E12&color=F4F0E8"></a>
-  <img alt="MCP tools" src="https://img.shields.io/badge/MCP%20tools-436%2F452%20live%20%2B%2016%20gated-F4F0E8?labelColor=0E0E12">
-</p>
+### The video editor your AI drives.
 
-<p align="center">
-  <a href="#demo">Demo</a> ·
-  <a href="#architecture">Architecture</a> ·
-  <a href="#the-mcp-tool-ecosystem">Tools</a> ·
-  <a href="#install-prebuilt-installers">Install</a> ·
-  <a href="#build-from-clone">Build</a> ·
-  <a href="#setup-add-kimo-to-your-ai-client">Connect your AI</a> ·
-  <a href="#watching-it-work-spectator-telemetry">Spectator</a>
-</p>
+A headless Rust engine where every cut, keyframe, grade and export is an MCP tool call.<br>
+Plug it into Claude Code, Codex, Cursor or any MCP client and watch the edit happen live.
 
----
+<a href="https://getkimo.tech"><img alt="Website" src="https://img.shields.io/badge/getkimo.tech-FF5C28?style=for-the-badge&labelColor=0E0E12"></a>
+<a href="https://github.com/naman-sharma12345/kimo/releases/latest"><img alt="Download" src="https://img.shields.io/github/v/release/naman-sharma12345/kimo?style=for-the-badge&label=download&labelColor=0E0E12&color=F4F0E8"></a>
+<a href="#-connect-your-ai"><img alt="MCP" src="https://img.shields.io/badge/MCP-452%20tools-F4F0E8?style=for-the-badge&labelColor=0E0E12"></a>
 
-## Demo
+<a href="https://github.com/naman-sharma12345/kimo/actions/workflows/kimo-validation.yml"><img alt="CI" src="https://github.com/naman-sharma12345/kimo/actions/workflows/kimo-validation.yml/badge.svg"></a>
+<a href="https://github.com/naman-sharma12345/kimo/actions/workflows/release.yml"><img alt="release build" src="https://github.com/naman-sharma12345/kimo/actions/workflows/release.yml/badge.svg"></a>
+<a href="LICENSE"><img alt="license" src="https://img.shields.io/github/license/naman-sharma12345/kimo?labelColor=0E0E12&color=F4F0E8"></a>
+<img alt="Rust" src="https://img.shields.io/badge/built%20with-Rust-F4F0E8?labelColor=0E0E12&logo=rust&logoColor=white">
 
-<p align="center">
-  <a href="docs/media/kimo_brand_reveal.mp4"><img src="docs/media/kimo_brand_reveal.gif" alt="kimo brand reveal, rendered with kimo" width="480"></a><br>
-  <sub><b>Made with kimo.</b> A 33-second brand reveal rendered by the kimo engine from MCP tool calls. <a href="docs/media/kimo_brand_reveal.mp4">Watch it with sound (MP4)</a>.</sub>
-</p>
+<br>
 
-### Watch an agent drive it
+<a href="docs/media/kimo_brand_reveal.mp4"><img src="docs/media/kimo_brand_reveal.gif" alt="A brand reveal rendered entirely by kimo" width="520"></a>
 
-<p align="center"><img src="docs/media/kimo_v5_live_demo.gif" alt="An agent's real MCP tool calls driving the kimo spectator" width="720"></p>
+<sub><b>Made with kimo.</b> A 33-second brand reveal, rendered by the engine from MCP tool calls. <a href="docs/media/kimo_brand_reveal.mp4">Watch with sound ▶</a></sub>
+
+<br><br>
+
+**[Quickstart](#-quickstart)** · **[Connect your AI](#-connect-your-ai)** · **[What it can do](#-what-it-can-do)** · **[Gallery](#-made-with-kimo)** · **[How it works](#-how-it-works)** · **[Docs](#-docs)**
+
+</div>
+
+<br>
+
+## ✦ Why kimo
 
 <table>
-  <tr>
-    <td width="50%"><img src="docs/media/v5demo_1_edit_effects.jpg" alt="Edit and effects calls"><br><sub><b>Edit + effects.</b> <code>add_effect</code> lands on the clip; the viewer re-renders on its own.</sub></td>
-    <td width="50%"><img src="docs/media/v5demo_2_render_refused.jpg" alt="Render refused chip"><br><sub><b>A refused render.</b> A broken grade graph gets a "render refused" chip with the engine's reason.</sub></td>
-  </tr>
-  <tr>
-    <td><img src="docs/media/v5demo_3_coalesced_burst.jpg" alt="Coalesced burst"><br><sub><b>A burst of calls.</b> Eight fast moves, coalesced into two preview frames, every call still logged.</sub></td>
-    <td><img src="docs/media/v5demo_4_audio_mix.jpg" alt="Audio mix"><br><sub><b>Audio.</b> Pan, effects and <code>normalize_loudness</code> to -14 LUFS.</sub></td>
-  </tr>
-  <tr>
-    <td><img src="docs/media/v5demo_5_scene3d_cpu_lighting.jpg" alt="3D scene with CPU lighting"><br><sub><b>3D on the CPU.</b> <code>render_scene3d_cpu</code> with <code>cpu_lighting</code>: lit, shadowed geometry.</sub></td>
-  </tr>
+<tr>
+<td width="33%" valign="top">
+
+**🤖 AI-native, not AI-bolted-on**
+
+kimo has no editing GUI. Every feature is a registered command, and the MCP tool list is generated from that same registry. If a human could do it, your agent can too.
+
+</td>
+<td width="33%" valign="top">
+
+**🎬 One engine, the whole stack**
+
+Editing, motion graphics, VFX, tracking, 3D and pro color: the surface of CapCut, After Effects, Premiere and Resolve, aimed at one engine.
+
+</td>
+<td width="33%" valign="top">
+
+**👀 Watch it work**
+
+The Kimo Spectator app streams every tool call, the timeline and live preview frames while the agent edits. Read-only, out of band, zero setup.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+**⚡ Small and fast**
+
+A CPU renderer tuned for a 2 GB machine. No GPU needed. Headless, so it runs on a laptop, a server or CI.
+
+</td>
+<td valign="top">
+
+**📏 Measured, not claimed**
+
+Every "better than X" line in [FEATURES.md](FEATURES.md) has a stated baseline and a measured number, losses included. Tiers are honest: solid, beta or not built.
+
+</td>
+<td valign="top">
+
+**🔓 Open source, MIT**
+
+Free to use, fork and ship. Linux and Windows builds on every release.
+
+</td>
+</tr>
 </table>
 
-Real `kimo-mcp` tool calls (30 calls, 18 tools) streamed to the spectator over loopback TCP and recorded at 1920x1080. Nothing in these frames was staged in the UI.
+## ✦ What's new in v6.0.0 "eyes"
 
-## What it is
+| | |
+|---|---|
+| 🖼️ **`add_pip`** | One-call picture-in-picture: circle or rounded crop, border ring, shadow, pop-in |
+| 💬 **`add_keyword_pops`** | Emphasised words pop on screen as they're spoken, picked by you or from the transcript |
+| ➡️ **`add_arrow`** | Animated "look here" callouts with an auto start point and optional label |
+| ✂️ **Transcript editing** | `transcript_search` + `transcript_edit_apply`: cut by phrase, atomic ripple deletes, full undo. [Guide](docs/TRANSCRIPT_EDITING.md) |
+| 🎯 **Trackable `vignette`** | Roundness, size, aspect, edge tint, and a centre that follows a tracked point or mask |
+| 🔥 **`film_burn` + new metrics** | A new transition, plus `flash_series`, `audio_spectrum`, loudness curves and PSNR / SSIM / MS-SSIM comparisons |
 
-kimo is a video editor with no editing GUI. You talk to it over the [Model Context Protocol](https://modelcontextprotocol.io). Cut, keyframe, grade, track, key, relight, simulate, caption, mix and export are all registered commands, and the MCP server's tool list is generated from that same registry. There is no feature a human can reach that an AI cannot.
+Full list in [CHANGELOG.md](CHANGELOG.md).
 
-The target is the surface of CapCut, After Effects, Premiere and DaVinci Resolve in one engine: editing, motion graphics, VFX, tracking and pro color. It is an early engine with honest tiers. [FEATURES.md](FEATURES.md) lists what is solid, what is beta and what is not built.
+## ✦ Quickstart
 
-## What's new in v6.0.0 "eyes"
+**1. Download** the engine from the [latest release](https://github.com/naman-sharma12345/kimo/releases/latest), or build it:
 
-- `add_pip`: one-call picture-in-picture inset of a second video (circle or rounded-rect crop, border ring, drop shadow, pop-in animation), built on existing primitives.
-- `add_keyword_pops`: an emphasised word or phrase pops onto screen as spoken, either explicit or auto-picked from the loaded transcript.
-- `add_arrow`: an animated "look here" arrow/callout at a target point, with an auto-computed start point and an optional label.
-- `transcript_search` and `transcript_edit_apply`: phrase lookup across the transcript and revision-checked, atomic ripple-deletion edits with undo/redo. See [transcript editing](docs/TRANSCRIPT_EDITING.md).
-- `vignette` reshaped and trackable: roundness, squareness, size, aspect, edge tint, and a centre that can follow a tracked point or mask.
-- New transition `film_burn`, and new read-only measurement tools `flash_series` (photosensitivity flash counts) and `audio_spectrum`, plus extended `measure_loudness` (LRA, momentary/short-term curves) and `diff_frames`/`compare_ranges` (PSNR, SSIM, MS-SSIM).
-
-See [CHANGELOG.md](CHANGELOG.md) for the full list.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    agent["AI agent<br/>(Claude Code, Codex, Cursor, OpenCode, any MCP client)"]
-    subgraph engine["kimo-mcp: the headless engine"]
-        direction TB
-        reg["command registry<br/>tools/list is generated from it"]
-        core["kimo-core<br/>project model, CPU renderer,<br/>color, audio, text, tracking, 3D"]
-        prev["preview thread<br/>one auto frame after mutating calls"]
-        reg --> core --> prev
-    end
-    ff[("ffmpeg / ffprobe")]
-    gui["Kimo Spectator (kimo-gui)<br/>read-only, never calls render_frame"]
-    agent -- "JSON-RPC over stdio<br/>tools/call is the only way to edit" --> reg
-    core <-- "decode / encode / probe" --> ff
-    engine -. "telemetry JSONL on 127.0.0.1:7421<br/>call events, frame_rendered, frame_skipped" .-> gui
+```bash
+git clone https://github.com/naman-sharma12345/kimo.git && cd kimo
+cargo build --release --workspace --bins      # 2 GB box? add CARGO_BUILD_JOBS=1
 ```
 
-- **Headless engine.** `crates/kimo-core` holds the project model, keyframes, the command registry, tool groups, the CPU renderer, effects, text, audio, tracking and color. `crates/kimo-mcp` is the MCP stdio server; `kimo` (`crates/kimo-cli`) is a command line client for the same tools. Decode, encode and probing go through `ffmpeg` and `ffprobe`. The renderer is CPU only; GPU code is off by default.
-- **Edits only through MCP tool calls.** Add a tool to the registry and it appears in the MCP server, the CLI, the fuzz test and the schema. There is no side door.
-- **The GUI is a pure telemetry spectator.** `crates/kimo-gui` (a Tauri app, its own Cargo workspace) registers zero IPC commands and only listens on loopback. It shows each call, the timeline and the preview frames the engine pushes. It never calls `render_frame` and has no code path back to the engine. Close it and the engine carries on; open it mid-session and it catches up.
+**2. Add it to your AI client:**
 
-More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/EXTENDING.md](docs/EXTENDING.md), [crates/kimo-gui/README.md](crates/kimo-gui/README.md). An agent editing phone footage into a 9:16 short, call by call: [docs/DIRECTOR_QUICKSTART.md](docs/DIRECTOR_QUICKSTART.md).
-
-## The MCP tool ecosystem
-
-New: [search transcript phrases and apply reversible picture/audio cuts](docs/TRANSCRIPT_EDITING.md), with revision checks, dry runs, caption updates and all-track ripple.
-
-**436/452 live in the default build + 16 feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah).**
-
-A default `tools/list` shows 17 grouped entries; set `KIMO_TOOLS=flat` to list all 452 (see [Tool list profiles](#tool-list-profiles)).
-
-How the numbers fit: `kimo_info` and the golden registry (`crates/kimo-core/tests/golden/golden_registry.txt`) count 452 tools in 14 groups. A flat `tools/list` (`KIMO_TOOLS=flat`) lists 454: those 452 plus the two meta tools `search_tools` and `kimo_describe`. Of the 454, 438 are live in the default build and 16 are feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah); the gated ones stay in the list and answer with a clear refusal until their feature is built in.
-
-452 registered tools sit in 14 groups (full list [below](#tool-listing-452-tools)):
-
-| Area | Groups | Examples |
-|---|---|
-| Editing | `project`, `timeline` | tracks, clips, trims, ripple and roll edits, speed ramps, cut on the beat (beat_cut), scene auto-split (scene_split), multicam, markers, paste attributes, atomic `batch` with undo |
-| Motion | `animate`, `effects` | keyframes and Bezier easing, audio to keyframes, jump-cut punch-ins, expressions, camera and shake, corner pin, transitions, morph cut (optical-flow jump-cut smoothing), push and gradient wipes, blur fill for vertical video, lens blur (iris bokeh defocus), depth parallax (3D photo camera move from a depth map), displacement map, adjustment layers |
-| Compositing | `masks`, `graphics` | mask layers and roto, shapes and path operators (wiggle, zig zag, pucker/bloat, twist, round corners), HUD frames, counters, boxes |
-| Text | `text` | titles, captions, SRT import, text animators |
-| VFX | `vfx3d` | code clips (a web page / three.js project drawn per frame), particles, emitters, shard bursts, 3D scene, physics, lights and materials, 3D layer compositor (depth sort, plane intersections, cast shadows, depth of field) |
-| Tracking | `tracking` | auto reframe (subject-following crop to the canvas aspect), point, planar and mesh tracking, warp stabilize (smooth or locked, position / similarity / perspective, crop + auto-scale or synthesized edges, rolling-shutter repair), camera solve |
-| Color | `color_grade`, `color_science`, `scopes` | grade graphs, curves, ASC CDL, LUTs, ACES and OCIO tools, scopes, exposure analysis, flash series and WCAG contrast (also of text over moving video) |
-| Audio | `audio` | clips, effects, beats, loudness, ducking, speech intervals, spectrum and band energy, A/V offset (audio onsets vs picture change, lag in ms) |
-| Output | `output` | frame and video export, chunked export jobs, GIF, EXR, manifests, frame lint, contact sheets, PSNR / SSIM / MS-SSIM comparisons, edit checks (changed regions inside / outside allowed rects), saliency maps (where the eye goes, mass inside given rects), frozen-frame runs over a range (start, end, length, largest pixel difference), near-black runs over a range (whole frame near-black, start, end, length, brightest pixel), sharpness per frame (Laplacian variance and Sobel gradient of luma, whole frame and rects) |
-
-**Principles**
-
-- **MCP first.** Every tool is callable by name. The default `tools/list` is grouped so a client does not read every schema up front.
-- **CPU, small memory.** Tuned for a 2 GB machine. A cold release build of the whole workspace took 17 minutes on a shared 2 CPU / 2 GB machine (`CARGO_BUILD_JOBS=1`).
-- **Measured, not claimed.** Every "better than X" line in FEATURES.md has a stated baseline and a measured number, including the cases where we lost.
-- **Fuzzed.** The v3 notes record 6497 fuzz calls with 0 failures at 327 tools. These numbers come from the project notes. They were not re-run for this README.
-
-### Tool list profiles
-`KIMO_TOOLS` picks what `tools/list` returns. Every tool can be called by its own name under every profile.
-
-| Profile | `tools/list` entries | Size | Use when |
-|---|---|---|
-| `grouped` (default) | 17 | 4,432 bytes | small context windows. Call a group with `action` and `args`; find tools with `search_tools`. |
-| `core` | 29 | 20,368 bytes | the most used tools with full schemas, plus `search_tools`, `kimo_describe`, `kimo_enable_group`. |
-| `flat` | 447 | 391,436 bytes | clients with large context or their own tool search. Every tool listed with its schema. |
-| `director` | 30 | 20,537 bytes | small models cutting phone footage into a short: the recipe tools (`auto_rough_cut`, `caption_from_words`, `finish_audio`, `auto_grade`, `lint_edit`, ...) with one-line descriptions written for that job. See docs/SMALL_MODEL_PREP.md. |
-| group names, e.g. `audio,color_grade` | varies | varies | those groups listed flat, the rest grouped. |
-
-Measured on a default-feature `kimo-mcp` built from commit `af615ca` (`initialize`, then `tools/list`; size is the compact JSON of the `result`); the `flat` row was re-measured the same way after `flash_series`, `audio_spectrum`, `compare_ranges`, `contrast_ratio`, `text_contrast_series`, `edit_check`, `saliency_map`, `av_offset`, `frozen_frames`, `black_frames` and `focus_series` were added, `diff_frames` gained `quality`, `get_scopes` its numeric arguments (and a first sentence naming them) `query_safe_margins` its `rects`, `flash_series` its flash rule numbers, 77 tools a short first sentence in front of their old description `validate_captions` its `legibility` numbers and `lint_frame` its `quality` numbers and `decode_media` and `render_flow` its `stats` numbers (v6, unreleased; `grouped` and `core` did not change). Re-measured again on commit `8644178` after the revision-safe transcript editing and preview proxy workflows (`transcript_edit`, `transcript_search`, `proxy_tools`) landed: `flat` is 447 entries, 391,436 bytes (`grouped`, `core` and `director` entry counts unchanged; their byte counts were not re-verified this pass). `kimo_enable_group` is listed in `grouped` and `core` but not in `flat`. `search_tools(query, limit=8, group?)` returns ranked tools, effects and transitions with the required args and a `call_as` hint.
-
-Set it like this: `claude mcp add --transport stdio --env KIMO_TOOLS=core kimo -- /home/you/.local/bin/kimo-mcp`, or `[mcp_servers.kimo.env] KIMO_TOOLS = "core"` for Codex. For JSON configs add `"env": { "KIMO_TOOLS": "core" }` (OpenCode: `"environment": { ... }`).
-
-## Install (prebuilt installers)
-
-Installers are built by the [release workflow](.github/workflows/release.yml) on GitHub-hosted runners and attached to a **draft** release with a `SHA256SUMS` file. Nothing is published until a maintainer reviews the draft. The builds are **unsigned**. This release ships **Linux and Windows**. macOS is coming later.
-
-Files in the `v6.0.0` release. Check every download against that release's [`SHA256SUMS`](https://github.com/naman-sharma12345/kimo/releases/tag/v6.0.0) (a `.sha256` file also sits beside each engine package).
-
-| OS | File | Status |
-|---|---|---|
-| Linux x86_64 | `Kimo-Spectator_6.0.0_amd64.deb` | **unsigned draft**, built on CI runners; the same build steps were smoke-tested on Debian 12 at `ca0334f` (install, launch, one rendered frame, uninstall) |
-| Linux x86_64 | `Kimo-Spectator_6.0.0_amd64.AppImage` | **unsigned draft**, built on CI runners; run with `--appimage-extract-and-run` was smoke-tested on Debian 12 at `ca0334f`; a normal FUSE launch is not tested |
-| Windows x64 | `Kimo-Spectator_6.0.0_x64_en-US.msi` | **unsigned draft, built on CI runners**; CI installs it, launches it, checks the listener (7421, and 7422 with 7421 taken) and uninstalls it on a GitHub Windows runner; not installed on a real Windows PC yet |
-
-Engine (command line) downloads, same release:
-
-| OS | File |
-|---|---|
-| Linux x86_64 (glibc 2.35+) | `kimo-v6.0.0-linux-x86_64-glibc.tar.gz` |
-| Windows x64 | `kimo-6.0.0-windows-x86_64.zip` |
-| Windows x64 (installer) | `kimo-6.0.0-windows-x86_64-setup.exe` |
-
-The Windows engine packages are built and packaged by CI on a GitHub Windows runner; they have not been run on a real Windows PC yet.
-
-**Check the download** against the release's `SHA256SUMS`:
-
+```bash
+claude mcp add --transport stdio kimo -- /path/to/kimo-mcp
 ```
+
+**3. Ask for an edit:**
+
+> *"Use kimo to import ~/clip.mp4, cut out the silences, add a title and captions, and export a 9:16 short."*
+
+You'll need `ffmpeg` and `ffprobe` on your `PATH`. Optional: open the **Kimo Spectator** app to watch the edit live.
+
+<details>
+<summary><b>📦 Release downloads (Linux & Windows)</b></summary>
+
+<br>
+
+Installers are built by the [release workflow](.github/workflows/release.yml) on GitHub-hosted runners, with a `SHA256SUMS` file. The builds are **unsigned**. macOS is coming later.
+
+| | Linux x86_64 | Windows x64 |
+|---|---|---|
+| **Engine (CLI + MCP server)** | `kimo-v6.0.0-linux-x86_64-glibc.tar.gz` (glibc 2.35+) | `kimo-6.0.0-windows-x86_64-setup.exe` or `.zip` |
+| **Spectator app** | `Kimo-Spectator_6.0.0_amd64.deb` or `.AppImage` | `Kimo-Spectator_6.0.0_x64_en-US.msi` |
+
+Check every download against the release's [`SHA256SUMS`](https://github.com/naman-sharma12345/kimo/releases/tag/v6.0.0):
+
+```bash
 sha256sum -c SHA256SUMS --ignore-missing                                   # Linux
-Get-FileHash .\Kimo-Spectator_6.0.0_x64_en-US.msi -Algorithm SHA256        # Windows PowerShell, compare by eye
+Get-FileHash .\Kimo-Spectator_6.0.0_x64_en-US.msi -Algorithm SHA256        # Windows PowerShell
 ```
 
-**Linux (unsigned draft)**
+**Linux**
 
-```
-sudo apt install ./Kimo-Spectator_6.0.0_amd64.deb      # pulls in WebKitGTK 4.1; remove with: sudo apt remove kimo-spectator
+```bash
+sudo apt install ./Kimo-Spectator_6.0.0_amd64.deb      # remove with: sudo apt remove kimo-spectator
 # or, no install:
 chmod +x Kimo-Spectator_6.0.0_amd64.AppImage
 ./Kimo-Spectator_6.0.0_amd64.AppImage                  # no FUSE? add --appimage-extract-and-run
 ```
 
-**Windows (unsigned draft).** Run the `.msi`. SmartScreen says "Windows protected your PC": click **More info**, then **Run anyway**. The app uses Microsoft Edge WebView2, which Windows 11 already has; on older systems the installer fetches it.
+**Windows.** Run the `.msi`. SmartScreen says "Windows protected your PC": click **More info**, then **Run anyway**. It uses Microsoft Edge WebView2 (already on Windows 11). The engine installer goes per user, no admin, into `%LOCALAPPDATA%\Programs\kimo\bin\kimo-mcp.exe`. See the [Windows guide](packaging/windows/WINDOWS.md).
 
-The spectator listens on the first free port of `127.0.0.1:7421`-`7430` (loopback only, never `0.0.0.0`) and the engine finds it there by default, so there is nothing to set: open the app and calls show up. `KIMO_SPECTATOR=off` turns the stream off (see [Watching it work](#watching-it-work-spectator-telemetry)).
+Status: the Linux `.deb` and AppImage were smoke-tested on Debian 12; Windows packages are installed, launched and uninstalled by CI on a GitHub Windows runner but not yet on a real Windows PC.
 
-## Build from clone
+</details>
 
-### 1. Prerequisites
+<details>
+<summary><b>🛠️ Build from source (full guide)</b></summary>
+
+<br>
+
+#### 1. Prerequisites
 
 All platforms: the Rust toolchain from [rustup](https://rustup.rs), `cmake` and a C++ compiler (the engine builds vendored Manifold), and `ffmpeg` + `ffprobe` on `PATH` at runtime.
 
@@ -236,7 +203,7 @@ Step 4 (the spectator app) also needs Node.js 18 or newer for `npx`; the CI jobs
 
 **macOS: no installer in this release, and it has not been built on a Mac here.** The commands in the macOS column and in steps 2-4 are the same ones the Linux and Windows CI jobs run; `crates/kimo-core/build.rs` links `libc++` on macOS. Reports welcome.
 
-### 2. Build the engine
+#### 2. Build the engine
 
 ```
 git clone https://github.com/naman-sharma12345/kimo.git
@@ -247,7 +214,7 @@ target/release/kimo --version                       # the version in Cargo.toml 
 
 `kimo-mcp` is the MCP server (stdio). `kimo` is the command line client for the same tools.
 
-### 3. Run it headless
+#### 3. Run it headless
 
 `kimo-mcp` takes no required arguments: it reads JSON-RPC on stdin and writes replies on stdout. Your MCP client normally starts it for you.
 
@@ -260,7 +227,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | target/relea
 
 The check prints `"serverInfo":{"commit":"...","name":"kimo",...,"version":"..."}`. `--demo-pace-ms <50..100>` sets the demo pace; `KIMO_TOOLS` picks the tool list profile.
 
-### 4. Build the spectator app (optional)
+#### 4. Build the spectator app (optional)
 
 The spectator is its own Cargo workspace in `crates/kimo-gui`. Build it with the Tauri CLI; `npx` fetches it, no global install needed:
 
@@ -280,7 +247,7 @@ Then start the spectator first and the engine second:
 ../../target/release/kimo-mcp                                        # every tool call now shows up live (no KIMO_SPECTATOR needed)
 ```
 
-### 5. Connect a client
+#### 5. Connect a client
 
 **Client config.** Use the absolute path of the binary you just built, for example `/home/you/kimo/target/release/kimo-mcp`.
 
@@ -306,7 +273,7 @@ The server itself (launch, `initialize`, `tools/list`) is verified on this build
 
 Codex and OpenCode use the formats shown under "Setup" below with the same path. `KIMO_TOOLS=core` (env var on the server entry) shrinks `tools/list`; see "Tool list profiles" below.
 
-### 6. Quickstart with the CLI
+#### 6. Quickstart with the CLI
 
 State lives in a project file (`--project p.kimo`, created on first use). Every command below ran against this build; replace the media path with your own file.
 
@@ -326,22 +293,54 @@ $K tools describe add_clip                                             # argumen
 
 Ids (`track1`, `asset2`) are what the previous call returned, so read them from the output. `export` checks free memory first and refuses with a clear message when the frame would not fit; set `KIMO_MEM_MB` to override its budget. Exit codes: 0 ok, 1 tool error, 2 usage, 3 preflight failed. `kimo --help` lists every subcommand.
 
-## Setup: add kimo to your AI client
+</details>
 
-kimo is a local MCP server that speaks over stdin/stdout (the "stdio" transport). There is nothing to start by hand: your client launches `kimo-mcp` itself. You only need the path to the binary.
+## ✦ Connect your AI
 
-**1. Get the binary** (build from clone, see [Build from clone](#build-from-clone) above) and put it somewhere stable, for example:
+kimo is a standard MCP stdio server. Your client launches `kimo-mcp` itself; you only give it the path.
 
+<table>
+<tr><th>Client</th><th>Setup</th></tr>
+<tr><td><b>Claude Code</b></td><td>
+
+```bash
+claude mcp add --transport stdio kimo -- ~/.local/bin/kimo-mcp
 ```
-mkdir -p ~/.local/bin && cp /path/to/kimo/target/release/kimo-mcp ~/.local/bin/
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | ~/.local/bin/kimo-mcp
+
+</td></tr>
+<tr><td><b>OpenAI Codex</b></td><td>
+
+```bash
+codex mcp add kimo -- ~/.local/bin/kimo-mcp
 ```
 
-The second command should print a JSON reply containing `"serverInfo":{"name":"kimo"`. Install `ffmpeg` and `ffprobe` too (`sudo apt install ffmpeg`, or your package manager).
+</td></tr>
+<tr><td><b>Cursor / Claude Desktop</b></td><td>
 
-**2. Add it to your client.** Replace `/home/you/.local/bin/kimo-mcp` with your absolute path. Config formats below were checked against each client's public docs on 2026-10-11; client configs change, so if one fails, check the linked page.
+```json
+{ "mcpServers": { "kimo": { "command": "/home/you/.local/bin/kimo-mcp", "args": [] } } }
+```
 
-### Claude Code
+</td></tr>
+<tr><td><b>OpenCode</b></td><td>
+
+```json
+{ "mcp": { "kimo": { "type": "local", "command": ["/home/you/.local/bin/kimo-mcp"], "enabled": true } } }
+```
+
+</td></tr>
+</table>
+
+Quick check: `echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | kimo-mcp` should print `"serverInfo":{"name":"kimo"...`.
+
+<details>
+<summary><b>Detailed setup for every client (scopes, config files, Windows paths)</b></summary>
+
+<br>
+
+Config formats were checked against each client's public docs on 2026-10-11; client configs change, so if one fails, check the linked page.
+
+#### Claude Code
 ([docs](https://code.claude.com/docs/en/mcp-servers))
 
 ```
@@ -354,7 +353,7 @@ Add `--scope user` to make it available in every project, or `--scope project` t
 { "mcpServers": { "kimo": { "command": "/home/you/.local/bin/kimo-mcp", "args": [] } } }
 ```
 
-### OpenAI Codex (CLI and IDE extension)
+#### OpenAI Codex (CLI and IDE extension)
 ([docs](https://developers.openai.com/codex/mcp))
 
 ```
@@ -368,7 +367,7 @@ Or edit `~/.codex/config.toml` (or `.codex/config.toml` in a trusted project):
 command = "/home/you/.local/bin/kimo-mcp"
 ```
 
-### Cursor
+#### Cursor
 ([docs](https://cursor.com/docs/context/mcp))
 
 Create `~/.cursor/mcp.json` (all projects) or `.cursor/mcp.json` (one project):
@@ -379,7 +378,7 @@ Create `~/.cursor/mcp.json` (all projects) or `.cursor/mcp.json` (one project):
 
 Then open Cursor's MCP settings and switch the `kimo` server on.
 
-### OpenCode
+#### OpenCode
 ([docs](https://opencode.ai/docs/mcp-servers/))
 
 Put this in `opencode.json` in your project, or in `~/.config/opencode/opencode.json` for all projects. Note that OpenCode takes `command` as a list and uses `type: "local"`:
@@ -393,14 +392,135 @@ Put this in `opencode.json` in your project, or in `~/.config/opencode/opencode.
 }
 ```
 
-### Any other MCP client
+#### Any other MCP client
 kimo is a standard MCP stdio server (protocol 2024-11-05, `initialize`, `tools/list`, `tools/call`). Any client that can register a stdio server by command works: give it the absolute path to `kimo-mcp` and no arguments. Many clients use the `mcpServers` JSON shape shown for Cursor; some (for example Zed) use a different key, so check your client's MCP docs for the exact file and format. Only the four clients above were checked against their docs.
 
 Windows: use the path to `kimo-mcp.exe` (the Windows engine installer `kimo-6.0.0-windows-x86_64-setup.exe` installs per user, no admin rights, into `%LOCALAPPDATA%\Programs\kimo` by default, so the binary is `%LOCALAPPDATA%\Programs\kimo\bin\kimo-mcp.exe` ([kimo.iss](packaging/windows/kimo.iss)); in JSON write backslashes doubled, see the [Windows guide](packaging/windows/WINDOWS.md)). The configs above are the same except for the path; the Claude Code, Codex, Cursor and OpenCode formats were checked on their docs, not tested on Windows here.
 
 **3. Try it.** Ask your assistant: "Use kimo to import /path/to/clip.mp4, add a title, and render a frame." Or drive it yourself with the Python client in `examples/mcp_client.py`.
 
-## Watching it work: spectator telemetry
+</details>
+
+<details>
+<summary><b>Tool list profiles (<code>KIMO_TOOLS</code>): fit kimo into small context windows</b></summary>
+
+<br>
+
+`KIMO_TOOLS` picks what `tools/list` returns. Every tool can still be called by its own name under every profile.
+
+| Profile | `tools/list` entries | Size | Use when |
+|---|---|---|---|
+| `grouped` (default) | 17 | 4,432 bytes | small context windows. Call a group with `action` and `args`; find tools with `search_tools`. |
+| `core` | 29 | 20,368 bytes | the most used tools with full schemas, plus `search_tools`, `kimo_describe`, `kimo_enable_group`. |
+| `flat` | 447 | 391,436 bytes | clients with large context or their own tool search. Every tool listed with its schema. |
+| `director` | 30 | 20,537 bytes | small models cutting phone footage into a short: the recipe tools (`auto_rough_cut`, `caption_from_words`, `finish_audio`, `auto_grade`, `lint_edit`, ...) with one-line descriptions written for that job. See docs/SMALL_MODEL_PREP.md. |
+| group names, e.g. `audio,color_grade` | varies | varies | those groups listed flat, the rest grouped. |
+
+Measured on a default-feature `kimo-mcp` built from commit `af615ca` (`initialize`, then `tools/list`; size is the compact JSON of the `result`); the `flat` row was re-measured the same way after `flash_series`, `audio_spectrum`, `compare_ranges`, `contrast_ratio`, `text_contrast_series`, `edit_check`, `saliency_map`, `av_offset`, `frozen_frames`, `black_frames` and `focus_series` were added, `diff_frames` gained `quality`, `get_scopes` its numeric arguments (and a first sentence naming them) `query_safe_margins` its `rects`, `flash_series` its flash rule numbers, 77 tools a short first sentence in front of their old description `validate_captions` its `legibility` numbers and `lint_frame` its `quality` numbers and `decode_media` and `render_flow` its `stats` numbers (v6, unreleased; `grouped` and `core` did not change). Re-measured again on commit `8644178` after the revision-safe transcript editing and preview proxy workflows (`transcript_edit`, `transcript_search`, `proxy_tools`) landed: `flat` is 447 entries, 391,436 bytes (`grouped`, `core` and `director` entry counts unchanged; their byte counts were not re-verified this pass). `kimo_enable_group` is listed in `grouped` and `core` but not in `flat`. `search_tools(query, limit=8, group?)` returns ranked tools, effects and transitions with the required args and a `call_as` hint.
+
+Set it like this: `claude mcp add --transport stdio --env KIMO_TOOLS=core kimo -- /home/you/.local/bin/kimo-mcp`, or `[mcp_servers.kimo.env] KIMO_TOOLS = "core"` for Codex. For JSON configs add `"env": { "KIMO_TOOLS": "core" }` (OpenCode: `"environment": { ... }`).
+
+</details>
+
+## ✦ What it can do
+
+**452 tools in 14 groups.** 438 are live in the default build; 16 more are feature-gated (OCIO, mesh import) and answer with a clear refusal until built in.
+
+| Area | Groups | Examples |
+|---|---|---|
+| Editing | `project`, `timeline` | tracks, clips, trims, ripple and roll edits, speed ramps, cut on the beat (beat_cut), scene auto-split (scene_split), multicam, markers, paste attributes, atomic `batch` with undo |
+| Motion | `animate`, `effects` | keyframes and Bezier easing, audio to keyframes, jump-cut punch-ins, expressions, camera and shake, corner pin, transitions, morph cut (optical-flow jump-cut smoothing), push and gradient wipes, blur fill for vertical video, lens blur (iris bokeh defocus), depth parallax (3D photo camera move from a depth map), displacement map, adjustment layers |
+| Compositing | `masks`, `graphics` | mask layers and roto, shapes and path operators (wiggle, zig zag, pucker/bloat, twist, round corners), HUD frames, counters, boxes |
+| Text | `text` | titles, captions, SRT import, text animators |
+| VFX | `vfx3d` | code clips (a web page / three.js project drawn per frame), particles, emitters, shard bursts, 3D scene, physics, lights and materials, 3D layer compositor (depth sort, plane intersections, cast shadows, depth of field) |
+| Tracking | `tracking` | auto reframe (subject-following crop to the canvas aspect), point, planar and mesh tracking, warp stabilize (smooth or locked, position / similarity / perspective, crop + auto-scale or synthesized edges, rolling-shutter repair), camera solve |
+| Color | `color_grade`, `color_science`, `scopes` | grade graphs, curves, ASC CDL, LUTs, ACES and OCIO tools, scopes, exposure analysis, flash series and WCAG contrast (also of text over moving video) |
+| Audio | `audio` | clips, effects, beats, loudness, ducking, speech intervals, spectrum and band energy, A/V offset (audio onsets vs picture change, lag in ms) |
+| Output | `output` | frame and video export, chunked export jobs, GIF, EXR, manifests, frame lint, contact sheets, PSNR / SSIM / MS-SSIM comparisons, edit checks (changed regions inside / outside allowed rects), saliency maps (where the eye goes, mass inside given rects), frozen-frame runs over a range (start, end, length, largest pixel difference), near-black runs over a range (whole frame near-black, start, end, length, brightest pixel), sharpness per frame (Laplacian variance and Sobel gradient of luma, whole frame and rects) |
+
+<details>
+<summary><b>📋 Full tool listing (all 452)</b></summary>
+
+<br>
+
+Get any tool's arguments with `kimo tools describe <name>` or `kimo_describe`, and find tools by words with `search_tools`. A group can be called as `{"name": "vfx3d", "action": "add_scene3d", "args": {...}}`, or call any tool by its own name.
+
+| Group | Tools |
+|---|---|
+| `project` (43) | `proxy_generate`, `proxy_list`, `proxy_set_enabled`, `proxy_validate`, `proxy_relink`, `proxy_remove`, `timeline_summary`, `project_set`, `import_media`, `get_project`, `save_project`, `load_project`, `kimo_info`, `check_environment`, `cache_stats`, `cache_clear`, `cache_set_budget`, `undo`, `redo`, `history_list`, `checkpoint`, `restore`, `checkpoint_delete`, `batch`, `list_dependencies`, `collect_project`, `relink_media`, `ext_list`, `set_meta`, `find`, `read_pixels`, `import_pixels`, `project_diff`, `recipe_list`, `recipe_describe`, `recipe_apply`, `set_limits`, `get_limits`, `template_define`, `template_apply`, `template_list`, `template_describe`, `template_delete` |
+| `timeline` (48) | `scene_split`, `auto_rough_cut`, `place_broll`, `cut_to_beat`, `add_track`, `add_clip`, `set_speed_ramp`, `set_time_remap`, `group_clips`, `ungroup_clip`, `set_time_mode`, `freeze_frame`, `move_clip`, `trim_clip`, `split_clip`, `delete_clip`, `set_speed`, `ripple_delete`, `drop_short_segments`, `ripple_trim`, `roll_edit`, `slip_clip`, `set_split_edit`, `slide_clip`, `insert_gap`, `lift_range`, `duplicate_clip`, `loop_clip`, `distribute_clips`, `swap_clips`, `rate_stretch`, `add_marker`, `list_markers`, `remove_marker`, `snap_time`, `list_edit_points`, `set_track`, `delete_track`, `split_all_at`, `remove_silence_cuts`, `trim_filler_words`, `fit_clip_duration`, `sync_clips`, `add_multicam`, `switch_angle`, `list_multicam`, `beat_cut`, `paste_attributes` |
+| `animate` (36) | `link_property`, `set_expression`, `set_keyframe_bezier`, `add_camera_shake`, `set_motion_blur`, `set_camera`, `set_camera_keyframe`, `set_corner_pin`, `set_property`, `set_keyframe`, `set_blend`, `set_motion_path`, `remove_motion_path`, `set_flow_blur`, `render_flow`, `get_curve`, `move_key`, `remove_key`, `copy_curve`, `simplify_curve`, `smooth_curve`, `track_beats`, `bind_beats`, `set_mesh_pin`, `apply_motion_preset`, `motion_extract`, `motion_diff`, `set_keyframes`, `sample_property`, `bake_property`, `add_null`, `set_parent`, `get_transform`, `audio_to_keyframes`, `add_punch_ins`, `add_smart_punch` |
+| `effects` (26) | `remove_transition`, `sample_field`, `sample_noise`, `list_transitions`, `add_adjustment_layer`, `add_speed_lines`, `add_glitch_confetti`, `set_echo`, `set_posterize_time`, `list_effects`, `add_effect`, `set_effect_param`, `remove_effect`, `add_transition`, `set_effect_mask`, `add_managed_linear_effect`, `set_effect_encoding`, `effect_describe`, `effect_uv_sample`, `transition_render_raw`, `add_morph_cut`, `add_lens_blur`, `add_depth_parallax`, `add_push_wipe`, `add_displacement_map`, `add_blur_fill` |
+| `masks` (19) | `set_mask`, `set_mask_keyframe`, `remove_mask`, `add_mask`, `update_mask`, `remove_mask_layer`, `reorder_mask`, `list_masks`, `set_mask_prop_key`, `set_mask_motion_blur`, `set_mask_path_key`, `roto_propagate`, `track_mask`, `set_track_matte`, `remove_track_matte`, `render_mask`, `track_matte`, `refine_matte`, `set_matte` |
+| `text` (32) | `add_text`, `set_text`, `import_srt`, `transcribe`, `set_text_style`, `add_text_animator`, `set_animator_keyframe`, `add_title`, `add_keyword_pops`, `list_fonts`, `set_text_weight`, `set_text_path`, `add_captions`, `add_caption_cues`, `list_captions`, `set_caption_style`, `edit_caption`, `transcript_import`, `transcript_get`, `transcript_edit_word`, `transcript_set_take`, `transcript_coverage`, `transcript_to_captions`, `validate_captions`, `transcript_edit_preview`, `transcript_edit_apply`, `transcript_search`, `auto_captions`, `edit_caption_words`, `export_captions`, `caption_from_words`, `add_glow_text` |
+| `graphics` (23) | `add_box_expand`, `add_shape`, `add_pip`, `add_arrow`, `add_detection_box`, `add_hud_frame`, `add_counter`, `add_prompt_box`, `add_modifier`, `list_modifiers`, `remove_modifier`, `list_shape_modifiers`, `add_shape_modifier`, `remove_shape_modifier`, `list_layer_styles`, `set_layer_style`, `remove_layer_style`, `add_path_shape`, `set_path`, `path_info`, `add_path_key`, `clear_path_keys`, `add_path_operator` |
+| `vfx3d` (65) | `add_code_clip`, `set_code_clip_param`, `check_code_clip_determinism`, `add_particles`, `add_emitter`, `add_particles3d`, `set_particles3d`, `add_shard_burst`, `add_scene3d`, `simulate_physics`, `shards_project`, `set_light`, `light_rig`, `remove_light`, `list_lights`, `set_material`, `list_materials`, `remove_material`, `set_relight`, `preview_material`, `particle_simulate_raw`, `inspect_threed_backend`, `inspect_mesh_buffers`, `inspect_scene_matrices`, `raycast_mesh_raw`, `sample_sdf_raw`, `sample_pbr_raw`, `sample_diffuse_sh_raw`, `render_mesh_cpu_reference`, `import_mesh_raw`, `generate_mesh_primitive`, `inspect_mesh_primitive`, `render_mesh_camera_pass`, `ingest_vertex_stream`, `inspect_vertex_stream`, `derive_vertex_tangents`, `export_vertex_stream_obj`, `export_vertex_stream_gltf`, `compile_scene3d_descriptor`, `render_scene3d_cpu`, `render_scene3d_wgpu`, `sample_scene3d_animation`, `render_scene3d_sequence`, `sample_direct_lighting`, `render_vertex_stream_pbr`, `query_flat_sah`, `inspect_sdf_graph`, `sample_sdf_graph`, `contour_sdf_graph`, `transform_vertex_stream`, `instantiate_gltf_scene`, `render_offscreen_mesh_normal`, `sample_texture_material`, `import_gltf_surface`, `render_textured_bvh`, `render_wgpu_pbr`, `sample_advection_field`, `render_particle_flow`, `render_particle_flow_motion`, `mesh_lathe`, `mesh_extrude_path`, `mesh_subdivide`, `mesh_boolean`, `set_3d_compositor`, `set_3d_layer_shadows` |
+| `tracking` (31) | `camera_project_points`, `camera_clip_triangle`, `set_ground_plane`, `place_at_track`, `export_st_map`, `track_long_gap`, `track_point`, `stabilize`, `track_planar`, `pin_layer`, `track_mesh`, `solve_camera`, `list_camera_solves`, `camera_solve_info`, `apply_camera_solve`, `grade_node_tracking`, `track_planar_anchored`, `track_features`, `track_set_info`, `fit_track_homography`, `fit_info`, `decompose_track_homography`, `track_jitter_metrics`, `corner_disagreement`, `track_feature_residuals`, `lk_residual_audit`, `ecc_refine_track`, `render_error_field`, `validate_planar_track`, `undistort_clip`, `auto_reframe` |
+| `color_grade` (27) | `preview_subject_match`, `match_grade`, `set_color_curve`, `set_color_wheels`, `pick_white_balance`, `pick_key_color`, `auto_color`, `match_color`, `match_shots`, `inspect_asc_cdl`, `apply_asc_cdl`, `generate_lut_node`, `evaluate_grade_graph_samples`, `inspect_grade_graph`, `set_grade_graph`, `add_node`, `connect_nodes`, `disconnect_nodes`, `remove_grade_node`, `set_grade_output`, `set_grade_node`, `set_node_param`, `set_node_mask`, `create_shared_grade_graph`, `bind_shared_grade_graphs`, `remove_shared_grade_graph`, `auto_grade` |
+| `color_science` (18) | `inspect_color_frame_metadata`, `inspect_color_delivery`, `inspect_color_pipeline`, `compare_aces2_reference`, `sample_linear_neutral`, `audit_color_output`, `inspect_float_media`, `set_hdr_mastering`, `set_color_pipeline`, `set_clip_input_color`, `validate_hdr_transfer_math`, `evaluate_hlg_reference_display`, `add_acescct_primaries`, `inspect_high_bit_delivery_contract`, `inspect_film_response`, `inspect_ocio_config`, `transform_ocio_samples`, `transform_ocio_view_samples` |
+| `scopes` (15) | `get_scopes`, `compare_linear_exposure`, `render_gamut_excursions`, `analyze_exposure_sequence`, `render_exposure_false_color`, `analyze_exposure`, `analyze_color`, `render_scope`, `render_display_scope`, `measure_loudness`, `inspect_grade_scopes`, `set_grade_scopes`, `flash_series`, `contrast_ratio`, `text_contrast_series` |
+| `audio` (20) | `finish_audio`, `add_audio_clip`, `set_audio`, `set_audio_volume_key`, `detect_beats`, `set_audio_effect_key`, `audio_filter_response`, `audio_effect_describe`, `audio_probe`, `read_samples`, `import_samples`, `audio_transients`, `add_audio_effect`, `remove_audio_effect`, `set_audio_pan`, `normalize_loudness`, `auto_duck`, `audio_speech_intervals`, `audio_spectrum`, `av_offset` |
+| `output` (49) | `lint_edit`, `review_export`, `export_audio`, `export_gif`, `render_frame`, `export`, `join_export`, `export_alpha`, `export_aces2_reference_video`, `render_aces2_reference`, `render_float_tiff`, `render_float_exr`, `render_high_bit_still`, `export_high_bit`, `export_grade_lut`, `export_camera_solve`, `export_asc_cdl`, `export_color_pipeline_lut`, `contact_sheet`, `describe_frame`, `pick_thumbnail`, `detect_cuts`, `diff_frames`, `burn_in`, `export_job_start`, `job_status`, `cancel_job`, `resume_job`, `export_manifest`, `explain_invalidation`, `inspect_export_preset`, `export_preset`, `lint_frame`, `match_events`, `render_ocio_display_view`, `preview_range`, `query_safe_margins`, `session_stats`, `solve_constraints`, `export_with_subtitles`, `compute_text_bounds`, `set_ocio_view_delivery`, `export_ocio_view_video`, `compare_ranges`, `edit_check`, `saliency_map`, `frozen_frames`, `black_frames`, `focus_series` |
+
+</details>
+
+### Drive it from the CLI too
+
+```bash
+K=target/release/kimo
+$K -q call add_track    --project p.kimo                                          # {"track_id":"track1"}
+$K -q call import_media --project p.kimo --args '{"path":"/abs/path/in.mp4"}'     # -> asset2
+$K -q call add_clip     --project p.kimo --args '{"track_id":"track1","source_type":"media","asset_id":"asset2","start":0,"duration":3}'
+$K -q call add_title    --project p.kimo --args '{"track_id":"track1","style":"lower_third","text":"Hello kimo","start":0.5,"duration":2}'
+$K -q call render_frame --project p.kimo --args '{"time":1,"path":"/tmp/f.png"}'
+$K export p.kimo out.mp4
+$K tools search "color grade"
+```
+
+## ✦ Made with kimo
+
+<table>
+<tr>
+<td width="33%"><img src="docs/media/film-02-relit-title.jpg" alt="Relit title over a lens flare"><br><sub><b>Relit titles</b> over real footage</sub></td>
+<td width="33%"><img src="docs/media/title-embers.jpg" alt="Title over a city at night"><br><sub><b>Motion titles</b> on drone plates</sub></td>
+<td width="33%"><img src="docs/media/frosted-glass.jpg" alt="Frosted glass panel"><br><sub><b>Frosted glass</b> UI over video</sub></td>
+</tr>
+<tr>
+<td><img src="docs/media/film-01-road.jpg" alt="Graded road footage"><br><sub><b>Color grading</b> with grade graphs</sub></td>
+<td><img src="docs/media/matte-real-plate.jpg" alt="Keyed subject"><br><sub><b>Mattes and keying</b> on a real plate</sub></td>
+<td><img src="docs/media/film-03-lockup.jpg" alt="Logo lockup"><br><sub><b>Brand lockups</b> and end cards</sub></td>
+</tr>
+</table>
+
+## ✦ How it works
+
+```mermaid
+flowchart LR
+    agent["AI agent<br/>(Claude Code, Codex, Cursor, OpenCode, any MCP client)"]
+    subgraph engine["kimo-mcp: the headless engine"]
+        direction TB
+        reg["command registry<br/>tools/list is generated from it"]
+        core["kimo-core<br/>project model, CPU renderer,<br/>color, audio, text, tracking, 3D"]
+        prev["preview thread<br/>one auto frame after mutating calls"]
+        reg --> core --> prev
+    end
+    ff[("ffmpeg / ffprobe")]
+    gui["Kimo Spectator (kimo-gui)<br/>read-only, never calls render_frame"]
+    agent -- "JSON-RPC over stdio<br/>tools/call is the only way to edit" --> reg
+    core <-- "decode / encode / probe" --> ff
+    engine -. "telemetry JSONL on 127.0.0.1:7421<br/>call events, frame_rendered, frame_skipped" .-> gui
+```
+
+- **Headless engine.** `crates/kimo-core` holds the project model, keyframes, the command registry, tool groups, the CPU renderer, effects, text, audio, tracking and color. `crates/kimo-mcp` is the MCP stdio server; `kimo` (`crates/kimo-cli`) is a command line client for the same tools. Decode, encode and probing go through `ffmpeg` and `ffprobe`. The renderer is CPU only; GPU code is off by default.
+- **Edits only through MCP tool calls.** Add a tool to the registry and it appears in the MCP server, the CLI, the fuzz test and the schema. There is no side door.
+- **The GUI is a pure telemetry spectator.** `crates/kimo-gui` (a Tauri app, its own Cargo workspace) registers zero IPC commands and only listens on loopback. It shows each call, the timeline and the preview frames the engine pushes. It never calls `render_frame` and has no code path back to the engine. Close it and the engine carries on; open it mid-session and it catches up.
+
+More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/EXTENDING.md](docs/EXTENDING.md), [crates/kimo-gui/README.md](crates/kimo-gui/README.md). An agent editing phone footage into a 9:16 short, call by call: [docs/DIRECTOR_QUICKSTART.md](docs/DIRECTOR_QUICKSTART.md).
+
+<details>
+<summary><b>👀 Spectator telemetry: how live preview works</b></summary>
+
+<br>
 
 Kimo's spectator app (`crates/kimo-gui`) connects on its own. Open it and every tool call streams to it live; you don't
 set anything. With `KIMO_SPECTATOR` unset or empty (or `on`), kimo-mcp looks for the app on loopback ports
@@ -455,7 +575,7 @@ Every headless frame a call queues ends as exactly one `frame_rendered` (auto) o
 (`coalesced`, `superseded_by_render_frame`, `frame_lane_dropped`, `disconnected`) mean a newer frame replaces this one
 and carry no reason. Details: `crates/kimo-mcp/src/preview.rs` ("Headless skips").
 
-### Two preview modes
+#### Two preview modes
 
 - **Headless (default).** As described above: canvas frames coalesce by call cadence, so a burst of 59 calls 50 ms
   apart shows about 6 frames, and the tool calls never wait for the viewer. Use this for agents and batch runs.
@@ -474,34 +594,24 @@ and carry no reason. Details: `crates/kimo-mcp/src/preview.rs` ("Headless skips"
   Pacing was chosen over rendering every frame without waiting because unwaited frames would be rendered after the
   agent had already moved on, so the canvas would trail the timeline and inspector and show the wrong state for a call.
 
-## How an AI sees the tools
+</details>
 
-Call a group with `{"action": "<tool name>", "args": {...}}`, for example `{"name": "vfx3d", "action": "add_scene3d", "args": {...}}`. Calling a tool by its own name also works.
+## ✦ Docs
 
-See [preview proxies](docs/PROXY_WORKFLOW.md) for lighter editing media with original-media exports, integrity checks and recovery.
-
-## Tool listing (452 tools)
-
-This is the list this checkout registers (read from `tools/list` of the grouped server plus `kimo_describe group=<name>`, 452 tools in 14 groups; the grouped `tools/list` itself shows 14 group tools plus `search_tools`, `kimo_describe`, `kimo_enable_group`). `kimo --version` and `kimo_info` report the workspace version, which is 6.0.0 from this release. Get any tool's arguments with `kimo tools describe <name>` or `kimo_describe`, and find tools by words with `search_tools`.
-
-| Group | Tools |
+| | |
 |---|---|
-| `project` (43) | `proxy_generate`, `proxy_list`, `proxy_set_enabled`, `proxy_validate`, `proxy_relink`, `proxy_remove`, `timeline_summary`, `project_set`, `import_media`, `get_project`, `save_project`, `load_project`, `kimo_info`, `check_environment`, `cache_stats`, `cache_clear`, `cache_set_budget`, `undo`, `redo`, `history_list`, `checkpoint`, `restore`, `checkpoint_delete`, `batch`, `list_dependencies`, `collect_project`, `relink_media`, `ext_list`, `set_meta`, `find`, `read_pixels`, `import_pixels`, `project_diff`, `recipe_list`, `recipe_describe`, `recipe_apply`, `set_limits`, `get_limits`, `template_define`, `template_apply`, `template_list`, `template_describe`, `template_delete` |
-| `timeline` (48) | `scene_split`, `auto_rough_cut`, `place_broll`, `cut_to_beat`, `add_track`, `add_clip`, `set_speed_ramp`, `set_time_remap`, `group_clips`, `ungroup_clip`, `set_time_mode`, `freeze_frame`, `move_clip`, `trim_clip`, `split_clip`, `delete_clip`, `set_speed`, `ripple_delete`, `drop_short_segments`, `ripple_trim`, `roll_edit`, `slip_clip`, `set_split_edit`, `slide_clip`, `insert_gap`, `lift_range`, `duplicate_clip`, `loop_clip`, `distribute_clips`, `swap_clips`, `rate_stretch`, `add_marker`, `list_markers`, `remove_marker`, `snap_time`, `list_edit_points`, `set_track`, `delete_track`, `split_all_at`, `remove_silence_cuts`, `trim_filler_words`, `fit_clip_duration`, `sync_clips`, `add_multicam`, `switch_angle`, `list_multicam`, `beat_cut`, `paste_attributes` |
-| `animate` (36) | `link_property`, `set_expression`, `set_keyframe_bezier`, `add_camera_shake`, `set_motion_blur`, `set_camera`, `set_camera_keyframe`, `set_corner_pin`, `set_property`, `set_keyframe`, `set_blend`, `set_motion_path`, `remove_motion_path`, `set_flow_blur`, `render_flow`, `get_curve`, `move_key`, `remove_key`, `copy_curve`, `simplify_curve`, `smooth_curve`, `track_beats`, `bind_beats`, `set_mesh_pin`, `apply_motion_preset`, `motion_extract`, `motion_diff`, `set_keyframes`, `sample_property`, `bake_property`, `add_null`, `set_parent`, `get_transform`, `audio_to_keyframes`, `add_punch_ins`, `add_smart_punch` |
-| `effects` (26) | `remove_transition`, `sample_field`, `sample_noise`, `list_transitions`, `add_adjustment_layer`, `add_speed_lines`, `add_glitch_confetti`, `set_echo`, `set_posterize_time`, `list_effects`, `add_effect`, `set_effect_param`, `remove_effect`, `add_transition`, `set_effect_mask`, `add_managed_linear_effect`, `set_effect_encoding`, `effect_describe`, `effect_uv_sample`, `transition_render_raw`, `add_morph_cut`, `add_lens_blur`, `add_depth_parallax`, `add_push_wipe`, `add_displacement_map`, `add_blur_fill` |
-| `masks` (19) | `set_mask`, `set_mask_keyframe`, `remove_mask`, `add_mask`, `update_mask`, `remove_mask_layer`, `reorder_mask`, `list_masks`, `set_mask_prop_key`, `set_mask_motion_blur`, `set_mask_path_key`, `roto_propagate`, `track_mask`, `set_track_matte`, `remove_track_matte`, `render_mask`, `track_matte`, `refine_matte`, `set_matte` |
-| `text` (32) | `add_text`, `set_text`, `import_srt`, `transcribe`, `set_text_style`, `add_text_animator`, `set_animator_keyframe`, `add_title`, `add_keyword_pops`, `list_fonts`, `set_text_weight`, `set_text_path`, `add_captions`, `add_caption_cues`, `list_captions`, `set_caption_style`, `edit_caption`, `transcript_import`, `transcript_get`, `transcript_edit_word`, `transcript_set_take`, `transcript_coverage`, `transcript_to_captions`, `validate_captions`, `transcript_edit_preview`, `transcript_edit_apply`, `transcript_search`, `auto_captions`, `edit_caption_words`, `export_captions`, `caption_from_words`, `add_glow_text` |
-| `graphics` (23) | `add_box_expand`, `add_shape`, `add_pip`, `add_arrow`, `add_detection_box`, `add_hud_frame`, `add_counter`, `add_prompt_box`, `add_modifier`, `list_modifiers`, `remove_modifier`, `list_shape_modifiers`, `add_shape_modifier`, `remove_shape_modifier`, `list_layer_styles`, `set_layer_style`, `remove_layer_style`, `add_path_shape`, `set_path`, `path_info`, `add_path_key`, `clear_path_keys`, `add_path_operator` |
-| `vfx3d` (65) | `add_code_clip`, `set_code_clip_param`, `check_code_clip_determinism`, `add_particles`, `add_emitter`, `add_particles3d`, `set_particles3d`, `add_shard_burst`, `add_scene3d`, `simulate_physics`, `shards_project`, `set_light`, `light_rig`, `remove_light`, `list_lights`, `set_material`, `list_materials`, `remove_material`, `set_relight`, `preview_material`, `particle_simulate_raw`, `inspect_threed_backend`, `inspect_mesh_buffers`, `inspect_scene_matrices`, `raycast_mesh_raw`, `sample_sdf_raw`, `sample_pbr_raw`, `sample_diffuse_sh_raw`, `render_mesh_cpu_reference`, `import_mesh_raw`, `generate_mesh_primitive`, `inspect_mesh_primitive`, `render_mesh_camera_pass`, `ingest_vertex_stream`, `inspect_vertex_stream`, `derive_vertex_tangents`, `export_vertex_stream_obj`, `export_vertex_stream_gltf`, `compile_scene3d_descriptor`, `render_scene3d_cpu`, `render_scene3d_wgpu`, `sample_scene3d_animation`, `render_scene3d_sequence`, `sample_direct_lighting`, `render_vertex_stream_pbr`, `query_flat_sah`, `inspect_sdf_graph`, `sample_sdf_graph`, `contour_sdf_graph`, `transform_vertex_stream`, `instantiate_gltf_scene`, `render_offscreen_mesh_normal`, `sample_texture_material`, `import_gltf_surface`, `render_textured_bvh`, `render_wgpu_pbr`, `sample_advection_field`, `render_particle_flow`, `render_particle_flow_motion`, `mesh_lathe`, `mesh_extrude_path`, `mesh_subdivide`, `mesh_boolean`, `set_3d_compositor`, `set_3d_layer_shadows` |
-| `tracking` (31) | `camera_project_points`, `camera_clip_triangle`, `set_ground_plane`, `place_at_track`, `export_st_map`, `track_long_gap`, `track_point`, `stabilize`, `track_planar`, `pin_layer`, `track_mesh`, `solve_camera`, `list_camera_solves`, `camera_solve_info`, `apply_camera_solve`, `grade_node_tracking`, `track_planar_anchored`, `track_features`, `track_set_info`, `fit_track_homography`, `fit_info`, `decompose_track_homography`, `track_jitter_metrics`, `corner_disagreement`, `track_feature_residuals`, `lk_residual_audit`, `ecc_refine_track`, `render_error_field`, `validate_planar_track`, `undistort_clip`, `auto_reframe` |
-| `color_grade` (27) | `preview_subject_match`, `match_grade`, `set_color_curve`, `set_color_wheels`, `pick_white_balance`, `pick_key_color`, `auto_color`, `match_color`, `match_shots`, `inspect_asc_cdl`, `apply_asc_cdl`, `generate_lut_node`, `evaluate_grade_graph_samples`, `inspect_grade_graph`, `set_grade_graph`, `add_node`, `connect_nodes`, `disconnect_nodes`, `remove_grade_node`, `set_grade_output`, `set_grade_node`, `set_node_param`, `set_node_mask`, `create_shared_grade_graph`, `bind_shared_grade_graphs`, `remove_shared_grade_graph`, `auto_grade` |
-| `color_science` (18) | `inspect_color_frame_metadata`, `inspect_color_delivery`, `inspect_color_pipeline`, `compare_aces2_reference`, `sample_linear_neutral`, `audit_color_output`, `inspect_float_media`, `set_hdr_mastering`, `set_color_pipeline`, `set_clip_input_color`, `validate_hdr_transfer_math`, `evaluate_hlg_reference_display`, `add_acescct_primaries`, `inspect_high_bit_delivery_contract`, `inspect_film_response`, `inspect_ocio_config`, `transform_ocio_samples`, `transform_ocio_view_samples` |
-| `scopes` (15) | `get_scopes`, `compare_linear_exposure`, `render_gamut_excursions`, `analyze_exposure_sequence`, `render_exposure_false_color`, `analyze_exposure`, `analyze_color`, `render_scope`, `render_display_scope`, `measure_loudness`, `inspect_grade_scopes`, `set_grade_scopes`, `flash_series`, `contrast_ratio`, `text_contrast_series` |
-| `audio` (20) | `finish_audio`, `add_audio_clip`, `set_audio`, `set_audio_volume_key`, `detect_beats`, `set_audio_effect_key`, `audio_filter_response`, `audio_effect_describe`, `audio_probe`, `read_samples`, `import_samples`, `audio_transients`, `add_audio_effect`, `remove_audio_effect`, `set_audio_pan`, `normalize_loudness`, `auto_duck`, `audio_speech_intervals`, `audio_spectrum`, `av_offset` |
-| `output` (49) | `lint_edit`, `review_export`, `export_audio`, `export_gif`, `render_frame`, `export`, `join_export`, `export_alpha`, `export_aces2_reference_video`, `render_aces2_reference`, `render_float_tiff`, `render_float_exr`, `render_high_bit_still`, `export_high_bit`, `export_grade_lut`, `export_camera_solve`, `export_asc_cdl`, `export_color_pipeline_lut`, `contact_sheet`, `describe_frame`, `pick_thumbnail`, `detect_cuts`, `diff_frames`, `burn_in`, `export_job_start`, `job_status`, `cancel_job`, `resume_job`, `export_manifest`, `explain_invalidation`, `inspect_export_preset`, `export_preset`, `lint_frame`, `match_events`, `render_ocio_display_view`, `preview_range`, `query_safe_margins`, `session_stats`, `solve_constraints`, `export_with_subtitles`, `compute_text_bounds`, `set_ocio_view_delivery`, `export_ocio_view_video`, `compare_ranges`, `edit_check`, `saliency_map`, `frozen_frames`, `black_frames`, `focus_series` |
+| 🧭 [Architecture](docs/ARCHITECTURE.md) | How the engine, registry and spectator fit together |
+| 🧩 [Extending kimo](docs/EXTENDING.md) | Add a tool to the registry |
+| 🎞️ [Director quickstart](docs/DIRECTOR_QUICKSTART.md) | An agent cutting phone footage into a 9:16 short, call by call |
+| ✂️ [Transcript editing](docs/TRANSCRIPT_EDITING.md) | Edit video by editing words |
+| 🪶 [Preview proxies](docs/PROXY_WORKFLOW.md) | Lighter editing media, original-quality exports |
+| 🏷️ [Feature tiers](FEATURES.md) | What's solid, beta and not built |
+| 🗺️ [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) · [Dev notes](docs/DEV_NOTES.md) | Where it's going and what changed |
 
-## Verification status
+<details>
+<summary><b>✅ Verification status</b></summary>
+
+<br>
 
 - Registry: 452 tools (`crates/kimo-core/tests/golden/golden_registry.txt`, 452 lines). A default-feature `kimo-mcp` lists 454 entries in `flat` mode: those 452 plus `search_tools` and `kimo_describe`. Of the 454, 438/454 live in the default build + 16 feature-gated (8 native-ocio, 8 mesh-import/material-textures/flat-sah).
 - `flash_series` on the jaja ad (v6, unreleased): the 30.542 s luminance stamp is a slow fall (0.894 to 0.794 as the logo fades in), not a hard cut. Under rule (a) a transition is stamped at the first frame whose luminance has moved 0.1 from the swing start, so this stamp is expected behaviour, not a bug.
@@ -513,9 +623,14 @@ This is the list this checkout registers (read from `tools/list` of the grouped 
 - Third-party licences for the spectator app: [THIRD_PARTY.md](THIRD_PARTY.md) (five MPL-2.0 crates from the Tauri stack and the LGPL libraries bundled in the AppImage, both decision pending).
 - Per-feature limits and change notes: [docs/DEV_NOTES.md](docs/DEV_NOTES.md). Feature tiers: [FEATURES.md](FEATURES.md). Plans: [ROADMAP.md](ROADMAP.md).
 
-## Work in progress (feature branches)
+</details>
 
-### Coherent fields (feature-branch WIP)
+<details>
+<summary><b>🧪 Work in progress (feature branches)</b></summary>
+
+<br>
+
+#### Coherent fields (feature-branch WIP)
 This feature branch adds original raw 2D Perlin/simplex fields, analytic gradients,
 MCP point sampling and an animatable noise effect. It is not part of the finalized
 v3 release. Compilation, numeric tests, warning delta and real 1080p visual
@@ -524,21 +639,29 @@ See [the noise plan](docs/noise/PLAN.md) and [verification commands](docs/noise/
 The next WIP field units add explicit Euclidean Worley F1/F2, FBM, domain warp and
 2D potential curl. These are independently selected raw operators, not presets.
 They are also uncompiled and unrendered here. See [field units](docs/noise/FIELD_UNITS.md).
-### Camera math primitives (feature-branch WIP)
+#### Camera math primitives (feature-branch WIP)
 Explicit-pose projection and camera-space near-plane clipping are drafted as raw
 MCP math tools. Uncompiled, unrendered, not integrated into the legacy renderer.
 They do not yet fix existing Scene3D output. See [camera WIP](docs/camera/WIP.md).
-### Raw UV math (feature-branch WIP)
+#### Raw UV math (feature-branch WIP)
 Uncompiled original push/radial coordinate primitives, MCP-callable but not a
 rendered transition. See [UV WIP](docs/uv/WIP.md). No visual sign-off.
-### Particle simulation primitive (feature-branch WIP)
+#### Particle simulation primitive (feature-branch WIP)
 Uncompiled raw fixed-step 3D trajectory + force/swept-plane math. No emitter or
 renderer adapter yet, no visual sign-off. See [particle WIP](docs/particles/WIP.md).
 
-## Contributing and the README rule
+</details>
 
-The README is updated with every product change. If a change adds, removes or regroups tools, or ships a new proof, the same commit updates this file.
+## ✦ Contributing
 
-## License
+Issues and PRs welcome. One rule: **the README ships with the product.** If a change adds, removes or regroups tools, or ships a new proof, the same commit updates this file.
 
-MIT licensed. See [LICENSE](LICENSE). Third-party components of the spectator app: [THIRD_PARTY.md](THIRD_PARTY.md).
+<br>
+
+<div align="center">
+
+**MIT licensed** · [LICENSE](LICENSE) · [Third-party notices](THIRD_PARTY.md)
+
+<sub>Built in Rust. Driven by your AI. <a href="https://getkimo.tech">getkimo.tech</a></sub>
+
+</div>
