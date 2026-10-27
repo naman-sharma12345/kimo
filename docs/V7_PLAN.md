@@ -84,3 +84,31 @@ Cheapest-impact first, as instructed:
   committed, author/committer `Naman Sharma <naman-sharma12345@users.noreply.github.com>`.
 - `cargo clean -p kimo-core` under the lock if the manifold CMake cache-path error recurs (hit once already during
   this audit's baseline build — the worktree path differs from /tmp/v6rel_A's cached cmake source path).
+
+
+## Baseline (confirmed, 65324e9, before any v7 commit)
+
+Full workspace suite (`cargo test --profile gate --workspace --no-fail-fast`, under the lock; needed one
+`cargo clean -p kimo-core` first for the known manifold CMake cache-path mismatch against /tmp/v6rel_A's cache):
+
+- 291 test binaries, 2023 tests passed, 0 unexpected failures.
+- 2 known pre-existing failures, both already documented, neither a v7 regression:
+  - `readme_count::readme_v3_tool_count_matches_the_registry` — the README no longer has a line containing
+    "registered tools" (looks like a side effect of Naman's recent README redesign PRs). Pre-existing on 65324e9,
+    before any v7 commit. Will restore a tool-count line in README as part of a small-item pass so this test
+    passes again (or update the test if Naman wants the new README shape kept as-is — flagging, not deciding).
+  - `robust_est.rs` doctest — the stated known pre-existing failure (a stray `License Agreement` string collides
+    with the doctest's inferred fence). Per the mission brief, left alone.
+- Warnings: 35 lib warnings (at the ceiling, matches FEATURES.md's "Warnings stay at 35, or lower" rule already
+  being honored on main).
+- golden_frames / recipe_frames: not separately isolated in this run (they're inside the full suite above and
+  passed); will re-confirm their exact hashes (golden_frames 8959a9e4…, recipe_frames 02652276…) explicitly before
+  the v7 wrap, and after every batch that could plausibly touch rendering.
+
+## Steer received 2026-10-27 ~19:25 UTC
+
+Naman confirmed (12:43 AM IST): "gui at last" — the GUI editor (crates/kimo-gui, currently a skeleton with demo
+assets and a capabilities/default.json but **not a workspace member** — `Cargo.toml`'s `[workspace] members` lists
+only kimo-core, kimo-mcp, kimo-cli) is now in scope, built as the very last item, after everything else. MOGRT:
+no answer yet — keeping the JSON-template substitute with an honest [~] note, not attempting the closed format.
+Item 17 above is un-deferred; item 18 unchanged. Build order otherwise unchanged: small items now.
