@@ -16,7 +16,7 @@ fn scaled(p: &crate::keyframe::Prop, k: f64) -> crate::keyframe::Prop {
 }
 
 pub fn commands() -> Vec<Command> { vec![
-    Command { name: "copy_keyframes", description: "Copy one property's keyframes (base value, keys, eases/bezier handles, expression ops) from one clip onto one or more other clips: graph-editor copy/paste keyframes. Source is a clip transform property, or an effect param when from_effect_id is given. Destination property/effect default to the source's; to_effect_id applies the same effect id on every to_clip_id (pass one target clip for a per-effect paste onto a different clip's effect). time_offset shifts every copied key's time (clip-local seconds). replace (default true) clears the destination's existing keys first; false merges, overwriting only keys at matching times and keeping the rest.", mutates: true,
+    Command { name: "copy_keyframes", description: "Graph-editor copy/paste keyframes. Copies one property's keyframes (base value, keys, eases/bezier handles, expression ops) from one clip onto one or more other clips. Source is a clip transform property, or an effect param when from_effect_id is given. Destination property/effect default to the source's; to_effect_id applies the same effect id on every to_clip_id (pass one target clip for a per-effect paste onto a different clip's effect). time_offset shifts every copied key's time (clip-local seconds). replace (default true) clears the destination's existing keys first; false merges, overwriting only keys at matching times and keeping the rest.", mutates: true,
         schema: obj(vec![
             ("from_clip_id", s("clip to copy from")),
             ("from_property", s("transform property or effect-param name to copy")),

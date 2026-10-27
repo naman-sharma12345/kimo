@@ -83,7 +83,23 @@ pub enum AudioEffect {
         reduction_db: f64,
         floor_db: f64,
     },
+    /// Noise gate (ffmpeg agate): mutes/attenuates signal below threshold_db, down to range_db when fully closed.
+    NoiseGate {
+        threshold_db: f64,
+        range_db: f64,
+        ratio: f64,
+        attack_ms: f64,
+        release_ms: f64,
+    },
+    /// Brickwall limiter (ffmpeg alimiter): true ceiling at ceiling_db, auto makeup to reach it.
+    Limiter {
+        ceiling_db: f64,
+        attack_ms: f64,
+        release_ms: f64,
+    },
 }
+/// dB (relative to full scale) to a linear amplitude ratio, for ffmpeg filters (agate/alimiter) that take a linear 0..1 level.
+fn db_to_lin(db: f64) -> f64 { 10f64.powf(db / 20.0) }
 impl AudioEffect {
     pub fn filter(&self) -> String {
         match self {
@@ -93,6 +109,8 @@ impl AudioEffect {
  Self::Deesser{intensity,max,frequency}=>format!("deesser=i={intensity}:m={max}:f={frequency}"),
  Self::Reverb{..}=>"anull".into(),
  Self::Denoise{reduction_db,floor_db}=>format!("afftdn=nr={reduction_db}:nf={floor_db}"),
+ Self::NoiseGate{threshold_db,range_db,ratio,attack_ms,release_ms}=>format!("agate=threshold={:.8}:range={:.8}:ratio={ratio}:attack={attack_ms}:release={release_ms}",db_to_lin(*threshold_db),db_to_lin(*range_db)),
+ Self::Limiter{ceiling_db,attack_ms,release_ms}=>format!("alimiter=limit={:.8}:attack={attack_ms}:release={release_ms}:level=0",db_to_lin(*ceiling_db).min(1.0)),
 }
     }
 }

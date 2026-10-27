@@ -263,7 +263,9 @@ fn add_audio_effect_inner(ss: &mut Session, a: &Value) -> Result<Value, String> 
         "deesser" => &["intensity", "max", "frequency"],
         "reverb" => &["decay", "delay_ms"],
         "denoise" => &["reduction_db", "floor_db"],
-        _ => return Err(format!("unknown audio effect '{kind}'; kinds: eq, compressor, deesser, reverb, denoise, biquad, fir, mix_matrix")),
+        "noise_gate" => &["threshold_db", "range_db", "ratio", "attack_ms", "release_ms"],
+        "limiter" => &["ceiling_db", "attack_ms", "release_ms"],
+        _ => return Err(format!("unknown audio effect '{kind}'; kinds: eq, compressor, deesser, reverb, denoise, noise_gate, limiter, biquad, fir, mix_matrix")),
     };
     // valid names with their range and default, so a wrong name is fixed in one retry
     let spec = |k: &str| -> &str { match (kind, k) {
@@ -271,7 +273,11 @@ fn add_audio_effect_inner(ss: &mut Session, a: &Value) -> Result<Value, String> 
         ("compressor", "threshold_db") => "-60..0, default -18", ("compressor", "ratio") => "1..20, default 3", ("compressor", "attack_ms") => "0.01..2000, default 10",
         ("compressor", "release_ms") => "0.01..9000, default 200", ("compressor", "makeup_db") => "0..36, default 0",
         ("deesser", _) => "0..1, default 0.5", ("reverb", "decay") => "default 0.3", ("reverb", "delay_ms") => "6..240, default 60",
-        ("denoise", "reduction_db") => "default 12", ("denoise", "floor_db") => "default -50", _ => "" } };
+        ("denoise", "reduction_db") => "default 12", ("denoise", "floor_db") => "default -50",
+        ("noise_gate", "threshold_db") => "-80..0 dBFS, default -40 (signal below this is attenuated)", ("noise_gate", "range_db") => "-100..0 dBFS, default -60 (output level when fully closed)",
+        ("noise_gate", "ratio") => "1..9000, default 4", ("noise_gate", "attack_ms") => "0.01..9000, default 20", ("noise_gate", "release_ms") => "0.01..9000, default 250",
+        ("limiter", "ceiling_db") => "-40..0 dBFS, default -1 (true ceiling; output never exceeds it)", ("limiter", "attack_ms") => "0.1..80, default 5", ("limiter", "release_ms") => "1..8000, default 50",
+        _ => "" } };
     let map = p.as_object().ok_or_else(|| format!("params must be an object; {kind} takes: {}", allowed.iter().map(|k| format!("{k} ({})", spec(k))).collect::<Vec<_>>().join(", ")))?;
     for k in map.keys() {
         if !allowed.contains(&k.as_str()) {
@@ -300,6 +306,18 @@ fn add_audio_effect_inner(ss: &mut Session, a: &Value) -> Result<Value, String> 
         "reverb" => AudioEffect::Reverb {
             decay: f("decay", 0.3, 0., 0.8)?,
             delay_ms: f("delay_ms", 60., 6., 240.)?,
+        },
+        "noise_gate" => AudioEffect::NoiseGate {
+            threshold_db: f("threshold_db", -40., -80., 0.)?,
+            range_db: f("range_db", -60., -100., 0.)?,
+            ratio: f("ratio", 4., 1., 9000.)?,
+            attack_ms: f("attack_ms", 20., 0.01, 9000.)?,
+            release_ms: f("release_ms", 250., 0.01, 9000.)?,
+        },
+        "limiter" => AudioEffect::Limiter {
+            ceiling_db: f("ceiling_db", -1., -40., 0.)?,
+            attack_ms: f("attack_ms", 5., 0.1, 80.)?,
+            release_ms: f("release_ms", 50., 1., 8000.)?,
         },
         _ => AudioEffect::Denoise {
             reduction_db: f("reduction_db", 12., 0.01, 97.)?,
@@ -853,7 +871,7 @@ pub fn commands() -> Vec<Command> {
  Command{name:"set_caption_style",description:"Apply caption preset to every cue; optional size/y overrides.",mutates:true,schema:obj(vec![("caption_id",s("group")),("style",s("subtitle|boxed|yellow")),("size",n("px")),("y",n("px"))],&["caption_id","style"]),run:set_caption_style},
  Command{name:"edit_caption",description:"Edit caption text, timeline start, or duration.",mutates:true,schema:obj(vec![("clip_id",s("cue")),("text",s("caption text")),("start",n("timeline seconds")),("duration",n("seconds"))],&["clip_id"]),run:edit_caption},
  Command{name:"burn_in",description:"Enable/disable caption group's presence in preview and exports without deleting cues.",mutates:true,schema:obj(vec![("caption_id",s("group")),("enabled",json!({"type":"boolean"}))],&["caption_id","enabled"]),run:burn_in},
- Command{name:"add_audio_effect",description:"Append validated EQ/compressor/deesser/reverb/denoise or raw biquad (DFII transposed f64 state), fir and stereo mix_matrix. Raw defaults identity; no normalization/clamping. Render/export uses validated FFmpeg filters plus CPU reverb. Reverb is stereo damped-comb/allpass Schroeder; tail cropped to clip duration, reverb applied after FFmpeg effects.",mutates:true,schema:obj(vec![("clip_id",s("media clip")),("kind",json!({"type":"string","enum":["eq","compressor","deesser","reverb","denoise","biquad","fir","mix_matrix"]})),("params",json!({"type":"object","additionalProperties":true}))],&["clip_id","kind"]),run:add_audio_effect},
+ Command{name:"add_audio_effect",description:"Append validated EQ/compressor/deesser/reverb/denoise/noise_gate/limiter or raw biquad (DFII transposed f64 state), fir and stereo mix_matrix. Raw defaults identity; no normalization/clamping. Render/export uses validated FFmpeg filters (noise_gate -> agate, limiter -> alimiter) plus CPU reverb. Reverb is stereo damped-comb/allpass Schroeder; tail cropped to clip duration, reverb applied after FFmpeg effects.",mutates:true,schema:obj(vec![("clip_id",s("media clip")),("kind",json!({"type":"string","enum":["eq","compressor","deesser","reverb","denoise","noise_gate","limiter","biquad","fir","mix_matrix"]})),("params",json!({"type":"object","additionalProperties":true}))],&["clip_id","kind"]),run:add_audio_effect},
  Command{name:"remove_audio_effect",description:"Remove effect by zero-based index.",mutates:true,schema:obj(vec![("clip_id",s("clip")),("effect_index",json!({"type":"integer","minimum":0}))],&["clip_id","effect_index"]),run:remove_audio_effect},
  Command{name:"set_audio_pan",description:"Stereo balance -1 left to +1 right; attenuates opposite channel.",mutates:true,schema:obj(vec![("clip_id",s("clip")),("pan",n("-1..1"))],&["clip_id","pan"]),run:set_audio_pan},
  Command{name:"measure_loudness",description:"EBU R128 integrated stereo LUFS and sample peak, plus optional momentary/short-term LUFS curve, loudness range and clipped-sample count. Optional clip_id measures decoded post filters/pre gain; absent measures final timeline mix. Silence or <400ms LUFS returns null. true_peak=true adds 4x sinc reconstruction peak estimate (not certified): BS.1770-4 Annex 2 style 4x oversampling with a 64-tap-per-phase Blackman-windowed sinc, dBTP. curve=momentary|short_term|both adds loudness_curve: ungated EBU Tech 3341 momentary (400 ms) and/or short-term (3 s) LUFS readings every hop_s (0.1..3 s, default 0.1) with each series' max_lufs; payload is about 10 readings per second per series at the default (a 5-min clip is about 3000 per series, ~60 KB), so pass a larger hop_s or max_points (raises hop_s so each series holds at most that many readings) to keep it small. lra=true adds loudness_range per EBU Tech 3342: 3 s readings every lra_hop_s (default 0.1), gates -70 LUFS absolute and -20 LU relative, lra_lu = 95th minus 10th percentile, plus low_lufs/high_lufs. clip_threshold_dbfs (-60..0) adds clipping: channel samples and stereo frames at or above that level. Raw numbers only, no compliance verdict; reference values, not applied: EBU R128 -23 LUFS, streaming about -14 LUFS, -1 dBTP ceiling. Without these arguments the output is unchanged from v5.",mutates:false,schema:obj(vec![("clip_id",s("optional clip")),("true_peak",json!({"type":"boolean","default":false})),("curve",json!({"type":"string","enum":["momentary","short_term","both"],"description":"adds loudness_curve: EBU Tech 3341 momentary (400 ms) / short-term (3 s) LUFS series"})),("hop_s",json!({"type":"number","minimum":0.1,"maximum":3,"description":"curve reading spacing seconds, 0.01 s steps, default 0.1"})),("max_points",json!({"type":"integer","minimum":10,"maximum":100000,"description":"cap readings per curve series; raises hop_s to fit"})),("lra",json!({"type":"boolean","default":false,"description":"adds loudness_range (EBU Tech 3342)"})),("lra_hop_s",json!({"type":"number","minimum":0.1,"maximum":3,"description":"short-term reading spacing for LRA seconds, default 0.1"})),("clip_threshold_dbfs",json!({"type":"number","minimum":-60,"maximum":0,"description":"adds clipping: samples and frames with |x| at or above this level"}))],&[]),run:measure_loudness},
@@ -1125,6 +1143,53 @@ mod tests {
         .is_err());
         assert_eq!(serde_json::to_value(&s.project).unwrap(), before);
         std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn noise_gate_attenuates_a_quiet_tone_more_than_a_loud_one() {
+        // A tone well below threshold_db should come out quieter (relative to input) than the same tone above it.
+        let quiet_path = fixture("gate-quiet", "sine=frequency=440:sample_rate=48000:duration=1,volume=0.113");
+        let loud_path = fixture("gate-loud", "sine=frequency=440:sample_rate=48000:duration=1,volume=5.657");
+        let mut s = Session::new();
+        let t = track(&mut s);
+        let quiet = media(&mut s, &t, &quiet_path, 0., 1.);
+        let loud = media(&mut s, &t, &loud_path, 0., 1.);
+        let rms = |pcm: &[f32]| -> f64 { (pcm.iter().map(|v| (*v as f64) * (*v as f64)).sum::<f64>() / pcm.len().max(1) as f64).sqrt() };
+        let before_quiet = rms(&clip_pcm(&s, &quiet).unwrap());
+        let before_loud = rms(&clip_pcm(&s, &loud).unwrap());
+        call(&mut s, "add_audio_effect", json!({"clip_id":quiet,"kind":"noise_gate","params":{"threshold_db":-20.0,"range_db":-80.0,"attack_ms":1.0,"release_ms":1.0}}));
+        call(&mut s, "add_audio_effect", json!({"clip_id":loud,"kind":"noise_gate","params":{"threshold_db":-20.0,"range_db":-80.0,"attack_ms":1.0,"release_ms":1.0}}));
+        let after_quiet = rms(&clip_pcm(&s, &quiet).unwrap());
+        let after_loud = rms(&clip_pcm(&s, &loud).unwrap());
+        // the loud tone (above threshold) should pass through close to its original level...
+        assert!(after_loud / before_loud.max(1e-9) > 0.7, "loud tone over-attenuated: {after_loud} vs {before_loud}");
+        // ...while the quiet tone (below threshold) should be attenuated much more
+        assert!(after_quiet / before_quiet.max(1e-9) < 0.3, "quiet tone not gated: {after_quiet} vs {before_quiet}");
+        std::fs::remove_file(&quiet_path).ok(); std::fs::remove_file(&loud_path).ok();
+    }
+    #[test]
+    fn limiter_never_lets_the_peak_exceed_its_ceiling_and_the_ceiling_is_a_real_knob() {
+        // ffmpeg's alimiter has a gotcha: its default auto-level ("level=true") renormalizes the output and the
+        // configured `limit` stops being an actual ceiling at all (measured directly: peak came out the same
+        // regardless of limit, with the default). Our wrapper passes level=0 so ceiling_db is a genuine brickwall;
+        // this test pins both properties: the ceiling is never exceeded, AND raising it actually raises the peak.
+        let path = fixture("limit-hot", "sine=frequency=1000:sample_rate=48000:duration=1,volume=10.5");
+        let peak_at = |ceiling_db: f64| -> f32 {
+            let mut s = Session::new();
+            let t = track(&mut s);
+            let c = media(&mut s, &t, &path, 0., 1.);
+            call(&mut s, "add_audio_effect", json!({"clip_id":c,"kind":"limiter","params":{"ceiling_db":ceiling_db,"attack_ms":5.0,"release_ms":50.0}}));
+            clip_pcm(&s, &c).unwrap().iter().fold(0.0f32, |m, v| m.max(v.abs()))
+        };
+        let before_peak = { let mut s = Session::new(); let t = track(&mut s); let c = media(&mut s, &t, &path, 0., 1.); clip_pcm(&s, &c).unwrap().iter().fold(0.0f32, |m, v| m.max(v.abs())) };
+        assert!(before_peak > 0.9, "fixture should be near full scale, got {before_peak}");
+        for ceiling_db in [-1.0, -3.0, -6.0, -12.0, -20.0] {
+            let ceiling_lin = 10f64.powf(ceiling_db / 20.0) as f32;
+            let p = peak_at(ceiling_db);
+            assert!(p <= ceiling_lin + 1e-4, "ceiling_db={ceiling_db}: peak {p} exceeded ceiling {ceiling_lin}");
+        }
+        let loose = peak_at(-1.0); let tight = peak_at(-20.0);
+        assert!(loose > tight * 2.0, "raising ceiling_db should raise the output peak: loose={loose} tight={tight}");
+        std::fs::remove_file(&path).ok();
     }
     #[test]
     fn normalize_hits_target_and_preserves_silence_errors() {
