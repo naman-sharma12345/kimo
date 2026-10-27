@@ -128,7 +128,7 @@ Use `tools/list` / `list_effects` for live schemas. Read the source parameter na
 
 ### Limits
 
-- [ ] denoise (temporal/spatial), sharpen [x] unsharp, dehaze, clarity, lens profile correction
+- [~] denoise (temporal/spatial, bilateral in its spatial pass) [x], sharpen [x] unsharp, dehaze [x] (verified, dehaze.rs tests), clarity [x] (= `midtone_detail`, Resolve-style local contrast in midtones, verified); pending: lens profile correction (no lens/camera database), and bilateral/compound/smart/channel blur as their own standalone effect kinds (bilateral exists only inside denoise today)
 
 ### Proof level
 
@@ -468,7 +468,7 @@ Use the quality-tier audit and test notes in the BETA appendix; checklist marks 
 
 - [ ] arithmetic, blend, calculations, channel combiner, compound arithmetic, minimax (erode/dilate, partial: choker), remove color matting, set channels, set matte, shift channels, solid composite
 
-- [ ] levels per channel, color balance (HLS), black & white mixer, change to color, change color, selective color, tritone [x via gradient_map], leave color [x color_isolate], auto levels/contrast/color, Lumetri full, vibrance, CC tools (toner), color link, equalize, easy levels, output (clip), PS arbitrary map, color stabilizer, match color
+- [~] color balance (HLS) [x `hsl`/`hs`], black & white mixer [x `channel_mixer`], selective color [x `qualifier`, HSL secondary], tritone [x via gradient_map], leave color [x color_isolate], auto levels/contrast/color [x `auto_color`/`auto_grade`/`auto_balance`], vibrance [x `color_boost`, verified -- boosts weak colour only, strong colour/luma kept, exact Resolve-primaries-bar definition], match color [x `match_color`, Reinhard transfer], PS arbitrary map [x `point_curves`/`curves`]; pending: levels per channel (current `levels` is master-only), change to color / change color, CC tools (toner), color link, equalize, easy levels, output (clip) as a grade-node concept, color stabilizer, and a full Lumetri-parity single tool (the pieces exist separately)
 
 - [ ] slider, checkbox, color, point, angle, layer, dropdown controls feeding any param
 
