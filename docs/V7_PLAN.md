@@ -112,3 +112,63 @@ assets and a capabilities/default.json but **not a workspace member** — `Cargo
 only kimo-core, kimo-mcp, kimo-cli) is now in scope, built as the very last item, after everything else. MOGRT:
 no answer yet — keeping the JSON-template substitute with an honest [~] note, not attempting the closed format.
 Item 17 above is un-deferred; item 18 unchanged. Build order otherwise unchanged: small items now.
+
+
+## Full-suite sanity check after 6 commits (2026-10-27, ~22:20 UTC)
+
+`cargo test --profile gate --workspace --no-fail-fast` (2 passes needed again; the suite runs past the 1700s
+single-invocation window the build rules specify, so it is split across runner invocations -- compiled artifacts
+are cached between them, only execution time is re-paid):
+
+- 294 test binaries, 2043 tests passed, 0 unexpected failures.
+- Same 2 known pre-existing failures as the 65324e9 baseline, unchanged: `readme_count` (the README's tool-count
+  line is gone, from Naman's own README redesign PRs -- NOT touched by me: Naman said explicitly "im doing it you
+  dont do it" and "README stays yours" earlier in this same lane's history, re: the hackathon scrub) and the
+  `robust_est.rs` doctest (the stated known pre-existing failure).
+- Warnings: 35 (unchanged, at the ceiling).
+- Net new tests from this session's 4 feature commits: +20 (2023 -> 2043 passed; some of that is 2 new kinds
+  folded into one existing smoke-test loop, which doesn't add a new #[test] function, hence not a 1:1 count).
+
+## Commits so far (v7 branch, local only, nothing pushed)
+
+1. `1780bfd` docs: V7_PLAN.md audit
+2. `89e32f9` docs: baseline counts + GUI steer
+3. `3297ab2` feat(edit): timecode-delta strings on ripple_trim/roll_edit/slip_clip/slide_clip
+4. `ebd9c36` feat(edit): replace_clip_media + copy_keyframes; paste_attributes/templates verified
+5. `093fa99` feat(audio): noise_gate + limiter (+ the ffmpeg alimiter level=0 gotcha, caught and fixed)
+6. `8c10fe4` docs(features): clarity/vibrance/dehaze/color-balance/match-color verified and flipped
+
+Current HEAD: `8c10fe4`.
+
+## FEATURES.md state after this session
+
+Lines fully [x] now that were [ ]: L87 (timecode-delta helpers), L84 (replace clip/paste attributes/effect
+presets/copy-paste keyframes -- all four sub-clauses covered, two by new code, two by already-shipped tools).
+Lines moved [ ] -> [~] with an honest sub-item breakdown: L131 (denoise/sharpen/dehaze/clarity done; lens profile
+correction and standalone bilateral/compound/smart/channel blur still missing), L170 (essential-sound: most of it
+done; de-reverb, surround, audio transitions, keyframeable pan still missing), L471 (color grab-bag: most
+identifiable sub-items done; per-channel levels, change-to-color, CC toner, color link, equalize, color
+stabilizer, one unified Lumetri-parity tool still missing).
+
+## Known complexity flagged, not attempted this session
+
+**Keyframeable stereo pan** (part of L170): `Audio.pan` is a plain `f64`, not a `Prop` like `volume`. Converting
+it would need a custom serde shim (accept a legacy bare number OR a full Prop object on load; the existing `Prop`
+struct has no `skip_serializing_if`, so it always serializes as an object -- meaning every already-saved project's
+`pan: 0.0` would change shape on any resave, a real backward-compat risk touching project-JSON-equality tests
+project-wide). Worth doing, but it's a correctness-sensitive schema migration, not a "small" item; queued behind
+the explicitly-small items.
+
+## Scale reality check (for whoever reads this next, including a future me)
+
+452 -> 455 registered tools so far. The remaining pending/partial surface is still large: the generator/stylize
+effect catalog gap (L475/477/483/485) alone is most of Adobe's Generate/Stylize/Particle-Playground/VR catalogs --
+dozens of distinct, real pixel/physics kernels, not a refactor. The wgpu 2D GPU pipeline, SIMD/dirty-region perf
+work, ML roto/segmentation, puppet rig/liquify, and the project-format-v2 migration are each genuinely large,
+multi-day-or-more undertakings on their own, even scoped to "closest real implementation plus honest [~]". GUI
+(now confirmed in scope, last, per Naman's "gui at last") is its own crate already scaffolded
+(`crates/kimo-gui`, with demo assets and a capabilities file) but **not in the workspace `[members]` list** --
+wiring it in and building an actual interactive editor is a project-sized piece of work by itself. None of this
+is a reason to slow down on the small/medium items; it is the honest shape of what "all means all, none left"
+costs, and it is why late items will lean harder on the honesty rule (closest real implementation + a specific
+[~] note) rather than full parity claims.
