@@ -308,8 +308,8 @@ restore dab5b50df493b4be
 resume_job ddf7317d0c4d5591
 review_export 2981ac9006e24f17
 ripple_delete af7455d513b9e3c9
-ripple_trim 67fb9388eed31127
-roll_edit 0e15462a35d306ee
+ripple_trim 5be54654d9c33c34
+roll_edit 6b0329ead4107025
 roto_propagate d82172bedca52a94
 saliency_map 109791485c05b75a
 sample_advection_field cc26c0f26246430c
@@ -396,8 +396,8 @@ set_track_matte b4eb6b6073080911
 shards_project c322e07f6dbcfc79
 simplify_curve 6de030d9111840e4
 simulate_physics 379d680dbb9bb0a2
-slide_clip b938e2dc08b653bd
-slip_clip 2c0858c74b31b006
+slide_clip 42df2b85080f272c
+slip_clip ffe1f471dad7aa8b
 smooth_curve 76c3081df1b15c57
 snap_time 724db0acdc620969
 solve_camera 0c9f7ebe322fb9b1

@@ -84,7 +84,7 @@ Use `tools/list` / `list_effects` for live schemas. Read the source parameter na
 - [ ] replace clip (keep effects), paste attributes, effect presets (save/apply), copy/paste keyframes
 - [ ] auto reframe (cover-fit decode), scene edit detection, auto-cut to beats / to speech
 - [ ] proxy workflow (generate proxy, toggle), offline media relink
-- [ ] rolling/regular edit by timecode text ("+10", "-5 frames") helpers
+- [x] rolling/regular edit by timecode text ("+10", "-5 frames") helpers: `ripple_trim`, `roll_edit`, `slip_clip` and `slide_clip`'s `delta` takes a number (unchanged) or a string like "+10", "-5 frames", "3f" (unit defaults to seconds, converted via project fps for frames)
 - [ ] captions: SRT import [x], speech-to-text [ ] (needs whisper), caption styling presets [ ], burn-in [x via text]
 
 ### Proof level

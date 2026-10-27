@@ -14,6 +14,34 @@ fn na(a: &Value, k: &str) -> Result<f64, String> { a.get(k).and_then(|v| v.as_f6
 fn on(a: &Value, k: &str, d: f64) -> f64 { a.get(k).and_then(|v| v.as_f64()).unwrap_or(d) }
 const EPS: f64 = 1e-6;
 
+/// A `delta`/timecode argument: a plain number (seconds, unchanged behavior) or a timecode-delta string like
+/// "+10", "-5 frames", "3f", "2 sec" (unit defaults to seconds when omitted). Frame units convert through the
+/// project's own fps. FEATURES.md "rolling/regular edit by timecode text helpers".
+fn delta_arg(a: &Value, k: &str, fps: f64) -> Result<f64, String> {
+    let v = a.get(k).ok_or_else(|| crate::errors::arg_err(a, k, "number or timecode-delta string"))?;
+    if let Some(n) = v.as_f64() { if !n.is_finite() { return Err(format!("{k} must be a finite number")); } return Ok(n); }
+    let raw = v.as_str().ok_or_else(|| format!("{k} must be a number or a timecode-delta string like '+10', '-5 frames', '3f'"))?;
+    let t = raw.trim();
+    if t.is_empty() { return Err(format!("{k} string is empty")); }
+    let bytes = t.as_bytes();
+    let mut i = 0usize;
+    if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') { i += 1; }
+    let start_digits = i;
+    while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'.') { i += 1; }
+    if i == start_digits { return Err(format!("{k} '{t}' has no number in it; use e.g. '+10', '-5 frames', '3f'")); }
+    let (num_part, rest) = t.split_at(i);
+    let value: f64 = num_part.parse().map_err(|_| format!("{k} '{t}' is not a valid number"))?;
+    let unit = rest.trim().to_ascii_lowercase();
+    match unit.as_str() {
+        "" | "s" | "sec" | "secs" | "second" | "seconds" => Ok(value),
+        "f" | "frame" | "frames" => { if !(fps > 0.0) { return Err("project fps must be > 0 to convert a frame delta".into()); } Ok(value / fps) }
+        o => Err(format!("{k} unit '{o}' not recognized; use seconds (default, or 's'/'sec') or frames ('f'/'frame'/'frames')")),
+    }
+}
+/// Schema for a `delta`/timecode argument: accepts a JSON number or a timecode-delta string.
+fn delta_schema(d: &str) -> Value { json!({"type":["number","string"],"description": format!("{d}; or a timecode-delta string like '+10', '-5 frames', '3f' (unit defaults to seconds)")}) }
+
+
 /// (track index, clip index)
 fn loc(p: &Project, id: &str) -> Result<(usize, usize), String> {
     for (ti, t) in p.tracks.iter().enumerate() { if let Some(ci) = t.clips.iter().position(|c| c.id == id) { return Ok((ti, ci)); } }
@@ -36,21 +64,21 @@ pub fn commands() -> Vec<Command> { vec![
         run: |ss, a| { let id = sa(a, "clip_id")?; let (ti, ci) = loc(&ss.project, id)?; unlocked(&ss.project, ti)?;
             let c = ss.project.tracks[ti].clips.remove(ci); shift_after(&mut ss.project.tracks[ti], c.start + c.duration, -c.duration, ""); Ok(json!({"shifted_by":-c.duration})) } },
     Command { name: "ripple_trim", description: "Ripple trim: change the clip's head or tail by `delta` seconds (negative shortens). Later clips on the track shift to follow. edge: tail | head.", mutates: true,
-        schema: obj(vec![("clip_id", s("clip")), ("edge", json!({"type":"string","enum":["head","tail"]})), ("delta", n("seconds, +grow / -shrink"))], &["clip_id","edge","delta"]),
-        run: |ss, a| { let id = sa(a, "clip_id")?; let d = na(a, "delta")?; let (ti, ci) = loc(&ss.project, id)?; unlocked(&ss.project, ti)?;
+        schema: obj(vec![("clip_id", s("clip")), ("edge", json!({"type":"string","enum":["head","tail"]})), ("delta", delta_schema("seconds, +grow / -shrink"))], &["clip_id","edge","delta"]),
+        run: |ss, a| { let id = sa(a, "clip_id")?; let fps = ss.project.fps; let d = delta_arg(a, "delta", fps)?; let (ti, ci) = loc(&ss.project, id)?; unlocked(&ss.project, ti)?;
             let c = ss.project.tracks[ti].cm(ci); let old_end = c.start + c.duration;
             if c.duration + d < 0.04 { return Err("clip would be shorter than 1 frame".into()); }
             match sa(a, "edge")? { "tail" => { c.duration += d; } "head" => { c.in_point = (c.in_point - d * c.speed).max(0.0); c.duration += d; } o => return Err(format!("bad edge {o}")) }
             shift_after(&mut ss.project.tracks[ti], old_end, d, id); Ok(json!({"duration": ss.project.tracks[ti].clips[ci].duration})) } },
     Command { name: "roll_edit", description: "Rolling edit: move the cut between two adjacent clips by `delta` seconds; total length is unchanged.", mutates: true,
-        schema: obj(vec![("left_clip_id", s("clip before the cut")), ("right_clip_id", s("clip after the cut")), ("delta", n("seconds, + moves cut later"))], &["left_clip_id","right_clip_id","delta"]),
-        run: |ss, a| { let d = na(a, "delta")?; let (t1, i1) = loc(&ss.project, sa(a, "left_clip_id")?)?; let (t2, i2) = loc(&ss.project, sa(a, "right_clip_id")?)?; if t1 != t2 { return Err("clips must be on the same track".into()); } unlocked(&ss.project, t1)?;
+        schema: obj(vec![("left_clip_id", s("clip before the cut")), ("right_clip_id", s("clip after the cut")), ("delta", delta_schema("seconds, + moves cut later"))], &["left_clip_id","right_clip_id","delta"]),
+        run: |ss, a| { let fps = ss.project.fps; let d = delta_arg(a, "delta", fps)?; let (t1, i1) = loc(&ss.project, sa(a, "left_clip_id")?)?; let (t2, i2) = loc(&ss.project, sa(a, "right_clip_id")?)?; if t1 != t2 { return Err("clips must be on the same track".into()); } unlocked(&ss.project, t1)?;
             let tr = &mut ss.project.tracks[t1]; if (tr.clips[i1].start + tr.clips[i1].duration - tr.clips[i2].start).abs() > 0.02 { return Err("clips are not adjacent".into()); }
             if tr.clips[i1].duration + d < 0.04 || tr.clips[i2].duration - d < 0.04 { return Err("roll too large".into()); }
             tr.cm(i1).duration += d; let r = tr.cm(i2); r.start += d; r.duration -= d; r.in_point = (r.in_point + d * r.speed).max(0.0); crate::keyframe::shift_clip_clock(r, d); Ok(json!({"ok":true})) } },
     Command { name: "slip_clip", description: "Slip: shift which part of the source shows inside the clip (in-point += delta) without moving or resizing it.", mutates: true,
-        schema: obj(vec![("clip_id", s("clip")), ("delta", n("source seconds"))], &["clip_id","delta"]),
-        run: |ss, a| { let (ti, ci) = loc(&ss.project, sa(a, "clip_id")?)?; unlocked(&ss.project, ti)?; let c = ss.project.tracks[ti].cm(ci); c.in_point = (c.in_point + na(a, "delta")?).max(0.0); Ok(json!({"in_point":c.in_point})) } },
+        schema: obj(vec![("clip_id", s("clip")), ("delta", delta_schema("source seconds"))], &["clip_id","delta"]),
+        run: |ss, a| { let fps = ss.project.fps; let d = delta_arg(a, "delta", fps)?; let (ti, ci) = loc(&ss.project, sa(a, "clip_id")?)?; unlocked(&ss.project, ti)?; let c = ss.project.tracks[ti].cm(ci); c.in_point = (c.in_point + d).max(0.0); Ok(json!({"in_point":c.in_point})) } },
     Command { name: "set_split_edit", description: "J/L cut: the incoming clip's audio starts `seconds` before its video (j) or the outgoing audio runs on (l); video edit unchanged.", mutates: true,
         schema: obj(vec![("clip_id", s("the INCOMING clip of the cut")), ("kind", json!({"type":"string","enum":["j","l","none"]})), ("seconds", json!({"type":"number","minimum":0,"description":"audio offset; required for j/l, ignored for none"}))], &["clip_id","kind"]),
         run: |ss, a| { let (ti, bi) = loc(&ss.project, sa(a, "clip_id")?)?; unlocked(&ss.project, ti)?;
@@ -76,8 +104,8 @@ pub fn commands() -> Vec<Command> { vec![
             let (b, o) = (&tr.clips[bi], ai.map(|i| &tr.clips[i]));
             Ok(json!({"incoming": b.id, "outgoing": o.map(|o| &o.id), "kind": kind, "seconds": d, "incoming_lead": b.audio.lead, "outgoing_tail": o.map(|o| o.audio.tail)})) } },
     Command { name: "slide_clip", description: "Slide: move a clip by `delta`; the previous clip's tail and next clip's head absorb the change so total length is unchanged.", mutates: true,
-        schema: obj(vec![("clip_id", s("clip")), ("delta", n("seconds"))], &["clip_id","delta"]),
-        run: |ss, a| { let d = na(a, "delta")?; let (ti, ci) = loc(&ss.project, sa(a, "clip_id")?)?; unlocked(&ss.project, ti)?;
+        schema: obj(vec![("clip_id", s("clip")), ("delta", delta_schema("seconds"))], &["clip_id","delta"]),
+        run: |ss, a| { let fps = ss.project.fps; let d = delta_arg(a, "delta", fps)?; let (ti, ci) = loc(&ss.project, sa(a, "clip_id")?)?; unlocked(&ss.project, ti)?;
             let tr = &mut ss.project.tracks[ti]; let (st, en) = (tr.clips[ci].start, tr.clips[ci].start + tr.clips[ci].duration);
             let prev = tr.clips.iter().position(|c| (c.start + c.duration - st).abs() < 0.02 && c.id != tr.clips[ci].id); let next = tr.clips.iter().position(|c| (c.start - en).abs() < 0.02 && c.id != tr.clips[ci].id);
             if let Some(p) = prev { if tr.clips[p].duration + d < 0.04 { return Err("previous clip too short".into()); } tr.cm(p).duration += d; }
