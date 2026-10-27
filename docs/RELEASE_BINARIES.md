@@ -1,21 +1,29 @@
 # Release binaries
 
-Assets per tag `vX.Y.Z` (or manual run of the `release` workflow):
+Assets per tag `vX.Y.Z` (or a manual `workflow_dispatch` run of the `release` workflow with
+`draft_release` ticked):
 
-- `kimo-<tag>-linux-x86_64-static.tar.gz` - primary. Static musl, runs on any x86_64 Linux.
-- `kimo-<tag>-linux-x86_64-glibc.tar.gz` - dynamic glibc (built on Ubuntu 22.04, needs glibc >= 2.35). Optional.
-- `.sha256` next to each.
-- `kimo-<version>-windows-x86_64-setup.exe` - per-user Windows x64 installer with uninstall support.
-- `kimo-<version>-windows-x86_64.zip` - portable Windows x64 package.
+- `kimo-<tag>-linux-x86_64-glibc.tar.gz` - the engine (`kimo-mcp`), built on Ubuntu 22.04, needs
+  glibc >= 2.35. This is the only Linux engine build this release ships: the static musl build was
+  dropped on 2026-10-17 (the vendored Manifold C++ library has no musl C++ compiler on the runner).
+- `kimo-<version>-windows-x86_64-setup.exe` - per-user Windows x64 installer for the engine, with
+  uninstall support.
+- `kimo-<version>-windows-x86_64.zip` - portable Windows x64 package for the engine.
+- Kimo Spectator (the desktop app, `crates/kimo-gui`): `Kimo-Spectator_<version>_amd64.deb` and
+  `Kimo-Spectator_<version>_amd64.AppImage` for Linux, `Kimo-Spectator_<version>_x64_en-US.msi` for
+  Windows.
+- `SHA256SUMS`, covering every file above; a `.sha256` also sits beside each engine package.
+- No macOS build this release (coming later).
 
-Windows packages use the Cargo version and include `bin/kimo-mcp.exe`, bundled
-fonts with OFL licenses, and a setup guide. FFmpeg/FFprobe are installed
-separately, as on Linux. See [Windows setup](../packaging/windows/WINDOWS.md).
-Installers are unsigned. Manual workflow runs produce both Windows files and
-SHA-256 checksums; tag releases publish them alongside Linux packages.
+All installers and binaries are unsigned. Manual `workflow_dispatch` runs with `draft_release` off
+produce workflow artifacts and `SHA256SUMS` only, no release; a tag push (or a dispatch run on a `v*`
+ref with `draft_release` on) attaches everything to a DRAFT release for a maintainer to review and
+publish by hand. See [Windows setup](../packaging/windows/WINDOWS.md) for the installer/zip; the engine
+packages are not run on a real Windows PC as part of CI.
 
-Layout: `bin/kimo-mcp`, `fonts/*.ttf` (+ `fetch.sh`), docs. Keep `fonts/` next to `bin/`;
-Kimo finds it from the executable path (also `KIMO_FONTS=<dir>`, `./fonts`, `~/kimo/fonts`, `/usr/share/fonts`).
+Engine package layout: `bin/kimo-mcp` (or `bin/kimo-mcp.exe`), `fonts/*.ttf` (+ `fetch.sh`),
+`README.md`, `FEATURES.md`, this file. Keep `fonts/` next to `bin/`; Kimo finds it from the executable
+path (also `KIMO_FONTS=<dir>`, `./fonts`, `~/kimo/fonts`, `/usr/share/fonts`).
 
 ## What a fresh box needs
 
@@ -38,8 +46,9 @@ a bundled libOpenColorIO plus matching headers on the build runner, which is not
 
 ## Cutting a release
 
-    git tag v0.1.0 && git push origin v0.1.0     # builds and publishes
-    # or: Actions > release > Run workflow (artifacts only; tick "publish" on a tag ref to release)
+    git tag v6.0.0 && git push origin v6.0.0     # builds everything and opens a DRAFT release to review
+    # or: Actions > release > Run workflow on a v* ref, with "draft_release" ticked to attach a draft
+    #     (left off, it's a dry run: workflow artifacts + SHA256SUMS only, no release)
 
-Build locally: `cargo build --release --locked -p kimo-mcp --target x86_64-unknown-linux-musl`
-(`rustup target add x86_64-unknown-linux-musl` first).
+Build locally: `cargo build --release --locked -p kimo-mcp --target x86_64-unknown-linux-gnu`
+(the glibc target this release ships; no musl target is built or shipped).
