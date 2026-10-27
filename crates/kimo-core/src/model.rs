@@ -133,10 +133,31 @@ pub struct Audio {
     #[serde(default, skip_serializing_if = "is_zero_f64")] pub lead: f64,
     /// Split edit: seconds the audio runs on AFTER the video ends (L cut; negative = ends before, the outgoing side of a J cut).
     #[serde(default, skip_serializing_if = "is_zero_f64")] pub tail: f64,
-    #[serde(default)] pub effects: Vec<crate::editorial::AudioEffect>, #[serde(default)] pub pan: f64, #[serde(default = "unity_prop")] pub duck_gain: Prop, pub mute: bool, pub volume: Prop, pub fade_in: f64, pub fade_out: f64, pub pitch: f64, pub highpass: f64, pub lowpass: f64, pub denoise: f64, pub compress: bool, pub echo: f64, pub reverse: bool }
+    #[serde(default)] pub effects: Vec<crate::editorial::AudioEffect>,
+    /// Stereo balance, -1 left to +1 right. A `Prop` (like `volume`) so it is keyframeable via `set_audio_pan_key`;
+    /// `set_audio_pan` still sets the static base. Serialization is opt-in on actually keyframing it: with no keys
+    /// and no expression ops it writes back out as the old bare number (byte-identical to pre-v7 project JSON --
+    /// every golden_project fixture has an un-keyframed pan, so none of them move), and only becomes the full Prop
+    /// object once a key is set. Older saved projects wrote this as a bare number -- accepted on load via `de_pan`
+    /// (`tests/data/v1_project.kimo`, a pre-migration fixture, proves the bare-number form still loads).
+    #[serde(default = "zero_prop", deserialize_with = "de_pan", serialize_with = "ser_pan")] pub pan: Prop,
+    #[serde(default = "unity_prop")] pub duck_gain: Prop, pub mute: bool, pub volume: Prop, pub fade_in: f64, pub fade_out: f64, pub pitch: f64, pub highpass: f64, pub lowpass: f64, pub denoise: f64, pub compress: bool, pub echo: f64, pub reverse: bool }
 fn unity_prop() -> Prop { Prop::new(1.0) }
+fn zero_prop() -> Prop { Prop::new(0.0) }
+/// Accepts either the legacy bare-number `pan` (pre-v7 project format) or a full `Prop` object.
+fn de_pan<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Prop, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum PanRepr { Num(f64), Full(Prop) }
+    Ok(match PanRepr::deserialize(d)? { PanRepr::Num(n) => Prop::new(n), PanRepr::Full(p) => p })
+}
+/// Writes the old bare-number shape while unkeyframed (opt-in migration: existing project JSON stays byte-identical
+/// until pan is actually animated), the full Prop object once a key or expression op is present.
+fn ser_pan<S: serde::Serializer>(p: &Prop, s: S) -> Result<S::Ok, S::Error> {
+    if p.keys.is_empty() && p.expr.is_empty() { s.serialize_f64(p.base) } else { p.serialize(s) }
+}
 fn is_zero_f64(v: &f64) -> bool { *v == 0.0 }
-impl Default for Audio { fn default() -> Self { Audio { lead: 0.0, tail: 0.0, effects: vec![], pan: 0.0, duck_gain: Prop::new(1.0), mute: false, volume: Prop::new(1.0), fade_in: 0.0, fade_out: 0.0, pitch: 0.0, highpass: 0.0, lowpass: 0.0, denoise: 0.0, compress: false, echo: 0.0, reverse: false } } }
+impl Default for Audio { fn default() -> Self { Audio { lead: 0.0, tail: 0.0, effects: vec![], pan: Prop::new(0.0), duck_gain: Prop::new(1.0), mute: false, volume: Prop::new(1.0), fade_in: 0.0, fade_out: 0.0, pitch: 0.0, highpass: 0.0, lowpass: 0.0, denoise: 0.0, compress: false, echo: 0.0, reverse: false } } }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Transition { pub kind: String, pub duration: f64,

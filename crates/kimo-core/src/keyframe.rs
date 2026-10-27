@@ -46,7 +46,7 @@ impl Ease {
 
 /// The per-property clamp flag: properties whose value range is bounded (an elastic/back overshoot must not push opacity past 1 or volume
 /// below 0). Position, scale, rotation and every other property are left unclamped, so overshoot reads as motion.
-pub const BOUNDED_PROPS: &[(&str, f64, f64)] = &[("opacity", 0.0, 1.0), ("fill_alpha", 0.0, 1.0), ("stroke_alpha", 0.0, 1.0), ("reveal", 0.0, 1.0), ("volume", 0.0, f64::INFINITY)];
+pub const BOUNDED_PROPS: &[(&str, f64, f64)] = &[("opacity", 0.0, 1.0), ("fill_alpha", 0.0, 1.0), ("stroke_alpha", 0.0, 1.0), ("reveal", 0.0, 1.0), ("volume", 0.0, f64::INFINITY), ("pan", -1.0, 1.0)];
 /// `v` clamped to the property's range when it is bounded, else unchanged.
 pub fn clamp_prop(name: &str, v: f64) -> f64 { match BOUNDED_PROPS.iter().find(|(n, _, _)| *n == name) { Some((_, lo, hi)) => v.clamp(*lo, *hi), None => v } }
 

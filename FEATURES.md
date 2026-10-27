@@ -167,7 +167,7 @@ Use `tools/list` / `list_effects` for live schemas. Read the source parameter na
 
 ### Limits
 
-- [~] essential-sound style: dialogue loudness normalize (`normalize_loudness`) [x], auto-duck (`auto_duck`) [x], EQ bands/de-esser/reverb (`add_audio_effect`) [x], noise_gate and limiter (`add_audio_effect` kind=noise_gate/limiter, ffmpeg agate/alimiter) [x new in v7 -- note: alimiter needs `level=0` or its ceiling_db does nothing, caught by test and set explicitly]; pending: de-reverb, surround mix, audio transitions (constant-power/exponential crossfades on audio-only edges), and stereo pan is a plain value (`set_audio_pan`), not yet a keyframeable Prop like volume
+- [~] essential-sound style: dialogue loudness normalize (`normalize_loudness`) [x], auto-duck (`auto_duck`) [x], EQ bands/de-esser/reverb (`add_audio_effect`) [x], noise_gate and limiter (`add_audio_effect` kind=noise_gate/limiter, ffmpeg agate/alimiter) [x], stereo pan is now a keyframeable Prop like volume (`set_audio_pan` sets the static base, `set_audio_pan_key` keyframes it; old projects' bare-number pan still load, and it still serializes as a bare number until actually keyframed, so existing project JSON is untouched) [x new in v7]; pending: de-reverb, surround mix, audio transitions (constant-power/exponential crossfades on audio-only edges)
 - [ ] voiceover record, audio sync by waveform, loudness meter (LUFS) readout
 
 ### Proof level

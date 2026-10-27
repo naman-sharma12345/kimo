@@ -142,7 +142,7 @@ fn build_registry() -> Vec<Command> {
 }
 
 /// Keyframe tools whose `time` is clip-local seconds and cannot be negative.
-const KEYFRAME_TOOLS: [&str; 8] = ["set_keyframe", "set_keyframe_bezier", "set_mask_keyframe", "set_mask_prop_key", "set_mask_path_key", "set_animator_keyframe", "set_camera_keyframe", "set_audio_volume_key"];
+const KEYFRAME_TOOLS: [&str; 9] = ["set_keyframe", "set_keyframe_bezier", "set_mask_keyframe", "set_mask_prop_key", "set_mask_path_key", "set_animator_keyframe", "set_camera_keyframe", "set_audio_volume_key", "set_audio_pan_key"];
 
 /// Public entry: runs the tool and unifies the wording of not-found and OS errors (unit 5 commit B).
 /// U1: "@name" accepted wherever a clip or track id argument exists. Only id-shaped keys are touched (clip_id, parent_id, track_id, clip_ids and the like), never free text.

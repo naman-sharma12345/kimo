@@ -335,6 +335,7 @@ set_animator_keyframe 1f7119987f8dc80b
 set_audio 09c6580478feb879
 set_audio_effect_key 02e5c3c88e7432d6
 set_audio_pan f9b02d2054de6500
+set_audio_pan_key 68c1e6eef9c55534
 set_audio_volume_key 93c0a5135d9ba013
 set_blend cdad51ace4f9fd7f
 set_camera d916f0fec16525a1

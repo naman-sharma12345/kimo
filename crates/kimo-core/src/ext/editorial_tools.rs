@@ -344,7 +344,7 @@ fn remove_audio_effect_inner(ss: &mut Session, a: &Value) -> Result<Value, Strin
 }
 fn set_audio_pan_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let pan = finite(a, "pan", 0., -1., 1.)?;
-    get(ss, a)?.audio.pan = pan;
+    get(ss, a)?.audio.pan.base = pan;
     Ok(json!({"pan":pan,"law":"stereo balance; attenuate opposite channel"}))
 }
 fn clip_pcm(ss: &Session, id: &str) -> Result<Vec<f32>, String> {
