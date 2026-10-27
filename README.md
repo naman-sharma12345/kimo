@@ -32,6 +32,13 @@
 
 ## Demo
 
+<p align="center">
+  <a href="docs/media/kimo_brand_reveal.mp4"><img src="docs/media/kimo_brand_reveal.gif" alt="kimo brand reveal, rendered with kimo" width="480"></a><br>
+  <sub><b>Made with kimo.</b> A 33-second brand reveal rendered by the kimo engine from MCP tool calls. <a href="docs/media/kimo_brand_reveal.mp4">Watch it with sound (MP4)</a>.</sub>
+</p>
+
+### Watch an agent drive it
+
 <p align="center"><img src="docs/media/kimo_v5_live_demo.gif" alt="An agent's real MCP tool calls driving the kimo spectator" width="720"></p>
 
 <table>
