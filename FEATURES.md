@@ -476,7 +476,7 @@ Use the quality-tier audit and test notes in the BETA appendix; checklist marks 
 
 - [ ] VR to sphere, VR rotate sphere, VR blur/sharpen/denoise/glow, VR chromatic aberrations, VR plane to sphere, VR convert projection
 
-- [ ] refine soft matte, refine hard matte, simple choker variants, matte tools for tracked mattes
+- [x] refine soft matte, refine hard matte, simple choker variants, matte tools for tracked mattes [x `refine_matte` (classical trimap + colour-sampled alpha + guided filter, hair/edge quality) and `choker` (alpha erode/dilate) both pre-existed but had no functional test through the MCP command layer -- only incidental mentions in description-length/external-refs classification tests. Verified this pass with 4 new TDD tests: choker's positive amount shrinks and negative amount dilates a shape's alpha edge (confirmed against a background clip, since choker is alpha-only -- a newly-dilated pixel takes the shape's own unpainted colour, not its fill colour); refine_matte's `points` mode attaches a matte mask layer from a seed outline; refine_matte's `matte_dir` mode refines a real track_matte output across frames. "refine hard matte" reads as the same classical refine_matte path with a tight band/low samples for a crisper edge -- no separate tool, since the honest/soft-vs-hard distinction here is a parameter choice, not a different algorithm.]
 
 - [ ] add grain with presets, match grain, remove grain, dust & scratches (cleanup), median, noise HLS, noise alpha, noise (additive/mono), motion/temporal denoise
 
