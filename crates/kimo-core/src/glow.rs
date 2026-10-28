@@ -59,10 +59,66 @@ pub fn apply_deep(pr: &Params, f: &mut Frame, t: f64) {
     for i in 0..n { let a = f.d[i * 4 + 3]; if a <= 0.0 { continue; } let c = [dec(f.d[i * 4]), dec(f.d[i * 4 + 1]), dec(f.d[i * 4 + 2])]; let l = lum(c); if l <= 1e-6 { continue; }
         let e = knee_excess(l, th, knee); if e <= 0.0 { continue; } let k = e / l * a; for j in 0..3 { bp[i * 3 + j] = c[j] * k; } any = true; }
     if !any || gain <= 0.0 { return; }
-    let (mut tmp, mut out, mut acc) = (vec![0f32; n * 3], vec![0f32; n * 3], vec![0f32; n * 3]);
-    for (ci, &(s, wt)) in comps.iter().enumerate() { crate::guard::check(); let k = gaussian_kernel_1d(s); pass(&bp, &mut tmp, w, h, &k, true); pass(&tmp, &mut out, w, h, &k, false);
-        let tn = tints[ci]; for i in 0..n { for j in 0..3 { acc[i * 3 + j] += out[i * 3 + j] * wt * tn[j]; } } }
+    let acc = if half_res_on(pr, t) {
+        // Half-res fast path: downsample once, run every component's Gaussian pass at half size with
+        // half the sigma (one half-res pixel spans two full-res pixels, so this targets the same
+        // real-world blur extent), accumulate at half res, upsample the SUM once at the end (cheaper
+        // than upsampling every component separately, and avoids compounding upsample blur per tap).
+        let (bp_half, hw, hh) = downsample2x(&bp, w, h); let hn = hw * hh;
+        let (mut tmp, mut out) = (vec![0f32; hn * 3], vec![0f32; hn * 3]); let mut acc_half = vec![0f32; hn * 3];
+        for (ci, &(s, wt)) in comps.iter().enumerate() { crate::guard::check(); let k = gaussian_kernel_1d((s * 0.5).max(1e-3));
+            pass(&bp_half, &mut tmp, hw, hh, &k, true); pass(&tmp, &mut out, hw, hh, &k, false);
+            let tn = tints[ci]; for i in 0..hn { for j in 0..3 { acc_half[i * 3 + j] += out[i * 3 + j] * wt * tn[j]; } } }
+        upsample2x(&acc_half, hw, hh, w, h)
+    } else {
+        let (mut tmp, mut out, mut acc) = (vec![0f32; n * 3], vec![0f32; n * 3], vec![0f32; n * 3]);
+        for (ci, &(s, wt)) in comps.iter().enumerate() { crate::guard::check(); let k = gaussian_kernel_1d(s); pass(&bp, &mut tmp, w, h, &k, true); pass(&tmp, &mut out, w, h, &k, false);
+            let tn = tints[ci]; for i in 0..n { for j in 0..3 { acc[i * 3 + j] += out[i * 3 + j] * wt * tn[j]; } } }
+        acc
+    };
     for i in 0..n { let gl = [acc[i * 3] * gain, acc[i * 3 + 1] * gain, acc[i * 3 + 2] * gain]; if gl == [0.0; 3] { continue; }
         let a = f.d[i * 4 + 3]; let an = a + (1.0 - a) * gl[0].max(gl[1]).max(gl[2]).clamp(0.0, 1.0); if an <= 1e-6 { continue; }
         for j in 0..3 { let v = (dec(f.d[i * 4 + j]) * a + gl[j]) / an; f.d[i * 4 + j] = if lin { linear_to_srgb(v) } else { v }; } f.d[i * 4 + 3] = an; }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Half-res fast path (FEATURES.md L558 "u8/half-res fast path for glow/blur"): opt-in via the
+// `half_res` param (default 0, byte-identical to the pre-existing path). The bright-pass buffer is
+// box-downsampled 2x before the separable Gaussian passes (each component's sigma halved to match,
+// since one half-res pixel spans two full-res pixels) and the glow buffer is bilinear-upsampled back
+// before compositing. Quarter the pixels and half the kernel radius per component -- the two
+// multiply, so this is roughly an 8x reduction in the separable-pass multiply-adds, at the cost of a
+// softer, slightly less precise glow (a real speed/quality tradeoff, not a hidden approximation).
+/// Box-downsample RGB (stride 3) by 2x, ceil-dividing odd dimensions (the last row/col duplicates its
+/// only source row/col rather than reading past the edge).
+fn downsample2x(src: &[f32], w: usize, h: usize) -> (Vec<f32>, usize, usize) {
+    let dw = w.div_ceil(2).max(1); let dh = h.div_ceil(2).max(1);
+    let mut dst = vec![0f32; dw * dh * 3];
+    for dy in 0..dh { for dx in 0..dw {
+        let x0 = dx * 2; let y0 = dy * 2;
+        let xs = [x0, (x0 + 1).min(w - 1)]; let ys = [y0, (y0 + 1).min(h - 1)];
+        let mut acc = [0f32; 3];
+        for &sy in &ys { for &sx in &xs { let s = (sy * w + sx) * 3; for j in 0..3 { acc[j] += src[s + j]; } } }
+        let o = (dy * dw + dx) * 3; for j in 0..3 { dst[o + j] = acc[j] * 0.25; }
+    } }
+    (dst, dw, dh)
+}
+/// Bilinear-upsample RGB (stride 3) from (sw, sh) back to (w, h) -- the approximate inverse of
+/// downsample2x's 2x2 box (not exact; a box-down then bilinear-up is the standard half-res bloom
+/// technique, not a lossless round trip).
+fn upsample2x(src: &[f32], sw: usize, sh: usize, w: usize, h: usize) -> Vec<f32> {
+    let mut dst = vec![0f32; w * h * 3];
+    let (sw1, sh1) = ((sw.max(1) - 1) as f32, (sh.max(1) - 1) as f32);
+    for y in 0..h { for x in 0..w {
+        let fx = ((x as f32 + 0.5) / 2.0 - 0.5).clamp(0.0, sw1); let fy = ((y as f32 + 0.5) / 2.0 - 0.5).clamp(0.0, sh1);
+        let x0 = fx.floor() as usize; let y0 = fy.floor() as usize; let x1 = (x0 + 1).min(sw - 1); let y1 = (y0 + 1).min(sh - 1);
+        let (tx, ty) = (fx - x0 as f32, fy - y0 as f32);
+        for j in 0..3 {
+            let v00 = src[(y0 * sw + x0) * 3 + j]; let v10 = src[(y0 * sw + x1) * 3 + j];
+            let v01 = src[(y1 * sw + x0) * 3 + j]; let v11 = src[(y1 * sw + x1) * 3 + j];
+            dst[(y * w + x) * 3 + j] = v00 * (1.0 - tx) * (1.0 - ty) + v10 * tx * (1.0 - ty) + v01 * (1.0 - tx) * ty + v11 * tx * ty;
+        }
+    } }
+    dst
+}
+pub(crate) fn half_res_on(pr: &Params, t: f64) -> bool { p(pr, "half_res", 0.0, t) >= 0.5 }
