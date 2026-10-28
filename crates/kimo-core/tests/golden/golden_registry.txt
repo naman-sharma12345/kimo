@@ -109,6 +109,7 @@ create_bin eb4e9ec665ef012c
 create_shared_grade_graph 58fa459ac9911fc4
 create_subclip efb0b879c2640bcb
 cut_to_beat 08631deca2c5a949
+cut_to_speech 87cd4a7037642d9c
 decompose_track_homography 59de4e8c4deda02d
 delete_bin 29303ec26c9b2be7
 delete_clip f4a1f352f81309a7

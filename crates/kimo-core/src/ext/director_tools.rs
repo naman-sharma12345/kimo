@@ -580,6 +580,45 @@ fn cut_to_beat(ss: &mut Session, a: &Value) -> Result<Value, String> {
         "note": "every cut is on a beat of the music (shot clip sound muted); add text on a new track, then finish_audio"}))
 }
 
+
+// FEATURES.md "auto reframe (cover-fit decode), scene edit detection, auto-cut to beats / to speech": auto_reframe,
+// detect_cuts and scene_split already shipped pre-v7; cut_to_beat above is the existing "to beats" recipe. This is
+// its "to speech" sibling -- same shape, same guarantees, but the fenceposts are where a narration/voiceover track's
+// own VAD-detected speech intervals start (via the `speech()` helper above), not a detected music beat grid.
+fn cut_to_speech(ss: &mut Session, a: &Value) -> Result<Value, String> {
+    let dia = str_arg(a, "dialogue_asset_id")?.to_string(); let (dpath, _ddur) = asset(ss, &dia)?;
+    let ids = str_list(a, "asset_ids")?; for id in &ids { asset(ss, id)?; }
+    let fps = fps(ss);
+    let n = opt_num(a, "phrases_per_shot", 1.0).clamp(1.0, 32.0) as usize;
+    let start = snap(opt_num(a, "start", 0.0).max(0.0), fps);
+    let aggr = opt_num(a, "aggressiveness", 1.0).clamp(0.0, 3.0) as u32;
+    let min_sil_ms = opt_num(a, "min_silence_ms", 300.0);
+    let pad_ms = opt_num(a, "pad_ms", 120.0);
+    let fenceposts: Vec<f64> = speech(ss, json!({"path": dpath}), aggr, min_sil_ms, pad_ms)?.into_iter().map(|(s, _e)| s).collect();
+    if fenceposts.len() < n + 1 { return Err("audio_speech_intervals found fewer than phrases_per_shot+1 speech intervals in the dialogue; cut by hand with add_clip".into()); }
+    // a steady grid doesn't apply here (speech isn't periodic); each interval's start is its own fencepost, grouped
+    // n at a time exactly the way cut_to_beat groups n beats -- shot k spans fencepost[k*n] to fencepost[(k+1)*n],
+    // so shots*n+1 fenceposts are needed for `shots` shots, same arithmetic as the beat grid above.
+    let shots = ids.len().min((fenceposts.len() - 1) / n).max(1);
+    if fenceposts.len() < shots * n + 1 { return Err(format!("the dialogue holds {} speech intervals; {shots} shots of {n} phrases need {}", fenceposts.len(), shots * n + 1)); }
+    let t0 = fenceposts[0];
+    let vt = new_track(ss)?; let mut clips = vec![]; let mut cuts = vec![];
+    for k in 0..shots {
+        let (ps, pe) = (fenceposts[k * n] - t0, fenceposts[(k + 1) * n] - t0);
+        let (s, e) = (snap(start + ps, fps), snap(start + pe, fps)); let dd = e - s;
+        if dd <= 0.0 { return Err(format!("shot {k} came out zero or negative duration; try a smaller phrases_per_shot")); }
+        let id = &ids[k % ids.len()]; let (_, adur) = asset(ss, id)?;
+        let ip = a.get("in_points").and_then(|m| m.get(id.as_str())).and_then(|v| v.as_f64()).unwrap_or(((adur - dd) / 2.0).max(0.0));
+        let cid = call(ss, "add_clip", &json!({"track_id": vt, "source_type": "media", "asset_id": id, "start": r3(s), "duration": r3(dd.min(adur)), "in_point": snap(ip.min((adur - dd).max(0.0)), fps), "fit": "cover"}))?["clip_id"].as_str().unwrap_or("").to_string();
+        call(ss, "set_audio", &json!({"clip_id": cid, "mute": true}))?;
+        clips.push(json!({"clip_id": cid, "asset_id": id, "start": r3(s), "end": r3(s + dd.min(adur))})); cuts.push(r3(s));
+    }
+    let total = snap(fenceposts[shots * n] - t0, fps);
+    let dc = call(ss, "add_audio_clip", &json!({"asset_id": dia, "start": start, "duration": total, "in_point": r3(t0)}))?;
+    Ok(json!({"video_track_id": vt, "dialogue_clip_id": dc["clip_id"], "dialogue_track_id": dc["track_id"], "clips": clips, "cuts_at": cuts, "phrases_used": shots * n, "end": r3(start + total),
+        "note": "every cut lands where a new speech interval starts (shot clip sound muted); add captions with caption_from_words, then finish_audio"}))
+}
+
 // ---------------------------------------------------------------- timeline_summary
 fn timeline_summary(ss: &mut Session, _a: &Value) -> Result<Value, String> {
     let p = &ss.project; let mut end: f64 = 0.0;
@@ -862,6 +901,10 @@ pub fn commands() -> Vec<Command> {
         Command { name: "cut_to_beat", description: "Music reel in one call: lays the music and cuts the shots exactly on its beats, N beats per shot. Returns clip ids.", mutates: true,
             schema: obj(vec![("music_asset_id", s("imported music")), ("asset_ids", ids("shots in order (reused in turn if more shots are needed)")), ("beats_per_shot", n("default 4")), ("duration", n("target seconds (default: one shot per asset)")),
                 ("start", n("timeline seconds, default 0")), ("in_points", json!({"type": "object", "description": "optional {asset_id: source seconds}"}))], &["music_asset_id", "asset_ids"]), run: |ss, a| atomic(ss, a, cut_to_beat) },
+        Command { name: "cut_to_speech", description: "Narration reel in one call: lays the dialogue and cuts the shots exactly where new speech starts, N speech intervals per shot. Returns clip ids.", mutates: true,
+            schema: obj(vec![("dialogue_asset_id", s("imported narration/voiceover")), ("asset_ids", ids("shots in order (reused in turn if more shots are needed)")), ("phrases_per_shot", n("speech intervals per shot, default 1")),
+                ("aggressiveness", n("VAD aggressiveness 0..3, default 1")), ("min_silence_ms", n("gap that separates two speech intervals, default 300")), ("pad_ms", n("speech edge padding, default 120")),
+                ("start", n("timeline seconds, default 0")), ("in_points", json!({"type": "object", "description": "optional {asset_id: source seconds}"}))], &["dialogue_asset_id", "asset_ids"]), run: |ss, a| atomic(ss, a, cut_to_speech) },
         Command { name: "lint_edit", description: "Pre-export check: concrete problems (dark frames, text under the UI, b-roll over silence, loudness, captions, fonts), each with its fix call.", mutates: false,
             schema: obj(vec![("platform", s("tiktok (default)|reels|shorts|none")), ("target_lufs", n("default -14")), ("duration", json!({"type": "array", "items": {"type": "number"}, "description": "[min, max] seconds"})), ("dialogue_track", s("default: the lowest track with speech"))], &[]), run: lint_edit },
         Command { name: "timeline_summary", description: "Compact view of the edit: tracks bottom to top with each clip's id, source, start/end and text. Small; use instead of get_project.", mutates: false,
