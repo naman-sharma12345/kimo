@@ -472,7 +472,7 @@ Use the quality-tier audit and test notes in the BETA appendix; checklist marks 
 
 - [ ] slider, checkbox, color, point, angle, layer, dropdown controls feeding any param
 
-- [ ] 4-color gradient, advanced lightning variants (strike, branch decay), audio spectrum, audio waveform, beam (laser), cell pattern, eyedropper fill, fill, fractal (Mandelbrot/Julia), paint bucket, radio waves, scribble, stroke, vegas (animated outline), write-on, caustics
+- [x] 4-color gradient, advanced lightning variants (strike, branch decay) [x `lightning`'s new strike/branch_decay params], audio spectrum, audio waveform, beam (laser), cell pattern, eyedropper fill, fill, fractal (Mandelbrot/Julia), paint bucket, radio waves, scribble, stroke, vegas (animated outline), write-on, caustics -- new crates/kimo-core/src/color/generators.rs module, 15 kinds registered via add_effect/catalog3, 16 TDD tests (tests/generators_and_lightning_v7.rs)
 
 - [ ] VR to sphere, VR rotate sphere, VR blur/sharpen/denoise/glow, VR chromatic aberrations, VR plane to sphere, VR convert projection
 
