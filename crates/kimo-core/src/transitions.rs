@@ -3,7 +3,7 @@
 use crate::effects::Frame;
 use crate::model::Transition;
 
-pub const KINDS: &[&str] = &["crossfade", "dissolve", "wipe", "wipe_left", "wipe_right", "wipe_up", "wipe_down", "diagonal", "blinds", "checker", "iris", "clock", "split_h", "split_v", "noise_dissolve", "slide_left", "slide_right", "slide_up", "slide_down", "zoom", "zoom_blur", "spin", "flash", "dip_black", "dip_white", "dip_color", "light_leak", "film_burn", "glitch", "whip_left", "whip_right", "shatter", "shatter_cells"];
+pub const KINDS: &[&str] = &["crossfade", "dissolve", "wipe", "wipe_left", "wipe_right", "wipe_up", "wipe_down", "diagonal", "blinds", "checker", "iris", "clock", "split_h", "split_v", "noise_dissolve", "block_dissolve", "card_wipe", "slide_left", "slide_right", "slide_up", "slide_down", "zoom", "zoom_blur", "spin", "flash", "dip_black", "dip_white", "dip_color", "light_leak", "film_burn", "glitch", "whip_left", "whip_right", "shatter", "shatter_cells"];
 pub const EASES: &[&str] = &["linear", "in", "out", "in_out", "in_cubic", "out_cubic", "in_out_cubic", "in_out_expo", "out_back", "out_bounce", "out_quart", "out_expo", "in_expo", "in_out_quint", "in_back", "in_out_back", "in_elastic", "out_elastic", "in_out_elastic", "in_bounce", "in_out_bounce"];
 
 pub fn ease(name: &str, t: f64) -> f64 {
@@ -61,6 +61,18 @@ pub fn plan(tr: &Transition, lt: f64, w: usize, h: usize) -> Plan {
         "blinds" => { let n = tr.count.max(2.0) as f32; let hh = hf / n; let sw = (soft * 0.5).max(0.02); p.mask = Some(Box::new(move |_, y| { let v = (y as f32 % hh) / hh; sstep((k * (1.0 + sw) - v) / sw) })); }
         "checker" => { let s = (wf / tr.count.max(2.0) as f32).max(1.0); let sw = (soft * 0.5).max(0.03); p.mask = Some(Box::new(move |x, y| { let (cx, cy) = ((x as f32 / s) as i32, (y as f32 / s) as i32); let off = if (cx + cy) % 2 == 0 { 0.0 } else { 0.5 }; sstep((k * (1.0 + 0.5 + sw) - off - ((x as f32 / s).fract() * 0.0)) / sw.max(0.2) ) })); }
         "noise_dissolve" => { let sc = (tr.count.max(1.0) as f32 * 4.0) / wf; let sw = soft.max(0.05); p.mask = Some(Box::new(move |x, y| { let n = vnoise(x as f32 * sc, y as f32 * sc, seed) * 0.65 + vnoise(x as f32 * sc * 2.3, y as f32 * sc * 2.3, seed + 7) * 0.35; sstep((k * (1.0 + sw) - n) / sw) })); }
+        "block_dissolve" => { // After Effects' Block Dissolve: discrete rectangular blocks pop to the incoming frame in a random order, not the smooth per-pixel noise_dissolve.
+            let n = tr.count.clamp(2.0, 64.0) as f32; let bs = (wf.max(hf) / n).max(2.0); let sw = soft.max(0.04);
+            p.mask = Some(Box::new(move |x, y| { let (bx, by) = ((x as f32 / bs) as i32, (y as f32 / bs) as i32); let th = hash(bx, by, seed); sstep((k * (1.0 + sw) - th) / sw) })); }
+        "card_wipe" => { // After Effects' Card Wipe, "Left-Right" rows-and-columns deal preset: the frame is cut into columns that flip/reveal one after another left to right, rather than one smooth edge.
+            let n = tr.count.clamp(2.0, 32.0) as f32; let cw = wf / n; let stagger = 0.65; // fraction of the whole transition each column's own reveal takes, so columns overlap like a dealt hand rather than firing all at once
+            let sw = soft.max(0.03);
+            p.mask = Some(Box::new(move |x, _| { let col = (x as f32 / cw).floor().min(n - 1.0); let start = (col / n) * (1.0 - stagger); let local = ((k - start) / stagger).clamp(0.0, 1.0); sstep((local - 0.5 + sw) / sw.max(0.05)) }));
+            p.post = Some(Box::new(move |f| { let (w, h) = (f.w, f.h); let src = f.d.clone(); // a brief horizontal squeeze per column near its own flip moment, standing in for the 3D card turn
+                for x in 0..w { let col = (x as f32 / cw).floor().min(n - 1.0); let start = (col / n) * (1.0 - stagger); let local = ((k - start) / stagger).clamp(0.0, 1.0);
+                    let squeeze = (1.0 - (local * 2.0 - 1.0).abs()).max(0.0); if squeeze < 0.01 { continue; } let scale = 1.0 - squeeze * 0.7; let cx = (col + 0.5) * cw; let sx = (cx + (x as f32 - cx) / scale.max(0.05)).round() as i32;
+                    if sx < 0 || sx >= w as i32 { for y in 0..h { f.d[(y * w + x) * 4 + 3] *= 1.0 - squeeze; } continue; }
+                    for y in 0..h { let si = (y * w + sx as usize) * 4; let di = (y * w + x) * 4; for j in 0..4 { f.d[di + j] = src[si + j]; } f.d[di + 3] *= 1.0 - squeeze * 0.4; } } })); }
         "slide_left" => p.dx = (1.0 - k as f64) * w as f64, "slide_right" => p.dx = -(1.0 - k as f64) * w as f64, "slide_up" => p.dy = (1.0 - k as f64) * h as f64, "slide_down" => p.dy = -(1.0 - k as f64) * h as f64,
         "zoom" => { p.op = sstep(k * 1.6); p.scale = 0.6 + 0.4 * k as f64; }
         "zoom_blur" => { p.op = sstep(k * 2.0); p.scale = 1.0 + (1.0 - k as f64) * 0.8 * tr.intensity; let amt = (1.0 - k).powi(2) * 0.35 * tr.intensity as f32; p.post = Some(Box::new(move |f| radial_blur(f, amt, 14))); }
