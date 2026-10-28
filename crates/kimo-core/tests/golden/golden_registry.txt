@@ -93,6 +93,7 @@ check_environment 9d09b0da6a1d5b9c
 checkpoint 4063b9f4243b3a4e
 checkpoint_delete 22a3aee8d04e2bd6
 clear_essential_properties b39aebdb8a78d6ab
+clear_expression_script 5eab667b02c3b065
 clear_path_keys f99ff5da3693043a
 clear_source_marks 6d6920f190cf86fe
 collect_project 91bcadd45280c914
@@ -220,6 +221,7 @@ list_dependencies ec2e3a76db35b220
 list_edit_points d4ad4058dd15f335
 list_effects 09b58718710daf36
 list_essential_properties 2c137190024edd96
+list_expression_scripts 857cf144093d2c21
 list_fonts 72b7c1ebd21fc6d3
 list_hooks 483fb6afdc9b81f6
 list_layer_styles dbde2afd8c479198
@@ -377,6 +379,7 @@ set_effect_mask 500c58e69ce9bb0c
 set_effect_param d0f88adb011e356c
 set_essential_properties 7533e0e054052993
 set_expression 12c7a08732138781
+set_expression_script aafd04ee15722a62
 set_flow_blur 7e459b163e1a216d
 set_grade_graph 6748da7824c2fc7e
 set_grade_node 01ef22101da7231f

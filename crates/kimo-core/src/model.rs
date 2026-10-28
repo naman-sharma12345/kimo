@@ -218,6 +218,12 @@ pub struct Project {
     /// run_hooks(event) is invoked. Absent/empty for every project that never called register_hook, so old project
     /// files stay byte-stable. Explicitly triggered (run_hooks), not auto-fired by render/export -- see data_driven_v7.rs.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")] pub hooks: BTreeMap<String, Vec<crate::ext::data_driven_v7::HookEntry>>,
+    /// Free-form expression scripts (FEATURES.md L210/L220 gap, ext/expr_interp_v7.rs): Project.links'
+    /// sibling record for a real small expression language instead of a fixed multiplier/offset. Absent/
+    /// empty for every project that never called set_expression_script, so old project files stay byte-
+    /// stable. Resolved fresh (expr_interp_v7::resolve_live, which also resolves links) at every render
+    /// and sample_property read; the persisted keys are the last-bake snapshot for non-live readers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")] pub expr_scripts: Vec<crate::ext::expr_interp_v7::ExprScript>,
     pub name: String,
     pub width: u32,
     pub height: u32,
@@ -246,7 +252,7 @@ pub struct Project {
 
 impl Default for Project {
     fn default() -> Self {
-        Project { links: vec![], proxies: Default::default(), grade_scopes: Default::default(), lights: BTreeMap::new(), materials: BTreeMap::new(), editorial: Default::default(), ocio_view_delivery: None, occluders: BTreeMap::new(), color_pipeline: Default::default(), camera: BTreeMap::new(), comp3d: None, hooks: BTreeMap::new(), name: "untitled".into(), width: 1280, height: 720, fps: 30.0, assets: BTreeMap::new(), bins: vec![], subclips: BTreeMap::new(), tracks: vec![], next_id: 1, markers: vec![], deps: None, templates: vec![], base_dir: None }
+        Project { links: vec![], proxies: Default::default(), grade_scopes: Default::default(), lights: BTreeMap::new(), materials: BTreeMap::new(), editorial: Default::default(), ocio_view_delivery: None, occluders: BTreeMap::new(), color_pipeline: Default::default(), camera: BTreeMap::new(), comp3d: None, hooks: BTreeMap::new(), expr_scripts: vec![], name: "untitled".into(), width: 1280, height: 720, fps: 30.0, assets: BTreeMap::new(), bins: vec![], subclips: BTreeMap::new(), tracks: vec![], next_id: 1, markers: vec![], deps: None, templates: vec![], base_dir: None }
     }
 }
 

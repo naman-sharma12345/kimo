@@ -27,7 +27,7 @@ fn fnum(a: &Value, k: &str, d: f64) -> Result<f64, String> {
 /// A clip/effect property's value at timeline time `t`, read the same way sample_property reads it (clip-local time via
 /// render::clip_local_time, falling back to the standard default for an unkeyed standard property) -- but as a pure function of
 /// a `&Project`, no Session, so it can run from inside the renderer and from a read-only command without mutating anything.
-fn eval_property_at(p: &Project, clip_id: &str, property: &str, effect_id: Option<&str>, t: f64) -> Result<f64, String> {
+pub(crate) fn eval_property_at(p: &Project, clip_id: &str, property: &str, effect_id: Option<&str>, t: f64) -> Result<f64, String> {
     let c = p.find_clip(clip_id).ok_or_else(|| format!("no clip '{clip_id}'"))?;
     let lt = crate::render::clip_local_time(c, t);
     if let Some(id) = effect_id {
