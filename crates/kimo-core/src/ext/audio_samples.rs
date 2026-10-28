@@ -195,6 +195,7 @@ fn import(ss: &mut Session, a: &Value) -> Result<Value, String> {
                     height: 0,
                     duration: n as f64 / s.rate as f64,
                     fps: 0.,
+                    bin: None,
                 },
             );
             id

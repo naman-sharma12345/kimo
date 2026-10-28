@@ -30,6 +30,6 @@ pub fn commands() -> Vec<Command> { vec![
                 sin.write_all(&rgb).map_err(|e| format!("ffmpeg pipe: {e}"))?; }
             drop(sin); if !enc.wait().map_err(|e| e.to_string())?.success() { return Err("ffmpeg encode failed".into()); }
             let mut res = json!({"path": out, "frames": f1 + 1 - f0, "lens": {"k1": k1, "k2": k2, "focal_px": f, "cx": cx, "cy": cy, "from": src_note}, "seconds": t0.elapsed().as_secs_f64()});
-            if a.get("import").and_then(|v| v.as_bool()).unwrap_or(true) { let (aw, ah, d, afps) = crate::render::probe(&out)?; let id = ss.project.gen_id("asset"); ss.project.assets.insert(id.clone(), crate::model::Asset { origin:None,hash:None,kind:None,id: id.clone(), path: out.clone(), width: aw, height: ah, duration: d, fps: afps }); res["asset_id"] = json!(id); }
+            if a.get("import").and_then(|v| v.as_bool()).unwrap_or(true) { let (aw, ah, d, afps) = crate::render::probe(&out)?; let id = ss.project.gen_id("asset"); ss.project.assets.insert(id.clone(), crate::model::Asset { origin:None,hash:None,kind:None,id: id.clone(), path: out.clone(), width: aw, height: ah, duration: d, fps: afps, bin: None }); res["asset_id"] = json!(id); }
             Ok(res) } },
 ] }

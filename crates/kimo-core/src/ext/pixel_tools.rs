@@ -105,6 +105,7 @@ fn import(ss: &mut Session, a: &Value) -> Result<Value, String> {
             height: f.h as u32,
             duration: 0.,
             fps: 25.,
+            bin: None,
         },
     );
     Ok(

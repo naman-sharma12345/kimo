@@ -86,7 +86,7 @@
 85 set_meta {"id":"@nope"}	name_not_found: no clip named 'nope'. Nearest: (no clip has a name yet; set one with set_meta)
 86 set_meta {"id":"clip3","target":"zzz"}	target is not allowed. Valid: clip, track
 87 set_meta {"id":"clip3","tags":["bad tag"]}	invalid_name: tag 'bad tag' must be 1..64 characters from A-Z a-z 0-9 _ . - : =
-88 set_meta {"id":"track1","role":"x","target":"track"}	tracks only carry a name; role and tags are for clips
+88 set_meta {"id":"track1","role":"x","target":"track"}	tracks only carry a name; role, color and tags are for clips
 89 find {"limit":0}	limit must be an integer 1..500
 90 find {"kind":"zzz"}	kind is not allowed. Valid: clip, track
 91 find {"time_range":[2.0,1.0]}	time_range must be [start, end] seconds with start <= end

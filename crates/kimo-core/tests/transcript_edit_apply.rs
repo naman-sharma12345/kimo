@@ -43,6 +43,7 @@ fn fixture() -> (Session, String, String) {
             origin: None,
             hash: None,
             kind: None,
+            bin: None,
         },
     );
     ss.project.find_clip_mut(&clip).unwrap().source = Source::Media {

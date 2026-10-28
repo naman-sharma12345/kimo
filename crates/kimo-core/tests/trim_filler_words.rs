@@ -26,7 +26,7 @@ fn fixture(duration: f64) -> (Session, String, String, String) {
     call(&mut ss, "project_set", json!({"width": 64, "height": 36, "fps": 25}));
     let track = call(&mut ss, "add_track", json!({}))["track_id"].as_str().unwrap().to_string();
     let c1 = call(&mut ss, "add_clip", json!({"track_id": track, "source_type": "solid", "color": "#ff0000", "start": 0, "duration": duration}))["clip_id"].as_str().unwrap().to_string();
-    ss.project.assets.insert("asset1".into(), Asset { id: "asset1".into(), path: "fixture.mp4".into(), width: 64, height: 36, duration, origin: None, hash: None, kind: None, fps: 25.0 });
+    ss.project.assets.insert("asset1".into(), Asset { id: "asset1".into(), path: "fixture.mp4".into(), width: 64, height: 36, duration, origin: None, hash: None, kind: None, fps: 25.0, bin: None });
     ss.project.find_clip_mut(&c1).unwrap().source = Source::Media { asset: "asset1".into() };
     let c2 = call(&mut ss, "add_clip", json!({"track_id": track, "source_type": "solid", "color": "#00ff00", "start": duration, "duration": 2.0}))["clip_id"].as_str().unwrap().to_string();
     (ss, track, c1, c2)

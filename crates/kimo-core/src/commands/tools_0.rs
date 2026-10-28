@@ -15,7 +15,7 @@ pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
     Command { name: "import_media", description: "Import a video file as an asset (probes size/duration). Returns asset id.", mutates: true,
         schema: obj(vec![("path", s("absolute path to media file"))], &["path"]),
         run: |ss, a| { let path = str_arg(a, "path")?; let (w, h, d, fps) = render::probe(path)?; render::check_importable(path)?;
-            let id = ss.project.gen_id("asset"); ss.project.assets.insert(id.clone(), Asset { origin:None,hash:None,kind:None,id: id.clone(), path: path.into(), width: w, height: h, duration: d, fps });
+            let id = ss.project.gen_id("asset"); ss.project.assets.insert(id.clone(), Asset { origin:None,hash:None,kind:None,id: id.clone(), path: path.into(), width: w, height: h, duration: d, fps, bin: None });
             Ok(json!({"asset_id":id,"width":w,"height":h,"duration":d,"fps":fps})) } },
     Command { name: "add_track", description: "Add a track on top of the stack. Higher tracks composite over lower ones.", mutates: true,
         schema: obj(vec![], &[]),

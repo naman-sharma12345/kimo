@@ -177,7 +177,16 @@ pub struct Track { pub id: String, pub clips: Vec<std::sync::Arc<Clip>>, #[serde
 impl Track { pub fn cm(&mut self, i: usize) -> &mut Clip { std::sync::Arc::make_mut(&mut self.clips[i]) } }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Asset { #[serde(default,skip_serializing_if="Option::is_none")] pub origin:Option<String>, #[serde(default,skip_serializing_if="Option::is_none")] pub hash:Option<String>, #[serde(default,skip_serializing_if="Option::is_none")] pub kind:Option<String>, pub id: String, pub path: String, pub width: u32, pub height: u32, pub duration: f64, pub fps: f64 }
+pub struct Asset { #[serde(default,skip_serializing_if="Option::is_none")] pub origin:Option<String>, #[serde(default,skip_serializing_if="Option::is_none")] pub hash:Option<String>, #[serde(default,skip_serializing_if="Option::is_none")] pub kind:Option<String>, pub id: String, pub path: String, pub width: u32, pub height: u32, pub duration: f64, pub fps: f64,
+    /// Media-pool organisation (FEATURES.md L85): the bin this asset is filed under, by name. None = unfiled (the
+    /// pool root). Absent from old projects, so they stay byte-stable; set/cleared via `move_asset_to_bin`.
+    #[serde(default, skip_serializing_if="Option::is_none")] pub bin: Option<String> }
+
+/// A named, saved sub-range of a media asset (FEATURES.md L85 "subclips"): bookmarks `[in_point, out_point)`
+/// source seconds under a name, so it can be found and placed on the timeline (`add_clip_from_subclip`) without
+/// re-remembering the exact numbers each time. Does not itself appear on any track.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Subclip { pub id: String, pub asset_id: String, #[serde(default, skip_serializing_if="Option::is_none")] pub name: Option<String>, pub in_point: f64, pub out_point: f64 }
 
 /// Persisted auto-occluder anchor recipe: lets a reloaded project rebuild the surface reference frame from the source media.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -210,6 +219,13 @@ pub struct Project {
     pub height: u32,
     pub fps: f64,
     pub assets: BTreeMap<String, Asset>,
+    /// Media-pool bin names that exist (FEATURES.md L85), including empty ones; an asset's `bin` field may also
+    /// name a bin not listed here if it predates explicit bin creation. Absent/empty for every project that never
+    /// called create_bin, so old files stay byte-stable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")] pub bins: Vec<String>,
+    /// Saved named sub-ranges of media assets (FEATURES.md L85 "subclips"). Absent/empty for every project that
+    /// never called create_subclip, so old files stay byte-stable.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")] pub subclips: BTreeMap<String, Subclip>,
     /// Bottom to top.
     pub tracks: Vec<Track>,
     #[serde(skip)]
@@ -226,7 +242,7 @@ pub struct Project {
 
 impl Default for Project {
     fn default() -> Self {
-        Project { links: vec![], proxies: Default::default(), grade_scopes: Default::default(), lights: BTreeMap::new(), materials: BTreeMap::new(), editorial: Default::default(), ocio_view_delivery: None, occluders: BTreeMap::new(), color_pipeline: Default::default(), camera: BTreeMap::new(), comp3d: None, name: "untitled".into(), width: 1280, height: 720, fps: 30.0, assets: BTreeMap::new(), tracks: vec![], next_id: 1, markers: vec![], deps: None, templates: vec![], base_dir: None }
+        Project { links: vec![], proxies: Default::default(), grade_scopes: Default::default(), lights: BTreeMap::new(), materials: BTreeMap::new(), editorial: Default::default(), ocio_view_delivery: None, occluders: BTreeMap::new(), color_pipeline: Default::default(), camera: BTreeMap::new(), comp3d: None, name: "untitled".into(), width: 1280, height: 720, fps: 30.0, assets: BTreeMap::new(), bins: vec![], subclips: BTreeMap::new(), tracks: vec![], next_id: 1, markers: vec![], deps: None, templates: vec![], base_dir: None }
     }
 }
 

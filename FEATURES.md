@@ -80,7 +80,7 @@ Use `tools/list` / `list_effects` for live schemas. Read the source parameter na
 
 - [ ] insert vs overwrite with auto-ripple on add_clip, three/four-point edit, source in/out marks
 - [ ] multicam: sync by audio/timecode, angle switching, multicam to flat
-- [ ] subclips, clip labels/colors, bins and metadata, search
+- [x] subclips, clip labels/colors, bins and metadata, search [new in v7]: subclips are named saved in/out bookmarks on an asset (`create_subclip`/`list_subclips`/`delete_subclip`/`add_clip_from_subclip`, a thin wrapper over `add_clip` so placement is byte-identical to a hand-placed clip with the same numbers); clip colour labels are a reserved `color:<name>` tag on `set_meta` (red/orange/yellow/green/cyan/blue/purple/pink/gray), surfaced and filterable on `find`; bins organise media-pool assets into named folders independent of timeline tracks (`create_bin`/`list_bins`/`rename_bin`/`delete_bin`/`move_asset_to_bin`/`find_assets`); clip names/roles/tags and `find`'s other filters were already shipped (names.rs)
 - [x] replace clip (keep effects): `replace_clip_media`; paste attributes: `paste_attributes` (already shipped, verified); effect presets (save/apply): the `template_define`/`template_apply`/`template_list`/`template_describe` system (already shipped, general-purpose -- covers a saved, reusable effect preset); copy/paste keyframes: `copy_keyframes` (property or effect-param keys, optional time offset, replace or merge)
 - [ ] auto reframe (cover-fit decode), scene edit detection, auto-cut to beats / to speech
 - [ ] proxy workflow (generate proxy, toggle), offline media relink
