@@ -53,9 +53,11 @@ add_transition 206007cccc65ed1e
 analyze_color 34563f36b4186ca4
 analyze_exposure 9ca9ecd0326382b4
 analyze_exposure_sequence 635cbb61a9b00303
+animate_from_data 1b9dc88e9b6edc1b
 apply_asc_cdl 86d1717d70b3605b
 apply_camera_solve 01dc5fd029068bb6
 apply_motion_preset 7cfb92221fb1f5d8
+apply_responsive_time feb64da5ed7b3a18
 audio_effect_describe 07a0a16b3052585b
 audio_filter_response 4cae8e36278fcc87
 audio_probe 15e29ff927c2d40a
@@ -90,6 +92,7 @@ check_code_clip_determinism c8a2418c67534879
 check_environment 9d09b0da6a1d5b9c
 checkpoint 4063b9f4243b3a4e
 checkpoint_delete 22a3aee8d04e2bd6
+clear_essential_properties b39aebdb8a78d6ab
 clear_path_keys f99ff5da3693043a
 clear_source_marks 6d6920f190cf86fe
 collect_project 91bcadd45280c914
@@ -216,7 +219,9 @@ list_captions 524db21fe840e247
 list_dependencies ec2e3a76db35b220
 list_edit_points d4ad4058dd15f335
 list_effects 09b58718710daf36
+list_essential_properties 2c137190024edd96
 list_fonts 72b7c1ebd21fc6d3
+list_hooks 483fb6afdc9b81f6
 list_layer_styles dbde2afd8c479198
 list_lights 7242b7eca8aa84b6
 list_markers 63ae2e496ef97ab2
@@ -277,10 +282,12 @@ recipe_describe d6500745b10aabda
 recipe_list 260d6e832e090377
 redo 738dbd6488fa90b3
 refine_matte b2b938688521e43d
+register_hook b0eb54c7424279fe
 relink_media 007d3b0771ae5694
 remove_audio_effect 0efeb2144dd5d9f7
 remove_effect e5c9246d4f7c20de
 remove_grade_node 96f0bed092feb2d4
+remove_hook 82a1eab6c867de68
 remove_key 2851ce7e50af840d
 remove_layer_style 69a7851b1eb14e5b
 remove_light 2264fcd8e32fe212
@@ -329,6 +336,7 @@ ripple_delete af7455d513b9e3c9
 ripple_trim 5be54654d9c33c34
 roll_edit 6b0329ead4107025
 roto_propagate d82172bedca52a94
+run_hooks 400612110e836b40
 saliency_map 109791485c05b75a
 sample_advection_field cc26c0f26246430c
 sample_diffuse_sh_raw 7d79d4f10018ecab
@@ -367,6 +375,7 @@ set_echo c3655eedbd0435d0
 set_effect_encoding a1a83363698fc747
 set_effect_mask 500c58e69ce9bb0c
 set_effect_param d0f88adb011e356c
+set_essential_properties 7533e0e054052993
 set_expression 12c7a08732138781
 set_flow_blur 7e459b163e1a216d
 set_grade_graph 6748da7824c2fc7e

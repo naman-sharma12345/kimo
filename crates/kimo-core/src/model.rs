@@ -214,6 +214,10 @@ pub struct Project {
     /// 3D compositor (comp3d.rs, set_3d_compositor): depth sorting, intersections, shadows, depth of field. None (absent from the
     /// file) or enabled = false renders exactly as before.
     #[serde(default, skip_serializing_if = "Option::is_none")] pub comp3d: Option<crate::comp3d::Comp3d>,
+    /// Scripting hooks (FEATURES.md L239): named lifecycle events, each a list of template_apply calls to run when
+    /// run_hooks(event) is invoked. Absent/empty for every project that never called register_hook, so old project
+    /// files stay byte-stable. Explicitly triggered (run_hooks), not auto-fired by render/export -- see data_driven_v7.rs.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")] pub hooks: BTreeMap<String, Vec<crate::ext::data_driven_v7::HookEntry>>,
     pub name: String,
     pub width: u32,
     pub height: u32,
@@ -242,7 +246,7 @@ pub struct Project {
 
 impl Default for Project {
     fn default() -> Self {
-        Project { links: vec![], proxies: Default::default(), grade_scopes: Default::default(), lights: BTreeMap::new(), materials: BTreeMap::new(), editorial: Default::default(), ocio_view_delivery: None, occluders: BTreeMap::new(), color_pipeline: Default::default(), camera: BTreeMap::new(), comp3d: None, name: "untitled".into(), width: 1280, height: 720, fps: 30.0, assets: BTreeMap::new(), bins: vec![], subclips: BTreeMap::new(), tracks: vec![], next_id: 1, markers: vec![], deps: None, templates: vec![], base_dir: None }
+        Project { links: vec![], proxies: Default::default(), grade_scopes: Default::default(), lights: BTreeMap::new(), materials: BTreeMap::new(), editorial: Default::default(), ocio_view_delivery: None, occluders: BTreeMap::new(), color_pipeline: Default::default(), camera: BTreeMap::new(), comp3d: None, hooks: BTreeMap::new(), name: "untitled".into(), width: 1280, height: 720, fps: 30.0, assets: BTreeMap::new(), bins: vec![], subclips: BTreeMap::new(), tracks: vec![], next_id: 1, markers: vec![], deps: None, templates: vec![], base_dir: None }
     }
 }
 
