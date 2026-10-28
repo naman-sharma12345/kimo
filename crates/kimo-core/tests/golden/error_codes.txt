@@ -22,7 +22,7 @@
 21 add_shape	missing_arg	param=shape	hint=required arguments: track_id, shape, start, duration
 22 add_shape	not_found	param=track_id	hint=valid track ids (up to 10): track1, track2
 23 add_shape	invalid_value	param=shape	hint=valid values: rect, ellipse, polygon, line
-24 add_effect	invalid_value	param=kind	hint=nearest effect kinds: log_wheels, offset, bleach_bypass. list_effects returns all 147 kinds
+24 add_effect	invalid_value	param=kind	hint=nearest effect kinds: log_wheels, offset, bleach_bypass. list_effects returns all 153 kinds
 25 add_effect	not_found	param=clip_id	hint=valid clip ids (up to 10): clip3
 26 set_keyframe	missing_arg	param=value	hint=required arguments: clip_id, property, time, value
 27 set_keyframe	invalid_value	param=property	hint=valid values: opacity, x, y, scale, rotation, rot_x, rot_y, pos_z, backface, fill_alpha, stroke_alpha. To keyframe an effect param pass effect_id

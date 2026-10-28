@@ -116,6 +116,7 @@ pub fn catalog3() -> &'static [Entry] {
         v.extend(warper::catalog());
         v.extend(hdr_zones::catalog());
         v.extend(generators::catalog());
+        v.extend(controls_v7::catalog());
         v.extend(crate::keying::catalog4());
         v
     })
@@ -172,6 +173,7 @@ pub fn apply3(kind: &str, pr: &Params, f: &mut Frame, t: f64, _seed: u64) -> Res
         "print_stock" => return printstock::apply(pr,f,t),
         "denoise" => return denoise::apply(pr,f,t),
         "four_color_gradient"|"radio_waves"|"beam"|"cell_pattern"|"eyedropper_fill"|"fill"|"fractal"|"paint_bucket"|"scribble"|"stroke"|"write_on"|"vegas"|"caustics"|"audio_spectrum"|"audio_waveform" => return generators::apply(kind, pr, f, t, _seed),
+        "slider_control"|"checkbox_control"|"angle_control"|"point_control"|"color_control"|"dropdown_control" => return controls_v7::apply(kind, pr, f, t, _seed),
         "bilateral_blur" => return bilateral_blur::apply(pr,f,t),
         "white_adaptation" => return adaptation::apply(pr,f,t),
         "soft_gamut_ray" => return gamut_ray::apply(pr,f,t),
@@ -247,6 +249,7 @@ pub mod effect_domain;
 
 pub mod fast_transfer;
 pub mod generators;
+pub mod controls_v7;
 #[cfg(test)] mod finish_reference;
 #[cfg(test)] mod printstock_reference;
 #[cfg(test)] mod film_fast_proof;

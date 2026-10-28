@@ -167,6 +167,7 @@ fn open_sites_are_classified() {
         ("editorial.rs", 1, "caller path (tool argument / output / temp file / test), not stored in the project"),
         ("ext/auto_captions.rs", 3, "2 PROJECT-DERIVED: a clip's media for its audio and sample frames, resolved through deps (Project::resolve); 1 temp: the recognizer's JSON output"),
         ("ext/cdl_files.rs", 1, "caller path (tool argument / output / temp file / test), not stored in the project"),
+        ("ext/data_driven_v7.rs", 2, "caller path (csv_path / json_path arguments of animate_from_data), not stored in the project"),
         ("ext/delivery.rs", 5, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),
         ("ext/check_environment.rs", 1, "no project path: the size of the whisper binary / model files check_environment reports (KIMO_WHISPER_BIN, KIMO_WHISPER_MODEL or the models dir); nothing is stored in the project"),
         ("ext/director_tools.rs", 4, "2 PROJECT-DERIVED (asset paths: the shot look of auto_rough_cut, the frame auto_grade measures), resolved through deps::resolve_str at the call site; 2 caller path (review_export's path argument: frame sheet and loudness), not stored in the project"),

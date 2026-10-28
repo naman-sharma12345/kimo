@@ -15,7 +15,7 @@ add_counter 2cfd3406e38575f3
 add_depth_parallax cc1c6063f0930b13
 add_detection_box e740cc0690940b44
 add_displacement_map be79622940cf29ef
-add_effect 2263fa276754511b
+add_effect 7fe53f9510a123aa
 add_emitter 940e20f3bb9b947f
 add_glitch_confetti ea3c9845ccf22d20
 add_glow_text 11957bdb81e0bc57
@@ -57,7 +57,7 @@ animate_from_data 1b9dc88e9b6edc1b
 apply_asc_cdl 86d1717d70b3605b
 apply_camera_solve 01dc5fd029068bb6
 apply_motion_preset 7cfb92221fb1f5d8
-apply_responsive_time feb64da5ed7b3a18
+apply_responsive_time cf77602d5eaadee4
 audio_effect_describe 07a0a16b3052585b
 audio_filter_response 4cae8e36278fcc87
 audio_probe 15e29ff927c2d40a
@@ -377,9 +377,9 @@ set_echo c3655eedbd0435d0
 set_effect_encoding a1a83363698fc747
 set_effect_mask 500c58e69ce9bb0c
 set_effect_param d0f88adb011e356c
-set_essential_properties 7533e0e054052993
+set_essential_properties 2d4f32d321caf3e7
 set_expression 12c7a08732138781
-set_expression_script aafd04ee15722a62
+set_expression_script 0485f0564460ed0e
 set_flow_blur 7e459b163e1a216d
 set_grade_graph 6748da7824c2fc7e
 set_grade_node 01ef22101da7231f
