@@ -160,6 +160,7 @@ fit_clip_duration 018a469206f430eb
 fit_info adda72ad5a63e40e
 fit_track_homography c5762f693abc9959
 flash_series db43cfc85282cae9
+flatten_multicam af5cbd366008b331
 focus_series 3c7dc1c18e49debe
 freeze_frame c6a17e82ed026eb3
 frozen_frames d296c70d5e736dff

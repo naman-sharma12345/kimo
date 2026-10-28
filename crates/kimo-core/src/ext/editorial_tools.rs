@@ -863,6 +863,37 @@ fn switch_angle_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {
 fn list_multicam(ss: &mut Session, _: &Value) -> Result<Value, String> {
     Ok(json!(ss.project.editorial.multicams))
 }
+
+/// FEATURES.md "multicam: ... multicam to flat". Bakes the group's current cut (whatever `rebuild` last
+/// wrote to its track, from add_multicam/switch_angle) into plain timeline clips by discarding the group's
+/// own metadata (angles, switches, audio_angle) from `editorial.multicams`; the track and its clips are
+/// untouched -- only the *ability to switch_angle it again* is gone. That is the whole point: switch_angle
+/// calls `rebuild`, which replaces the track's clips wholesale, silently destroying any manual trim/effect/
+/// grade someone added to those clips after the last switch. Flattening is how you say "this cut is final,
+/// stop regenerating this track" before doing manual work on it.
+fn flatten_multicam_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {
+    let id = str_arg(a, "multicam_id")?;
+    let g = ss.project.editorial.multicams.get(id).ok_or("no multicam")?.clone();
+    if let Some(name) = a.get("track_name") {
+        let name = name.as_str().ok_or("track_name must be a string")?;
+        if name.is_empty() { return Err("track_name must not be empty".into()); }
+        let tr = ss.project.tracks.iter_mut().find(|t| t.id == g.track_id).ok_or("multicam track deleted")?;
+        tr.name = name.to_string();
+    }
+    ss.project.editorial.multicams.remove(id);
+    let clip_count = ss.project.tracks.iter().find(|t| t.id == g.track_id).map(|t| t.clips.len()).unwrap_or(0);
+    Ok(json!({"ok": true, "track_id": g.track_id, "clip_count": clip_count, "angle_count": g.angles.len(), "switch_count": g.switches.len()}))
+}
+fn flatten_multicam(ss: &mut Session, a: &Value) -> Result<Value, String> {
+    let before = ss.project.clone();
+    match flatten_multicam_inner(ss, a) {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            ss.project = before;
+            Err(e)
+        }
+    }
+}
 pub fn commands() -> Vec<Command> {
     vec![
  Command{name:"add_captions",description:"Create editable timed caption group using existing SRT importer/transcriber. Presets subtitle|boxed|yellow. Burn-in on by default.",mutates:true,schema:obj(vec![("track_id",s("unlocked track")),("source",json!({"type":"string","enum":["srt","transcribe"]})),("path",s("SRT or media path")),("out_srt",s("required for transcribe")),("model",s("Whisper model")),("style",s("subtitle|boxed|yellow")),("font",s("TTF path")),("size",n("pixel size")),("y",n("vertical offset pixels"))],&["track_id","source","path"]),run:add_captions},
@@ -881,6 +912,7 @@ pub fn commands() -> Vec<Command> {
  Command{name:"add_multicam",description:"Move 2..16 synchronized media clips into persistent multicam group; common interval, angle zero video, fixed audio angle. Generates normal timeline clips for all exports.",mutates:true,schema:obj(vec![("angles",json!({"type":"array","items":{"type":"string"}})),("audio_angle",json!({"type":"integer","minimum":0}))],&["angles"]),run:add_multicam},
  Command{name:"switch_angle",description:"Switch multicam video at absolute timeline seconds t, zero-based angle; continuous audio remains fixed. Rebuilds group track, replacing manual edits there.",mutates:true,schema:obj(vec![("multicam_id",s("group")),("t",n("absolute timeline seconds")),("angle",json!({"type":"integer","minimum":0}))],&["multicam_id","t","angle"]),run:switch_angle},
  Command{name:"list_multicam",description:"Read multicam groups, angle recipes and switches.",mutates:false,schema:obj(vec![],&[]),run:list_multicam},
+ Command{name:"flatten_multicam",description:"Bake a multicam group's current cut into plain timeline clips and discard the group. switch_angle can no longer rebuild/replace them afterwards.",mutates:true,schema:obj(vec![("multicam_id",s("group")),("track_name",s("optional: rename the now-plain track"))],&["multicam_id"]),run:flatten_multicam},
 ]
 }
 
