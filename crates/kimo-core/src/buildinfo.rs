@@ -6,7 +6,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Short git commit the binary was built from, "-dirty" when the work tree had uncommitted changes, "unknown" outside a git checkout.
 pub const COMMIT: &str = env!("KIMO_GIT_COMMIT");
 /// Version of the saved project file layout. Bump when old binaries could misread a new file; load_project refuses files with a newer schema.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 fn tool_version(bin: &str) -> Value {
     match std::process::Command::new(bin).arg("-version").output() {

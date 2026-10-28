@@ -122,9 +122,20 @@ pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
             Ok(json!({"path":p,"stale_history_removed":stale})) } },
     Command { name: "load_project", description: "Load a project JSON file.", mutates: true,
         schema: obj(vec![("path", s("file path")), ("report", json!({"type":"boolean","description":"also return `dependencies`: counts and the list of missing / changed external files (same data as list_dependencies, without hashing)"})), ("with_history", json!({"type":"boolean","description":"also load <path>.history (written by save_project with_history) so undo steps and checkpoints come back; the load itself is one more undo step on top. If the history is missing or does not belong to this project file (sha check) the project still loads and history_ignored says why"}))], &["path"]),
-        run: |ss, a| { let pth = str_arg(a, "path")?.to_string(); let t = std::fs::read_to_string(&pth).map_err(|e| e.to_string())?; let proj: Project = serde_json::from_str(&t).map_err(|e| e.to_string())?; for (id, asset) in &proj.assets { if std::path::Path::new(&asset.path).is_file() || crate::deps::seq_frame(&asset.path, 0).is_some() { render::check_importable(&asset.path).map_err(|e| format!("asset {id}: {e}"))?; } }
-            { #[derive(serde::Deserialize)] struct Hdr { #[serde(default)] kimo: Option<Value> } if let Ok(Hdr { kimo: Some(k) }) = serde_json::from_str::<Hdr>(&t) { if let Some(sv) = k.get("schema_version").and_then(|v| v.as_u64()) { if sv > crate::buildinfo::SCHEMA_VERSION as u64 { return Err(format!("project schema_version {sv} is newer than this build supports ({}); it was saved by kimo {} (commit {}). Update kimo to open it.", crate::buildinfo::SCHEMA_VERSION, k.pointer("/last_saved_with/version").and_then(|v| v.as_str()).unwrap_or("?"), k.pointer("/last_saved_with/commit").and_then(|v| v.as_str()).unwrap_or("?"))); } } } }
-            { #[derive(serde::Deserialize)] struct H2 { #[serde(default)] kimo: Option<Value> } let k = serde_json::from_str::<H2>(&t).ok().and_then(|h| h.kimo); ss.created_with = Some(k.and_then(|k| k.get("created_with").cloned()).unwrap_or_else(|| json!({"version": "unknown", "note": "saved before build identity existed"}))); }
+        run: |ss, a| { let pth = str_arg(a, "path")?.to_string(); let t = std::fs::read_to_string(&pth).map_err(|e| e.to_string())?;
+            let mut raw: Value = serde_json::from_str(&t).map_err(|e| e.to_string())?;
+            let kimo_header = raw.get("kimo").cloned();
+            let mut file_schema_version: u32 = 1;
+            if let Some(k) = &kimo_header { if let Some(sv) = k.get("schema_version").and_then(|v| v.as_u64()) {
+                if sv > crate::buildinfo::SCHEMA_VERSION as u64 { return Err(format!("project schema_version {sv} is newer than this build supports ({}); it was saved by kimo {} (commit {}). Update kimo to open it.", crate::buildinfo::SCHEMA_VERSION, k.pointer("/last_saved_with/version").and_then(|v| v.as_str()).unwrap_or("?"), k.pointer("/last_saved_with/commit").and_then(|v| v.as_str()).unwrap_or("?"))); }
+                file_schema_version = sv as u32; } }
+            // Migrate the raw JSON forward to this build's SCHEMA_VERSION BEFORE deserializing into Project (a
+            // migration may change shapes serde's #[serde(default)] alone can't -- see migrations.rs). A file
+            // already at (or past, refused above) the current version runs zero migrations and is untouched.
+            crate::migrations::migrate(&mut raw, file_schema_version);
+            let proj: Project = serde_json::from_value(raw).map_err(|e| e.to_string())?;
+            for (id, asset) in &proj.assets { if std::path::Path::new(&asset.path).is_file() || crate::deps::seq_frame(&asset.path, 0).is_some() { render::check_importable(&asset.path).map_err(|e| format!("asset {id}: {e}"))?; } }
+            ss.created_with = Some(kimo_header.and_then(|k| k.get("created_with").cloned()).unwrap_or_else(|| json!({"version": "unknown", "note": "saved before build identity existed"})));
             let mut ignored: Option<String> = None; let hist = if a.get("with_history").and_then(|v| v.as_bool()).unwrap_or(false) { match std::fs::read(format!("{pth}.history")) { Err(e) => { ignored = Some(format!("missing ({e})")); None } Ok(ht) => { let h: Value = serde_json::from_slice(&ht).map_err(|e| e.to_string())?;
                 let want = h.get("project_sha").and_then(|v| v.as_str()).unwrap_or(""); let have = format!("{:016x}", fnv64(t.as_bytes()));
                 if want != have { ignored = Some(if want.is_empty() { "history file has no project_sha (older format)".to_string() } else { format!("history belongs to a different project save (history sha {want}, project sha {have})") }); None } else {
