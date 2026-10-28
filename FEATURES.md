@@ -233,7 +233,7 @@ Status honest: nothing below is done unless marked. Existing: motion blur (shutt
 
 ### Limits
 
-- [ ] shape layer operators: fill, stroke, gradient fill, trim paths, repeater, merge/offset paths, zig zag, pucker/bloat, wiggle paths, round corners, twist; bezier paths
+- [x] shape layer operators: fill, stroke, gradient fill, trim paths, repeater, merge/offset paths, zig zag, pucker/bloat, wiggle paths, round corners, twist; bezier paths -- fill, stroke, trim/repeater/merge/offset paths, gradient stroke and bezier paths (add_path_shape, SVG path syntax or points, every modifier) were already fully shipped pre-v7, as were zig_zag/pucker_bloat/wiggle/twist/round_corners (add_path_operator, pathops.rs: signed-distance-field path operators, composable with the other modifiers in effect order). [new in v7] gradient fill: shape_gradient_fill, the Gradient Stroke modifier's sibling for a shape's own fill (same linear r1/g1/b1->r2/g2/b2 blend along `angle`, independent colour pair, so a shape can carry a flat stroke over a gradient fill or vice versa) -- the one piece of this line that didn't already exist.
 - [ ] roto: AI object matte / roto brush (needs ML model), mask tracking, refine edge
 - [ ] light/color: layer styles (drop shadow [x as effect], inner/outer glow [x outer], bevel, stroke [x outline], gradient overlay)
 - [ ] responsive time / presets, essential properties, data-driven animation (JSON/CSV), scripting hooks

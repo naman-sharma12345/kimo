@@ -10,6 +10,7 @@ pub const KINDS: &[(&str, &str, &[(&str, f64)])] = &[
     ("shape_merge", "Merge Paths with a second shape (strings.shape rect|ellipse|polygon|line|path (path uses strings.d), strings.mode union|subtract|intersect|exclude); params w,h,dx,dy,sides,corner_radius", &[("w", 100.0), ("h", 100.0), ("dx", 0.0), ("dy", 0.0), ("sides", 5.0), ("corner_radius", 0.0)]),
     ("shape_trim", "Trim Paths: stroke only between start..end (0..1 of the outline: exact arc length on Bezier paths, angle around the center from -x on primitives), shifted by offset (cycles). Needs stroke_width > 0", &[("start", 0.0), ("end", 1.0), ("offset", 0.0)]),
     ("shape_gradient_stroke", "Gradient Stroke: stroke color blends (r1,g1,b1) -> (r2,g2,b2) across the shape along `angle` deg", &[("r1", 1.0), ("g1", 0.2), ("b1", 0.4), ("r2", 0.2), ("g2", 0.6), ("b2", 1.0), ("angle", 0.0)]),
+    ("shape_gradient_fill", "Gradient Fill: fill color blends (r1,g1,b1) -> (r2,g2,b2) across the shape along `angle` deg (same linear blend as Gradient Stroke, applied to the fill instead)", &[("r1", 1.0), ("g1", 0.2), ("b1", 0.4), ("r2", 0.2), ("g2", 0.6), ("b2", 1.0), ("angle", 0.0)]),
 ];
 
 pub fn sd(shape: &str, sides: u32, hw: f64, hh: f64, cr: f64, px: f64, py: f64) -> f64 {
@@ -21,7 +22,7 @@ pub fn sd(shape: &str, sides: u32, hw: f64, hh: f64, cr: f64, px: f64, py: f64) 
     }
 }
 
-pub struct Stack<'a> { pub path: Option<crate::paths::Path>, pub dist: Box<dyn Fn(f64, f64) -> f64 + 'a>, pub trim: Option<(f64, f64, f64)>, pub grad: Option<([f64; 3], [f64; 3], f64)> }
+pub struct Stack<'a> { pub path: Option<crate::paths::Path>, pub dist: Box<dyn Fn(f64, f64) -> f64 + 'a>, pub trim: Option<(f64, f64, f64)>, pub grad: Option<([f64; 3], [f64; 3], f64)>, pub grad_fill: Option<([f64; 3], [f64; 3], f64)> }
 
 /// Build the distance function (pixel coords) for `base` modified by the clip's shape_* effects at clip-local time `t`.
 /// The clip's Bezier path (effect `shape_path`: strings.d = SVG path, strings.fill_rule = nonzero|evenodd), if any.
@@ -29,7 +30,7 @@ pub fn path_of(effects: &[Effect], t: f64) -> Option<crate::paths::Path> { let e
 
 pub fn build<'a>(effects: &'a [Effect], base: impl Fn(f64, f64) -> f64 + 'a, cx: f64, cy: f64, t: f64) -> Stack<'a> {
     let mut dist: Box<dyn Fn(f64, f64) -> f64 + 'a> = Box::new(base);
-    let (mut trim, mut grad) = (None, None);
+    let (mut trim, mut grad, mut grad_fill) = (None, None, None);
     // outline parameter for the path operators: arc length on a Bezier path, angle around the centre on primitives (as trim uses)
     let pth = path_of(effects, t); let rmax = 2.0 * cx.hypot(cy);
     let u_of: std::rc::Rc<dyn Fn(f64, f64) -> f64 + 'a> = match &pth { Some(p) => { let p = p.clone(); std::rc::Rc::new(move |x, y| p.nearest(x, y).1) } None => std::rc::Rc::new(|x: f64, y: f64| (y.atan2(x) + PI) / TAU) };
@@ -46,11 +47,12 @@ pub fn build<'a>(effects: &'a [Effect], base: impl Fn(f64, f64) -> f64 + 'a, cx:
                 dist = Box::new(move |x, y| { let a = prev(x, y); let b = match &p2 { Some(p) => p.sd(x - cx - dx, y - cy - dy), None => sd(&shape, sides, hw, hh, cr, x - cx - dx, y - cy - dy) }; match mode.as_str() { "subtract" => a.max(-b), "intersect" => a.max(b), "exclude" => a.min(b).max(-(a.max(b))), _ => a.min(b) } }); }
             "shape_trim" => { trim = Some((g("start", 0.0), g("end", 1.0), g("offset", 0.0))); dist = prev; }
             "shape_gradient_stroke" => { grad = Some(([g("r1", 1.0), g("g1", 0.2), g("b1", 0.4)], [g("r2", 0.2), g("g2", 0.6), g("b2", 1.0)], g("angle", 0.0).to_radians())); dist = prev; }
+            "shape_gradient_fill" => { grad_fill = Some(([g("r1", 1.0), g("g1", 0.2), g("b1", 0.4)], [g("r2", 0.2), g("g2", 0.6), g("b2", 1.0)], g("angle", 0.0).to_radians())); dist = prev; }
             k if k.starts_with("shape_op_") => { dist = crate::pathops::apply(e, prev, cx, cy, t, u_of.clone(), rmax); }
             _ => { dist = prev; }
         }
     }
-    Stack { path: pth, dist, trim, grad }
+    Stack { path: pth, dist, trim, grad, grad_fill }
 }
 
 impl Stack<'_> {
@@ -64,6 +66,13 @@ impl Stack<'_> {
     }
     pub fn stroke_color(&self, px: f64, py: f64, w: f64, h: f64, base: [f64; 3]) -> [f64; 3] {
         let Some((c1, c2, a)) = self.grad else { return base };
+        let ext = (w.max(h) / 2.0).max(1.0); let k = ((px * a.cos() + py * a.sin()) / ext * 0.5 + 0.5).clamp(0.0, 1.0);
+        [c1[0] + (c2[0] - c1[0]) * k, c1[1] + (c2[1] - c1[1]) * k, c1[2] + (c2[2] - c1[2]) * k]
+    }
+    /// Same linear blend as `stroke_color`, for Gradient Fill (a separate modifier/colour pair so a shape can carry
+    /// a solid stroke over a gradient fill, or vice versa, at once).
+    pub fn fill_color(&self, px: f64, py: f64, w: f64, h: f64, base: [f64; 3]) -> [f64; 3] {
+        let Some((c1, c2, a)) = self.grad_fill else { return base };
         let ext = (w.max(h) / 2.0).max(1.0); let k = ((px * a.cos() + py * a.sin()) / ext * 0.5 + 0.5).clamp(0.0, 1.0);
         [c1[0] + (c2[0] - c1[0]) * k, c1[1] + (c2[1] - c1[1]) * k, c1[2] + (c2[2] - c1[2]) * k]
     }
