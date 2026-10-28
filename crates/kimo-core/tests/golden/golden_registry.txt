@@ -8,7 +8,7 @@ add_box_expand 757e74b37aa0ba37
 add_camera_shake 9a275014886af36b
 add_caption_cues 4df6d3d9f16aa500
 add_captions 59f096446c4d0d66
-add_clip b851a4076e91b8c2
+add_clip b26364e2a1be01ac
 add_clip_from_subclip 7830c64a31ad3e9b
 add_code_clip 79e8cbe027cdbd62
 add_counter 2cfd3406e38575f3
@@ -91,6 +91,7 @@ check_environment 9d09b0da6a1d5b9c
 checkpoint 4063b9f4243b3a4e
 checkpoint_delete 22a3aee8d04e2bd6
 clear_path_keys f99ff5da3693043a
+clear_source_marks 6d6920f190cf86fe
 collect_project 91bcadd45280c914
 compare_aces2_reference 59ec416ff6c4de21
 compare_linear_exposure afcdd34f6dab8f45
@@ -126,6 +127,7 @@ ecc_refine_track c3a928404a53f0c5
 edit_caption 9f54f456c1123d9f
 edit_caption_words 2dff6530ee6bd3a8
 edit_check 582d7e388de4d689
+edit_points 147e249e13bc1cfa
 effect_describe 4c04333355609e5d
 effect_uv_sample c4075e4402f9c60d
 evaluate_grade_graph_samples e9370ef17ee49951
@@ -167,6 +169,7 @@ get_curve 166dfa1a0157224c
 get_limits 2c2b2d5ae5bcde50
 get_project 2fa2cd0084662a79
 get_scopes 7e5e8a96e99a1fed
+get_source_marks 1588cf29b33bff95
 get_transform 50191c62fd9c165c
 grade_node_tracking 1ffa2a4a07a2951e
 group_clips 39d53498853f9730
@@ -225,6 +228,7 @@ list_transitions e316853ba177f3f8
 lk_residual_audit 2cf7e10ac95fd795
 load_project 231dc74f5980a8b3
 loop_clip 84a9f61420f1b87c
+mark_source f05beb0417bee904
 match_color 7826baef90c3deb6
 match_events ccd11b0e9f67e25e
 match_grade d8125018a0c24142

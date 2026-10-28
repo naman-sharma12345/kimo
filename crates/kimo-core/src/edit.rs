@@ -50,6 +50,51 @@ fn loc(p: &Project, id: &str) -> Result<(usize, usize), String> {
 fn unlocked(p: &Project, ti: usize) -> Result<(), String> { if p.tracks[ti].locked { Err(format!("track {} is locked", p.tracks[ti].id)) } else { Ok(()) } }
 /// Shift every clip on the track that starts at/after `t` by `d`.
 fn shift_after(tr: &mut Track, t: f64, d: f64, skip: &str) { for c in tr.clips.iter_mut() { if c.id != skip && c.start >= t - EPS { let ns = (c.start + d).max(0.0); if ns != c.start { std::sync::Arc::make_mut(c).start = ns; } } } }
+
+/// Shared core of `insert_gap`, reused directly (no re-dispatch / no second undo entry) by `add_clip`'s
+/// mode:"insert" (FEATURES.md "insert vs overwrite... three/four-point edit"). Same validation and behaviour.
+pub(crate) fn do_insert_gap(ss: &mut crate::commands::Session, track_id: &str, at: f64, duration: f64) -> Result<(), String> {
+    if !at.is_finite() || at < 0.0 { return Err("at must be a finite time >= 0".into()); }
+    if !duration.is_finite() || duration <= 0.0 || duration > 1.0e6 { return Err("duration must be > 0 and at most 1000000 seconds".into()); }
+    let nid = ss.project.gen_id("clip");
+    let ti = ss.project.tracks.iter().position(|t| t.id == track_id).ok_or("no such track")?;
+    unlocked(&ss.project, ti)?;
+    let tr = &mut ss.project.tracks[ti];
+    if let Some(ci) = tr.clips.iter().position(|c| c.start < at - EPS && c.start + c.duration > at + EPS) {
+        let original = tr.clips[ci].id.clone();
+        let r = cut(tr.cm(ci), at, nid.clone());
+        tr.clips.push(std::sync::Arc::new(r));
+        ss.project.grade_scopes.copy_binding(&original, &nid);
+    }
+    shift_after(tr, at, duration, "");
+    Ok(())
+}
+/// Shared core of `lift_range`, reused directly by `add_clip`'s mode:"overwrite" (same reasoning as `do_insert_gap`).
+pub(crate) fn do_lift_range(ss: &mut crate::commands::Session, track_id: &str, start: f64, end: f64, extract: bool) -> Result<(), String> {
+    if end <= start { return Err("end must be > start".into()); }
+    let ids = [ss.project.gen_id("clip"), ss.project.gen_id("clip")];
+    let ti = ss.project.tracks.iter().position(|t| t.id == track_id).ok_or("no such track")?;
+    unlocked(&ss.project, ti)?;
+    let tr = &mut ss.project.tracks[ti];
+    let mut out: Vec<std::sync::Arc<Clip>> = vec![];
+    let mut k = 0;
+    for mut c in tr.clips.drain(..) {
+        let ce = c.start + c.duration;
+        if ce <= start + EPS || c.start >= end - EPS { out.push(c); continue; }
+        if c.start < start - EPS && ce > end + EPS {
+            let mut r = cut(std::sync::Arc::make_mut(&mut c), end, ids[k].clone()); k += 1;
+            std::sync::Arc::make_mut(&mut c).duration = start - c.start; r.transition_in = None;
+            out.push(c); out.push(std::sync::Arc::new(r));
+        } else if c.start < start - EPS {
+            std::sync::Arc::make_mut(&mut c).duration = start - c.start; out.push(c);
+        } else if ce > end + EPS {
+            let r = cut(std::sync::Arc::make_mut(&mut c), end, ids[k].clone()); k += 1; out.push(std::sync::Arc::new(r));
+        }
+    }
+    tr.clips = out;
+    if extract { for c in tr.clips.iter_mut() { if c.start >= end - EPS { std::sync::Arc::make_mut(c).start -= end - start; } } }
+    Ok(())
+}
 fn new_marker_id(p: &mut Project) -> String { p.gen_id("marker") }
 
 /// Split `c` at timeline time `at`; returns right half.
@@ -113,22 +158,10 @@ pub fn commands() -> Vec<Command> { vec![
             tr.cm(ci).start += d; Ok(json!({"ok":true})) } },
     Command { name: "insert_gap", description: "Insert empty time on a track at `at`: clips starting at/after it shift later by `duration` (a clip spanning `at` is split).", mutates: true,
         schema: obj(vec![("track_id", s("track")), ("at", n("seconds")), ("duration", n("seconds"))], &["track_id","at","duration"]),
-        run: |ss, a| { let (at, d) = (na(a, "at")?, na(a, "duration")?); if !at.is_finite() || at < 0.0 { return Err("at must be a finite time >= 0".into()); } if !d.is_finite() || d <= 0.0 || d > 1.0e6 { return Err("duration must be > 0 and at most 1000000 seconds".into()); } let tid = sa(a, "track_id")?.to_string(); let nid = ss.project.gen_id("clip");
-            let ti = ss.project.tracks.iter().position(|t| t.id == tid).ok_or("no such track")?; unlocked(&ss.project, ti)?; let tr = &mut ss.project.tracks[ti];
-            if let Some(ci) = tr.clips.iter().position(|c| c.start < at - EPS && c.start + c.duration > at + EPS) { let original=tr.clips[ci].id.clone();let r = cut(tr.cm(ci), at, nid.clone()); tr.clips.push(std::sync::Arc::new(r));ss.project.grade_scopes.copy_binding(&original,&nid); }
-            shift_after(tr, at, d, ""); Ok(json!({"ok":true})) } },
+        run: |ss, a| { let (at, d) = (na(a, "at")?, na(a, "duration")?); let tid = sa(a, "track_id")?.to_string(); do_insert_gap(ss, &tid, at, d)?; Ok(json!({"ok":true})) } },
     Command { name: "lift_range", description: "Lift: remove all material between `start` and `end` on a track, leaving a gap (clips are cut/trimmed as needed). extract=true closes the gap (ripple).", mutates: true,
         schema: obj(vec![("track_id", s("track")), ("start", n("s")), ("end", n("s")), ("extract", json!({"type":"boolean"}))], &["track_id","start","end"]),
-        run: |ss, a| { let (st, en) = (na(a, "start")?, na(a, "end")?); if en <= st { return Err("end must be > start".into()); } let ex = a.get("extract").and_then(|v| v.as_bool()).unwrap_or(false);
-            let tid = sa(a, "track_id")?.to_string(); let ids = [ss.project.gen_id("clip"), ss.project.gen_id("clip")];
-            let ti = ss.project.tracks.iter().position(|t| t.id == tid).ok_or("no such track")?; unlocked(&ss.project, ti)?; let tr = &mut ss.project.tracks[ti]; let mut out: Vec<std::sync::Arc<Clip>> = vec![]; let mut k = 0;
-            for mut c in tr.clips.drain(..) { let ce = c.start + c.duration;
-                if ce <= st + EPS || c.start >= en - EPS { out.push(c); continue; }
-                if c.start < st - EPS && ce > en + EPS { let mut r = cut(std::sync::Arc::make_mut(&mut c), en, ids[k].clone()); k += 1; std::sync::Arc::make_mut(&mut c).duration = st - c.start; r.transition_in = None; out.push(c); out.push(std::sync::Arc::new(r)); }
-                else if c.start < st - EPS { std::sync::Arc::make_mut(&mut c).duration = st - c.start; out.push(c); }
-                else if ce > en + EPS { let r = cut(std::sync::Arc::make_mut(&mut c), en, ids[k].clone()); k += 1; out.push(std::sync::Arc::new(r)); }
-            }
-            tr.clips = out; if ex { for c in tr.clips.iter_mut() { if c.start >= en - EPS { std::sync::Arc::make_mut(c).start -= en - st; } } } Ok(json!({"ok":true})) } },
+        run: |ss, a| { let (st, en) = (na(a, "start")?, na(a, "end")?); let ex = a.get("extract").and_then(|v| v.as_bool()).unwrap_or(false); let tid = sa(a, "track_id")?.to_string(); do_lift_range(ss, &tid, st, en, ex)?; Ok(json!({"ok":true})) } },
     Command { name: "duplicate_clip", description: "Copy a clip (all effects, keyframes, masks) to a new start time, optionally onto another track. Returns the new clip id.", mutates: true,
         schema: obj(vec![("clip_id", s("clip")), ("start", n("new timeline start")), ("track_id", s("optional destination track"))], &["clip_id","start"]),
         run: |ss, a| { let (ti, ci) = loc(&ss.project, sa(a, "clip_id")?)?; let nid = ss.project.gen_id("clip"); let mut c: Clip = (*ss.project.tracks[ti].clips[ci]).clone(); c.id = nid.clone(); c.start = na(a, "start")?; c.transition_in = None;

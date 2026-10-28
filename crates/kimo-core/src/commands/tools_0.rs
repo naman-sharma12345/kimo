@@ -2,6 +2,42 @@
 #![allow(unused_imports)]
 use super::*;
 
+/// The body of `add_clip`, factored out so the `run` closure can choose whether to pay for a
+/// project clone+restore (only when `mode` is given -- see the closure). Validates everything
+/// (source_type/asset_id/color/gradient/fit) BEFORE performing the mode:"insert"/"overwrite"
+/// ripple-or-lift, so a bad argument caught by that validation never leaves a partial mutation:
+/// with mode none it cannot mutate before the final push either way (same as the original code).
+fn add_clip_place(ss: &mut Session, a: &Value, mode: Option<&str>, ripple_tracks: &[String]) -> Result<Value, String> {
+    let tid = str_arg(a, "track_id")?.to_string();
+    let src = match str_arg(a, "source_type")? {
+        "media" => { let id = str_arg(a, "asset_id")?; if !ss.project.assets.contains_key(id) { return Err(format!("no asset '{id}'")); } Source::Media { asset: id.into() } }
+        "solid" => Source::Solid { color: color(a, "color", [0.0; 3])? },
+        "gradient" => Source::Gradient { c1: color(a, "color", [0.0; 3])?, c2: color(a, "color2", [1.0; 3])? },
+        o => return Err(format!("bad source_type {o}")) };
+    let id = ss.project.gen_id("clip");
+    let mut c = Clip { id: id.clone(), source: src, start: num_arg(a, "start")?, duration: num_arg(a, "duration")?, in_point: opt_num(a, "in_point", 0.0), speed: opt_num(a, "speed", 1.0), speed_curve: None, time_remap: None, speed_blend: Default::default(), props: default_props(), grade_graph: None, effects: vec![], blend: "normal".into(), mask: None, time_mode: TimeMode::Normal, corners: None, audio: Audio::default(), motion_blur: 0.0, echo: None, motion_path: None, posterize_fps: 0.0, text_fx: None, parent: None, inherit: Default::default(), name: None, role: None, tags: vec![], transition_in: None };
+    // A solid's colour alpha ("#rrggbbaa" / [r,g,b,a]) was dropped and the solid drew opaque; it is the clip's fill_alpha, as on add_shape (separate from layer opacity, composed with it).
+    if matches!(c.source, Source::Solid { .. }) { let al = color_alpha(a, "color"); if al < 1.0 { c.props.insert("fill_alpha".into(), Prop::new(al)); } }
+    // A gradient's end alphas were dropped too (a "#00000000" -> "#000000cc" scrim drew opaque black): kept as color_alpha / color2_alpha, only when < 1.
+    if matches!(c.source, Source::Gradient { .. }) { if let Some(v) = a.get("angle").filter(|v| !v.is_null()) { let d = v.as_f64().filter(|d| d.is_finite()).ok_or("angle must be a finite number of degrees")?; c.props.insert("gradient_angle".into(), Prop::new(d)); }
+        match a.get("gradient").and_then(|v| v.as_str()) { None | Some("linear") => {} Some("radial") => { c.props.insert("gradient_radial".into(), Prop::new(1.0)); } Some(o) => return Err(format!("bad gradient '{o}': use linear or radial")) } }
+    else if a.get("angle").is_some_and(|v| !v.is_null()) || a.get("gradient").is_some_and(|v| !v.is_null()) { return Err("angle and gradient apply to source_type gradient only".into()); }
+    if matches!(c.source, Source::Gradient { .. }) { for k in ["color", "color2"] { let al = color_alpha(a, k); if al < 1.0 { c.props.insert(format!("{k}_alpha"), Prop::new(al)); } } }
+    match a.get("fit").and_then(|v| v.as_str()) { Some("cover") => { c.props.insert("fit".into(), Prop::new(1.0)); } Some("stretch") => { c.props.insert("fit".into(), Prop::new(2.0)); } Some("contain") | None => {} Some(o) => return Err(format!("bad fit {o}; use contain, cover or stretch")) }
+    // Everything above is pure validation/construction (no project mutation); the ripple/lift below is the one and
+    // only mutation before the final push, so an error at this point (track_id/ripple_tracks missing, locked, bad
+    // duration) still leaves the project untouched for the mode:none case, and is caught by the caller's
+    // clone+restore for the mode:Some case (do_insert_gap on a *later* ripple_tracks entry can fail after an
+    // earlier one already mutated -- that's exactly what the outer wrapper undoes).
+    match mode {
+        Some("insert") => { let (st, d) = (num_arg(a, "start")?, num_arg(a, "duration")?); crate::edit::do_insert_gap(ss, &tid, st, d)?; for rt in ripple_tracks { crate::edit::do_insert_gap(ss, rt, st, d)?; } }
+        Some("overwrite") => { let (st, d) = (num_arg(a, "start")?, num_arg(a, "duration")?); crate::edit::do_lift_range(ss, &tid, st, st + d, false)?; }
+        _ => {}
+    }
+    let tr = ss.project.tracks.iter_mut().find(|t| t.id == tid).ok_or(format!("no track '{tid}'"))?; tr.clips.push(std::sync::Arc::new(c));
+    Ok(json!({"clip_id":id}))
+}
+
 pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
     vec![
     Command { name: "project_set", description: "Set project canvas size and frame rate (and optional name).", mutates: true,
@@ -23,25 +59,19 @@ pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
     Command { name: "add_clip", description: "Add a clip to a track. source_type: media (needs asset_id), solid (color [r,g,b] 0..1), gradient (color, color2; linear at angle, or radial).", mutates: true,
         schema: obj(vec![("track_id", s("target track")), ("source_type", json!({"type":"string","enum":["media","solid","gradient"]})), ("asset_id", s("for media")),
             ("color", col_schema("", false)), ("color2", col_schema("gradient end colour", false)), ("gradient", json!({"type":"string","enum":["linear","radial"],"description":"gradient shape: linear (default) or radial (color at the centre, color2 at the corners)"})), ("angle", n("linear gradient direction in degrees, color -> color2: 0 top->bottom (default), 90 left->right, 180 bottom->top; keyframe as gradient_angle")),
-            ("start", n("timeline start seconds")), ("duration", n("seconds")), ("in_point", n("source offset seconds")), ("speed", n("playback speed, default 1")), ("fit", json!({"type":"string","enum":["contain","cover","stretch"],"description":"media framing: contain (letterbox, default), cover (fill + center crop), stretch"}))], &["track_id","source_type","start","duration"]),
-        run: |ss, a| { let tid = str_arg(a, "track_id")?.to_string();
-            let src = match str_arg(a, "source_type")? {
-                "media" => { let id = str_arg(a, "asset_id")?; if !ss.project.assets.contains_key(id) { return Err(format!("no asset '{id}'")); } Source::Media { asset: id.into() } }
-                "solid" => Source::Solid { color: color(a, "color", [0.0; 3])? },
-                "gradient" => Source::Gradient { c1: color(a, "color", [0.0; 3])?, c2: color(a, "color2", [1.0; 3])? },
-                o => return Err(format!("bad source_type {o}")) };
-            let id = ss.project.gen_id("clip");
-            let mut c = Clip { id: id.clone(), source: src, start: num_arg(a, "start")?, duration: num_arg(a, "duration")?, in_point: opt_num(a, "in_point", 0.0), speed: opt_num(a, "speed", 1.0), speed_curve: None, time_remap: None, speed_blend: Default::default(), props: default_props(), grade_graph: None, effects: vec![], blend: "normal".into(), mask: None, time_mode: TimeMode::Normal, corners: None, audio: Audio::default(), motion_blur: 0.0, echo: None, motion_path: None, posterize_fps: 0.0, text_fx: None, parent: None, inherit: Default::default(), name: None, role: None, tags: vec![], transition_in: None };
-            // A solid's colour alpha ("#rrggbbaa" / [r,g,b,a]) was dropped and the solid drew opaque; it is the clip's fill_alpha, as on add_shape (separate from layer opacity, composed with it).
-            if matches!(c.source, Source::Solid { .. }) { let al = color_alpha(a, "color"); if al < 1.0 { c.props.insert("fill_alpha".into(), Prop::new(al)); } }
-            // A gradient's end alphas were dropped too (a "#00000000" -> "#000000cc" scrim drew opaque black): kept as color_alpha / color2_alpha, only when < 1.
-            if matches!(c.source, Source::Gradient { .. }) { if let Some(v) = a.get("angle").filter(|v| !v.is_null()) { let d = v.as_f64().filter(|d| d.is_finite()).ok_or("angle must be a finite number of degrees")?; c.props.insert("gradient_angle".into(), Prop::new(d)); }
-                match a.get("gradient").and_then(|v| v.as_str()) { None | Some("linear") => {} Some("radial") => { c.props.insert("gradient_radial".into(), Prop::new(1.0)); } Some(o) => return Err(format!("bad gradient '{o}': use linear or radial")) } }
-            else if a.get("angle").is_some_and(|v| !v.is_null()) || a.get("gradient").is_some_and(|v| !v.is_null()) { return Err("angle and gradient apply to source_type gradient only".into()); }
-            if matches!(c.source, Source::Gradient { .. }) { for k in ["color", "color2"] { let al = color_alpha(a, k); if al < 1.0 { c.props.insert(format!("{k}_alpha"), Prop::new(al)); } } }
-            match a.get("fit").and_then(|v| v.as_str()) { Some("cover") => { c.props.insert("fit".into(), Prop::new(1.0)); } Some("stretch") => { c.props.insert("fit".into(), Prop::new(2.0)); } Some("contain") | None => {} Some(o) => return Err(format!("bad fit {o}; use contain, cover or stretch")) }
-            let tr = ss.project.tracks.iter_mut().find(|t| t.id == tid).ok_or(format!("no track '{tid}'"))?; tr.clips.push(std::sync::Arc::new(c));
-            Ok(json!({"clip_id":id})) } },
+            ("start", n("timeline start seconds")), ("duration", n("seconds")), ("in_point", n("source offset seconds")), ("speed", n("playback speed, default 1")), ("fit", json!({"type":"string","enum":["contain","cover","stretch"],"description":"media framing: contain (letterbox, default), cover (fill + center crop), stretch"})),
+            ("mode", json!({"type":"string","enum":["insert","overwrite"],"description":"omitted (default): plain placement, exactly as before. insert: ripple later clips on track_id (and ripple_tracks) later by `duration` first (FEATURES.md insert-edit). overwrite: clear [start, start+duration) on track_id first, trimming/removing what's there, nothing else moves (overwrite-edit)."})),
+            ("ripple_tracks", json!({"type":"array","items":{"type":"string"},"description":"mode:\"insert\" only: also ripple these other tracks at the same point, to keep multi-track sync"}))], &["track_id","source_type","start","duration"]),
+        run: |ss, a| {
+            let mode = match a.get("mode") { None | Some(Value::Null) => None, Some(Value::String(s)) if s == "insert" || s == "overwrite" => Some(s.clone()), Some(Value::String(s)) => return Err(format!("mode must be insert or overwrite, got '{s}'")), _ => return Err("mode must be a string".into()) };
+            let ripple_tracks: Vec<String> = match a.get("ripple_tracks") { None | Some(Value::Null) => vec![], Some(Value::Array(v)) => v.iter().map(|x| x.as_str().map(String::from).ok_or_else(|| "ripple_tracks must be an array of strings".to_string())).collect::<Result<_,_>>()?, _ => return Err("ripple_tracks must be an array of strings".into()) };
+            if !ripple_tracks.is_empty() && mode.as_deref() != Some("insert") { return Err("ripple_tracks only applies to mode:\"insert\"".into()); }
+            // mode is the only path that can mutate the project before every argument is validated (the insert/overwrite
+            // ripple happens ahead of the source_type/asset/color/fit checks below, so a later validation error must not
+            // leave a half-applied ripple or lift behind); the plain (mode: none) path is untouched and pays no clone.
+            if mode.is_some() { let before = ss.project.clone(); match add_clip_place(ss, a, mode.as_deref(), &ripple_tracks) { Ok(v) => Ok(v), Err(e) => { ss.project = before; Err(e) } } }
+            else { add_clip_place(ss, a, None, &[]) }
+        } },
     Command { name: "add_audio_clip", description: "Add an audio-only clip (music, voice, sfx) from an imported asset. It never draws and never takes part in the video stack. Creates an audio track if track_id is omitted. Export applies a limiter (ceiling -1.5 dBFS) so peaks stay under about -1 dBTP.", mutates: true,
         schema: obj(vec![("asset_id", s("imported asset (wav/mp3/video with audio)")), ("track_id", s("existing track, optional")), ("start", n("timeline start seconds")), ("duration", n("seconds")), ("in_point", n("source offset seconds")), ("volume", n("gain, default 1"))], &["asset_id","start","duration"]),
         run: |ss, a| { let id = str_arg(a, "asset_id")?; if !ss.project.assets.contains_key(id) { return Err(format!("no asset '{id}'")); }

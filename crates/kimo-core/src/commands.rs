@@ -35,8 +35,13 @@ pub struct Session { pub resource_limits: crate::resource_limits::Limits, pub me
     /// final pair, which runs back to back with no mutation between them) - never a stale read.
     /// Bounded to a handful of entries; cleared rather than LRU-evicted past that, since a miss only
     /// costs exactly what every call cost before this cache existed.
-    pub audio_decode_cache: std::collections::HashMap<(String, u64), std::sync::Arc<Vec<f32>>> }
-impl Session { pub fn new() -> Self { Session { resource_limits: crate::resource_limits::Limits::startup(), media: vec![], project: Project::default(), undo: vec![], redo: vec![], cache: render::Cache::new(), fcache: crate::framecache::FrameCache::new(crate::framecache::default_cap()), undo_labels: vec![], redo_labels: vec![], checkpoints: vec![], snap_sz: 1 << 20, snap_n: 0, snap_clips: 0, created_with: None, stats: Default::default(), audio_decode_cache: Default::default() } } }
+    pub audio_decode_cache: std::collections::HashMap<(String, u64), std::sync::Arc<Vec<f32>>>,
+    /// Ephemeral source in/out marks per asset (FEATURES.md "source in/out marks"), set by `mark_source` and read
+    /// by `edit_points`'s three-point edit when source_in/source_out are omitted. Session-only, like a real NLE's
+    /// source-viewer marks: never serialized into the saved project (Session is not Serialize at all), cleared by
+    /// `clear_source_marks`, and simply absent (so unused) for a project that never touches this feature.
+    pub source_marks: std::collections::BTreeMap<String, (Option<f64>, Option<f64>)> }
+impl Session { pub fn new() -> Self { Session { resource_limits: crate::resource_limits::Limits::startup(), media: vec![], project: Project::default(), undo: vec![], redo: vec![], cache: render::Cache::new(), fcache: crate::framecache::FrameCache::new(crate::framecache::default_cap()), undo_labels: vec![], redo_labels: vec![], checkpoints: vec![], snap_sz: 1 << 20, snap_n: 0, snap_clips: 0, created_with: None, stats: Default::default(), audio_decode_cache: Default::default(), source_marks: Default::default() } } }
 const MAX_CHECKPOINTS: usize = 24;
 
 #[derive(Clone)]
