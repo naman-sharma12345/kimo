@@ -556,9 +556,9 @@ Use `tools/list` / `list_effects` for live schemas. Read the source parameter na
 
 - [ ] wgpu pipeline: WGSL effect kernels, GPU compositing, frame textures in VRAM, async readback, hardware encode via ffmpeg/NVENC
 - [ ] u8/half-res fast path for glow/blur, SIMD, tile-based rendering, dirty-region cache
-- [ ] expression evaluator (small interpreter) shared by all params
+- [x] expression evaluator (small interpreter) shared by all params [x `set_expression_script`/`clear_expression_script`/`list_expression_scripts`, FEATURES.md L210/L220, ext/expr_interp_v7.rs: arithmetic/comparisons/ternary/functions, applies to any clip's any property or effect param]
 - [ ] project format v2 with compositions, versioned migrations
-- [ ] MCP: batch tool (apply many ops atomically), describe_project summary for LLM context, templates (create_title, create_lower_third, create_trailer_titles, make_montage_from_folder)
+- [~] MCP: batch tool (apply many ops atomically) [x `batch`, already shipped pre-v7: atomic/dry_run/foreach/$calc/$ref]; describe_project summary for LLM context [x `timeline_summary`, already shipped -- "compact view of the edit... use instead of get_project"]; templates: create_title [x `add_title`'s style presets], create_lower_third [x `add_title` style=lower_third, and the separate `lower_third` primitive], create_trailer_titles [x `add_title` styles impact/hook_box/kinetic cover this -- no dedicated multi-card sequencer built]; make_montage_from_folder is new this pass (ext/montage_from_folder_v7.rs): scans a folder (not recursive) for recognized video/still files, imports each in filename order, lays them back to back on a track, clip_duration caps a longer clip but never stretches a shorter one, optional crossfade overlap via add_transition. 9 TDD tests. Honest [~]: create_trailer_titles has no dedicated tool, just existing title styles.
 - [ ] GUI (deferred by the user)
 
 ### Proof level

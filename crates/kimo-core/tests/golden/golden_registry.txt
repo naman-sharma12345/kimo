@@ -237,6 +237,7 @@ list_transitions e316853ba177f3f8
 lk_residual_audit 2cf7e10ac95fd795
 load_project 231dc74f5980a8b3
 loop_clip 84a9f61420f1b87c
+make_montage_from_folder 23e863d91fb9cc4b
 mark_source f05beb0417bee904
 match_color 7826baef90c3deb6
 match_events ccd11b0e9f67e25e
