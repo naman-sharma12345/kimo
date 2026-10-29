@@ -16,6 +16,9 @@ pub const CATALOG2: &[(&str, &str, &[C])] = &[
     ("directional_blur", "Motion blur along an angle", &[("length", 24.0, "px"), ("angle", 0.0, "degrees")]),
     ("flip", "Flip frame", &[("horizontal", 1.0, "0/1"), ("vertical", 0.0, "0/1")]),
     ("tilt_shift", "Miniature tilt-shift blur outside a focus band", &[("center", 0.5, "0..1 y"), ("band", 0.15, "half-height fraction"), ("radius", 10.0, "blur px")]),
+    ("channel_blur", "Blur R, G and B independently by different amounts (chromatic-fringe / prism look); alpha is untouched", &[("r_radius", 4.0, "px"), ("g_radius", 4.0, "px"), ("b_radius", 4.0, "px")]),
+    ("smart_blur", "Smooths flat/noisy areas only; real edges (luma change above threshold) are left exactly sharp", &[("radius", 4.0, "px"), ("threshold", 0.1, "0..1 luma change that counts as a real edge")]),
+    ("reduce_interlace_flicker", "Vertical-only low-pass (3-tap 1-2-1) that suppresses thin horizontal detail prone to interlace flicker", &[("amount", 0.5, "0..1 blend strength")]),
     ("fractal_noise", "Animated fractal (fbm) noise: clouds, smoke, texture. mode 0 replace, 1 overlay, 2 add, 3 multiply, 4 alpha-matte", &[("scale", 160.0, "px"), ("complexity", 4.0, "octaves 1..8"), ("speed", 0.3, "evolution/s"), ("contrast", 1.4, "0..4"), ("brightness", 0.0, "-1..1"), ("opacity", 1.0, "0..1"), ("mode", 1.0, "0..4")]),
     ("gradient_ramp", "Linear/radial color ramp. mode 0 replace, 1 overlay, 2 multiply, 3 add", &[("r0", 0.0, "start R"), ("g0", 0.0, "start G"), ("b0", 0.0, "start B"), ("r1", 1.0, "end R"), ("g1", 0.5, "end G"), ("b1", 0.0, "end B"), ("x0", 0.5, "0..1"), ("y0", 0.0, "0..1"), ("x1", 0.5, "0..1"), ("y1", 1.0, "0..1"), ("radial", 0.0, "0/1"), ("opacity", 1.0, "0..1"), ("mode", 0.0, "0..3")]),
     ("checkerboard", "Checkerboard generator", &[("size", 40.0, "px"), ("r", 1.0, "R"), ("g", 1.0, "G"), ("b", 1.0, "B"), ("opacity", 0.5, "0..1")]),
@@ -121,6 +124,20 @@ pub fn apply2(kind: &str, pr: &Params, f: &mut Frame, t: f64, seed: u64) -> Resu
         "directional_blur" => { let (l, a) = (g("length", 24.0), g("angle", 0.0).to_radians()); let src = f.d.clone(); let n = (l as usize).clamp(2, 48); let (ux, uy) = (a.cos(), a.sin()); for y in 0..h { for x in 0..w { let mut acc = [0f32; 4]; for k in 0..n { let o = (k as f32 / (n - 1) as f32 - 0.5) * l; let v = sample(&src, w, h, x as f32 + ux * o, y as f32 + uy * o); for j in 0..4 { acc[j] += v[j]; } } for j in 0..4 { f.d[(y * w + x) * 4 + j] = acc[j] / n as f32; } } } }
         "flip" => { let (hz, vt) = (g("horizontal", 1.0) > 0.5, g("vertical", 0.0) > 0.5); warp(f, |x, y| (if hz { wf - 1.0 - x } else { x }, if vt { hf - 1.0 - y } else { y })); }
         "tilt_shift" => { let (c, bnd, r) = (g("center", 0.5), g("band", 0.15), g("radius", 10.0)); let mut bl = Frame { w, h, d: f.d.clone() }; box_blur3(&mut bl, (r * 2.0) as usize); for y in 0..h { let d = ((y as f32 / hf - c).abs() - bnd).max(0.0) / 0.25; let k = d.clamp(0.0, 1.0); for x in 0..w { for j in 0..4 { let i = (y * w + x) * 4 + j; f.d[i] += (bl.d[i] - f.d[i]) * k; } } } }
+        "channel_blur" => { let (rr, rg, rb) = (g("r_radius", 4.0) as usize, g("g_radius", 4.0) as usize, g("b_radius", 4.0) as usize);
+            let alpha: Vec<f32> = (0..w * h).map(|i| f.d[i * 4 + 3]).collect();
+            for (ch, r) in [(0usize, rr), (1, rg), (2, rb)] { let mut tmp = Frame::new(w, h);
+                for i in 0..w * h { let v = f.d[i * 4 + ch]; tmp.d[i * 4] = v; tmp.d[i * 4 + 1] = v; tmp.d[i * 4 + 2] = v; tmp.d[i * 4 + 3] = v; }
+                box_blur3(&mut tmp, r); for i in 0..w * h { f.d[i * 4 + ch] = tmp.d[i * 4]; } }
+            for i in 0..w * h { f.d[i * 4 + 3] = alpha[i]; } }
+        "smart_blur" => { let r = g("radius", 4.0) as usize; let thr = g("threshold", 0.1).clamp(0.0, 1.0) as f32;
+            let orig = f.d.clone(); box_blur3(f, r);
+            for i in 0..w * h { let lo = 0.299 * orig[i * 4] + 0.587 * orig[i * 4 + 1] + 0.114 * orig[i * 4 + 2]; let lb = 0.299 * f.d[i * 4] + 0.587 * f.d[i * 4 + 1] + 0.114 * f.d[i * 4 + 2];
+                if (lo - lb).abs() > thr { for j in 0..3 { f.d[i * 4 + j] = orig[i * 4 + j]; } } } }
+        "reduce_interlace_flicker" => { let amt = g("amount", 0.5).clamp(0.0, 1.0) as f32; let src = f.d.clone();
+            for y in 0..h { let y0 = y.saturating_sub(1); let y1 = (y + 1).min(h - 1);
+                for x in 0..w { let i = (y * w + x) * 4;
+                    for j in 0..4 { let v = src[(y0 * w + x) * 4 + j] * 0.25 + src[i + j] * 0.5 + src[(y1 * w + x) * 4 + j] * 0.25; f.d[i + j] = src[i + j] * (1.0 - amt) + v * amt; } } } }
         "fractal_noise" => { let (sc, oct, sp, ct, br, op, mode) = (g("scale", 160.0).max(4.0), g("complexity", 4.0).clamp(1.0, 8.0) as usize, g("speed", 0.3), g("contrast", 1.4), g("brightness", 0.0), g("opacity", 1.0), g("mode", 1.0) as u32); let tt = t as f32 * sp * 2.0; let sd = seed as u32;
             for y in 0..h { for x in 0..w { let n = ((fbm(x as f32 / sc + tt * 0.3, y as f32 / sc - tt, oct, sd) - 0.5) * ct + 0.5 + br).clamp(0.0, 1.0); let i = y * w + x; match mode { 4 => { f.d[i * 4 + 3] *= 1.0 + (n - 1.0) * op; } m => blend(f, i, [n, n, n], op, m) } } } }
         "gradient_ramp" => { let (c0, c1) = ([g("r0", 0.0), g("g0", 0.0), g("b0", 0.0)], [g("r1", 1.0), g("g1", 0.5), g("b1", 0.0)]); let (x0, y0, x1, y1) = (g("x0", 0.5) * wf, g("y0", 0.0) * hf, g("x1", 0.5) * wf, g("y1", 1.0) * hf); let rad = g("radial", 0.0) > 0.5; let (op, mode) = (g("opacity", 1.0), g("mode", 0.0) as u32);
