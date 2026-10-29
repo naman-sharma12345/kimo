@@ -92,6 +92,8 @@ pub fn catalog3() -> &'static [Entry] {
         v.push(("white_balance", "Neutral-point white balance via per-channel gains (set by pick_white_balance, or by hand)", lv(vec![("r_gain", 1.0, "R"), ("g_gain", 1.0, "G"), ("b_gain", 1.0, "B")])));
         v.push(("color_transfer", "Reinhard-style statistical color match (per-channel mean/std). Normally set by the match_color tool.", lv(vec![("sr_mean", 0.5, "src R mean"), ("sg_mean", 0.5, ""), ("sb_mean", 0.5, ""), ("sr_std", 0.2, ""), ("sg_std", 0.2, ""), ("sb_std", 0.2, ""), ("tr_mean", 0.5, "ref R mean"), ("tg_mean", 0.5, ""), ("tb_mean", 0.5, ""), ("tr_std", 0.2, ""), ("tg_std", 0.2, ""), ("tb_std", 0.2, ""), ("strength", 1.0, "0..1")])));
         v.push(("tonemap", "Tone mapping for HDR-ish / linear input. mode 0 ACES filmic fit, 1 Reinhard, 2 Hable filmic. Optionally applies sRGB encoding.", lv(vec![("mode", 0.0, "0..2"), ("exposure", 0.0, "stops"), ("encode_srgb", 1.0, "0/1")])));
+        v.push(("cineon_log", "Cineon/DPX printing-density log <-> linear (FEATURES.md L491): the classic Kodak Cineon curve (10-bit code-value black/white points, density-per-code gamma), distinct from the LogC3/S-Log3 curves color_space already covers. direction 0 decodes log code values to linear scene values (import a .cin/.dpx-style log plate), 1 encodes linear back to log code values (prepare for a log-expecting pipeline). Exactly invertible: decode(encode(x)) == x.", lv(vec![("direction", 0.0, "0 log->linear decode, 1 linear->log encode"), ("black_point", 95.0, "10-bit code value, 0..1023"), ("white_point", 685.0, "10-bit code value, 0..1023"), ("gamma", 0.6, "printing-density gamma")])));
+        v.push(("hdr_compander", "Reversible HDR companding (FEATURES.md L491): packs wide-range linear scene values into a bounded 0..1-ish range for storage/transport in a non-float pipeline, and expands them back -- a data-packing round trip, not a perceptual tonemap (compare `tonemap`, which is intentionally lossy). mu-law style curve (audio's mu-law, applied to pixel values): direction 0 compands (encode) linear -> bounded, 1 expands (decode) bounded -> linear. Exactly invertible up to float precision: expand(compand(x)) == x.", lv(vec![("direction", 0.0, "0 compand (encode), 1 expand (decode)"), ("mu", 15.0, "curve steepness, mu-law parameter, > 0")])));
         v.push(("highlight_rolloff", "Soft-clip highlights above a knee (avoid harsh digital clipping)", lv(vec![("knee", 0.8, "0..1"), ("softness", 0.5, "0..1")])));
         v.push(("split_toning", "Tint shadows and highlights with separate hues and a balance control", lv(vec![("shadow_hue", 210.0, "deg"), ("shadow_sat", 0.3, "0..1"), ("high_hue", 35.0, "deg"), ("high_sat", 0.3, "0..1"), ("balance", 0.0, "-1..1")])));
         v.extend(managed::catalog());
@@ -234,6 +236,26 @@ pub fn apply3(kind: &str, pr: &Params, f: &mut Frame, t: f64, _seed: u64) -> Res
             for i in 0..n { for j in 0..3 { let v = f.d[i * 4 + j]; let o = (v - sm[j]) * (ts[j] / ss[j].max(0.01)).clamp(0.2, 5.0) + tm[j]; f.d[i * 4 + j] = v + (o - v) * s; } } }
         "tonemap" => { let (mode, ex, enc) = (g("mode", 0.0) as u32, 2f32.powf(g("exposure", 0.0)), g("encode_srgb", 1.0) > 0.5); let hable = |x: f32| ((x * (0.15 * x + 0.05) + 0.004) / (x * (0.15 * x + 0.5) + 0.06)) - 0.02 / 0.3;
             for i in 0..n { for j in 0..3 { let x = f.d[i * 4 + j].max(0.0) * ex; let y = match mode { 0 => (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 1 => x / (1.0 + x), _ => hable(x * 2.0) / hable(11.2) }; f.d[i * 4 + j] = if enc { from_lin(1, y.clamp(0.0, 1.0)) } else { y }; } } }
+        "cineon_log" => { let (dir, bp, wp, gm) = (g("direction", 0.0) > 0.5, g("black_point", 95.0), g("white_point", 685.0), g("gamma", 0.6).max(1e-4));
+            // printing-density span between black and white reference code values (0.002 density/code, the Cineon constant); white
+            // point maps to linear 1.0, black point maps to linear 10^(-density_range/gamma) (small, not exactly 0 -- a real log
+            // curve never reaches true black, which is the point of grading log footage instead of clipping it).
+            let density_range = ((wp - bp).max(1.0)) * 0.002;
+            for i in 0..n { for j in 0..3 { let v = f.d[i * 4 + j];
+                f.d[i * 4 + j] = if !dir { // log code value (0..1, normalized by /1023) -> linear
+                    let bracket = (v * 1023.0 - bp) / (wp - bp).max(1.0) - 1.0;
+                    10f32.powf(bracket * density_range / gm)
+                } else { // linear -> log code value (0..1, normalized by /1023)
+                    let bracket = v.max(1e-10).log10() * gm / density_range;
+                    ((bracket + 1.0) * (wp - bp).max(1.0) + bp) / 1023.0
+                };
+            } } }
+        "hdr_compander" => { let (dir, mu) = (g("direction", 0.0) > 0.5, g("mu", 15.0).max(1e-3));
+            let ln1pmu = (1.0 + mu).ln();
+            for i in 0..n { for j in 0..3 { let v = f.d[i * 4 + j]; let s = v.signum(); let a = v.abs();
+                f.d[i * 4 + j] = if !dir { s * (1.0 + mu * a).ln() / ln1pmu } // compand: linear -> bounded
+                else { s * ((ln1pmu * a).exp() - 1.0) / mu }; // expand: bounded -> linear
+            } } }
         "highlight_rolloff" => { let (k, so) = (g("knee", 0.8), g("softness", 0.5).max(0.01)); for i in 0..n { for j in 0..3 { let v = f.d[i * 4 + j]; if v > k { let r = 1.0 - k; f.d[i * 4 + j] = k + r * (1.0 - (-(v - k) / (r * so)).exp()) * so.min(1.0).max(0.01) / so.min(1.0).max(0.01) * 1.0; } } } }
         "split_toning" => { let (sh, ss, hh, hs, bal) = (g("shadow_hue", 210.0), g("shadow_sat", 0.3), g("high_hue", 35.0), g("high_sat", 0.3), g("balance", 0.0)); let sc = hsl2rgb(sh, 1.0, 0.5); let hc = hsl2rgb(hh, 1.0, 0.5);
             for i in 0..n { let c = [f.d[i * 4], f.d[i * 4 + 1], f.d[i * 4 + 2]]; let l = lum(c); let t_ = sstep(0.0, 1.0, (l + bal * 0.5).clamp(0.0, 1.0)); for j in 0..3 { let tint = sc[j] * (1.0 - t_) * ss + hc[j] * t_ * hs; f.d[i * 4 + j] = c[j] + (tint - 0.5 * (ss * (1.0 - t_) + hs * t_)) * 0.5 ; } } }
