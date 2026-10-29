@@ -1,0 +1,100 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>kimo gui (v7, minimal)</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; margin: 0; background: #1b1b1f; color: #eee; }
+  header { padding: 10px 16px; background: #222; border-bottom: 1px solid #333; }
+  main { display: grid; grid-template-columns: 1fr 360px; gap: 12px; padding: 12px; }
+  section { background: #222; border: 1px solid #333; border-radius: 6px; padding: 10px; }
+  h2 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: #9ab; }
+  #timeline { overflow-x: auto; }
+  .track { display: flex; align-items: center; height: 28px; border-bottom: 1px solid #2c2c33; }
+  .track-label { width: 70px; font-size: 11px; color: #889; flex: none; }
+  .clip { position: relative; height: 20px; background: #3a6; border-radius: 3px; margin-right: 1px; font-size: 10px; color: #012; padding: 2px 4px; overflow: hidden; white-space: nowrap; flex: none; }
+  #preview img { max-width: 100%; border: 1px solid #333; background: #000; display: block; }
+  #preview input { width: 70px; }
+  textarea { width: 100%; box-sizing: border-box; background: #111; color: #cfc; border: 1px solid #333; font-family: monospace; font-size: 12px; }
+  button { background: #357; color: #fff; border: 0; border-radius: 4px; padding: 6px 10px; cursor: pointer; }
+  #tool-list { max-height: 160px; overflow-y: auto; font-size: 11px; }
+  #tool-list div { padding: 2px 0; cursor: pointer; color: #9cf; }
+  #result { white-space: pre-wrap; font-family: monospace; font-size: 11px; background: #111; padding: 6px; border-radius: 4px; max-height: 220px; overflow: auto; }
+</style>
+</head>
+<body>
+<header><strong>kimo</strong> &middot; v7 minimal GUI over the MCP registry</header>
+<main>
+  <div>
+    <section id="preview">
+      <h2>Preview frame</h2>
+      <div><label>t = <input id="t" type="number" step="0.1" value="0"> s <button onclick="loadPreview()">Render</button></label></div>
+      <img id="frame" alt="(no frame rendered yet)">
+    </section>
+    <section id="timeline" style="margin-top:12px">
+      <h2>Timeline</h2>
+      <div id="tracks"></div>
+    </section>
+  </div>
+  <section>
+    <h2>Tools</h2>
+    <input id="search" placeholder="filter tools..." style="width:100%;box-sizing:border-box" oninput="filterTools()">
+    <div id="tool-list"></div>
+    <h2 style="margin-top:10px">Invoke</h2>
+    <div><input id="tool-name" placeholder="tool name" style="width:100%;box-sizing:border-box"></div>
+    <textarea id="tool-args" rows="4">{}</textarea>
+    <button onclick="callTool()">Run</button>
+    <h2 style="margin-top:10px">Result</h2>
+    <div id="result"></div>
+  </section>
+</main>
+<script>
+let registry = [];
+async function loadTimeline() {
+  const r = await fetch('/api/timeline'); const tl = await r.json();
+  const el = document.getElementById('tracks'); el.innerHTML = '';
+  const pxPerSec = 40;
+  for (const t of tl.tracks) {
+    const row = document.createElement('div'); row.className = 'track';
+    const label = document.createElement('div'); label.className = 'track-label'; label.textContent = t.name || t.id; row.appendChild(label);
+    for (const c of t.clips) {
+      const bar = document.createElement('div'); bar.className = 'clip';
+      bar.style.width = Math.max(4, c.duration * pxPerSec) + 'px';
+      bar.title = (c.name || c.id) + ' (' + c.source_kind + ') ' + c.start.toFixed(2) + 's..' + c.end.toFixed(2) + 's';
+      bar.textContent = c.name || c.source_kind;
+      row.appendChild(bar);
+    }
+    el.appendChild(row);
+  }
+}
+async function loadPreview() {
+  const t = document.getElementById('t').value;
+  document.getElementById('frame').src = '/preview.png?t=' + encodeURIComponent(t) + '&_=' + Date.now();
+}
+async function loadRegistry() {
+  const r = await fetch('/api/registry'); registry = await r.json(); renderToolList(registry);
+}
+function renderToolList(list) {
+  const el = document.getElementById('tool-list'); el.innerHTML = '';
+  for (const c of list) {
+    const d = document.createElement('div'); d.textContent = c.name + (c.mutates ? ' *' : '');
+    d.title = c.summary; d.onclick = () => { document.getElementById('tool-name').value = c.name; };
+    el.appendChild(d);
+  }
+}
+function filterTools() {
+  const q = document.getElementById('search').value.toLowerCase();
+  renderToolList(registry.filter(c => c.name.toLowerCase().includes(q) || c.summary.toLowerCase().includes(q)));
+}
+async function callTool() {
+  const tool = document.getElementById('tool-name').value.trim();
+  let args; try { args = JSON.parse(document.getElementById('tool-args').value || '{}'); } catch (e) { document.getElementById('result').textContent = 'bad JSON in args: ' + e; return; }
+  const r = await fetch('/api/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tool, args }) });
+  const v = await r.json();
+  document.getElementById('result').textContent = JSON.stringify(v, null, 2);
+  loadTimeline();
+}
+loadTimeline(); loadRegistry();
+</script>
+</body>
+</html>

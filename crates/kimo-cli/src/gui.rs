@@ -1,0 +1,267 @@
+//! v7 GUI (FEATURES.md L562, built LAST as instructed): a minimal local web UI over the same tool
+//! registry/dispatch the CLI and MCP server use -- no second dispatch path (`run_tool`, shared with main.rs).
+//! `kimo gui` serves it. Requirements this meets: a timeline view of the project (timeline_view_model,
+//! served at GET /api/timeline), a preview frame rendered by the actual engine (GET /preview.png?t=..,
+//! through render::render_png -- the same function render_frame/export use), and a tool-invocation panel
+//! (POST /api/call -> run_tool, the same path the CLI's `call` subcommand and the MCP server use).
+//!
+//! `handle_request` is a pure function of (Session, method, path, query, body) with no socket anywhere in
+//! it, so every route is unit-tested headless (tests/gui_tests.rs) without ever binding a port; only
+//! `serve`'s outer accept loop (untested here, it is a thin and unremarkable std::net::TcpListener read/
+//! write loop) touches a real socket.
+use kimo_core::commands::{registry_ref, Session};
+use serde_json::{json, Value};
+use std::sync::{Arc, Mutex};
+
+fn source_kind(c: &kimo_core::model::Clip) -> String {
+    serde_json::to_value(&c.source).ok().and_then(|v| v.get("type").and_then(|x| x.as_str().map(String::from))).unwrap_or_default()
+}
+
+/// The timeline view-model: tracks and their clips, with the fields a timeline UI actually needs to lay
+/// out bars on a ruler (start/duration/end in project seconds) and label them (name/role/source kind).
+pub fn timeline_view_model(ss: &Session) -> Value {
+    let p = &ss.project;
+    let tracks: Vec<Value> = p.tracks.iter().map(|t| {
+        let clips: Vec<Value> = t.clips.iter().map(|c| json!({
+            "id": c.id, "name": c.name, "role": c.role, "source_kind": source_kind(c),
+            "start": c.start, "duration": c.duration, "end": c.start + c.duration,
+        })).collect();
+        json!({"id": t.id, "name": t.name, "clip_count": clips.len(), "clips": clips})
+    }).collect();
+    json!({"width": p.width, "height": p.height, "fps": p.fps, "duration": p.duration(), "track_count": tracks.len(), "tracks": tracks})
+}
+
+/// Every registered tool, name + first line of its description + mutates, for the tool-invocation panel's
+/// picker (the full schema is available per-tool at GET /api/tool/<name> so the picker stays small).
+pub fn registry_summary() -> Value {
+    json!(registry_ref().iter().map(|c| { let first = c.description.split(". ").next().unwrap_or(&c.description); json!({"name": c.name, "summary": first, "mutates": c.mutates}) }).collect::<Vec<_>>())
+}
+
+pub struct Response { pub status: u16, pub content_type: &'static str, pub body: Vec<u8> }
+fn json_response(status: u16, v: Value) -> Response { Response { status, content_type: "application/json", body: serde_json::to_vec(&v).unwrap_or_default() } }
+fn err_response(status: u16, msg: impl Into<String>) -> Response { json_response(status, json!({"error": msg.into()})) }
+
+const INDEX_HTML: &str = include_str!("gui_index.html");
+
+/// Parses `?t=1.5` (or any single-key query) out of a raw query string; used for /preview.png's `t`.
+fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
+    query.split('&').find_map(|kv| { let (k, v) = kv.split_once('=')?; if k == key { Some(v) } else { None } })
+}
+
+/// The whole routing table. No socket, no I/O beyond what a route explicitly needs (render_png writes a
+/// temp file and reads it back; everything else is pure JSON over the in-memory Session). This is what
+/// tests/gui_tests.rs calls directly.
+pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query: &str, body: &[u8]) -> Response {
+    match (method, path) {
+        ("GET", "/") => Response { status: 200, content_type: "text/html; charset=utf-8", body: INDEX_HTML.as_bytes().to_vec() },
+        ("GET", "/api/timeline") => { let ss = ss.lock().unwrap(); json_response(200, timeline_view_model(&ss)) }
+        ("GET", "/api/registry") => json_response(200, registry_summary()),
+        ("GET", "/api/tool") => { // ?name=<tool>
+            let Some(name) = query_param(query, "name") else { return err_response(400, "missing_arg: name") };
+            match registry_ref().iter().find(|c| c.name == name) {
+                Some(c) => json_response(200, json!({"name": c.name, "description": c.description, "schema": c.schema, "mutates": c.mutates})),
+                None => err_response(404, format!("unknown_tool: no tool named '{name}'")),
+            }
+        }
+        ("GET", "/preview.png") => {
+            let t: f64 = query_param(query, "t").and_then(|s| s.parse().ok()).unwrap_or(0.0);
+            let ss = ss.lock().unwrap();
+            let dir = std::env::temp_dir().join("kimo_gui_preview");
+            if std::fs::create_dir_all(&dir).is_err() { return err_response(500, "could not create preview temp dir"); }
+            let path = dir.join(format!("preview_{}.png", std::process::id()));
+            let path_str = match path.to_str() { Some(s) => s, None => return err_response(500, "non-utf8 temp path") };
+            let mut cache = kimo_core::render::Cache::new();
+            match kimo_core::render::render_png(&ss.project, t, path_str, &mut cache) {
+                Ok(()) => match std::fs::read(&path) { Ok(bytes) => Response { status: 200, content_type: "image/png", body: bytes }, Err(e) => err_response(500, format!("rendered but could not read back: {e}")) },
+                Err(e) => err_response(500, format!("render failed: {e}")),
+            }
+        }
+        ("POST", "/api/call") => {
+            let v: Value = match serde_json::from_slice(body) { Ok(v) => v, Err(e) => return err_response(400, format!("body is not valid JSON: {e}")) };
+            let Some(tool) = v.get("tool").and_then(|v| v.as_str()) else { return err_response(400, "missing_arg: tool") };
+            let args = v.get("args").cloned().unwrap_or(json!({}));
+            match crate::run_tool(ss, tool, &args) {
+                Ok(result) => json_response(200, json!({"ok": true, "result": result})),
+                Err(e) => json_response(200, json!({"ok": false, "error": e})),
+            }
+        }
+        (_, "/") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
+        _ => err_response(404, format!("no route for {path}")),
+    }
+}
+
+/// Reads one HTTP/1.1 request off `stream` (request line, headers for Content-Length, then the body) --
+/// minimal by design (no chunked transfer, no keep-alive): this server is for one person's browser on
+/// localhost, not a public endpoint. Returns (method, path, query, body).
+fn read_request(stream: &mut std::net::TcpStream) -> std::io::Result<(String, String, String, Vec<u8>)> {
+    use std::io::{BufRead, BufReader, Read};
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let mut line = String::new(); reader.read_line(&mut line)?;
+    let mut parts = line.split_whitespace();
+    let method = parts.next().unwrap_or("GET").to_string();
+    let target = parts.next().unwrap_or("/").to_string();
+    let (path, query) = target.split_once('?').map(|(p, q)| (p.to_string(), q.to_string())).unwrap_or((target, String::new()));
+    let mut content_length = 0usize;
+    loop { let mut h = String::new(); if reader.read_line(&mut h)? == 0 || h == "\r\n" || h == "\n" { break; }
+        if let Some(v) = h.to_ascii_lowercase().strip_prefix("content-length:") { content_length = v.trim().parse().unwrap_or(0); } }
+    let mut body = vec![0u8; content_length]; if content_length > 0 { reader.read_exact(&mut body)?; }
+    Ok((method, path, query, body))
+}
+
+fn write_response(stream: &mut std::net::TcpStream, r: &Response) -> std::io::Result<()> {
+    use std::io::Write;
+    let status_text = match r.status { 200 => "OK", 400 => "Bad Request", 404 => "Not Found", 405 => "Method Not Allowed", 500 => "Internal Server Error", _ => "Unknown" };
+    write!(stream, "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", r.status, status_text, r.content_type, r.body.len())?;
+    stream.write_all(&r.body)
+}
+
+/// Blocks forever accepting one connection at a time (a local single-user tool; no concurrency needed).
+pub fn serve(ss: Arc<Mutex<Session>>, bind: &str, port: u16) -> std::io::Result<()> {
+    let listener = std::net::TcpListener::bind((bind, port))?;
+    eprintln!("kimo gui listening on http://{bind}:{port}");
+    for stream in listener.incoming() {
+        let mut stream = match stream { Ok(s) => s, Err(_) => continue };
+        let resp = match read_request(&mut stream) {
+            Ok((method, path, query, body)) => handle_request(&ss, &method, &path, &query, &body),
+            Err(e) => err_response(400, format!("malformed request: {e}")),
+        };
+        let _ = write_response(&mut stream, &resp);
+    }
+    Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kimo_core::commands::dispatch;
+
+    fn fixture() -> Arc<Mutex<Session>> {
+        let mut ss = Session::new();
+        dispatch(&mut ss, "project_set", &json!({"width": 64, "height": 36, "fps": 25})).unwrap();
+        let tr = dispatch(&mut ss, "add_track", &json!({})).unwrap()["track_id"].as_str().unwrap().to_string();
+        dispatch(&mut ss, "add_shape", &json!({"track_id": tr, "shape": "rect", "start": 0.0, "duration": 2.0, "color": [1.0, 0.0, 0.0]})).unwrap();
+        Arc::new(Mutex::new(ss))
+    }
+
+    #[test]
+    fn timeline_view_model_lists_tracks_and_clips_with_timing() {
+        let ss = fixture();
+        let v = timeline_view_model(&ss.lock().unwrap());
+        assert_eq!(v["width"], 64);
+        assert_eq!(v["track_count"], 1);
+        let clips = v["tracks"][0]["clips"].as_array().unwrap();
+        assert_eq!(clips.len(), 1);
+        assert_eq!(clips[0]["start"], 0.0);
+        assert_eq!(clips[0]["duration"], 2.0);
+        assert_eq!(clips[0]["end"], 2.0);
+        assert_eq!(clips[0]["source_kind"], "shape");
+    }
+
+    #[test]
+    fn registry_summary_lists_every_tool_with_a_short_summary() {
+        let v = registry_summary();
+        let arr = v.as_array().unwrap();
+        assert!(arr.len() > 100, "the whole registry should be listed, got {}", arr.len());
+        let add_track = arr.iter().find(|c| c["name"] == "add_track").expect("add_track should be in the registry");
+        assert!(!add_track["summary"].as_str().unwrap().is_empty());
+        assert_eq!(add_track["mutates"], true);
+    }
+
+    #[test]
+    fn query_param_reads_a_key_from_a_raw_query_string() {
+        assert_eq!(query_param("t=1.5&x=2", "t"), Some("1.5"));
+        assert_eq!(query_param("t=1.5&x=2", "x"), Some("2"));
+        assert_eq!(query_param("t=1.5", "missing"), None);
+        assert_eq!(query_param("", "t"), None);
+    }
+
+    #[test]
+    fn handle_request_serves_the_index_page() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        assert_eq!(r.status, 200);
+        assert_eq!(r.content_type, "text/html; charset=utf-8");
+        assert!(String::from_utf8_lossy(&r.body).contains("kimo gui"));
+    }
+
+    #[test]
+    fn handle_request_serves_the_timeline_json() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/api/timeline", "", &[]);
+        assert_eq!(r.status, 200);
+        let v: Value = serde_json::from_slice(&r.body).unwrap();
+        assert_eq!(v["track_count"], 1);
+    }
+
+    #[test]
+    fn handle_request_serves_registry_and_one_tool_schema() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/api/registry", "", &[]);
+        assert_eq!(r.status, 200);
+        let r2 = handle_request(&ss, "GET", "/api/tool", "name=add_track", &[]);
+        assert_eq!(r2.status, 200);
+        let v: Value = serde_json::from_slice(&r2.body).unwrap();
+        assert_eq!(v["name"], "add_track");
+        assert!(v["schema"].is_object());
+        let r3 = handle_request(&ss, "GET", "/api/tool", "name=not_a_real_tool_xyz", &[]);
+        assert_eq!(r3.status, 404);
+        let r4 = handle_request(&ss, "GET", "/api/tool", "", &[]);
+        assert_eq!(r4.status, 400);
+    }
+
+    #[test]
+    fn handle_request_renders_a_real_preview_frame_png() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/preview.png", "t=0.5", &[]);
+        assert_eq!(r.status, 200, "{:?}", String::from_utf8_lossy(&r.body));
+        assert_eq!(r.content_type, "image/png");
+        assert!(r.body.len() > 8, "a real PNG should have real bytes");
+        assert_eq!(&r.body[1..4], b"PNG", "the engine should have actually rendered a PNG, not a placeholder");
+    }
+
+    #[test]
+    fn handle_request_dispatches_a_tool_call_and_it_changes_the_project() {
+        let ss = fixture();
+        let before = timeline_view_model(&ss.lock().unwrap())["track_count"].as_u64().unwrap();
+        let body = serde_json::to_vec(&json!({"tool": "add_track", "args": {}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        assert_eq!(r.status, 200);
+        let v: Value = serde_json::from_slice(&r.body).unwrap();
+        assert_eq!(v["ok"], true);
+        let after = timeline_view_model(&ss.lock().unwrap())["track_count"].as_u64().unwrap();
+        assert_eq!(after, before + 1, "the tool-invocation panel should actually run real tools through the same dispatch path");
+    }
+
+    #[test]
+    fn handle_request_reports_a_tool_error_without_an_http_error() {
+        // A bad tool call is a normal (200) response with ok:false -- the HTTP layer isn't the place to
+        // encode tool-level failure, the same way the MCP server and the CLI's `call` both return it as data.
+        let ss = fixture();
+        let body = serde_json::to_vec(&json!({"tool": "delete_clip", "args": {"clip_id": "not_a_real_clip"}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        assert_eq!(r.status, 200);
+        let v: Value = serde_json::from_slice(&r.body).unwrap();
+        assert_eq!(v["ok"], false);
+        assert!(v["error"].is_object() || v["error"].is_string(), "error should carry something useful: {v}");
+        assert!(v["error"]["message"].as_str().map(|s| !s.is_empty()).unwrap_or(false), "{v}");
+    }
+
+    #[test]
+    fn handle_request_rejects_malformed_call_bodies() {
+        let ss = fixture();
+        let r = handle_request(&ss, "POST", "/api/call", "", b"not json");
+        assert_eq!(r.status, 400);
+        let r2 = handle_request(&ss, "POST", "/api/call", "", b"{}");
+        assert_eq!(r2.status, 400, "missing tool name should be a 400, not a dispatch attempt");
+    }
+
+    #[test]
+    fn handle_request_404s_an_unknown_route_and_405s_a_wrong_method() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/nope", "", &[]);
+        assert_eq!(r.status, 404);
+        let r2 = handle_request(&ss, "POST", "/api/timeline", "", &[]);
+        assert_eq!(r2.status, 405);
+    }
+}
