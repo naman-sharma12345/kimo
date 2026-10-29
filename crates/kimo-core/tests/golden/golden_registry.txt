@@ -53,6 +53,7 @@ add_text_animator 7c837530f3da76ca
 add_title ef78e3db77ecd193
 add_track cf1da67768a18dbb
 add_transition d4c6da13ddecf273
+add_watermark b96ec8e068099019
 analyze_color 34563f36b4186ca4
 analyze_exposure 9ca9ecd0326382b4
 analyze_exposure_sequence 635cbb61a9b00303
@@ -83,6 +84,7 @@ bind_beats 2d8bcd8a43d9aad9
 bind_shared_grade_graphs d163ca88fc64bb1d
 black_frames d782d005bfdbf524
 burn_in 0df91ac9090a9beb
+burn_in_timecode 3590af8f77513c35
 cache_clear 6022ac3871ddd27b
 cache_set_budget 422160a7f6a95562
 cache_stats fda818c878e0e6dc
@@ -155,7 +157,7 @@ export_high_bit c67d5e5efd756824
 export_job_start 07ddf323a2e92685
 export_manifest ba5041cada0f270e
 export_ocio_view_video 78b47578708559a2
-export_preset 4b7865df8214957a
+export_preset 2584e278d8b503ad
 export_st_map 19270ee3126a2709
 export_vertex_stream_gltf cb9c0dd901f16703
 export_vertex_stream_obj e4ee4a2a4c9506e2
@@ -256,6 +258,7 @@ motion_extract 40677d74bedf2eb2
 move_asset_to_bin 23a63229fa937d23
 move_clip 7a2fedebbc66bea9
 move_key 8db0720360eda83d
+mux_chapters d4c909f56caca1e1
 normalize_loudness d77d16d8f58e8b00
 particle_simulate_raw 13a7503832a95aad
 paste_attributes 836988433eac2c08
