@@ -187,5 +187,35 @@ pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
     Command { name: "checkpoint_delete", description: "Delete a named checkpoint.", mutates: false,
         schema: obj(vec![("name", s("checkpoint name"))], &["name"]),
         run: |ss, a| { let name = str_arg(a, "name")?.to_string(); let l = ss.checkpoints.len(); ss.checkpoints.retain(|c| c.0 != name); if ss.checkpoints.len() == l { Err(format!("no checkpoint '{name}'")) } else { Ok(json!({"ok":true})) } } },
+    Command { name: "gpu2d_status", description: "Probe whether the v7 opt-in GPU/2D compute path can open a wgpu adapter, without rendering anything. Feature `gpu2d`, default off. Returns backend (the adapter's name/driver string, e.g. a lavapipe/llvmpipe software-Vulkan string) and fallback_reason (set, backend=\"cpu\", when gpu2d is not compiled in or no adapter opens). The CPU path (used by every other effect and by gpu_gaussian_blur_frame/gpu_color_matrix_frame when the GPU is unavailable) is unaffected either way.", mutates: false,
+        schema: obj(vec![], &[]),
+        run: |_ss, _a| { let s = crate::gpu2d::probe(); Ok(json!({"backend": s.backend, "fallback_reason": s.fallback_reason, "gpu_available": s.fallback_reason.is_none()})) } },
+    Command { name: "gpu_gaussian_blur_frame", description: "v7 opt-in GPU path: render the frame at `time` and gaussian-blur it through a WGSL compute shader on whatever wgpu adapter is present. Feature `gpu2d`, default off; lavapipe software Vulkan on this box; same sigma meaning as the glow effect's kernel. Falls back to the identical CPU reference implementation when gpu2d is not compiled in or no adapter opens (backend=\"cpu\" in the result either way tells you which ran). Writes the result to `path` (.png). With compare_cpu (default true) also runs the CPU reference and reports max_abs_diff, a live CPU-vs-GPU tolerance check. This does not change the project or any existing render path -- it is a standalone preview/diagnostic tool, not wired into add_effect.", mutates: false,
+        schema: obj(vec![("time", n("seconds")), ("sigma", n("gaussian sigma in px, default 4")), ("path", s("output .png path")), ("compare_cpu", json!({"type":"boolean","description":"default true: also run the CPU reference and report max_abs_diff"})), ("software_only", json!({"type":"boolean","description":"force wgpu's fallback (software) adapter, default false"}))], &["time","path"]),
+        run: |ss, a| { let t = num_arg(a, "time")?; let sigma = opt_num(a, "sigma", 4.0) as f32; let path = str_arg(a, "path")?; render::check_still_path(path, true)?;
+            let frame = render::render_frame(&ss.project, t, &ss.cache)?;
+            let compare = a.get("compare_cpu").and_then(|v| v.as_bool()).unwrap_or(true);
+            let software_only = a.get("software_only").and_then(|v| v.as_bool()).unwrap_or(false);
+            let t0 = std::time::Instant::now();
+            let (out, status) = match crate::gpu2d::gpu_gaussian_blur(&frame, sigma, software_only) { Ok((f, s)) => (f, s), Err(e) => (crate::gpu2d::cpu_gaussian_blur(&frame, sigma), crate::gpu2d::Gpu2dStatus { backend: "cpu".into(), fallback_reason: Some(e) }) };
+            let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
+            let mut res = json!({"path": path, "backend": status.backend, "fallback_reason": status.fallback_reason, "elapsed_ms": elapsed_ms});
+            if compare { let cpu = crate::gpu2d::cpu_gaussian_blur(&frame, sigma); let max_abs_diff = out.d.iter().zip(cpu.d.iter()).map(|(a, b)| (a - b).abs()).fold(0f32, f32::max); res["max_abs_diff_vs_cpu"] = json!(max_abs_diff); }
+            render::write_image(&out, path)?; Ok(res) } },
+    Command { name: "gpu_color_matrix_frame", description: "v7 opt-in GPU path: render the frame at `time` and apply a colour matrix through a WGSL compute shader on whatever wgpu adapter is present. Feature `gpu2d`, default off; lavapipe software Vulkan on this box. matrix is 20 numbers: 4 AE-style rows of [r,g,b,a,offset] producing out r,g,b,a. Falls back to the identical CPU reference implementation when gpu2d is not compiled in or no adapter opens. Writes the result to `path` (.png). With compare_cpu (default true) also runs the CPU reference and reports max_abs_diff. Standalone preview/diagnostic tool, not wired into add_effect or any existing render path.", mutates: false,
+        schema: obj(vec![("time", n("seconds")), ("matrix", json!({"type":"array","items":{"type":"number"},"minItems":20,"maxItems":20,"description":"4 rows x [r,g,b,a,offset], row order r,g,b,a; identity = [1,0,0,0,0, 0,1,0,0,0, 0,0,1,0,0, 0,0,0,1,0]"})), ("path", s("output .png path")), ("compare_cpu", json!({"type":"boolean","description":"default true"})), ("software_only", json!({"type":"boolean"}))], &["time","matrix","path"]),
+        run: |ss, a| { let t = num_arg(a, "time")?; let path = str_arg(a, "path")?; render::check_still_path(path, true)?;
+            let marr: Vec<f64> = a.get("matrix").and_then(|v| v.as_array()).ok_or("matrix needed: 20 numbers")?.iter().filter_map(|v| v.as_f64()).collect();
+            if marr.len() != 20 { return Err(format!("matrix needs exactly 20 numbers (4 rows of r,g,b,a,offset), got {}", marr.len())); }
+            let mut m = [0f32; 20]; for i in 0..20 { m[i] = marr[i] as f32; }
+            let frame = render::render_frame(&ss.project, t, &ss.cache)?;
+            let compare = a.get("compare_cpu").and_then(|v| v.as_bool()).unwrap_or(true);
+            let software_only = a.get("software_only").and_then(|v| v.as_bool()).unwrap_or(false);
+            let t0 = std::time::Instant::now();
+            let (out, status) = match crate::gpu2d::gpu_color_matrix(&frame, &m, software_only) { Ok((f, s)) => (f, s), Err(e) => (crate::gpu2d::cpu_color_matrix(&frame, &m), crate::gpu2d::Gpu2dStatus { backend: "cpu".into(), fallback_reason: Some(e) }) };
+            let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
+            let mut res = json!({"path": path, "backend": status.backend, "fallback_reason": status.fallback_reason, "elapsed_ms": elapsed_ms});
+            if compare { let cpu = crate::gpu2d::cpu_color_matrix(&frame, &m); let max_abs_diff = out.d.iter().zip(cpu.d.iter()).map(|(a, b)| (a - b).abs()).fold(0f32, f32::max); res["max_abs_diff_vs_cpu"] = json!(max_abs_diff); }
+            render::write_image(&out, path)?; Ok(res) } },
     ]
 }

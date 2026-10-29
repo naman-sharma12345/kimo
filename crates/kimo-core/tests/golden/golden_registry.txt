@@ -182,6 +182,9 @@ get_project 2fa2cd0084662a79
 get_scopes 7e5e8a96e99a1fed
 get_source_marks 1588cf29b33bff95
 get_transform 50191c62fd9c165c
+gpu2d_status 99868abc2184a77c
+gpu_color_matrix_frame 0ee7fbd4f4f99e34
+gpu_gaussian_blur_frame 24112f892cffa87c
 grade_node_tracking 1ffa2a4a07a2951e
 group_clips 39d53498853f9730
 history_list bb1a0f89a5fcc401

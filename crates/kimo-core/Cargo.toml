@@ -31,6 +31,12 @@ default = ["surface-contour"]
 native-ocio = []
 mesh-import = ["dep:gltf", "dep:tobj"]
 gpu3d = ["dep:wgpu"]
+# v7 GPU/2D pipeline (opt-in, default off): WGSL compute kernels for a couple of 2D effects (gaussian blur, color
+# matrix) run through wgpu on whatever adapter is present (lavapipe software Vulkan on this box). Independent of
+# gpu3d (which is the 3D mesh/offscreen-raster path) so a 2D-only build does not need mesh-import/flat-sah etc.
+# The CPU path (gpu2d::cpu_*) stays the implementation every existing effect and golden uses; this feature adds
+# a parallel, separately-tested GPU path that nothing calls by default.
+gpu2d = ["dep:wgpu"]
 flat-sah = ["dep:bvh", "dep:nalgebra"]
 surface-contour = ["dep:isosurface"]
 material-textures = ["dep:mikktspace"]
