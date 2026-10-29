@@ -106,7 +106,7 @@ Use `tools/list` / `list_effects` for live schemas. Read the source parameter na
 
 ### Limits
 
-- [ ] outgoing-clip push/slide-out, luma wipe from custom matte, page peel, morph cut-like, ripple dissolve, gradient wipe, barn doors
+- [~] outgoing-clip push/slide-out, luma wipe from custom matte, page peel, morph cut-like, ripple dissolve, gradient wipe, barn doors [x 4 of 7 already shipped pre-v7, uncredited: push (pushwipe.rs -- outgoing slides out one edge while incoming slides in the opposite, true geometric motion not a wipe), gradient_wipe (pushwipe.rs -- linear/radial/angular ramp OR the luma of another clip kept hidden from the composite, exactly "luma wipe from custom matte"), morph_cut (transitions.rs/render.rs -- real dense optical flow between the outgoing clip's last frame and the incoming clip, Premiere's actual Morph Cut, not an approximation). New this pass (transitions.rs): ripple_dissolve (concentric sine-perturbed radial reveal expanding from centre) and barn_doors (the outgoing picture's two halves physically slide apart like double doors -- a geometric slide via a raw-pixel compose closure, same family as push, not a reveal mask, verified by checking the open gap widens monotonically with k). Honest [~]: page_peel is a simplified 2D corner peel (diagonal reveal with a curl-shadow band and a highlight running just behind the lifting edge) -- not a true 3D page-curl geometry, which this pass does not attempt; it reads as a page lifting, not merely a plain diagonal wipe, but it is a stand-in, stated as such. 4 new TDD tests (new_transitions_v7.rs). golden_registry.txt hand-updated for add_transition's grown kind enum.]
 
 ### Proof level
 

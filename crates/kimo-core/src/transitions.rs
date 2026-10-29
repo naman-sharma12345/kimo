@@ -3,7 +3,7 @@
 use crate::effects::Frame;
 use crate::model::Transition;
 
-pub const KINDS: &[&str] = &["crossfade", "dissolve", "wipe", "wipe_left", "wipe_right", "wipe_up", "wipe_down", "diagonal", "blinds", "checker", "iris", "clock", "split_h", "split_v", "noise_dissolve", "block_dissolve", "card_wipe", "slide_left", "slide_right", "slide_up", "slide_down", "zoom", "zoom_blur", "spin", "flash", "dip_black", "dip_white", "dip_color", "light_leak", "film_burn", "glitch", "whip_left", "whip_right", "shatter", "shatter_cells"];
+pub const KINDS: &[&str] = &["crossfade", "dissolve", "wipe", "wipe_left", "wipe_right", "wipe_up", "wipe_down", "diagonal", "blinds", "checker", "iris", "clock", "split_h", "split_v", "noise_dissolve", "block_dissolve", "card_wipe", "slide_left", "slide_right", "slide_up", "slide_down", "zoom", "zoom_blur", "spin", "flash", "dip_black", "dip_white", "dip_color", "light_leak", "film_burn", "glitch", "whip_left", "whip_right", "shatter", "shatter_cells", "ripple_dissolve", "barn_doors", "page_peel"];
 pub const EASES: &[&str] = &["linear", "in", "out", "in_out", "in_cubic", "out_cubic", "in_out_cubic", "in_out_expo", "out_back", "out_bounce", "out_quart", "out_expo", "in_expo", "in_out_quint", "in_back", "in_out_back", "in_elastic", "out_elastic", "in_out_elastic", "in_bounce", "in_out_bounce"];
 
 pub fn ease(name: &str, t: f64) -> f64 {
@@ -108,6 +108,37 @@ pub fn plan(tr: &Transition, lt: f64, w: usize, h: usize) -> Plan {
             let kk = k as f64; p.scale = 1.0 + 0.04 * (1.0 - kk); }
         "whip_left" | "whip_right" => { let s = if tr.kind == "whip_left" { 1.0 } else { -1.0 }; p.dx = s * (1.0 - k as f64) * w as f64; let vel = ((1.0 - k) * 4.0 * k).max(0.0).min(1.0) * wf * 0.35 * tr.intensity as f32; p.post = Some(Box::new(move |f| dir_blur(f, vel, 0.0, 16))); p.op = 1.0;
             let v2 = vel; p.overlay = Some(Box::new(move |f| dir_blur(f, v2 * 0.6, 0.0, 12))); }
+        "ripple_dissolve" => { // concentric rings expanding from centre, a sine-perturbed radial threshold (same
+            // sstep((k*(1+sw)-n)/sw) shape as noise_dissolve, n clamped to 0..1 so k=0/1 are always pure)
+            let (cx, cy) = (wf / 2.0, hf / 2.0); let maxd = (cx * cx + cy * cy).sqrt().max(1.0);
+            let freq = tr.count.max(1.0) as f32 * 2.0; let sw = soft.max(0.06);
+            p.mask = Some(Box::new(move |x, y| { let (dx, dy) = (x as f32 - cx, y as f32 - cy); let d = (dx * dx + dy * dy).sqrt() / maxd;
+                let n = (d + 0.05 * (d * freq * std::f32::consts::TAU).sin()).clamp(0.0, 1.0); sstep((k * (1.0 + sw) - n) / sw) }));
+        }
+        "barn_doors" => { // the outgoing picture's two halves physically slide apart (like double doors opening) instead of
+            // being wiped away; a true geometric slide (like push), not a reveal mask, so it runs in `compose` on raw pixels.
+            let half = w as isize / 2; let shift = (k * (w as f32 / 2.0 + 2.0)) as isize;
+            p.compose = Some(Box::new(move |below, inc| { let (bw, bh) = (below.w, below.h); let mut out = Frame { w: inc.w, h: inc.h, d: inc.d.clone() };
+                for y in 0..bh { for x in 0..bw { let xi = x as isize;
+                    let src_x = if xi < half - shift { Some(xi + shift) } else if xi >= half + shift { Some(xi - shift) } else { None };
+                    if let Some(sx) = src_x { if sx >= 0 && (sx as usize) < bw { let so = (y * bw + sx as usize) * 4; let a = below.d[so + 3];
+                        if a > 0.0 { let doo = (y * bw + x) * 4;
+                            for j in 0..3 { out.d[doo + j] = below.d[so + j] * a + out.d[doo + j] * out.d[doo + 3] * (1.0 - a); }
+                            out.d[doo + 3] = a + out.d[doo + 3] * (1.0 - a); } } } } }
+                out })); }
+        "page_peel" => { // a simplified 2D corner peel (diagonal reveal from a corner with a curl-shadow band along the
+            // lifting edge and a bright highlight just behind it) -- an honest stand-in for a true 3D page curl, which
+            // this pass does not attempt; cheap, but reads as a page lifting rather than a plain diagonal wipe.
+            let ang = if tr.angle != 0.0 { tr.angle as f32 } else { 135.0 }; let (c, sn) = (ang.to_radians().cos(), ang.to_radians().sin());
+            let half = (wf * c.abs() + hf * sn.abs()) / 2.0; let sw = (soft * half * 2.0).max(1.0); let edge = -half + k * (2.0 * half + sw);
+            p.mask = Some(Box::new(move |x, y| { let pr = (x as f32 - wf / 2.0) * c + (y as f32 - hf / 2.0) * sn; sstep((edge - pr) / sw) }));
+            let it = tr.intensity as f32;
+            p.overlay = Some(Box::new(move |f| { for y in 0..f.h { for x in 0..f.w { let pr = (x as f32 - wf / 2.0) * c + (y as f32 - hf / 2.0) * sn;
+                let d = edge - pr; // distance behind the lifting edge, on the still-covered (outgoing) side
+                if d < 0.0 || d > sw * 6.0 { continue; }
+                let band = d / (sw * 6.0); let shadow = (1.0 - band).powi(2) * 0.5 * it; let hl = (1.0 - (band - 0.12).abs() * 6.0).clamp(0.0, 1.0) * 0.35 * it;
+                let i = (y * f.w + x) * 4; let a = f.d[i + 3]; if a <= 0.0 { continue; }
+                for j in 0..3 { f.d[i + j] = (f.d[i + j] * (1.0 - shadow) + hl).clamp(0.0, 1.0); } } } })); }
         _ => p.op = k,
     }
     p
