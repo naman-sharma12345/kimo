@@ -15,7 +15,7 @@ add_counter 2cfd3406e38575f3
 add_depth_parallax cc1c6063f0930b13
 add_detection_box e740cc0690940b44
 add_displacement_map be79622940cf29ef
-add_effect a58f9e99a7162e22
+add_effect ee0656b3e9bde3c8
 add_emitter 940e20f3bb9b947f
 add_glitch_confetti ea3c9845ccf22d20
 add_glow_text 11957bdb81e0bc57
