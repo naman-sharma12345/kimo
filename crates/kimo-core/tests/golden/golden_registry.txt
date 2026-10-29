@@ -229,7 +229,7 @@ list_essential_properties 2c137190024edd96
 list_expression_scripts 857cf144093d2c21
 list_fonts 72b7c1ebd21fc6d3
 list_hooks 483fb6afdc9b81f6
-list_layer_styles dbde2afd8c479198
+list_layer_styles 587fc42be09a92d5
 list_lights 7242b7eca8aa84b6
 list_markers 63ae2e496ef97ab2
 list_masks abb189717b8209fb
@@ -397,7 +397,7 @@ set_hdr_mastering 7f72fec86997f9fc
 set_keyframe d367b31d80f6c144
 set_keyframe_bezier fb0399046835f763
 set_keyframes 8e8fdaa1741a54bf
-set_layer_style 7a8c92de865f4ce6
+set_layer_style eabf63cdf536c6b4
 set_light 5b677c590887db11
 set_limits 0fb5b9a5542efe5a
 set_mask d346bd54f9e9523c
