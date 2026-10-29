@@ -164,7 +164,7 @@ export_vertex_stream_gltf cb9c0dd901f16703
 export_vertex_stream_obj e4ee4a2a4c9506e2
 export_with_subtitles 824e8be7e0dd374e
 ext_list 83a5db4765dba269
-find b3b48a92ca15675f
+find 527d840634ad21e4
 find_assets 4616a91345c1f416
 finish_audio 2e6067faa3bb01ce
 fit_clip_duration 018a469206f430eb

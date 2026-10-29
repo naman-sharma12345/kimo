@@ -44,3 +44,23 @@ fn scene() -> (Session, String, Vec<String>) { let mut ss = Session::new(); c(&m
     let tx = c(&mut ss, "add_text", json!({"track_id": tt, "text": "Hello World", "start": 0.0, "duration": 2.0}))["clip_id"].as_str().unwrap().to_string();
     assert_eq!(c(&mut ss, "find", json!({"text_contains": "hello w"}))["matches"][0]["id"], tx.as_str()); assert_eq!(c(&mut ss, "find", json!({"text_contains": "zzz"}))["count"], 0);
 }
+
+#[test] fn find_has_effect_filters_by_effect_kind_and_lists_effects_in_results() {
+    let (mut ss, _t, ids) = scene(); let h = pj(&ss); let u = ss.undo.len();
+    c(&mut ss, "add_effect", json!({"clip_id": ids[0], "kind": "glow", "params": {"amount": 0.5}}));
+    c(&mut ss, "add_effect", json!({"clip_id": ids[0], "kind": "blur", "params": {"radius": 2.0}}));
+    c(&mut ss, "add_effect", json!({"clip_id": ids[1], "kind": "blur", "params": {"radius": 1.0}}));
+    let f = |ss: &mut Session, a: Value| -> Vec<String> { c(ss, "find", a)["matches"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap().to_string()).collect() };
+    assert_eq!(f(&mut ss, json!({"has_effect": "glow"})), vec![ids[0].clone()]);
+    let mut blurred = f(&mut ss, json!({"has_effect": "blur"})); blurred.sort();
+    let mut want = vec![ids[0].clone(), ids[1].clone()]; want.sort();
+    assert_eq!(blurred, want);
+    assert_eq!(f(&mut ss, json!({"has_effect": "nope_no_such_kind"})).len(), 0);
+    c(&mut ss, "set_meta", json!({"id": ids[0], "name": "hero"}));
+    let m = c(&mut ss, "find", json!({"has_effect": "glow"}))["matches"][0].clone();
+    assert_eq!(m["effects"], json!(["glow", "blur"]), "effect kinds ride along, in order");
+    assert!(e(&mut ss, "find", json!({"kind": "track", "has_effect": "glow"})).contains("has_effect"), "has_effect is clip-only");
+    // undo the fixture's own mutations back out, confirming find itself never touched history further than the 2+1 add_effect calls + 1 set_meta
+    c(&mut ss, "undo", json!({})); c(&mut ss, "undo", json!({})); c(&mut ss, "undo", json!({})); c(&mut ss, "undo", json!({}));
+    assert_eq!(pj(&ss), h); assert_eq!(ss.undo.len(), u, "find performed no mutation of its own");
+}
