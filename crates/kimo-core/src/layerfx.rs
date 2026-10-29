@@ -16,7 +16,7 @@ use crate::model::Effect;
 
 pub const CHANNELS: &[&str] = &["red", "green", "blue", "alpha", "luma", "hue", "saturation", "lightness"];
 pub const EDGES: &[&str] = &["clamp", "wrap", "transparent"];
-pub const KINDS: &[&str] = &["displacement_map", "set_matte", "lens_blur", "depth_parallax"];
+pub const KINDS: &[&str] = &["displacement_map", "set_matte", "lens_blur", "depth_parallax", "channel_combiner", "set_channels", "match_grain"];
 pub const MAP_SPACES: &[&str] = &["screen", "clip"];
 
 /// Where the clip lands on the canvas: f = c + (dx, dy) + R(rot) * scale * (q - c), c the canvas centre, y down (render.rs transform_bb).
@@ -25,7 +25,7 @@ impl Place { pub fn identity(&self) -> bool { (self.scale - 1.0).abs() < 1e-9 &&
 
 /// The string key holding the driving clip's id.
 /// lens_blur carries one only when add_lens_blur was given a depth map (depth_clip); without it the lens blur is an ordinary effect.
-pub fn source_key(kind: &str) -> Option<&'static str> { match kind { "displacement_map" => Some("map_clip"), "set_matte" => Some("matte_clip"), "lens_blur" | "depth_parallax" => Some("depth_clip"), _ => None } }
+pub fn source_key(kind: &str) -> Option<&'static str> { match kind { "displacement_map" => Some("map_clip"), "set_matte" => Some("matte_clip"), "lens_blur" | "depth_parallax" => Some("depth_clip"), "channel_combiner" | "set_channels" | "match_grain" => Some("ref_clip"), _ => None } }
 /// True when the effect is driven by another clip right now (its source key is set).
 pub fn driven(e: &Effect) -> bool { source_key(&e.kind).is_some_and(|k| e.strings.contains_key(k)) }
 
@@ -71,6 +71,73 @@ pub fn set_matte(e: &Effect, f: &mut Frame, matte: &Frame) {
     if matte.w == 0 || matte.h == 0 { return; }
     let (ch, inv) = (word(e, "channel", "alpha"), e.strings.get("invert").map(|s| s == "1").unwrap_or(false));
     for y in 0..f.h { for x in 0..f.w { let m = channel(at(matte, f, x, y), ch, 0.0); let m = if inv { 1.0 - m } else { m }; f.d[(y * f.w + x) * 4 + 3] *= m.clamp(0.0, 1.0); } }
+}
+
+/// Channel Combiner (AE's Calculations / Compound Arithmetic): blend this clip with a second,
+/// referenced clip using a named operator -- the true two-clip arithmetic the plain `blend` field
+/// (this clip's own 22-mode blend against the clips below it on the timeline) cannot express, since
+/// the second input here is an arbitrary OTHER clip, not whatever happens to sit underneath.
+/// `operation`: add, subtract, multiply, screen, difference, darken, lighten (clamped 0..1 each).
+/// `opacity` (0..1, default 1) mixes the combined result back toward the clip's own original pixel.
+/// `ref_channel` ("rgb" default, or any layerfx::CHANNELS name) lets the second input drive from a
+/// single channel (e.g. "luma") instead of full RGB, broadcast to all three output channels.
+pub fn channel_combiner(e: &Effect, f: &mut Frame, refc: &Frame, lt: f64) {
+    if refc.w == 0 || refc.h == 0 { return; }
+    let op = word(e, "operation", "add"); let opacity = num(e, "opacity", lt, 1.0).clamp(0.0, 1.0);
+    let rch = word(e, "ref_channel", "rgb");
+    for y in 0..f.h { for x in 0..f.w {
+        let o = (y * f.w + x) * 4; let rp = at(refc, f, x, y);
+        let rc = if rch == "rgb" { [rp[0], rp[1], rp[2]] } else { let v = channel(rp, rch, 0.0); [v, v, v] };
+        for j in 0..3 { let a = f.d[o + j]; let b = rc[j];
+            let r = match op { "subtract" => a - b, "multiply" => a * b, "screen" => 1.0 - (1.0 - a) * (1.0 - b),
+                "difference" => (a - b).abs(), "darken" => a.min(b), "lighten" => a.max(b), _ => a + b };
+            f.d[o + j] = (a + (r.clamp(0.0, 1.0) - a) * opacity).clamp(0.0, 1.0); }
+    } }
+}
+
+/// Set Channels (AE's Set Channels): construct each output channel (R,G,B,A) from an arbitrary
+/// source -- this clip's own data, the referenced clip's data, or a flat on/off value -- the real gap
+/// `shift_channels` (FEATURES.md L469, this-clip-only) left open: a second clip as a channel source.
+/// Params per output channel `{r,g,b,a}_source`: "this" (default r->red, g->green, b->blue, a->alpha),
+/// "ref" (the referenced clip), "on" (flat 1.0), "off" (flat 0.0); `{r,g,b,a}_channel` names which of
+/// layerfx::CHANNELS to read when the source is "this" or "ref" (defaults to the output channel's own
+/// name, so an untouched channel is a true identity pass-through).
+pub fn set_channels(e: &Effect, f: &mut Frame, refc: &Frame, _lt: f64) {
+    let out_ch = ["red", "green", "blue", "alpha"];
+    let src = f.d.clone();
+    for y in 0..f.h { for x in 0..f.w {
+        let o = (y * f.w + x) * 4; let this_px = &src[o..o + 4]; let ref_px = if refc.w > 0 && refc.h > 0 { Some(at(refc, f, x, y)) } else { None };
+        for (j, out_name) in out_ch.iter().enumerate() {
+            let letter = &out_name[0..1];
+            let source = word(e, &format!("{letter}_source"), "this");
+            let chan_key = format!("{letter}_channel");
+            let chan = word(e, &chan_key, out_name);
+            let v = match source { "on" => 1.0, "off" => 0.0,
+                "ref" => ref_px.map(|rp| channel(rp, chan, 0.0)).unwrap_or(this_px[j]),
+                _ => channel(this_px, chan, 0.0) };
+            f.d[o + j] = v.clamp(0.0, 1.0);
+        }
+    } }
+}
+
+/// Match Grain: estimate the reference clip's own grain amplitude (a high-pass residual -- the
+/// reference minus a small box blur of itself, RMS over luma) and reproduce an equivalent synthetic
+/// grain on THIS clip via the existing Film-Look-Creator grain engine (color/grain_look.rs), closing
+/// the two-clip-reference gap named on FEATURES.md L481. `strength` (default 1.0) scales the
+/// estimated amount; `size` (default 1.0) is the synthetic grain's own size parameter (grain size
+/// itself is not estimated from the reference -- an honest simplification, noted in FEATURES.md).
+pub fn match_grain(e: &Effect, f: &mut Frame, refc: &Frame, lt: f64, seed: u64) {
+    if refc.w == 0 || refc.h == 0 { return; }
+    let mut hp = Frame { w: refc.w, h: refc.h, d: refc.d.clone() };
+    let blurred = { let mut b = Frame { w: refc.w, h: refc.h, d: refc.d.clone() }; crate::effects::box_blur3(&mut b, 2); b };
+    for i in 0..hp.w * hp.h { for j in 0..3 { hp.d[i * 4 + j] -= blurred.d[i * 4 + j]; } }
+    let n = (hp.w * hp.h).max(1);
+    let sum_sq: f64 = (0..n).map(|i| { let l = 0.2126 * hp.d[i * 4] as f64 + 0.7152 * hp.d[i * 4 + 1] as f64 + 0.0722 * hp.d[i * 4 + 2] as f64; l * l }).sum();
+    let rms = (sum_sq / n as f64).sqrt();
+    let strength = num(e, "strength", lt, 1.0).max(0.0) as f64;
+    let size = num(e, "size", lt, 1.0).clamp(1.0, 32.0) as f64;
+    let amount = (rms * 4.0 * strength).clamp(0.0, 0.5); // the grain effect's own amount range is 0..0.5
+    crate::color::grain_look::apply(amount, size, 0.0, 0.0, [1.0, 1.0, 1.0], [1.0, 1.0, 1.0], f, seed);
 }
 /// Camera Lens Blur with a depth map: the map's channel (depth_channel, default luma, read over black, inverted with invert 1) at each pixel,
 /// its distance from focal_depth (default 1 = white in focus) normalised by the farthest a value can be (max(focal, 1 - focal)), scales the radius.
@@ -123,4 +190,4 @@ pub fn depth_parallax(e: &Effect, f: &mut Frame, map: &Frame, lt: f64) {
         let i = (y * w + x) * 4; f.d[i..i + 4].copy_from_slice(&out);
     } }
 }
-pub fn apply(e: &Effect, f: &mut Frame, src: &Frame, lt: f64, place: Option<Place>) { match e.kind.as_str() { "displacement_map" => displace(e, f, src, lt, place), "set_matte" => set_matte(e, f, src), "lens_blur" => lens_depth(e, f, src, lt), "depth_parallax" => depth_parallax(e, f, src, lt), _ => {} } }
+pub fn apply(e: &Effect, f: &mut Frame, src: &Frame, lt: f64, place: Option<Place>, seed: u64) { match e.kind.as_str() { "displacement_map" => displace(e, f, src, lt, place), "set_matte" => set_matte(e, f, src), "lens_blur" => lens_depth(e, f, src, lt), "depth_parallax" => depth_parallax(e, f, src, lt), "channel_combiner" => channel_combiner(e, f, src, lt), "set_channels" => set_channels(e, f, src, lt), "match_grain" => match_grain(e, f, src, lt, seed), _ => {} } }

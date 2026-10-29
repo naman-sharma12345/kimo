@@ -8,6 +8,7 @@ add_box_expand 757e74b37aa0ba37
 add_camera_shake 9a275014886af36b
 add_caption_cues 4df6d3d9f16aa500
 add_captions 59f096446c4d0d66
+add_channel_combiner 69fe26297ed4811f
 add_clip b26364e2a1be01ac
 add_clip_from_subclip 7830c64a31ad3e9b
 add_code_clip 79e8cbe027cdbd62
@@ -25,6 +26,7 @@ add_lens_blur 465cef3d1ba4c9ca
 add_managed_linear_effect 15e7663749141579
 add_marker 13b9c5a2e2022d94
 add_mask 128b6203f759a55c
+add_match_grain a1b28d4e072f25b9
 add_modifier 881425bab098ce59
 add_morph_cut f5aea6965892fcd5
 add_multicam f0d46cf978e1e7f9
@@ -40,6 +42,7 @@ add_prompt_box 1f7b236e95633eb0
 add_punch_ins 9d853586d3ec64b1
 add_push_wipe 4869e61f95c4c704
 add_scene3d 8aa86fa31f1393d8
+add_set_channels 1360567a1d34b9d6
 add_shape d5414bb0544a4ab5
 add_shape_modifier 95434f64dd11932f
 add_shard_burst d5d23132405a5039
