@@ -70,7 +70,7 @@ Each module separates the capability checklist, parameter/control notes, limits,
 - [~] group clips via precomps; pending: track targeting, sync lock, linked audio+video clips, link/unlink
 - [~] nested compositions via group_clips / ungroup_clip; no editing grouped clips in place or group time remap
 - [~] adjustment layers [x], track mattes [x], sequence settings per sequence, multiple sequences
-- [~] designed title/lower-third presets via add_title; no MOGRT import or general parametric template system
+- [~] designed title/lower-third presets via add_title. MOGRT substitute: a real parametric template system already existed pre-v7 (template_define/template_apply/template_list/template_describe/template_delete -- named, parameterised op-lists, one atomic undo step, exportable/importable as a JSON library) plus set_essential_properties/list_essential_properties/clear_essential_properties (marking which params a MOGRT-style consumer should expose, FEATURES.md L239). NEW this pass: export_template_package/import_template_package (ext/templates.rs) bundle a named template with its clips' essential-property marks into one JSON file -- Kimo's own open one-file substitute for Adobe's closed .mogrt container, round-trippable within or across projects (import matches essential marks back onto clips by role first, falling back to the original clip_id; unmatched entries are reported, never silently dropped). 5 TDD tests. Honest gap: still no Adobe .mogrt IMPORT (that format is closed/proprietary; not attempted, as instructed) and no thumbnail/preview asset in the package, unlike a real MOGRT file.
 
 ### Parameters and controls
 

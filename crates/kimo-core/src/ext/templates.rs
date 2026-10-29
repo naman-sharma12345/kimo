@@ -73,6 +73,63 @@ fn template_apply(ss: &mut Session, a: &Value) -> Result<Value, String> {
     out["args"] = Value::Object(env.into_iter().collect()); if (dry || flag("expansion")) && !only { out["expansion"] = expansion; }
     Ok(out)
 }
+
+// ---------------------------------------------------------------------------------------------
+// v7: MOGRT substitute. Adobe's .mogrt format is closed (a proprietary zip container); this is Kimo's
+// own open substitute -- a single JSON file bundling a template_define'd template body with the
+// essential-property marks (set_essential_properties, FEATURES.md L239 -- already described in this
+// codebase as "the knobs an external caller/MOGRT-style template consumer should expose") captured off
+// whichever clips the template's last application (or any manual clips) carry them on. Essential marks
+// are plain `essential:` tags on Clip.tags (see ext/data_driven_v7.rs), so round-tripping them is just
+// carrying the tag strings verbatim -- no separate parser needed here.
+const MAX_PACKAGE_BYTES: usize = 1_048_576;
+
+fn export_template_package(ss: &mut Session, a: &Value) -> Result<Value, String> {
+    let t = find(ss, str_arg(a, "name")?)?.clone();
+    let path = str_arg(a, "path")?;
+    let explicit: Option<Vec<String>> = a.get("clip_ids").and_then(|v| v.as_array()).map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
+    let mut essential = vec![];
+    for tr in &ss.project.tracks { for c in &tr.clips {
+        let tags: Vec<String> = c.tags.iter().filter(|t| t.starts_with("essential:")).cloned().collect();
+        if tags.is_empty() { continue; }
+        if let Some(ids) = &explicit { if !ids.contains(&c.id) { continue; } }
+        essential.push(json!({"clip_id": c.id, "role": c.role, "essential_tags": tags}));
+    } }
+    let package = json!({"kimo_template_package_version": 1, "template": t, "essential_properties": essential});
+    let bytes = serde_json::to_vec_pretty(&package).map_err(|e| e.to_string())?;
+    if bytes.len() > MAX_PACKAGE_BYTES { return Err(format!("out_of_range: a template package may be at most {MAX_PACKAGE_BYTES} bytes, this one is {}", bytes.len())); }
+    std::fs::write(path, &bytes).map_err(|e| format!("cannot write path: {e}"))?;
+    Ok(json!({"path": path, "template_name": t.name, "params": t.params.iter().map(|p| p.name.clone()).collect::<Vec<_>>(), "op_count": t.ops.len(), "essential_clip_count": essential.len()}))
+}
+
+fn import_template_package(ss: &mut Session, a: &Value) -> Result<Value, String> {
+    let path = str_arg(a, "path")?;
+    let txt = std::fs::read_to_string(path).map_err(|e| format!("cannot read path: {e}"))?;
+    let v: Value = serde_json::from_str(&txt).map_err(|e| format!("path is not valid JSON: {e}"))?;
+    if v.get("kimo_template_package_version").is_none() { return Err("not a kimo template package: missing kimo_template_package_version".into()); }
+    let t: Template = serde_json::from_value(v.get("template").cloned().ok_or("package has no \"template\"")?).map_err(|e| format!("package's template is malformed: {e}"))?;
+    let name = t.name.clone(); let params: Vec<String> = t.params.iter().map(|p| p.name.clone()).collect(); let op_count = t.ops.len();
+    let replaced = put(ss, t)?;
+    let reapply = a.get("reapply_essential").and_then(|v| v.as_bool()).unwrap_or(true);
+    let (mut reapplied, mut unmatched) = (0usize, vec![]);
+    if reapply {
+        for entry in v.get("essential_properties").and_then(|v| v.as_array()).cloned().unwrap_or_default() {
+            let role = entry.get("role").and_then(|v| v.as_str());
+            let orig_id = entry.get("clip_id").and_then(|v| v.as_str());
+            let tags: Vec<String> = entry.get("essential_tags").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+            // Prefer matching by role (survives a fresh template_apply, since ops usually carry the role forward);
+            // fall back to the original clip_id (useful when importing back into the same project the package came from).
+            let target = role.and_then(|r| ss.project.tracks.iter().flat_map(|tr| tr.clips.iter()).find(|c| c.role.as_deref() == Some(r)).map(|c| c.id.clone()))
+                .or_else(|| orig_id.filter(|id| ss.project.find_clip(id).is_some()).map(|s| s.to_string()));
+            match target.and_then(|id| ss.project.find_clip_mut(&id)) {
+                Some(c) => { for tg in tags { if !c.tags.contains(&tg) { c.tags.push(tg); } } reapplied += 1; }
+                None => unmatched.push(json!({"clip_id": orig_id, "role": role})),
+            }
+        }
+    }
+    Ok(json!({"path": path, "template_name": name, "params": params, "op_count": op_count, "replaced": replaced, "essential_reapplied": reapplied, "essential_unmatched": unmatched}))
+}
+
 pub fn commands() -> Vec<Command> { vec![
     Command { name: "template_define", mutates: true, description: "Store a named template in the project (Kimo ships none; you author them). params: [{name, type number|string|boolean|id|array|object|any, default?}]; ops: the batch ops, where {{param}} is replaced by the argument (a whole-string slot keeps its type) and foreach, {\"$calc\"}, @names and $refs work as in batch. Redefining a name replaces it. library_path instead imports every template from a JSON file {\"templates\":[...]}.",
         schema: obj(vec![("name", s("template name: A-Z a-z 0-9 _ . -")), ("params", json!({"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"type":{"type":"string","enum":TYPES},"default":{}},"required":["name"]}})), ("ops", json!({"type":"array","items":{"type":"object"}})), ("library_path", s("import templates from this JSON file instead of defining one"))], &[]), run: template_define },
@@ -82,4 +139,8 @@ pub fn commands() -> Vec<Command> { vec![
         schema: obj(vec![("export_path", s("write {\"templates\":[...]} to this file"))], &[]), run: template_list },
     Command { name: "template_describe", mutates: false, description: "Read-only: one template in full - parameters with type, default and required, and its ops.", schema: obj(vec![("name", s("template name"))], &["name"]), run: template_describe },
     Command { name: "template_delete", mutates: true, description: "Delete a stored template by name.", schema: obj(vec![("name", s("template name"))], &["name"]), run: template_delete },
+    Command { name: "export_template_package", mutates: false, description: "v7 MOGRT substitute: bundle an already-defined template with its clips' essential-property marks into one JSON file. template_define must already have the template; clip_ids defaults to every clip carrying an essential mark. Adobe's .mogrt is a closed/proprietary format; this is Kimo's own open one-file substitute, importable with import_template_package (in this project or another).",
+        schema: obj(vec![("name", s("template name, already stored via template_define")), ("path", s("output .json path")), ("clip_ids", json!({"type":"array","items":{"type":"string"},"description":"optional: only these clips' essential marks (default: every clip with any)"}))], &["name","path"]), run: export_template_package },
+    Command { name: "import_template_package", mutates: true, description: "v7 MOGRT substitute: load a package written by export_template_package. Registers its template (as template_define would, replacing a same-named one). By default (reapply_essential) also reapplies its essential-property marks onto clips in the CURRENT project: matched by role first (so a fresh template_apply instance picks them up), falling back to the original clip_id (round-tripping within the same project). Unmatched entries are reported, not silently dropped.",
+        schema: obj(vec![("path", s("input .json path, written by export_template_package")), ("reapply_essential", json!({"type":"boolean","description":"default true"}))], &["path"]), run: import_template_package },
 ] }
