@@ -64,6 +64,20 @@ pub const CATALOG2: &[(&str, &str, &[C])] = &[
     ("vr_glow", "VR Glow: threshold + seam-wrapping blur + add, same recipe as `glow` but the bloom itself wraps the 360 seam (vr.rs, FEATURES.md L477)", &[("amount", 0.5, "0..2"), ("radius", 12.0, "px"), ("threshold", 0.7, "0..1")]),
     ("vr_chromatic_aberration", "VR Chromatic Aberrations: radial R/B channel split, sampled with horizontal wrap so the fringe runs across the seam instead of smearing into the last column (vr.rs, FEATURES.md L477)", &[("amount", 4.0, "px"), ("cx", 0.5, "center U"), ("cy", 0.5, "center V"), ("radial_scale", 2.0, "radial multiplier"), ("r_scale", 1.0, "red scale"), ("b_scale", -1.0, "blue scale")]),
 
+    ("cartoon", "Cartoon/toon shading (FEATURES.md L485): posterize colour into flat bands and darken wherever the local luma gradient crosses a threshold (a real edge line, not a blur)", &[("levels", 5.0, "colour bands, 2..16"), ("edge_strength", 1.0, "0..2, how dark the edge lines are"), ("edge_threshold", 0.15, "0..1 gradient magnitude that counts as an edge")]),
+    ("color_emboss", "Colour-preserving emboss (FEATURES.md L485): the classic emboss relief (original minus a directionally-offset sample) added back onto the original colour, so colour survives (plain `emboss` elsewhere goes to grey)", &[("angle", 135.0, "deg"), ("strength", 1.0, "0..4"), ("depth", 1.0, "offset px, >0")]),
+    ("roughen_edges", "Roughen Edges (FEATURES.md L485): a jagged noise-driven warp confined to the alpha edge band (an interior solid fill barely moves; only the boundary gets ragged)", &[("amount", 6.0, "px, 0..200"), ("size", 20.0, "noise feature size px, >=1")]),
+    ("scatter", "Scatter (FEATURES.md L485): every pixel resampled from a random nearby position, independent per pixel (not a blur -- edges go ragged, flat fields stay flat on average)", &[("amount", 6.0, "px, 0..200")]),
+    ("texturize", "Texturize (FEATURES.md L485), procedural variant: multiplies the image by a synthetic bump pattern. Honest scope note: AE's own Texturize can also pull its bump from ANOTHER layer -- that two-clip-reference mode was not built this pass (see FEATURES.md).", &[("scale", 0.1, "noise frequency, >0"), ("amount", 0.5, "0..2"), ("octaves", 3.0, "1..6")]),
+    ("cc_glass", "CC Glass (FEATURES.md L485): refracts the image through a procedural bump field (the bump's own gradient bends the sample position), a real lens-like distortion, not a blur", &[("amount", 20.0, "px, 0..400"), ("scale", 0.02, "bump noise frequency, >0")]),
+    ("cc_kaleida", "CC Kaleida (FEATURES.md L485): mirrors the image into N radial wedges around a centre point for a true kaleidoscope repeat", &[("segments", 6.0, "2..64"), ("center_x", 0.5, "0..1"), ("center_y", 0.5, "0..1"), ("angle_offset", 0.0, "deg"), ("radius_scale", 1.0, "zoom, >0")]),
+    ("cc_threshold_rgb", "CC Threshold RGB (FEATURES.md L485): each colour channel independently hard-clipped to 0 or 1 at its own threshold (not a single combined luma threshold)", &[("r_threshold", 0.5, "0..1"), ("g_threshold", 0.5, "0..1"), ("b_threshold", 0.5, "0..1")]),
+    ("dither", "Ordered (Bayer 4x4) dithering down to a small number of levels per channel (FEATURES.md L485): a real spatial dither pattern, not a plain posterize", &[("levels", 4.0, "2..16"), ("strength", 1.0, "0..1 dither pattern amount")]),
+    ("tile_mosaic", "Mosaic/pixelate (FEATURES.md L485): the image rebuilt from flat NxN colour-average blocks", &[("size", 16.0, "block size px, 1..256")]),
+    ("sketch_pencil", "Pencil sketch (FEATURES.md L485, the raster look half of 'sketch/pencil' -- see trace/vector note on the honest-gaps list): the classic colour-dodge-of-an-inverted-blur technique over the image's own luma", &[("blur_radius", 6.0, "px, 1..64"), ("strength", 1.0, "0..1 blend back to the original"), ("color", 0.0, "0 pure grey sketch .. 1 tinted with the original colour")]),
+    ("oil_paint", "Oil paint (FEATURES.md L485): a real windowed most-common-luma-bucket filter (not a blur) -- each pixel becomes the average colour of whichever luma bucket is most common in its neighbourhood", &[("radius", 3.0, "neighbourhood radius px, 1..8"), ("levels", 20.0, "luma buckets, 2..64")]),
+    ("anaglyph", "Anaglyph red/cyan stereo (FEATURES.md L485): red channel sampled from one horizontal shift, green+blue from the opposite shift, approximating stereo separation from a single 2D image (no real depth map -- an honest approximation, not true stereo)", &[("shift", 4.0, "px, 0..100")]),
+    ("cc_burn_film", "CC Burn Film (FEATURES.md L485): an animated noise-edged film-burn eating the layer away as `progress` advances, with an ember glow band right at the burn front", &[("progress", 0.0, "0..1, 0 untouched, 1 fully burned away"), ("edge_width", 0.1, "0..1, softness/jaggedness of the burn front"), ("burn_r", 1.0, "ember colour R"), ("burn_g", 0.45, "ember colour G"), ("burn_b", 0.05, "ember colour B")]),
 ];
 
 // ---- helpers ----
@@ -188,6 +202,103 @@ pub fn apply2(kind: &str, pr: &Params, f: &mut Frame, t: f64, seed: u64) -> Resu
         "vr_denoise" => crate::vr::vr_denoise(f, pr, t),
         "vr_glow" => crate::vr::vr_glow(f, pr, t),
         "vr_chromatic_aberration" => crate::vr::vr_chromatic_aberration(f, pr, t),
+        "cartoon" => { let (levels, estr, ethr) = (g("levels", 5.0).clamp(2.0, 16.0), g("edge_strength", 1.0).clamp(0.0, 2.0), g("edge_threshold", 0.15).clamp(0.0, 1.0));
+            let gray: Vec<f32> = (0..w * h).map(|i| lum([f.d[i * 4], f.d[i * 4 + 1], f.d[i * 4 + 2]])).collect();
+            let src = f.d.clone();
+            for y in 0..h { for x in 0..w { let i = (y * w + x) * 4;
+                let gx = gray[y * w + (x + 1).min(w - 1)] - gray[y * w + x.saturating_sub(1)];
+                let gy = gray[(y + 1).min(h - 1) * w + x] - gray[y.saturating_sub(1) * w + x];
+                let grad = (gx * gx + gy * gy).sqrt();
+                let edge = if grad > ethr { (1.0 - estr).max(0.0) } else { 1.0 };
+                for j in 0..3 { f.d[i + j] = ((src[i + j] * levels).round() / levels) * edge; }
+            } }
+        }
+        "color_emboss" => { let (ang, strength, depth) = (g("angle", 135.0).to_radians(), g("strength", 1.0).clamp(0.0, 4.0), g("depth", 1.0).max(0.1));
+            let (dx, dy) = (ang.cos() * depth, ang.sin() * depth); let src = f.d.clone();
+            for y in 0..h { for x in 0..w { let i = (y * w + x) * 4; let o = sample(&src, w, h, x as f32 - dx, y as f32 - dy);
+                for j in 0..3 { f.d[i + j] = (src[i + j] + (src[i + j] - o[j]) * strength).clamp(0.0, 1.0); } } }
+        }
+        "roughen_edges" => { let (amount, size) = (g("amount", 6.0).clamp(0.0, 200.0), g("size", 20.0).max(1.0));
+            let alpha: Vec<f32> = (0..w * h).map(|i| f.d[i * 4 + 3]).collect(); let src = f.d.clone();
+            let ga = |x: usize, y: usize| -> f32 { let gx = alpha[y * w + (x + 1).min(w - 1)] - alpha[y * w + x.saturating_sub(1)]; let gy = alpha[(y + 1).min(h - 1) * w + x] - alpha[y.saturating_sub(1) * w + x]; (gx * gx + gy * gy).sqrt().min(1.0) };
+            for y in 0..h { for x in 0..w { let i = (y * w + x) * 4; let band = ga(x, y);
+                if band < 1e-4 { continue; }
+                let (nx, ny) = (fbm(x as f32 / size, y as f32 / size, 2, seed as u32) - 0.5, fbm(x as f32 / size + 100.0, y as f32 / size, 2, seed as u32) - 0.5);
+                let o = sample(&src, w, h, x as f32 + nx * amount * band * 2.0, y as f32 + ny * amount * band * 2.0);
+                f.d[i..i + 4].copy_from_slice(&o);
+            } }
+        }
+        "scatter" => { let amount = g("amount", 6.0).clamp(0.0, 200.0); let s = seed as u32;
+            warp(f, |x, y| (x + (hash(x as i32, y as i32, s) - 0.5) * 2.0 * amount, y + (hash(x as i32, y as i32, s.wrapping_add(1)) - 0.5) * 2.0 * amount));
+        }
+        "texturize" => { let (scale, amount, oct) = (g("scale", 0.1).max(1e-4), g("amount", 0.5).clamp(0.0, 2.0), g("octaves", 3.0).clamp(1.0, 6.0) as usize); let s = seed as u32;
+            for y in 0..h { for x in 0..w { let i = (y * w + x) * 4; let b = fbm(x as f32 * scale, y as f32 * scale, oct, s);
+                let k = 1.0 + (b - 0.5) * amount * 2.0; for j in 0..3 { f.d[i + j] = (f.d[i + j] * k).clamp(0.0, 4.0); } } }
+        }
+        "cc_glass" => { let (amount, scale) = (g("amount", 20.0).clamp(0.0, 400.0), g("scale", 0.02).max(1e-5)); let s = seed as u32; let src = f.d.clone();
+            let bump = |x: f32, y: f32| fbm(x * scale, y * scale, 4, s);
+            for y in 0..h { for x in 0..w { let i = (y * w + x) * 4;
+                let gx = bump(x as f32 + 1.0, y as f32) - bump(x as f32 - 1.0, y as f32); let gy = bump(x as f32, y as f32 + 1.0) - bump(x as f32, y as f32 - 1.0);
+                let o = sample(&src, w, h, x as f32 + gx * amount, y as f32 + gy * amount); f.d[i..i + 4].copy_from_slice(&o);
+            } }
+        }
+        "cc_kaleida" => { let (seg, cx, cy, ang0, rscale) = (g("segments", 6.0).clamp(2.0, 64.0) as i32, g("center_x", 0.5) * wf, g("center_y", 0.5) * hf, g("angle_offset", 0.0).to_radians(), g("radius_scale", 1.0).max(0.01));
+            let wedge = std::f32::consts::TAU / seg as f32; let src = f.d.clone();
+            for y in 0..h { for x in 0..w { let i = (y * w + x) * 4; let (dx, dy) = (x as f32 - cx, y as f32 - cy);
+                let r = (dx * dx + dy * dy).sqrt() / rscale; let mut a = dy.atan2(dx) - ang0; a = a.rem_euclid(wedge); if a > wedge / 2.0 { a = wedge - a; }
+                let (sx, sy) = (cx + r * a.cos(), cy + r * a.sin()); let o = sample(&src, w, h, sx, sy); f.d[i..i + 4].copy_from_slice(&o);
+            } }
+        }
+        "cc_threshold_rgb" => { let t3 = [g("r_threshold", 0.5), g("g_threshold", 0.5), g("b_threshold", 0.5)];
+            for i in 0..w * h { for j in 0..3 { f.d[i * 4 + j] = if f.d[i * 4 + j] >= t3[j] { 1.0 } else { 0.0 }; } }
+        }
+        "dither" => { const BAYER: [f32; 16] = [0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0];
+            let (levels, strength) = (g("levels", 4.0).clamp(2.0, 16.0), g("strength", 1.0).clamp(0.0, 1.0)); let span = (levels - 1.0).max(1.0);
+            for y in 0..h { for x in 0..w { let i = (y * w + x) * 4; let th = (BAYER[(y % 4) * 4 + (x % 4)] + 0.5) / 16.0 - 0.5;
+                for j in 0..3 { let v = f.d[i + j]; f.d[i + j] = ((v * span + th * strength).round() / span).clamp(0.0, 1.0); } } }
+        }
+        "tile_mosaic" => { let size = (g("size", 16.0).clamp(1.0, 256.0)) as usize; let src = f.d.clone();
+            let mut by = 0; while by < h { let mut bx = 0; while bx < w { let (bw, bh) = ((size).min(w - bx), (size).min(h - by));
+                let mut acc = [0f32; 4]; for yy in by..by + bh { for xx in bx..bx + bw { for j in 0..4 { acc[j] += src[(yy * w + xx) * 4 + j]; } } }
+                let n = (bw * bh).max(1) as f32; for j in 0..4 { acc[j] /= n; }
+                for yy in by..by + bh { for xx in bx..bx + bw { f.d[(yy * w + xx) * 4..][..4].copy_from_slice(&acc); } }
+                bx += size; } by += size; }
+        }
+        "sketch_pencil" => { let (radius, strength, color_mix) = (g("blur_radius", 6.0).clamp(1.0, 64.0) as usize, g("strength", 1.0).clamp(0.0, 1.0), g("color", 0.0).clamp(0.0, 1.0));
+            let src = f.d.clone(); let mut inv = Frame { w, h, d: (0..w * h).flat_map(|i| { let l = 1.0 - lum([src[i * 4], src[i * 4 + 1], src[i * 4 + 2]]); [l, l, l, 1.0] }).collect() };
+            box_blur3(&mut inv, radius);
+            for i in 0..w * h { let g_ = lum([src[i * 4], src[i * 4 + 1], src[i * 4 + 2]]); let b = inv.d[i * 4].min(0.995);
+                let sk = (g_ / (1.0 - b).max(1e-3)).clamp(0.0, 1.0);
+                for j in 0..3 { let tinted = sk * (1.0 - color_mix) + sk * src[i * 4 + j] * color_mix; f.d[i * 4 + j] = src[i * 4 + j] + (tinted - src[i * 4 + j]) * strength; } }
+        }
+        "oil_paint" => { let (radius, levels) = (g("radius", 3.0).clamp(1.0, 8.0) as i32, g("levels", 20.0).clamp(2.0, 64.0) as usize);
+            let src = f.d.clone(); let gray: Vec<f32> = (0..w * h).map(|i| lum([src[i * 4], src[i * 4 + 1], src[i * 4 + 2]])).collect();
+            for y in 0..h { for x in 0..w { let i = (y * w + x) * 4;
+                let mut counts = vec![0u32; levels]; let mut sums = vec![[0f32; 3]; levels];
+                for dy in -radius..=radius { for dx in -radius..=radius { let xx = (x as i32 + dx).clamp(0, w as i32 - 1) as usize; let yy = (y as i32 + dy).clamp(0, h as i32 - 1) as usize;
+                    let bucket = ((gray[yy * w + xx] * (levels - 1) as f32).round() as usize).min(levels - 1); counts[bucket] += 1;
+                    for j in 0..3 { sums[bucket][j] += src[(yy * w + xx) * 4 + j]; } } }
+                let best = (0..levels).max_by_key(|&k| counts[k]).unwrap(); let n = counts[best].max(1) as f32;
+                for j in 0..3 { f.d[i + j] = sums[best][j] / n; }
+            } }
+        }
+        "anaglyph" => { let shift = g("shift", 4.0).clamp(0.0, 100.0); let src = f.d.clone();
+            for y in 0..h { for x in 0..w { let i = (y * w + x) * 4;
+                let left = sample(&src, w, h, x as f32 - shift, y as f32); let right = sample(&src, w, h, x as f32 + shift, y as f32);
+                f.d[i] = left[0]; f.d[i + 1] = right[1]; f.d[i + 2] = right[2];
+            } }
+        }
+        "cc_burn_film" => { let (progress, edge_w) = (g("progress", 0.0).clamp(0.0, 1.0), g("edge_width", 0.1).clamp(0.001, 1.0));
+            let col = [g("burn_r", 1.0), g("burn_g", 0.45), g("burn_b", 0.05)]; let s = seed as u32;
+            let sstep = |a: f32, b: f32, x: f32| { let t = ((x - a) / (b - a).max(1e-6)).clamp(0.0, 1.0); t * t * (3.0 - 2.0 * t) };
+            for y in 0..h { for x in 0..w { let i = (y * w + x) * 4; let n = fbm(x as f32 * 0.01, y as f32 * 0.01, 4, s);
+                // a_front: 0 fully burned away (noise below the progress threshold), 1 untouched; a_front*(1-a_front) peaks exactly
+                // at the burn edge itself and falls to 0 on both the ash side and the untouched side -- the ember glow band
+                let a_front = sstep(progress, progress + edge_w, n);
+                let ember = a_front * (1.0 - a_front) * 4.0;
+                for j in 0..3 { f.d[i + j] = f.d[i + j] * a_front + col[j] * ember; } f.d[i + 3] *= a_front;
+            } }
+        }
         other => return crate::color::apply3(other, pr, f, t, seed),
     }
     Ok(())
