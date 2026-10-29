@@ -4,6 +4,55 @@
 
 ## Unreleased
 
+## v7.0.0 "studio" (2026-10-29)
+
+- Particles (FEATURES.md L483): new `bubbles` and `foam` emitter presets, and a new `card` sprite kind (a flat
+  rectangle whose half-width scales by `|cos(phase)|`, phase a pure function of time+seed -- a 2D stand-in for a
+  3D card flip) with a `card_dance` preset built on it. Credited, not duplicated: `add_emitter`'s existing
+  forces/gravity/wind/drag/turbulence/attractor/vortex/trails/colliders (analytic + layer-silhouette),
+  `simulate_physics` (deterministic circle-proxy rigid bodies) and `shatter`/`shatter_cells` (glass-shard
+  transitions) already covered most of this line pre-v7 and were uncredited; fixed in passing, a stale baseline
+  in error_codes.txt (claimed `list_effects` returns 182 kinds; it returns 185 since an earlier lens-blur commit
+  added 3 without updating it). 7 new TDD tests. Honest gaps: no real fluid/smoke grid solver, no cloth sim, no
+  polygon/joint rigid bodies, no true cannon-driven Card Dance, no lens-droplet refraction.
+- GPU pipeline (FEATURES.md L557): new optional `gpu2d` build feature (default off, separate from the existing
+  `gpu3d`/wgpu mesh path so this doesn't pull in its dependencies) -- real WGSL compute shaders (`gpu_gaussian_blur`,
+  separable 2-pass; `gpu_color_matrix`, an AE-style 4x5 matrix, single-pass) through wgpu's adapter/device/
+  compute-pipeline API, run and proven on this box's software Vulkan (Mesa lavapipe): GPU-vs-CPU max_abs_diff
+  measured at exactly 0.0 on both. Exposed as 3 read-only diagnostic MCP tools (`gpu2d_status`,
+  `gpu_gaussian_blur_frame`, `gpu_color_matrix_frame`) -- standalone, not wired into `add_effect` or the default
+  render path, so every golden reference frame is unchanged. Tools: 490 -> 493 registered. Honest gaps: no GPU
+  compositing of the main pipeline, no persistent VRAM frame textures, no async readback, no NVENC/hardware GPU
+  (lavapipe is software-only).
+- MOGRT substitute (FEATURES.md, title/lower-third line): new `export_template_package` / `import_template_package`
+  (ext/templates.rs) bundle a named template (the pre-existing `template_define`/`apply`/`list`/`describe`/
+  `delete` parametric batch-template system) together with its clips' `essential_properties` marks (also
+  pre-existing, the MOGRT-style "which knobs to expose" tags) into one JSON file -- Kimo's own open one-file
+  substitute for Adobe's closed/proprietary `.mogrt` container. Round-trips within or across projects: import
+  matches essential marks back onto clips by role first, falls back to the original clip_id, and reports (never
+  silently drops) anything unmatched. 5 new TDD tests. Tools: 493 -> 495 registered. Honest gap: no Adobe
+  `.mogrt` IMPORT (closed format, not attempted) and no thumbnail/preview asset in the package.
+- GUI (FEATURES.md L562, the one item this project had marked `[ ]`): new `kimo gui [--project p.kimo]
+  [--port 4567] [--bind 127.0.0.1]` -- a minimal local web UI (crates/kimo-cli/src/gui.rs + gui_index.html,
+  std::net only, no new dependency) over the exact same tool registry/dispatch the CLI and MCP server already
+  use. A timeline view (GET /api/timeline), a preview frame rendered by the real engine (GET
+  /preview.png?t=<seconds>, the same render_png export/render_frame use), and a tool-invocation panel (GET
+  /api/registry, POST /api/call running through the same `run_tool` path as `kimo call`). Headless-testable: its
+  whole routing table is a pure `handle_request(session, method, path, query, body)` function with no socket in
+  it (12 new tests), smoke-tested by hand against a live server. Credited alongside the pre-existing (and
+  previously uncredited) **Kimo Spectator** desktop app (crates/kimo-gui, its own Tauri workspace): Spectator is
+  a read-only live view of an agent's own edits (no IPC commands exist, by construction); `kimo gui` is the new,
+  complementary piece -- something a human can actually drive. Honest gaps: no JS framework or build step
+  (one small inline page, on purpose), no scrubbing/playback, no drag-to-trim/drag-to-move on the timeline
+  (read-only, not yet editable), no auth (loopback tool), no multi-client session sharing, no desktop packaging.
+- FEATURES.md: every remaining `[ ]` item is now `[x]` or honestly `[~]` (57 `[x]`, 48 `[~]`, 0 `[ ]`).
+- Known, unchanged in this release: `readme_count` fails because README.md's tool-count badge text does not
+  contain the literal phrase "registered tools" the test looks for (not a wrong number -- the phrase is simply
+  absent); the fix is a one-line README wording change, out of scope for this pass (README.md was intentionally
+  left untouched). `robust_est`'s doctest fails to compile on an unrelated pre-existing doc-comment issue
+  (a "License Agreement" line inside a doctest code block that rustdoc tries to parse as Rust). Both predate this
+  release and are unrelated to anything shipped in it.
+
 ## v6.0.0 "eyes" (2026-10-27)
 
 - Added `transcript_search`: normalized phrase lookup with script indexes, timeline ranges and ready-to-use delete operations.
