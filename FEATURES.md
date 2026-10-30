@@ -1652,3 +1652,31 @@ gaps, candidates for this pass:
   byte-identical to disk, the index page wires up the panel and its functions by name, and
   `export_job_start`/`job_status` through `/api/call` prove the exact shape the panel polls. All 72
   pre-existing kimo-cli tests stayed green (75 total now).
+
+## v7.5 feature 6/8+: import_clips
+
+- [x] Copy specific clips into the live project, from another project entirely if you like -- with
+  everything a clip itself holds (effects, keyframes, masks, its own embedded grade graph, speed), since a
+  clip serializes all of it directly. `source` is a revision string in `project_diff`'s own forms (`current |
+  undo:<n> | checkpoint:<name> | file:<path.kimo>`), reused rather than re-implementing project loading, so
+  this can pull clips out of a wholly separate project file, not just an earlier state of this one.
+  `project_merge` already reconciles two revisions of the SAME lineage by matching clip id (add/remove/
+  change); a straight copy must not assume shared ids, so every copied clip gets a FRESH id in the live
+  project, and a destination clip that happens to already use the source clip's id is left untouched (two
+  independently-built project files can easily reuse the same ids). A media clip's asset is imported into
+  the destination's own asset pool too -- reused by file path if the destination already has that exact
+  file, created fresh otherwise -- so the copy never carries a dangling asset reference. `track_id` is the
+  destination track, or omit it to create one new track for the call; `time_offset` shifts every copied
+  clip's original start by the same amount. Honest gap: a grade bound through the project-level
+  shared-grade-scopes feature does not travel (that binding lives on the source project itself, not the
+  clip); a clip's own embedded grade graph does.
+- New MCP tool `import_clips` (`crates/kimo-core/src/ext/import_clips.rs`). 13 new TDD tests
+  (`tests/import_clips.rs`): a clip imports with its effect and keyframe onto a new track, `time_offset`
+  shifts it, importing onto a named track creates no new track while omitting it does, a media clip's asset
+  imports alongside it, two clips sharing one source asset only import that asset once, an asset already
+  present in the destination by file path is reused rather than duplicated, a forced id collision with an
+  existing destination clip does not overwrite it, unknown clip id / missing source file / unknown
+  destination track all error cleanly, undo removes the whole import in one step, and multiple clips import
+  onto one destination track in one call. `golden_registry.txt` hand-updated (514 -> 515 tools); added to
+  the `project` toolgroup (`toolgroups.rs`) up front this time, caught nothing missing on the full suite.
+  Full targeted pass green including `golden_frames_registry_and_projects` and `registry_lint`.
