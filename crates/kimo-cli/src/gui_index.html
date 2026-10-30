@@ -73,6 +73,12 @@
       <div><button onclick="doUndo()" id="undo-btn">Undo</button> <button onclick="doRedo()" id="redo-btn">Redo</button></div>
       <div id="history-list" style="margin-top:6px"></div>
     </section>
+    <section id="export" style="margin-top:12px">
+      <h2>Export</h2>
+      <div><input id="export-path" value="export.mp4" style="width:65%"> <button id="export-btn" onclick="startExport()">Export</button> <button id="export-cancel-btn" onclick="cancelExport()" style="display:none;background:#733">Cancel</button></div>
+      <div id="export-bar-outer" style="display:none;margin-top:6px;background:#111;border-radius:4px;height:10px;overflow:hidden"><div id="export-bar-inner" style="background:#5a8;height:100%;width:0%"></div></div>
+      <div id="export-status" style="font-size:11px;color:#9ab;margin-top:4px"></div>
+    </section>
   </div>
   <section>
     <h2>Tools</h2>
@@ -169,6 +175,49 @@ async function zoomReset() {
   pxPerSec = window.kimoZoom.DEFAULT_PX_PER_SEC;
   const lbl = document.getElementById('zoom-label'); if (lbl) lbl.textContent = pxPerSec + 'px/s';
   await loadTimeline();
+}
+// v7.3: export with progress -- export_job_start/job_status/cancel_job already exist in kimo-core
+// (chunked export, incremental reuse, ETA); this just polls and renders what they already report.
+let exportJobId = null; let exportPollTimer = null;
+function exportStatusLine(s) {
+  const parts = [s.state];
+  if (s.chunks) parts.push(`${s.chunks.done}/${s.chunks.total} chunks`);
+  if (s.eta && s.eta.seconds != null) parts.push(`~${Math.ceil(s.eta.seconds)}s left (${s.eta.uncertainty})`);
+  if (s.error) parts.push(`error: ${s.error}`);
+  return parts.join(' · ');
+}
+function renderExportStatus(s) {
+  const outer = document.getElementById('export-bar-outer'); const inner = document.getElementById('export-bar-inner');
+  const status = document.getElementById('export-status'); const cancelBtn = document.getElementById('export-cancel-btn'); const btn = document.getElementById('export-btn');
+  outer.style.display = 'block';
+  const pct = (s.chunks && s.chunks.total > 0) ? Math.round(100 * s.chunks.done / s.chunks.total) : (s.frames_total > 0 ? Math.round(100 * s.frames_done / s.frames_total) : 0);
+  inner.style.width = pct + '%';
+  status.textContent = exportStatusLine(s);
+  const active = s.state === 'running' || s.state === 'queued' || s.state === 'cancelling';
+  cancelBtn.style.display = active ? 'inline-block' : 'none';
+  btn.disabled = active;
+}
+async function startExport() {
+  const path = document.getElementById('export-path').value.trim() || 'export.mp4';
+  const r = await callApi('export_job_start', { path, wait: false });
+  if (!r.ok) { document.getElementById('export-status').textContent = 'could not start: ' + (typeof r.error === 'string' ? r.error : JSON.stringify(r.error)); return; }
+  exportJobId = r.result.job_id;
+  renderExportStatus({ state: 'queued', chunks: { done: 0, total: 0 } });
+  if (exportPollTimer) clearInterval(exportPollTimer);
+  exportPollTimer = setInterval(pollExportJob, 500);
+  await pollExportJob();
+}
+async function pollExportJob() {
+  if (!exportJobId) return;
+  const r = await callApi('job_status', { job_id: exportJobId });
+  if (!r.ok) { clearInterval(exportPollTimer); exportPollTimer = null; return; }
+  renderExportStatus(r.result);
+  if (['done', 'failed', 'cancelled'].includes(r.result.state)) { clearInterval(exportPollTimer); exportPollTimer = null; }
+}
+async function cancelExport() {
+  if (!exportJobId) return;
+  await callApi('cancel_job', { job_id: exportJobId });
+  await pollExportJob();
 }
 async function addTrack() { await callApi('add_track', {}); await loadTimeline(); }
 async function addMarkerAtPlayhead() {

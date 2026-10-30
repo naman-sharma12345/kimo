@@ -725,4 +725,67 @@ mod tests {
             assert!(body.contains(needle), "index page should carry {needle:?}");
         }
     }
+
+    // ---- v7.3: export with progress ----
+
+    #[test]
+    fn the_index_page_wires_up_export_with_progress() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["export-path", "function startExport", "function pollExportJob", "function cancelExport", "export_job_start", "job_status", "cancel_job", "export-bar-inner", "export-cancel-btn"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn export_button_starts_a_real_job_and_polling_job_status_reaches_done_through_the_same_api_call_path() {
+        // The actual export_job_start/job_status machinery (chunking, ffmpeg, incremental reuse) is
+        // kimo-core's own, tested exhaustively there; what's new here is that the GUI drives it through
+        // plain /api/call round trips exactly like every other button, end to end to a real finished file.
+        let ss = fixture();
+        let dir = std::env::temp_dir().join(format!("kimo_gui_export_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("export.mp4");
+
+        let start_body = serde_json::to_vec(&json!({"tool": "export_job_start", "args": {"path": out.to_str().unwrap(), "chunk_s": 1}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &start_body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let job_id = v["result"]["job_id"].as_str().unwrap().to_string();
+
+        let t0 = std::time::Instant::now();
+        let fin = loop {
+            let body = serde_json::to_vec(&json!({"tool": "job_status", "args": {"job_id": job_id}})).unwrap();
+            let r = handle_request(&ss, "POST", "/api/call", "", &body);
+            let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+            let state = v["result"]["state"].as_str().unwrap_or("").to_string();
+            if state != "running" && state != "queued" { break v["result"].clone(); }
+            if t0.elapsed().as_secs() > 60 { panic!("export job never finished: {v}"); }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        assert_eq!(fin["state"], "done", "{fin}");
+        assert!(out.is_file(), "the exported file should actually exist on disk");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn cancel_export_reaches_a_real_running_job_through_the_same_api_call_path() {
+        let ss = fixture();
+        let dir = std::env::temp_dir().join(format!("kimo_gui_export_cancel_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("export.mp4");
+
+        let start_body = serde_json::to_vec(&json!({"tool": "export_job_start", "args": {"path": out.to_str().unwrap(), "chunk_s": 1}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &start_body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let job_id = v["result"]["job_id"].as_str().unwrap().to_string();
+
+        let cancel_body = serde_json::to_vec(&json!({"tool": "cancel_job", "args": {"job_id": job_id}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &cancel_body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        assert!(matches!(v["result"]["state"].as_str(), Some("cancelled") | Some("done")), "{v}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

@@ -1268,3 +1268,21 @@ new (the v7.2 audit explicitly flagged EDL/OTIO import as a real gap, bigger tha
   tests (crates/kimo-cli/src/gui.rs): the JS file is served correctly (405 on non-GET) and the index page is
   checked to wire up all four controls and the shared helper by name. All 36 pre-existing kimo-cli tests
   stayed green (39 total now).
+
+
+## v7.3 feature 9: kimo gui export with progress
+
+- [x] `kimo gui`: an Export panel -- output path field, Export button, a live progress bar, status line
+  (state, chunks done/total, ETA with its uncertainty band, any error), and a Cancel button that appears
+  only while a job is active. Pure wiring onto the chunked-export system that already existed
+  (`export_job_start`/`job_status`/`cancel_job`/`resume_job` -- incremental reuse, crash-safe chunking, ETA
+  from measured chunk times): `startExport()` calls `export_job_start` with `wait:false` and starts polling
+  `job_status` every 500ms; `renderExportStatus()` turns each poll into the bar's width (chunks done/total,
+  falling back to frames done/total before any chunk has measured) and the status line's words; polling
+  stops itself once the job reaches done/failed/cancelled; `cancelExport()` calls the already-registered
+  `cancel_job`. Nothing new in kimo-core -- every piece this wires onto was already tested exhaustively
+  there (tests/export_job*.rs). 3 new Rust tests (crates/kimo-cli/src/gui.rs): the index page is checked to
+  wire up the panel and all three functions by name; a real export started through `/api/call` is polled
+  through real `job_status` calls to a real "done" state with the file actually on disk; a real running job
+  is actually cancelled through `/api/call` and reaches cancelled-or-done. All 39 pre-existing kimo-cli
+  tests stayed green (42 total now).
