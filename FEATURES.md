@@ -967,9 +967,22 @@ Real gaps found (perception/feedback and agent-superiority), built below, cheape
   clip_id errors). golden_registry.txt hand-updated for the 3 changed tools' grown schema+description
   hashes plus the 1 new tool (500 tools), toolgroups.rs updated (animate group). All green including
   golden_frames_registry_and_projects (rendered frames and existing curves.rs's 22 tests unaffected).
-- [ ] No whole-project loudness query ("all clips under -20 LUFS" -- the north star's own example of
-  agent-superior "whole-project reasoning in one call"): `measure_loudness` answers one clip per call.
-  -> `find_by_loudness`.
+- [x] `find_by_loudness`: new tool, whole-project loudness query in one call ("all clips under -20
+  LUFS" is the north star's own example of agent-superior "whole-project reasoning in one call"). Reuses
+  `measure_loudness` itself per clip through `dispatch_nested` (no second loudness implementation --
+  identical results to calling it one clip at a time, just scoped to every media clip and range-filtered
+  for you). min_lufs/max_lufs bound the range, both optional -- omit both for a full per-clip loudness
+  readout of the project (also closes the "audio level readout per clip" perception gap in one tool);
+  track_id scopes to one track; true_peak also measures true-peak dBFS. A clip too short/silent for an
+  integrated reading (under measure_loudness's own 0.4s minimum), or one measure_loudness itself fails
+  on (e.g. a corrupt file), is reported in skipped_clips with why -- never silently dropped and never
+  treated as failing the whole call. Read-only. 8 new TDD tests (tests/find_by_loudness.rs, synthetic
+  tone WAVs at known dBFS levels, same technique as the existing loudness_ext.rs): max_lufs finds the
+  quiet clip and excludes the loud one, min+max together bound a range, no range given returns every
+  clip unfiltered, non-media clips are never candidates, a too-short clip is skipped not matched or
+  failed, track_id scoping, min>max errors, read-only (byte-identical project, no undo entry).
+  golden_registry.txt hand-updated (501 tools), toolgroups.rs updated (scopes group, next to
+  measure_loudness). All green including golden_frames_registry_and_projects.
 - [ ] No per-asset technical metadata query (shot list: duration, fps, has_audio, width/height, kind,
   hash, which bin, which clips reference it) in one call -- `find` returns timeline placement, not the
   underlying asset's own technical facts; the only way to read `Asset.duration/fps/...` today is

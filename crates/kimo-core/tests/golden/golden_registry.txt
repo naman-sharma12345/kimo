@@ -167,6 +167,7 @@ export_with_subtitles 824e8be7e0dd374e
 ext_list 83a5db4765dba269
 find b315b9c2a9e7af33
 find_assets 4616a91345c1f416
+find_by_loudness 8d53a4d617dbd31f
 finish_audio 2e6067faa3bb01ce
 fit_clip_duration 018a469206f430eb
 fit_info adda72ad5a63e40e
