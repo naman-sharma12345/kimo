@@ -315,6 +315,39 @@ mod tests {
     }
 
     #[test]
+    fn the_editable_timeline_moves_and_trims_a_clip_through_the_same_api_call_path() {
+        // The drag itself is mouse events in gui_index.html's JS (no DOM here); what's tested is the exact
+        // sequence a move-drag and a trim-drag each end in: one /api/call, then a /api/timeline refetch.
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        let before = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        assert_eq!(before["tracks"][0]["clips"][0]["start"], 0.0);
+
+        // move-drag: drops the clip at a new start time
+        let move_body = serde_json::to_vec(&json!({"tool": "move_clip", "args": {"clip_id": clip_id, "start": 3.5}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &move_body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let after_move = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        assert_eq!(after_move["tracks"][0]["clips"][0]["start"], 3.5);
+        assert_eq!(after_move["tracks"][0]["clips"][0]["duration"], 2.0, "trim wasn't touched yet");
+
+        // trim-drag: drags the right edge, changing only duration
+        let trim_body = serde_json::to_vec(&json!({"tool": "trim_clip", "args": {"clip_id": clip_id, "duration": 1.2}})).unwrap();
+        let r2 = handle_request(&ss, "POST", "/api/call", "", &trim_body);
+        let v2: Value = serde_json::from_slice(&r2.body).unwrap(); assert_eq!(v2["ok"], true, "{v2}");
+        let after_trim = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        assert_eq!(after_trim["tracks"][0]["clips"][0]["start"], 3.5, "move's position survives the trim");
+        assert_eq!(after_trim["tracks"][0]["clips"][0]["duration"], 1.2);
+        assert_eq!(after_trim["tracks"][0]["clips"][0]["end"], 4.7);
+
+        // a too-short drag (<=3px in the JS, so no call at all) is simply never sent -- nothing to test at
+        // this layer; a clip_id that no longer exists is the one real failure mode worth covering here:
+        let bad = serde_json::to_vec(&json!({"tool": "move_clip", "args": {"clip_id": "not_a_real_clip", "start": 1.0}})).unwrap();
+        let r3 = handle_request(&ss, "POST", "/api/call", "", &bad);
+        let v3: Value = serde_json::from_slice(&r3.body).unwrap(); assert_eq!(v3["ok"], false, "a stale clip id reports a tool error, not an HTTP error");
+    }
+
+    #[test]
     fn the_effect_params_panel_round_trips_through_the_same_api_call_path() {
         // The panel itself is HTML/JS (no DOM in this test binary); what's tested here is the exact
         // sequence it drives: fetch clip detail, edit a param through /api/call, refetch and see it moved.

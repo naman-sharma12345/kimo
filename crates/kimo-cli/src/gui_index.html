@@ -21,6 +21,9 @@
   #tool-list div { padding: 2px 0; cursor: pointer; color: #9cf; }
   #result { white-space: pre-wrap; font-family: monospace; font-size: 11px; background: #111; padding: 6px; border-radius: 4px; max-height: 220px; overflow: auto; }
   .clip.selected { outline: 2px solid #fd6; }
+  .clip { cursor: grab; }
+  .clip:active { cursor: grabbing; }
+  .clip .trim-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 6px; cursor: ew-resize; background: rgba(255,255,255,.25); }
   #inspector .fx { border: 1px solid #333; border-radius: 4px; padding: 6px; margin-bottom: 6px; }
   #inspector .fx-head { display: flex; justify-content: space-between; font-size: 11px; color: #9cf; margin-bottom: 4px; }
   #inspector .param-row { display: flex; justify-content: space-between; align-items: center; font-size: 11px; margin: 2px 0; }
@@ -80,19 +83,50 @@ async function loadTimeline() {
   const r = await fetch('/api/timeline'); const tl = await r.json();
   const el = document.getElementById('tracks'); el.innerHTML = '';
   for (const t of tl.tracks) {
-    const row = document.createElement('div'); row.className = 'track';
+    const row = document.createElement('div'); row.className = 'track'; row.style.position = 'relative';
     const label = document.createElement('div'); label.className = 'track-label'; label.textContent = t.name || t.id; row.appendChild(label);
+    const lane = document.createElement('div'); lane.style.position = 'relative'; lane.style.height = '20px'; lane.style.flex = '1 1 auto';
     for (const c of t.clips) {
       const bar = document.createElement('div'); bar.className = 'clip' + (c.id === selectedClipId ? ' selected' : '');
+      bar.style.position = 'absolute'; bar.style.left = (c.start * pxPerSec) + 'px';
       bar.style.width = Math.max(4, c.duration * pxPerSec) + 'px';
-      bar.title = (c.name || c.id) + ' (' + c.source_kind + ') ' + c.start.toFixed(2) + 's..' + c.end.toFixed(2) + 's -- click to inspect';
+      bar.title = (c.name || c.id) + ' (' + c.source_kind + ') ' + c.start.toFixed(2) + 's..' + c.end.toFixed(2) + 's -- drag to move, drag the right edge to trim, click to inspect';
       bar.textContent = c.name || c.source_kind;
       bar.dataset.clipId = c.id;
-      bar.onclick = () => selectClip(c.id);
-      row.appendChild(bar);
+      const handle = document.createElement('div'); handle.className = 'trim-handle';
+      handle.onmousedown = (ev) => startDrag(ev, c, 'trim');
+      bar.appendChild(handle);
+      bar.onmousedown = (ev) => { if (ev.target === handle) return; startDrag(ev, c, 'move'); };
+      bar.onclick = () => { if (!justDragged) selectClip(c.id); };
+      lane.appendChild(bar);
     }
+    row.appendChild(lane);
     el.appendChild(row);
   }
+}
+
+let justDragged = false;
+function startDrag(ev, clip, mode) {
+  ev.preventDefault(); ev.stopPropagation();
+  const startX = ev.clientX; const origStart = clip.start; const origDuration = clip.duration;
+  justDragged = false;
+  function onMove(mv) {
+    const deltaSec = (mv.clientX - startX) / pxPerSec;
+    if (Math.abs(mv.clientX - startX) > 3) justDragged = true;
+    const bar = document.querySelector(`.clip[data-clip-id="${CSS.escape(clip.id)}"]`); if (!bar) return;
+    if (mode === 'move') bar.style.left = Math.max(0, origStart + deltaSec) * pxPerSec + 'px';
+    else bar.style.width = Math.max(4, (origDuration + deltaSec) * pxPerSec) + 'px';
+  }
+  async function onUp(up) {
+    document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp);
+    const deltaSec = (up.clientX - startX) / pxPerSec;
+    if (Math.abs(up.clientX - startX) <= 3) return; // a click, not a drag: selectClip's onclick handles it
+    if (mode === 'move') await callApi('move_clip', { clip_id: clip.id, start: Math.max(0, origStart + deltaSec) });
+    else await callApi('trim_clip', { clip_id: clip.id, duration: Math.max(0.04, origDuration + deltaSec) });
+    await loadTimeline(); if (selectedClipId === clip.id) await loadInspector();
+    setTimeout(() => { justDragged = false; }, 0);
+  }
+  document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
 }
 
 async function selectClip(id) {
