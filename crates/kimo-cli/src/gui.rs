@@ -82,6 +82,11 @@ const TRACKSTATE_JS: &str = include_str!("gui_trackstate.js");
 /// -- gui_index.html's selection/drag handlers and tests/js/multiselect_test.js (Node) run the exact same
 /// bytes.
 const MULTISELECT_JS: &str = include_str!("gui_multiselect.js");
+/// v7.4: the waveform fetch/scale helper (which clips get a waveform fetch, the audio_transients args to
+/// ask with, and rewriting its fixed-pixel-width SVG to fill the clip bar's actual CSS width), served the
+/// same way for the same reason -- gui_index.html's timeline renderer and tests/js/waveform_test.js (Node)
+/// run the exact same bytes.
+const WAVEFORM_JS: &str = include_str!("gui_waveform.js");
 
 /// Parses `?t=1.5` (or any single-key query) out of a raw query string; used for /preview.png's `t`.
 fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
@@ -99,6 +104,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
         ("GET", "/gui_zoom.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: ZOOM_JS.as_bytes().to_vec() },
         ("GET", "/gui_trackstate.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: TRACKSTATE_JS.as_bytes().to_vec() },
         ("GET", "/gui_multiselect.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: MULTISELECT_JS.as_bytes().to_vec() },
+        ("GET", "/gui_waveform.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: WAVEFORM_JS.as_bytes().to_vec() },
         ("GET", "/api/timeline") => { let ss = ss.lock().unwrap(); json_response(200, timeline_view_model(&ss)) }
         ("GET", "/api/registry") => json_response(200, registry_summary()),
         ("GET", "/api/clip") => { // ?id=<clip_id>
@@ -135,7 +141,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
                 Err(e) => json_response(200, json!({"ok": false, "error": e})),
             }
         }
-        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/gui_zoom.js") | (_, "/gui_trackstate.js") | (_, "/gui_multiselect.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
+        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/gui_zoom.js") | (_, "/gui_trackstate.js") | (_, "/gui_multiselect.js") | (_, "/gui_waveform.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
         _ => err_response(404, format!("no route for {path}")),
     }
 }
@@ -967,6 +973,70 @@ mod tests {
         let clips = tl["tracks"][0]["clips"].as_array().unwrap();
         assert_eq!(clips.len(), 1, "two of three clips should be gone: {clips:?}");
         assert_eq!(clips[0]["id"], json!(ids[1]), "the untouched middle clip should be the only one left: {clips:?}");
+    }
+    // ---- v7.4: clip-bar waveforms (wires the existing audio_transients image:"waveform" option onto the
+    // timeline; no new peak-computation code -- the real decode and SVG already existed before this
+    // feature) ----
+
+    #[test]
+    fn served_waveform_js_matches_the_file_on_disk() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_waveform.js", "", &[]);
+        assert_eq!(r.status, 200); assert_eq!(r.content_type, "application/javascript; charset=utf-8");
+        assert_eq!(r.body, include_bytes!("gui_waveform.js").to_vec());
+    }
+
+    #[test]
+    fn the_index_page_wires_up_waveforms() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["gui_waveform.js", "kimoWaveform.shouldFetchWaveform", "kimoWaveform.waveformToolArgs", "kimoWaveform.scaleSvgToFill", "function loadWaveforms", "'waveform'"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    /// A one-track project with a real audible media clip (an ffmpeg-generated tone), for waveform tests --
+    /// the same fixture shape feature 1's mute test used.
+    fn media_clip_fixture() -> (Arc<Mutex<Session>>, String) {
+        let mut ss = Session::new();
+        dispatch(&mut ss, "project_set", &json!({"width": 64, "height": 36, "fps": 25})).unwrap();
+        let dir = std::env::temp_dir().join(format!("kimo_gui_waveform_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir); std::fs::create_dir_all(&dir).unwrap();
+        let wav = dir.join("tone.wav");
+        let status = std::process::Command::new("ffmpeg").args(["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-ar", "48000"]).arg(&wav).status().unwrap();
+        assert!(status.success());
+        let asset_id = dispatch(&mut ss, "import_media", &json!({"path": wav.to_str().unwrap()})).unwrap()["asset_id"].as_str().unwrap().to_string();
+        let tr = dispatch(&mut ss, "add_track", &json!({})).unwrap()["track_id"].as_str().unwrap().to_string();
+        let clip_id = dispatch(&mut ss, "add_clip", &json!({"track_id": tr, "source_type": "media", "asset_id": asset_id, "start": 0.0, "duration": 1.0})).unwrap()["clip_id"].as_str().unwrap().to_string();
+        (Arc::new(Mutex::new(ss)), clip_id)
+    }
+
+    #[test]
+    fn timeline_view_model_reports_media_source_kind_so_the_gui_knows_to_fetch_a_waveform() {
+        let (ss, _clip_id) = media_clip_fixture();
+        let tl = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        assert_eq!(tl["tracks"][0]["clips"][0]["source_kind"], "media");
+    }
+
+    #[test]
+    fn audio_transients_through_api_call_returns_a_real_waveform_svg_for_a_media_clip() {
+        let (ss, clip_id) = media_clip_fixture();
+        let body = serde_json::to_vec(&json!({"tool": "audio_transients", "args": {"target": {"clip_id": clip_id}, "image": "waveform"}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let svg = v["result"]["waveform"]["svg"].as_str().expect("a real audible clip should get a real waveform svg back");
+        assert!(svg.starts_with("<svg"), "{svg}"); assert!(svg.contains("<path"), "{svg}");
+    }
+
+    #[test]
+    fn a_shape_clip_is_a_clean_no_audio_error_not_a_crash() {
+        let ss = fixture(); // the base fixture's clip is an add_shape rect, no audio track at all
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        let body = serde_json::to_vec(&json!({"tool": "audio_transients", "args": {"target": {"clip_id": clip_id}, "image": "waveform"}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap();
+        assert_eq!(v["ok"], false, "a silent clip should report a clean tool error, not a crash: {v}");
     }
 }
 

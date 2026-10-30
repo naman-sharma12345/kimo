@@ -45,6 +45,8 @@
   .track-state-btn.active.mute { background: #966; border-color: #966; }
   .track-state-btn.active.solo { background: #a90; border-color: #a90; }
   .track.locked .clip { cursor: not-allowed; opacity: .55; }
+  .clip .waveform { position: absolute; inset: 0; z-index: -1; pointer-events: none; opacity: .6; }
+  .clip .waveform svg { display: block; }
 </style>
 </head>
 <body>
@@ -109,6 +111,7 @@
 <script src="/gui_zoom.js"></script>
 <script src="/gui_trackstate.js"></script>
 <script src="/gui_multiselect.js"></script>
+<script src="/gui_waveform.js"></script>
 <script>
 let registry = [];
 let projectFps = 30; // set from /api/timeline; used by J/K/L's frame step
@@ -160,6 +163,7 @@ async function loadTimeline() {
         bar.onmousedown = (ev) => { if (ev.target === handle) return; startDrag(ev, c, 'move'); };
       }
       bar.appendChild(handle);
+      if (kimoWaveform.shouldFetchWaveform(c)) { const wf = document.createElement('div'); wf.className = 'waveform'; bar.appendChild(wf); }
       bar.onclick = (ev) => { if (!justDragged) selectClip(c.id, ev); };
       lane.appendChild(bar);
     }
@@ -177,6 +181,27 @@ async function loadTimeline() {
   const ph = document.createElement('div'); ph.id = 'playhead'; ph.style.left = (labelWidth + currentT * pxPerSec) + 'px'; ph.style.pointerEvents = 'none';
   el.appendChild(ph);
   loadHistory();
+  loadWaveforms(tl);
+}
+
+// v7.4: one audio_transients call per media clip (image:"waveform"), fired after the timeline itself has
+// rendered so the bars appear immediately and the waveforms fill in as each decode finishes; fetched in
+// parallel (one real ffmpeg decode per clip, same cost class as a preview frame render). A clip with no
+// audio track, or any other failure, just leaves that bar without a waveform -- audio_transients' own
+// no_audio case, not an error worth surfacing here.
+async function loadWaveforms(tl) {
+  for (const t of tl.tracks) {
+    for (const c of t.clips) {
+      if (!kimoWaveform.shouldFetchWaveform(c)) continue;
+      const bar = document.querySelector(`.clip[data-clip-id="${CSS.escape(c.id)}"] .waveform`);
+      if (!bar) continue;
+      callApi('audio_transients', kimoWaveform.waveformToolArgs(c)).then((v) => {
+        if (!v.ok || !v.result || !v.result.waveform || !v.result.waveform.svg) return;
+        const target = document.querySelector(`.clip[data-clip-id="${CSS.escape(c.id)}"] .waveform`);
+        if (target) target.innerHTML = kimoWaveform.scaleSvgToFill(v.result.waveform.svg);
+      }).catch(() => {});
+    }
+  }
 }
 
 async function loadHistory() {

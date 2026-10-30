@@ -1363,7 +1363,7 @@ Real gaps found and built this pass:
 - [ ] kimo gui: ripple-delete in GUI (wire the existing ripple_delete tool to a shortcut/button distinct from
   plain delete)
 - [x] kimo gui: track mute/solo/lock controls -- feature 5, now that track_mute_solo exists to wire to
-- [ ] kimo gui: audio waveforms on clips
+- [x] kimo gui: audio waveforms on clips -- feature 7
 - [ ] kimo gui: a visible effects/transitions browser applying to the selected clip (today's inspector has a
   bare effect-kind <select>, no transitions, no search/categories -- the brief's "browser" bar is higher)
 
@@ -1474,3 +1474,27 @@ byte-identical to disk, the index page wires up the file and its functions by na
 through `/api/call` moves exactly the selected clips and leaves the rest, that move is one undo step for the
 whole group, and a group-delete batch removes exactly the selected clips. All 50 pre-existing kimo-cli tests
 stayed green (55 total now).
+
+## v7.4 feature 7/8: kimo gui clip waveforms
+
+- [x] `kimo gui`: every media clip bar now shows its real audio waveform, filling the bar behind its name.
+  No new peak-computation code -- `audio_transients` already had an `image: "waveform"` option (a
+  deterministic, compact SVG built from the real decoded samples) before this feature; this wires the
+  timeline renderer onto it rather than building a second copy of the same decode. After the timeline draws,
+  one `audio_transients` call per media clip fires in parallel (`target: {clip_id}, image: "waveform"`), and
+  each bar's waveform fills in as its own decode finishes. A clip with no audio track (or any other failure)
+  just keeps a plain bar -- `audio_transients`' own `no_audio` case, not an error worth surfacing in the GUI.
+  Only `source_kind === "media"` clips are asked at all; every other kind (solid, text, shape, ...) is silent
+  by construction and would just cost a wasted decode attempt.
+- `gui_waveform.js`: pure JS, no DOM, no audio decode -- `shouldFetchWaveform(clip)`, `waveformToolArgs(clip)`
+  (the exact `audio_transients` call), `scaleSvgToFill(svgMarkup)` (rewrites the tool's fixed-pixel-width SVG
+  to carry a `viewBox` + `preserveAspectRatio="none"` + 100% width/height, so the same markup stretches to
+  fill whatever pixel width the clip is drawn at, at whatever timeline zoom). Served at `GET
+  /gui_waveform.js`, same bytes the browser and the Node test run.
+
+15 new headless Node tests (`tests/js/waveform_test.js`) plus 5 new Rust tests: the JS file served
+byte-identical to disk, the index page wires up the file and its functions by name, a real media clip (an
+ffmpeg-generated tone) gets back a real `<svg>...<path>...</svg>` waveform through `/api/call`, a silent
+shape clip gets a clean tool error rather than a crash, and `timeline_view_model` reports `media` as the
+source kind the GUI keys its fetch decision on. All 55 pre-existing kimo-cli tests stayed green (60 total
+now).
