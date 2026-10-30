@@ -82,6 +82,7 @@ av_offset 2c347a7d11d33adf
 bake_property 389f09faed23fecf
 batch ef0c6c2068bb9798
 batch_normalize_loudness 8c5cd436d72936a9
+batch_set_meta 38d808f5d0a73034
 beat_cut 0c1be4637c253146
 bind_beats 2d8bcd8a43d9aad9
 bind_shared_grade_graphs d163ca88fc64bb1d

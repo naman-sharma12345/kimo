@@ -1731,7 +1731,7 @@ gaps, candidates for this pass:
   kind, unused media, caption/marker counts) instead of reading the whole project or paging find_assets.
 - [x] organize_bins: file every asset into bins automatically by kind/extension or by usage (used/
   unused), creating the bins as needed, in one call.
-- [ ] batch_set_meta: apply a name/role/color/tags to many clips at once, by explicit ids or by a
+- [x] batch_set_meta: apply a role/color/tags to many clips at once, by explicit ids or by a
   find-style filter, in one call.
 - [ ] kimo gui: clip context menu (right-click: split/duplicate/delete/properties).
 - [ ] kimo gui: media bin panel with search and a thumbnail list.
@@ -1778,3 +1778,26 @@ gaps, candidates for this pass:
   hand-updated (517 -> 518 tools); added to the `project` toolgroup up front. Full targeted pass green
   including `golden_frames_registry_and_projects`, `golden_registry_contract`, `description_first_sentence`
   and `external_refs`.
+
+## v7.6 feature 3/8: batch_set_meta
+
+- [x] Apply a role, colour label and/or tags to many clips at once, in one call: by explicit `clip_ids`,
+  or by a `filter` object taking the same fields `find` already does (name, name_glob, role, color, tag,
+  track, source_kind, has_effect, time_range, text_contains). The filter lives under its own nested
+  object rather than spread at the top level, so filtering by role/color is never confused with the
+  role/color being SET -- the same field name would otherwise mean two different things depending on how
+  a clip was selected (tested explicitly: selecting by `has_effect` and setting a `color` that differs
+  from any filter value). Literal `name` is deliberately not exposed as a value to set: `set_meta`
+  requires names to be unique among clips, so one batch value could never legally apply to more than one
+  clip -- naming stays its own per-clip `set_meta` call. A filter matching more than 500 clips (`find`'s
+  own cap) errors asking the caller to narrow it, rather than silently only touching the first 500.
+- New MCP tool `batch_set_meta` (`crates/kimo-core/src/ext/batch_set_meta.rs`), reusing `find` and
+  `set_meta` via `dispatch_nested`. 9 new TDD tests (`tests/batch_set_meta.rs`): `clip_ids` sets role and
+  colour on exactly those clips and leaves others untouched, a `has_effect` filter selects clips and
+  applies a colour independent of the filter's own fields, `add_tags`/`remove_tags` pass through to every
+  selected clip, an empty `clip_ids` updates nothing, and five error cases (no meta change requested,
+  neither selector given, both selectors given, an unknown filter field, an unknown clip id). Undoable as
+  one atomic step like the lane's other batch tools. `golden_registry.txt` hand-updated (518 -> 519
+  tools); added to the `project` toolgroup up front. Full targeted pass green including
+  `golden_frames_registry_and_projects`, `golden_registry_contract`, `description_first_sentence` and
+  `external_refs`.
