@@ -709,11 +709,29 @@ fn lint_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
         let m = (s0 + e0) / 2.0;
         let (Some((ra, _)), Some((rb, _))) = (text_rect(ss, &a.0, m - a.1), text_rect(ss, &b.0, m - b.1)) else { continue };
         let ix = (ra[0] + ra[2]).min(rb[0] + rb[2]) - ra[0].max(rb[0]); let iy = (ra[1] + ra[3]).min(rb[1] + rb[3]) - ra[1].max(rb[1]);
-        if ix <= 0.0 || iy <= 0.0 { continue; }
-        let small = (ra[2] * ra[3]).min(rb[2] * rb[3]).max(1.0); if ix * iy / small < 0.25 { continue; }
+        if ix <= 0.0 { continue; }
+        if iy > 0.0 {
+            let small = (ra[2] * ra[3]).min(rb[2] * rb[3]).max(1.0); if ix * iy / small < 0.25 { continue; }
+            overl += 1; if overl > 6 { continue; }
+            probs.push(json!({"code": "text_overlap", "clip_id": b.0, "other_clip_id": a.0, "at": r3(m), "message": format!("{} and {} are on screen together at {:.2} s in the same place", a.0, b.0, m),
+                "fix": {"tool": "delete_clip", "args": {"clip_id": b.0}, "or": {"tool": "set_property", "args": {"clip_id": b.0, "property": "y", "value": "<pixels from centre, clear of the other text>"}}}}));
+            continue;
+        }
+        // No pixel overlap, but with less than min_gap of clear space between them while sharing the same
+        // horizontal band, two text boxes read as one cluttered stack, not two separate lines (the v7.6Q
+        // benchmark finding: a caption pill moved to clear a subject landed a hair above the hook title's
+        // own pill -- zero overlap, same visual mess, and the overlap-only check above missed it). min_gap
+        // scales with the smaller box so two small labels aren't held to a big title's own spacing.
+        let gap = -iy;
+        let min_gap = (ra[3].min(rb[3]) * 0.15).max(12.0);
+        if gap >= min_gap { continue; }
         overl += 1; if overl > 6 { continue; }
-        probs.push(json!({"code": "text_overlap", "clip_id": b.0, "other_clip_id": a.0, "at": r3(m), "message": format!("{} and {} are on screen together at {:.2} s in the same place", a.0, b.0, m),
-            "fix": {"tool": "delete_clip", "args": {"clip_id": b.0}, "or": {"tool": "set_property", "args": {"clip_id": b.0, "property": "y", "value": "<pixels from centre, clear of the other text>"}}}}));
+        let cur_y = ss.project.tracks.iter().flat_map(|t| t.clips.iter()).find(|c| c.id == b.0).and_then(|c| c.props.get("y").map(|p| p.base)).unwrap_or(0.0);
+        let push_down = (ra[1] + ra[3] / 2.0) < (rb[1] + rb[3] / 2.0); // a is already above b -> add the clearance below b, else above it
+        let dy = (min_gap - gap) + 6.0; let new_y = r3(cur_y + if push_down { dy } else { -dy });
+        probs.push(json!({"code": "text_crowded", "severity": "warning", "clip_id": b.0, "other_clip_id": a.0, "at": r3(m), "gap_px": r3(gap.max(0.0)),
+            "message": format!("{} sits only {:.0}px from {} with no breathing room -- reads as one cluttered stack, not two separate lines", b.0, gap.max(0.0), a.0),
+            "fix": {"tool": "set_property", "args": {"clip_id": b.0, "property": "y", "value": new_y}}}));
     } }
     // 1e media clip aspect: a clip's source aspect doesn't match the canvas, so add_clip's default framing crops or
     // pads it without telling anyone. Non-mutating, additive: names auto_reframe as the fix.

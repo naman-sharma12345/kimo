@@ -408,6 +408,57 @@ fn gray_pixels(png: &str, w: usize, h: usize) -> Vec<u8> {
 
 
 /// Muse added a second title over the first ("MY TWO BOTTLES" under "MY FAVORITE BOTTLES"): the judge read garbage.
+/// v7.6Q: the finding that prompted this check -- apply_review_fixes' own text_over_subject fix moved a
+/// caption clear of a (fake) subject and landed it a hair above a hook title, ZERO pixel overlap, same
+/// visual mess. text_overlap (IoU-based) correctly says nothing; text_crowded is the new check for exactly
+/// this: two text boxes sharing a horizontal band with no real gap between them.
+#[test] fn two_texts_with_almost_no_gap_are_flagged_as_crowded_not_missed() {
+    let mut ss = Session::new(); call(&mut ss, "project_set", json!({"width": 1280, "height": 720, "fps": 30}));
+    let t1 = sid(&call(&mut ss, "add_track", json!({})), "track_id");
+    let top = sid(&call(&mut ss, "add_text", json!({"track_id": t1, "text": "TOP LINE", "start": 0, "duration": 2, "size": 70})), "clip_id");
+    call(&mut ss, "set_property", json!({"clip_id": top, "property": "y", "value": -150.0}));
+    let top_rect = call(&mut ss, "compute_text_bounds", json!({"clip_id": top}))["canvas_rect"].clone();
+    let top_bottom = top_rect[1].as_f64().unwrap() + top_rect[3].as_f64().unwrap();
+
+    // place a second text 5px below the first's bottom edge -- deliberately inside any reasonable min_gap,
+    // and confirm it is NOT a pixel overlap (ix>0 but iy<=0) before checking the new code fires.
+    let t2 = sid(&call(&mut ss, "add_track", json!({})), "track_id");
+    let bottom = sid(&call(&mut ss, "add_text", json!({"track_id": t2, "text": "BOTTOM LINE", "start": 0, "duration": 2, "size": 70})), "clip_id");
+    let bottom_rect = call(&mut ss, "compute_text_bounds", json!({"clip_id": bottom}))["canvas_rect"].clone();
+    let bottom_h = bottom_rect[3].as_f64().unwrap();
+    let want_top = top_bottom + 5.0; // 5px clear -- crowded by any reasonable standard
+    call(&mut ss, "set_property", json!({"clip_id": bottom, "property": "y", "value": want_top + bottom_h / 2.0 - 360.0}));
+
+    let r = call(&mut ss, "lint_edit", json!({"platform": "none"}));
+    let codes: Vec<&str> = r["problems"].as_array().unwrap().iter().filter_map(|p| p["code"].as_str()).collect();
+    assert!(!codes.contains(&"text_overlap"), "a 5px clear gap must not read as a pixel overlap: {r}");
+    let hit = r["problems"].as_array().unwrap().iter().find(|p| p["code"] == json!("text_crowded"))
+        .unwrap_or_else(|| panic!("two texts 5px apart should be flagged text_crowded: {r}"));
+    assert_eq!(hit["clip_id"], json!(bottom), "{hit}");
+    assert_eq!(hit["other_clip_id"], json!(top), "{hit}");
+    assert!(hit["gap_px"].as_f64().unwrap() < 10.0, "{hit}");
+
+    // apply the fix and confirm the gap actually widens past the minimum, and the overlap check still agrees nothing overlaps
+    let fix = hit["fix"].clone();
+    call(&mut ss, fix["tool"].as_str().unwrap(), fix["args"].clone());
+    let r2 = call(&mut ss, "lint_edit", json!({"platform": "none"}));
+    assert!(r2["problems"].as_array().unwrap().iter().all(|p| p["code"] != json!("text_crowded")), "the fix should clear the crowding: {r2}");
+}
+
+/// A generous, obviously-fine gap between two texts in the same band must not be flagged -- the check is
+/// for genuine crowding, not any two texts that happen to share a time window.
+#[test] fn a_generous_gap_between_two_texts_is_not_flagged() {
+    let mut ss = Session::new(); call(&mut ss, "project_set", json!({"width": 1280, "height": 720, "fps": 30}));
+    let t1 = sid(&call(&mut ss, "add_track", json!({})), "track_id");
+    let top = sid(&call(&mut ss, "add_text", json!({"track_id": t1, "text": "TOP LINE", "start": 0, "duration": 2, "size": 50})), "clip_id");
+    call(&mut ss, "set_property", json!({"clip_id": top, "property": "y", "value": -260.0}));
+    let t2 = sid(&call(&mut ss, "add_track", json!({})), "track_id");
+    let bottom = sid(&call(&mut ss, "add_text", json!({"track_id": t2, "text": "BOTTOM LINE", "start": 0, "duration": 2, "size": 50})), "clip_id");
+    call(&mut ss, "set_property", json!({"clip_id": bottom, "property": "y", "value": 260.0}));
+    let r = call(&mut ss, "lint_edit", json!({"platform": "none"}));
+    assert!(r["problems"].as_array().unwrap().iter().all(|p| p["code"] != json!("text_crowded") && p["code"] != json!("text_overlap")), "{r}");
+}
+
 #[test] fn two_titles_in_the_same_place_are_flagged() {
     let mut ss = Session::new(); call(&mut ss, "project_set", json!({"width": 720, "height": 1280, "fps": 30}));
     let t1 = sid(&call(&mut ss, "add_track", json!({})), "track_id"); let t2 = sid(&call(&mut ss, "add_track", json!({})), "track_id");
