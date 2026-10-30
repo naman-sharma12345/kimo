@@ -60,6 +60,31 @@ fn ink(ss: &Session, t: f64) -> Ink {
     let k = ink(&top, 1.3); assert!((k.y1 as f64) < 0.4 * 640.0, "top band: y {}..{}", k.y0, k.y1);
 }
 
+/// A boxed/pop-with-background style's actual visible pill (text ink padded by its own bg_pad) must stay
+/// inside a real side margin -- not run edge to edge with its corners clipped by the canvas. compute_text_bounds
+/// deliberately excludes the background box from "ink" (the right answer for a safe-area ink check), so this
+/// reads the rendered pixels directly: the box is near-black (bg [0,0,0,0.82]) against a bright background,
+/// clearly darker than anything else in frame.
+#[test] fn a_boxed_captions_actual_pill_stays_inside_a_real_side_margin() { let _env_guard = env_guard();
+    let mut ss = Session::new(); call(&mut ss, "project_set", json!({"width": 360, "height": 640, "fps": 30}));
+    let t = call(&mut ss, "add_track", json!({}))["track_id"].as_str().unwrap().to_string();
+    call(&mut ss, "add_clip", json!({"track_id": t, "source_type": "solid", "color": [0.85, 0.85, 0.85], "start": 0, "duration": 6}));
+    // a long line: the kind of caption most likely to run the pill edge to edge if its wrap width doesn't
+    // account for the pill's own padding.
+    let long_words = json!([
+        {"text": "honestly", "start": 0.2, "end": 0.6}, {"text": "this", "start": 0.6, "end": 0.8}, {"text": "is", "start": 0.8, "end": 0.95},
+        {"text": "the", "start": 0.95, "end": 1.05}, {"text": "best", "start": 1.05, "end": 1.3}]);
+    call(&mut ss, "auto_captions", json!({"words": long_words, "style": "boxed", "position": "bottom"}));
+    let f = render_frame(&ss.project, 0.9, &Cache::new()).unwrap();
+    let (mut x0, mut x1) = (usize::MAX, 0usize);
+    for y in 0..f.h { for x in 0..f.w { let i = (y * f.w + x) * 4; let (r, g, b) = (f.d[i], f.d[i + 1], f.d[i + 2]);
+        if r + g + b < 1.2 { x0 = x0.min(x); x1 = x1.max(x); } } }
+    assert!(x1 > x0, "no dark pill pixels found at all");
+    let w = f.w as f64;
+    assert!(x0 as f64 >= 0.04 * w, "pill's left edge should clear a real side margin, not run to the canvas edge: x0={x0} of {w}");
+    assert!((x1 as f64) <= 0.96 * w, "pill's right edge should clear a real side margin, not run to the canvas edge: x1={x1} of {w}");
+}
+
 #[test] fn boxed_style_colours_a_keyword_and_the_spoken_word() { let _env_guard = env_guard();
     let mut ss = portrait(); let r = call(&mut ss, "auto_captions", json!({"words": words(), "style": "boxed", "position": "bottom"}));
     assert_eq!(r["pages"], 2);

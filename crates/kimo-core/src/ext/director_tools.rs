@@ -818,7 +818,17 @@ fn lint_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
             if let Some(c) = &cap { flagged_subject.insert(c.clone()); }
             let cur_y = ss.project.tracks.iter().flat_map(|t| t.clips.iter()).find(|c| &c.id == id).and_then(|c| c.props.get("y").map(|p| p.base)).unwrap_or(0.0); // xform-lint: ok (the stored base, to set a new base with set_property)
             let top_lim = safe[1].max(140.0); let bottom_lim = safe[1] + safe[3] - r[3] - 16.0;
-            let dy = if peak_y >= r[1] + r[3] / 2.0 { top_lim - r[1] } else { bottom_lim - r[1] };
+            // Clearing the subject needs to get the box off the salient peak, not relocate it across the
+            // whole frame: a caption sitting in the bottom band that trips this on one sampled instant used
+            // to jump all the way to top_lim -- right into a cold-open hook title's own territory, the exact
+            // "a fix introduced a new problem" shape apply_review_fixes' re-check (previous commit) exists to
+            // catch, except this one is avoidable at the source. Capped to one box-height of clearance plus a
+            // margin, in the same direction the un-capped math already picked; a subject too large for that
+            // to clear shows up as a remaining/introduced problem on the re-check instead of silently landing
+            // somewhere worse.
+            let full_dy = if peak_y >= r[1] + r[3] / 2.0 { top_lim - r[1] } else { bottom_lim - r[1] };
+            let nudge_cap = r[3] + 24.0;
+            let dy = full_dy.clamp(-nudge_cap, nudge_cap);
             let fix = match &cap {
                 Some(c) => json!({"tool": "set_caption_style", "args": {"caption_id": c, "style": "boxed", "y": r3(cur_y + dy)}}),
                 None => json!({"tool": "set_property", "args": {"clip_id": id, "property": "y", "value": r3(cur_y + dy)}}),

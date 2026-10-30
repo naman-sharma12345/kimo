@@ -254,10 +254,17 @@ fn build(ss: &mut Session, a: &Value, l: &Look, takes: Vec<(Take, Vec<sw::TimedW
         let disp: Vec<String> = idx.iter().map(|&i| tr.words[i].display.clone()).collect(); let dref: Vec<&str> = disp.iter().map(|s| s.as_str()).collect();
         let text = compose_cue_text(&dref, &pg.breaks_after);
         let mut fx = TextFx { weight: l.weight, uppercase: l.upper, bg: l.bg, bg_pad: (l.size * w * 0.32).round(), bg_radius: (l.size * w * 0.22).round(), shadow_blur: l.shadow, shadow_opacity: if l.shadow > 0.0 { 0.55 } else { 0.0 }, ..Default::default() };
-        // type size: the preset, shrunk until the longest line fits 86% of the width
+        // type size: the preset, shrunk until the longest line fits 86% of the width -- counting the
+        // visible pill (text plus bg_pad on both sides) for a background-box style, not just the glyphs:
+        // a 92%-wide line of text padded out by a boxed/pop pill's own bg_pad routinely pushed the actual
+        // drawn box edge-to-edge (no side margin, corners clipped by the canvas) even though the bare text
+        // measured fine on its own.
         let mut size = opt_num(a, "size", (l.size * w).round()).clamp(8.0, 600.0);
-        if let Ok(m) = crate::text::measure_text(&text, &font, size, 0.0, l.weight, "center", w, h, Some(&fx)) { if m.width > 0.86 * w { size = (size * 0.86 * w / m.width).floor().max(8.0); } }
-        fx.box_width = 0.92 * w;
+        let fit_target = 0.86 * w - if l.bg.is_some() { 2.0 * fx.bg_pad } else { 0.0 };
+        if let Ok(m) = crate::text::measure_text(&text, &font, size, 0.0, l.weight, "center", w, h, Some(&fx)) { if m.width > fit_target { size = (size * fit_target / m.width).floor().max(8.0); } }
+        // same margin for the wrap width itself: a background box's own pill (text + 2*bg_pad) stays inside
+        // a real 5% side margin (0.90w) instead of running to the canvas edge.
+        fx.box_width = if l.bg.is_some() { (0.90 * w - 2.0 * fx.bg_pad).max(0.3 * w) } else { 0.92 * w };
         let s: Vec<f64> = idx.iter().map(|&i| tr.words[i].start - pg.start).collect(); let e: Vec<f64> = idx.iter().map(|&i| tr.words[i].end - pg.start).collect();
         let kw: Vec<usize> = if use_kw && dref.len() >= 2 { sw::keywords(&dref, if dref.len() >= 6 { 2 } else { 1 }, &freq) } else { vec![] };
         let dur = (pg.end - pg.start).max(0.05);
