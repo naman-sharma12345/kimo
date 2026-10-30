@@ -77,7 +77,13 @@ fn style(c: &mut Clip, name: &str, a: &Value, w: f64, h: f64) -> Result<(), Stri
     c.props.insert("y".into(), Prop::new(y));
     let fx = c.text_fx.get_or_insert_with(Default::default);
     fx.bg = bg;
-    fx.box_width = if h * 1.65 > w { w * 0.9 } else { h * 1.65 };
+    let wrap_target = if h * 1.65 > w { w * 0.9 } else { h * 1.65 };
+    // A background box's own visible pill is the text plus bg_pad on every side (text.rs's render_text draws
+    // it that way); without allowing for that here the wrap width was sized for the bare glyphs and a boxed
+    // cue's actual drawn pill ran past a real side margin, corners clipped by the canvas -- the same shape of
+    // bug fixed in auto_captions.rs's own build() for freshly-created captions, except this is the SEPARATE
+    // styling path set_caption_style/add_caption_cues/add_captions go through, which needed the same fix.
+    fx.box_width = if bg.is_some() { (wrap_target - 2.0 * fx.bg_pad).max(0.3 * w) } else { wrap_target };
     Ok(())
 }
 fn add_captions_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {

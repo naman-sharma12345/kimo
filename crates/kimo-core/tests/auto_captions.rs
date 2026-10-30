@@ -85,6 +85,32 @@ fn ink(ss: &Session, t: f64) -> Ink {
     assert!((x1 as f64) <= 0.96 * w, "pill's right edge should clear a real side margin, not run to the canvas edge: x1={x1} of {w}");
 }
 
+/// The real benchmark shape: a caption group created as "pop" (no background), then switched to "boxed" by
+/// text_over_subject's own fix (set_caption_style) -- the SEPARATE styling path in editorial_tools.rs that
+/// set_caption_style/add_caption_cues/add_captions share, distinct from auto_captions.rs's own build() (fixed
+/// two commits ago). Tab's own re-render still showed a full-frame-width pill after that fix landed, because
+/// this second path had the identical bug and nothing had touched it.
+#[test] fn switching_an_existing_caption_to_boxed_also_respects_the_side_margin() { let _env_guard = env_guard();
+    let mut ss = Session::new(); call(&mut ss, "project_set", json!({"width": 360, "height": 640, "fps": 30}));
+    let t = call(&mut ss, "add_track", json!({}))["track_id"].as_str().unwrap().to_string();
+    call(&mut ss, "add_clip", json!({"track_id": t, "source_type": "solid", "color": [0.85, 0.85, 0.85], "start": 0, "duration": 6}));
+    let long_words = json!([
+        {"text": "honestly", "start": 0.2, "end": 0.6}, {"text": "this", "start": 0.6, "end": 0.8}, {"text": "is", "start": 0.8, "end": 0.95},
+        {"text": "the", "start": 0.95, "end": 1.05}, {"text": "best", "start": 1.05, "end": 1.3}]);
+    let r = call(&mut ss, "auto_captions", json!({"words": long_words, "style": "pop", "position": "bottom"}));
+    let caption_id = r["caption_id"].as_str().unwrap().to_string();
+    // the exact move text_over_subject's fix makes: switch an existing (no-background) group to "boxed".
+    call(&mut ss, "set_caption_style", json!({"caption_id": caption_id, "style": "boxed"}));
+    let f = render_frame(&ss.project, 0.9, &Cache::new()).unwrap();
+    let (mut x0, mut x1) = (usize::MAX, 0usize);
+    for y in 0..f.h { for x in 0..f.w { let i = (y * f.w + x) * 4; let (r, g, b) = (f.d[i], f.d[i + 1], f.d[i + 2]);
+        if r + g + b < 1.2 { x0 = x0.min(x); x1 = x1.max(x); } } }
+    assert!(x1 > x0, "no dark pill pixels found at all");
+    let w = f.w as f64;
+    assert!(x0 as f64 >= 0.04 * w, "pill's left edge should clear a real side margin after switching to boxed: x0={x0} of {w}");
+    assert!((x1 as f64) <= 0.96 * w, "pill's right edge should clear a real side margin after switching to boxed: x1={x1} of {w}");
+}
+
 #[test] fn boxed_style_colours_a_keyword_and_the_spoken_word() { let _env_guard = env_guard();
     let mut ss = portrait(); let r = call(&mut ss, "auto_captions", json!({"words": words(), "style": "boxed", "position": "bottom"}));
     assert_eq!(r["pages"], 2);
