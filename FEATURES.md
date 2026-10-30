@@ -1576,3 +1576,22 @@ gaps, candidates for this pass:
   `golden_registry.txt` hand-updated for the new tool (512 -> 513 tools). Full targeted pass green:
   `close_gaps`, `golden_frames` (registry+frames+projects, confirms no golden frame/project moved),
   `description_first_sentence`, `external_refs`, `registry_lint`, `registry_unique`.
+
+## v7.5 feature 2/8+: duck_timeline
+
+- [x] One-call ducking across the whole timeline: names every dialogue track and every music track once,
+  runs kimo's own speech detector (the same VAD `auto_duck`'s own `detect: "speech"` mode uses) once per
+  dialogue track, combines the speech windows across ALL of them, and hands that combined list to EVERY
+  named music track through `auto_duck`'s existing `speech_windows` argument -- one `dispatch_nested` call
+  to `auto_duck` per music track, reusing its ducking math rather than reimplementing it. A line said on
+  either of two dialogue tracks now ducks both music beds in one call, where `auto_duck` alone needs one
+  call per (music, dialogue) pair and cannot union two dialogue tracks' speech into one duck signal at all.
+  A track named in both lists is an error. `amount_db`/`attack`/`release`/`hold` match `auto_duck`'s own
+  speech-mode defaults.
+- New MCP tool `duck_timeline` (`crates/kimo-core/src/ext/duck_timeline.rs`). 6 new TDD tests
+  (`tests/duck_timeline.rs`) with synthetic voice-burst audio (same technique as `tests/duck_speech.rs`):
+  one music track ducks under speech from either of two separate dialogue tracks, two music tracks both duck
+  in one call, a track named as both dialogue and music errors, empty lists error, an unknown track id
+  errors, and undo clears the ducking. `golden_registry.txt` hand-updated (513 -> 514 tools). Full targeted
+  pass green including `golden_frames_registry_and_projects` (no frame/project golden moved) and
+  `registry_lint`'s `via` advice check.

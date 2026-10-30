@@ -138,6 +138,7 @@ diff_frames 77dbd8fc4f3cfa48
 disconnect_nodes ad3dce0b755a8341
 distribute_clips de3b81a25b80ced1
 drop_short_segments cba48b305b730c2e
+duck_timeline 6e50b945ceb37bd7
 duplicate_clip e56f4cc4ca9b6b57
 ecc_refine_track c3a928404a53f0c5
 edit_caption 9f54f456c1123d9f
