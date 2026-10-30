@@ -119,7 +119,7 @@ pub fn add_hud_frame(ss: &mut Session, a: &Value) -> Result<Value, String> {
     for (sx, sy) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] { for horiz in [true, false] { let (w, h) = if horiz { (br, bt) } else { (bt, br) };
         let mut t = clip(ss, shape("rect", w, h, col, 0.0, col), start, dur); set(&mut t, "x", sx * (cw / 2.0 - 28.0 * k - if horiz { br / 2.0 } else { bt / 2.0 })); set(&mut t, "y", sy * (ch / 2.0 - 25.0 * k - if horiz { bt / 2.0 } else { br / 2.0 })); set(&mut t, "opacity", 0.85); cl.push(t); } }
     let (lx, rx, ty, by) = (-(cw / 2.0 - m - br - 16.0 * k), cw / 2.0 - m - br - 16.0 * k, -(ch / 2.0 - m - 6.0 * k), ch / 2.0 - m - 6.0 * k); let w_of = |s: &str| s.chars().count() as f64 * fs * 0.6;
-    let mut put = |ss: &mut Session, s: &str, x: f64, y: f64, c: [f64; 3], o: f64| -> Clip { let mut t = clip(ss, txt(s, font, fs, c, "center"), start, dur); set(&mut t, "x", x); set(&mut t, "y", y); set(&mut t, "opacity", o); t };
+    let put = |ss: &mut Session, s: &str, x: f64, y: f64, c: [f64; 3], o: f64| -> Clip { let mut t = clip(ss, txt(s, font, fs, c, "center"), start, dur); set(&mut t, "x", x); set(&mut t, "y", y); set(&mut t, "opacity", o); t };
     cl.push(put(ss, &label, lx + w_of(&label) / 2.0, ty, col, 0.9)); cl.push(put(ss, "REC", rx - w_of("REC") / 2.0, ty, col, 0.9));
     // blinking red dot (1 Hz)
     let mut dot = clip(ss, shape("ellipse", 10.0 * k, 10.0 * k, [0.95, 0.2, 0.2], 0.0, [0.0; 3]), start, dur); set(&mut dot, "x", rx - w_of("REC") - 14.0 * k); set(&mut dot, "y", ty); let mut tt = 0.0; let mut on = true; while tt <= dur && tt < 600.0 { key(&mut dot, "opacity", tt, if on { 1.0 } else { 0.0 }, Ease::Hold); tt += 0.5; on = !on; } cl.push(dot);
