@@ -4,6 +4,56 @@
 
 ## Unreleased
 
+## v7.1.0 (2026-10-30)
+
+Naman asked for new features added to the local v7 branch. Audited the registry (495 tools) and
+FEATURES.md first: most of the obvious directions (beat-detection auto-cut, auto-reframe, silence/filler
+trim, scene-change detection, loudness-normalized ducking, project diff, timeline search) already shipped
+in v7.0.0 under different names (`beat_cut`/`detect_beats`, `auto_reframe`, `remove_silence_cuts`/
+`trim_filler_words`, `detect_cuts`, `auto_duck`/`measure_loudness`, `project_diff`, `find`). The 8 real
+gaps found, each with its own commit:
+
+- `find` gains a `has_effect` filter (which clips carry a given effect kind) and lists every clip's
+  effect kinds on every result -- the one real gap in the existing clip/track query tool. 1 new test.
+- New `project_merge`: the write-side of `project_diff`, which only ever reported. Two-way clip-level
+  merge (base -> theirs, same revision forms as `project_diff`) onto the live project, matched by id,
+  with four conflict shapes detected against the common base (add_add, edit_edit, edit_removed,
+  remove_modify) rather than just against each other, so an edit that happens to land on the same end
+  state on both sides is never a false conflict. `on_conflict`: fail (default)/theirs/base, plus
+  `dry_run`. 5 new tests. Tools: 495 -> 496.
+- New `mark_scene_cuts`: automates the existing `detect_cuts`-then-`add_marker`-per-cut workflow into
+  one call. `skip_existing` (2-frame tolerance) means calling it twice does not pile up duplicate
+  markers. Not a duplicate of `scene_split` (splits clips) or `detect_cuts` (read-only). 4 new tests.
+  Tools: 496 -> 497.
+- New `export_variants`: batch-exports several size/aspect-ratio deliverables (named presets 16:9/9:16/
+  1:1/4:5, or explicit width/height) from one project in a single call -- `batch` explicitly forbids
+  `export*` tools, so this previously needed several manual exports with the project's canvas hand-edited
+  in between. Optional `auto_reframe` per differing-aspect variant (window removed again right after);
+  the project's own canvas is always restored, success or failure; variants are independent. 5 new tests.
+  Tools: 497 -> 498.
+- `kimo gui` deepened into an actually-editable local editor, in 4 commits:
+  - Clip detail endpoint (`GET /api/clip?id=`) + an effect-params panel: select a clip, see and edit its
+    properties and every effect's params live, add/remove effects -- all through tools that already
+    existed (`set_property`, `set_effect_param`, `add_effect`, `remove_effect`, `list_effects`), no new
+    dispatch path. 3 new tests.
+  - Editable timeline: drag a clip to move it (`move_clip`) or drag its right edge to trim it
+    (`trim_clip`); clip bars switched to absolute positioning (start * px/sec) so a moved clip isn't
+    forced back into a gapless sequence. A sub-3px drag is treated as a click (selection), not a move.
+    1 new test.
+  - Scrub and play: no new backend route -- JS drives the existing `/preview.png?t=` repeatedly. Play
+    steps forward on a wall-clock-paced tick (real elapsed time, so it tracks actual speed rather than
+    drifting); clicking/dragging the timeline background scrubs; a playhead line stays in sync. Honestly
+    a frame-stepped preview, not a video element. 1 new test.
+  - Undo/redo + a history panel: buttons wired to the pre-existing (pre-v7) bounded undo/redo tools,
+    which the GUI simply hadn't exposed yet; a history panel lists every undo/redo step by tool name.
+    2 new tests.
+  - 17/17 gui tests green; every GUI change was also hand smoke-tested against a live server (curl
+    through the exact call sequences the JS drives), the way the original v7.0.0 GUI commit was.
+
+22 new TDD tests across the 8 commits. golden_registry.txt hand-updated at every tool change (495 -> 498
+registered tools); goldens (golden_frames, golden_registry, golden_project) unchanged throughout. No
+push anywhere -- all 8 commits are local to the `v7` branch.
+
 ## v7.0.0 "studio" (2026-10-29)
 
 - Particles (FEATURES.md L483): new `bubbles` and `foam` emitter presets, and a new `card` sprite kind (a flat
