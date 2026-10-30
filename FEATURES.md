@@ -1355,9 +1355,9 @@ Real gaps found and built this pass:
 - [x] reframe_timeline -- feature 3: auto-reframe (v7.2) is a single-clip, export-time-only operation
   (export_variants applies and then removes it per variant); this is the persistent, undoable
   whole-timeline aspect conversion that actually changes the canvas and keys every clip.
-- [ ] project_template -- starter project templates (canvas size + track layout conventions for "vertical
-  social", "podcast/interview", "16:9 widescreen", etc.) so a new project doesn't start from a blank canvas
-  every time. Not to be confused with template_define/apply (those are clip/op templates, a different thing).
+- [x] project_template -- feature 4: starter project templates (canvas size + fps + track layout
+  conventions for vertical/square social, 16:9 widescreen, podcast interview, multicam panel) so a new
+  project doesn't start from a blank canvas every time. Not template_define/apply (clip/op templates).
 - [ ] kimo gui: multi-select + group move/delete
 - [ ] kimo gui: copy/paste clips
 - [ ] kimo gui: ripple-delete in GUI (wire the existing ripple_delete tool to a shortcut/button distinct from
@@ -1416,3 +1416,25 @@ Real gaps found and built this pass:
   width/height without a named aspect, non-media clips are never touched, `track_id` restricts scope, and two
   clean-error cases (unknown aspect name, no size given at all). Registered in the `timeline` toolgroup
   (beside `ripple_delete`/`auto_reframe`). Tools 509->510.
+
+## v7.4 feature 4/8: project_template -- starter project templates
+
+- [x] `list_project_templates` / `create_project_from_template`. Every project before this started from a
+  blank canvas: `project_set` takes width/height/fps/name but creates no tracks, so "set up a vertical
+  short" or "set up a two-guest podcast" meant the agent had to already know (or guess) the right canvas
+  size and then call `add_track` by hand, once per track, in the right order, every time. Five templates,
+  each with a stated rationale for its track layout: `vertical_social` (1080x1920, Video/Captions/Music),
+  `square_social` (1080x1080, same convention), `widescreen_16_9` (1920x1080, A-Roll/B-Roll/Music/SFX --
+  the A/B split matches `place_broll`'s own expectation of a dedicated b-roll track), `podcast_interview`
+  (1920x1080, Host/Guest/Screen Share/Music -- separate speaker tracks for `auto_rough_cut`'s per-speaker
+  dead-air detection), `multicam_panel` (1920x1080, Cam A/B/C/Screen Share/Music -- a ready-made track set
+  for `add_multicam`/`switch_angle`). `create_project_from_template` refuses to touch a project that already
+  has tracks unless `overwrite: true`, so it can never silently wipe real work; applying a template is one
+  ordinary mutating call (one undo step). Not to be confused with the pre-existing `template_define`/
+  `template_apply` (a named, parameterised op-list applied to a clip -- a completely different thing this
+  audit made sure not to duplicate). 7 TDD tests: every template is listed with canvas/fps/tracks/rationale,
+  applying one sets canvas+fps and creates named empty tracks in the right order, overwrite protection
+  refuses without the flag and works with it, an unknown template name is a clean error naming the valid
+  ones, the whole application is one undo step, and every template in the catalog is internally consistent
+  (its own reported track count matches what it actually created). Registered in the `project` toolgroup.
+  Tools 510->512.

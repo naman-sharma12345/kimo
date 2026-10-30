@@ -114,7 +114,7 @@ fn project_with_media(dir: &std::path::Path) -> (Session, String, String) {
 #[test] fn bad_aspect_name_is_a_clean_error() {
     let dir = tmp("badaspect"); let (mut ss, _tr, _clip) = project_with_media(&dir);
     let e = dispatch(&mut ss, "reframe_timeline", &json!({"aspect": "21:9"})).unwrap_err();
-    assert!(e.contains("unknown aspect"), "{e}");
+    assert!(e.contains("aspect must be one of"), "{e}");
 }
 
 #[test] fn no_size_given_is_a_clean_error() {

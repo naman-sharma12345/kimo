@@ -119,6 +119,7 @@ copy_curve 0057930bd542d836
 copy_keyframes 70ef3cc730635528
 corner_disagreement 44cdf6a5779ea221
 create_bin eb4e9ec665ef012c
+create_project_from_template e687011d4ffc4832
 create_shared_grade_graph 58fa459ac9911fc4
 create_subclip efb0b879c2640bcb
 cut_to_beat 08631deca2c5a949
@@ -251,6 +252,7 @@ list_masks abb189717b8209fb
 list_materials a1570dac684e15c2
 list_modifiers 361eba969d2e859a
 list_multicam 8575d1fdef62185c
+list_project_templates e6682e617926ee36
 list_shape_modifiers eca977ef4f45ce0c
 list_subclips 80943e29cb08f2ff
 list_transitions e316853ba177f3f8

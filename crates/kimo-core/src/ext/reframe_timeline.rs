@@ -18,7 +18,7 @@ const ASPECT_PRESETS: &[(&str, (u32, u32))] = &[("16:9", (1920, 1080)), ("9:16",
 
 fn target_size(a: &Value, cur: (u32, u32)) -> Result<(u32, u32), String> {
     if let Some(name) = a.get("aspect").and_then(|v| v.as_str()) {
-        return ASPECT_PRESETS.iter().find(|(n, _)| *n == name).map(|(_, wh)| *wh).ok_or_else(|| format!("unknown aspect '{name}'. Valid: {}", ASPECT_PRESETS.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", ")));
+        return ASPECT_PRESETS.iter().find(|(n, _)| *n == name).map(|(_, wh)| *wh).ok_or_else(|| format!("aspect must be one of {}, got '{name}'", ASPECT_PRESETS.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", ")));
     }
     let (w, h) = (a.get("width").and_then(|v| v.as_u64()), a.get("height").and_then(|v| v.as_u64()));
     match (w, h) {
