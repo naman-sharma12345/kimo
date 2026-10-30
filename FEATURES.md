@@ -998,9 +998,24 @@ Real gaps found (perception/feedback and agent-superiority), built below, cheape
   golden_registry.txt hand-updated (find_assets' grown schema+description hash, still 501 tools -- no
   new tool name this time). All green including golden_frames_registry_and_projects and the existing
   bins_subclips_colors.rs (8 tests, unaffected).
-- [ ] No one-call self-review: an agent today must call `lint_edit`, `validate_timeline` and
-  `contact_sheet` separately and manually correlate their times to get a single "what's wrong, and show
-  me" answer. -> `self_review` (read-only orchestration of existing tools, no new dispatch path).
+- [x] `self_review`: new tool, one-call orchestration of `lint_edit` + `validate_timeline` +
+  `list_dependencies` (missing files only), correlating every source's flagged moments into one merged
+  `flagged_times` list instead of calling all three and matching times up by hand. `path` (optional) also
+  renders a `contact_sheet` of every flagged moment (capped at 16, contact_sheet's own limit) so the
+  report comes with evidence, not just numbers. Pure composition through `dispatch_nested` -- no new
+  checking logic, no new dispatch path; `lint_edit` erroring on an empty timeline is reported, not
+  treated as a self_review failure. Deliberately NOT auto-fix: `lint_edit`'s own problems already carry
+  the exact fix call each needs, and applying them unasked is a mutation this tool does not take -- the
+  north star's "self-review loops: render a check, lint it, auto-fix" stops at render+lint here, on
+  purpose; auto-fix stays a deliberate separate step. 8 new TDD tests (tests/self_review.rs): a gap from
+  validate_timeline shows up in the merged report and flagged_times, an empty-timeline lint_edit error is
+  reported not thrown, missing media from list_dependencies flips ok false, no path skips rendering, path
+  given renders a sheet when something is flagged and skips it when nothing is, `ok` is exactly the AND
+  of the three sources (not asserting lint_edit finds zero problems on a real fixture -- its loudness/
+  dark-frame thresholds are lint_edit's own business), read-only. golden_registry.txt hand-updated (502
+  tools), toolgroups.rs updated (output group). All green including golden_frames_registry_and_projects;
+  director_small's lint_edit timing test hit its 9.0s ceiling once under concurrent load and passed clean
+  alone (12.49s single-threaded) -- the pre-existing documented flake, not a regression from this tool.
 - [ ] No explainability for why a cut exists (north star: "explainable edits"): a clip boundary today
   carries no record of which tool made it or why. -> `explain_cut` (BETA, best-effort: reads nearby
   markers/tags as evidence; explicitly not a real decision ledger -- building one would mean threading
