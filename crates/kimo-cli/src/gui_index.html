@@ -34,6 +34,10 @@
   #inspector .prop-row input { width: 90px; }
   #inspector select, #inspector button.small { font-size: 11px; padding: 3px 6px; }
   #no-selection { font-size: 11px; color: #778; }
+  #history-list { max-height: 120px; overflow-y: auto; font-size: 11px; }
+  #history-list .step { padding: 1px 0; color: #9ab; }
+  #history-list .step.next-undo { color: #fd6; font-weight: bold; }
+  #history-list .step.redo { color: #6a9; }
 </style>
 </head>
 <body>
@@ -61,6 +65,11 @@
           <button class="small" onclick="addEffectToSelected()">Add effect</button>
         </div>
       </div>
+    </section>
+    <section id="history" style="margin-top:12px">
+      <h2>History</h2>
+      <div><button onclick="doUndo()" id="undo-btn">Undo</button> <button onclick="doRedo()" id="redo-btn">Redo</button></div>
+      <div id="history-list" style="margin-top:6px"></div>
     </section>
   </div>
   <section>
@@ -113,7 +122,25 @@ async function loadTimeline() {
   }
   const ph = document.createElement('div'); ph.id = 'playhead'; ph.style.left = (labelWidth + currentT * pxPerSec) + 'px'; ph.style.pointerEvents = 'none';
   el.appendChild(ph);
+  loadHistory();
 }
+
+async function loadHistory() {
+  const v = await callApi('history_list', {});
+  if (!v.ok) return;
+  const h = v.result;
+  const el = document.getElementById('history-list'); el.innerHTML = '';
+  for (const step of h.undo) {
+    const d = document.createElement('div'); d.className = 'step' + (step.step === h.undo.length - 1 ? ' next-undo' : '');
+    d.textContent = step.tool; el.appendChild(d);
+  }
+  for (const label of h.redo) { const d = document.createElement('div'); d.className = 'step redo'; d.textContent = '\u21bb ' + label; el.appendChild(d); }
+  if (h.undo.length === 0 && h.redo.length === 0) el.innerHTML = '<div style="color:#667">(nothing yet)</div>';
+  document.getElementById('undo-btn').disabled = h.undo.length === 0;
+  document.getElementById('redo-btn').disabled = h.redo.length === 0;
+}
+async function doUndo() { const v = await callApi('undo', {}); if (!v.ok) { alert(v.error && v.error.message || 'nothing to undo'); return; } await loadTimeline(); if (selectedClipId) await loadInspector(); }
+async function doRedo() { const v = await callApi('redo', {}); if (!v.ok) { alert(v.error && v.error.message || 'nothing to redo'); return; } await loadTimeline(); if (selectedClipId) await loadInspector(); }
 
 function scrubToPixel(clientX, tracksEl) {
   const rect = tracksEl.getBoundingClientRect();

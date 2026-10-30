@@ -315,6 +315,40 @@ mod tests {
     }
 
     #[test]
+    fn undo_redo_and_history_list_round_trip_through_the_same_api_call_path() {
+        // The History panel's own sequence: history_list, undo, history_list again, redo, history_list again.
+        let ss = fixture();
+        let baseline = { let mut s = ss.lock().unwrap(); dispatch(&mut s, "history_list", &json!({})).unwrap() };
+        let n0 = baseline["undo"].as_array().unwrap().len(); // fixture() itself did project_set/add_track/add_shape
+
+        let add_track_body = serde_json::to_vec(&json!({"tool": "add_track", "args": {}})).unwrap();
+        handle_request(&ss, "POST", "/api/call", "", &add_track_body);
+        let after_add = { let mut s = ss.lock().unwrap(); dispatch(&mut s, "history_list", &json!({})).unwrap() };
+        let undo_steps = after_add["undo"].as_array().unwrap();
+        assert_eq!(undo_steps.len(), n0 + 1); assert_eq!(undo_steps.last().unwrap()["tool"], "add_track", "the most recent step is the one undo reverts next");
+        assert_eq!(after_add["redo"].as_array().unwrap().len(), 0);
+
+        let track_count_before = timeline_view_model(&ss.lock().unwrap())["track_count"].as_u64().unwrap();
+        let undo_body = serde_json::to_vec(&json!({"tool": "undo", "args": {}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &undo_body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        assert_eq!(timeline_view_model(&ss.lock().unwrap())["track_count"].as_u64().unwrap(), track_count_before - 1, "undo actually reverted the add_track");
+        let after_undo = { let mut s = ss.lock().unwrap(); dispatch(&mut s, "history_list", &json!({})).unwrap() };
+        assert_eq!(after_undo["undo"].as_array().unwrap().len(), n0);
+        assert_eq!(after_undo["redo"].as_array().unwrap(), &vec![json!("add_track")], "redo now holds the undone step");
+
+        let redo_body = serde_json::to_vec(&json!({"tool": "redo", "args": {}})).unwrap();
+        let r2 = handle_request(&ss, "POST", "/api/call", "", &redo_body);
+        let v2: Value = serde_json::from_slice(&r2.body).unwrap(); assert_eq!(v2["ok"], true, "{v2}");
+        assert_eq!(timeline_view_model(&ss.lock().unwrap())["track_count"].as_u64().unwrap(), track_count_before, "redo brought the track back");
+
+        // undo with nothing to undo is a tool-level error (not an HTTP error), same shape the panel's alert() reads
+        let r3 = handle_request(&ss, "POST", "/api/call", "", &serde_json::to_vec(&json!({"tool": "undo", "args": {"steps": 99}})).unwrap());
+        let v3: Value = serde_json::from_slice(&r3.body).unwrap();
+        assert_eq!(v3["ok"], true, "steps clamps to what's actually available rather than failing"); // one real undo step existed (the redo above)
+    }
+
+    #[test]
     fn the_index_page_carries_the_scrub_and_play_controls() {
         // Scrubbing/play is JS driving the existing /preview.png endpoint repeatedly (no new backend route,
         // same honest shape as the rest of this GUI); what's checkable without a browser is that the markup
@@ -322,7 +356,7 @@ mod tests {
         let ss = fixture();
         let r = handle_request(&ss, "GET", "/", "", &[]);
         let body = String::from_utf8_lossy(&r.body);
-        for needle in ["id=\"play-btn\"", "function togglePlay", "function scrubTo", "ph.id = 'playhead'"] {
+        for needle in ["id=\"play-btn\"", "function togglePlay", "function scrubTo", "ph.id = 'playhead'", "id=\"undo-btn\"", "function doUndo", "function loadHistory"] {
             assert!(body.contains(needle), "index page should carry {needle:?}");
         }
     }
