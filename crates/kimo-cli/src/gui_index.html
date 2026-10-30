@@ -10,7 +10,10 @@
   main { display: grid; grid-template-columns: 1fr 360px; gap: 12px; padding: 12px; }
   section { background: #222; border: 1px solid #333; border-radius: 6px; padding: 10px; }
   h2 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: #9ab; }
-  #timeline { overflow-x: auto; }
+  #timeline-scroll { overflow-x: auto; }
+  #timeline-minimap { position: relative; height: 24px; background: #15151a; border: 1px solid #333; border-radius: 3px; margin-bottom: 6px; cursor: pointer; overflow: hidden; }
+  #timeline-minimap .mm-block { position: absolute; height: 3px; background: #3a6; border-radius: 1px; }
+  #timeline-minimap .mm-viewport { position: absolute; top: 0; bottom: 0; background: rgba(154, 187, 255, .18); border: 1px solid #58a; pointer-events: none; }
   .track { display: flex; align-items: center; height: 28px; border-bottom: 1px solid #2c2c33; }
   .track-label { width: 70px; font-size: 11px; color: #889; flex: none; }
   .clip { position: relative; height: 20px; background: #3a6; border-radius: 3px; margin-right: 1px; font-size: 10px; color: #012; padding: 2px 4px; overflow: hidden; white-space: nowrap; flex: none; }
@@ -104,7 +107,10 @@
     </section>
     <section id="timeline" style="margin-top:12px">
       <h2>Timeline <button class="small" style="font-size:11px;padding:2px 6px" onclick="addTrack()">+ Track</button> <button class="small" style="font-size:11px;padding:2px 6px" onclick="addMarkerAtPlayhead()">+ Marker</button> <label style="font-size:11px;font-weight:normal;text-transform:none;letter-spacing:normal;color:#9ab"><input type="checkbox" id="snap-enabled" checked style="vertical-align:middle"> snap</label> <button class="small" style="font-size:11px;padding:2px 6px" onclick="zoomBy(0.5)">−</button> <span id="zoom-label" style="font-size:11px;color:#9ab">40px/s</span> <button class="small" style="font-size:11px;padding:2px 6px" onclick="zoomBy(2)">+</button> <button class="small" style="font-size:11px;padding:2px 6px" onclick="zoomReset()">reset</button></h2>
-      <div id="tracks"></div>
+      <div id="timeline-minimap" onclick="jumpFromMinimap(event)"></div>
+      <div id="timeline-scroll" onscroll="updateMinimapViewport()">
+        <div id="tracks"></div>
+      </div>
     </section>
     <section id="marker-panel" style="margin-top:12px">
       <h2>Markers &amp; chapters</h2>
@@ -181,6 +187,7 @@
 <script src="/gui_keyframes.js"></script>
 <script src="/gui_contextmenu.js"></script>
 <script src="/gui_mediabin.js"></script>
+<script src="/gui_minimap.js"></script>
 <script>
 let registry = [];
 let projectFps = 30; // set from /api/timeline; used by J/K/L's frame step
@@ -253,6 +260,7 @@ async function loadTimeline() {
   const ph = document.createElement('div'); ph.id = 'playhead'; ph.style.left = (labelWidth + currentT * pxPerSec) + 'px'; ph.style.pointerEvents = 'none';
   el.appendChild(ph);
   renderMarkerPanel(tl);
+  renderMinimap(tl);
   loadHistory();
   loadWaveforms(tl);
 }
@@ -276,6 +284,48 @@ function renderMarkerPanel(tl) {
     remove.onclick = (ev) => { ev.stopPropagation(); removeMarkerAt(r.id); };
     listEl.appendChild(row);
   }
+}
+
+// v7.6: timeline minimap -- a fixed-width strip showing every clip across the WHOLE project duration,
+// independent of the main timeline's own zoom/scroll, with a highlighted rectangle over whatever the main
+// timeline currently shows and click-to-jump. kimoMinimap owns all the pixel math (fit-to-width scale,
+// per-clip blocks, the viewport rectangle, a click's target time); this just renders that model.
+let lastTimelineModel = null;
+const MINIMAP_WIDTH = 300; // matches the CSS block's effective content width closely enough for a quick overview
+function renderMinimap(tl) {
+  lastTimelineModel = tl;
+  const el = document.getElementById('timeline-minimap'); if (!el) return;
+  el.innerHTML = '';
+  const blocks = kimoMinimap.buildBlocks(tl, MINIMAP_WIDTH);
+  const trackCount = Math.max(1, (tl.tracks || []).length);
+  for (const b of blocks) {
+    const row = document.createElement('div'); row.className = 'mm-block';
+    row.style.left = b.left + 'px'; row.style.width = b.width + 'px';
+    row.style.top = (3 + (b.trackIndex / trackCount) * 18) + 'px';
+    el.appendChild(row);
+  }
+  const vp = document.createElement('div'); vp.className = 'mm-viewport'; vp.id = 'mm-viewport-rect';
+  el.appendChild(vp);
+  updateMinimapViewport();
+}
+function updateMinimapViewport() {
+  const scrollEl = document.getElementById('timeline-scroll');
+  const vp = document.getElementById('mm-viewport-rect');
+  if (!scrollEl || !vp || !lastTimelineModel) return;
+  const visibleSec = Math.max(0, scrollEl.clientWidth - labelWidth) / pxPerSec;
+  const scrollLeftSec = Math.max(0, scrollEl.scrollLeft) / pxPerSec;
+  const rect = kimoMinimap.viewportRect(lastTimelineModel.duration, MINIMAP_WIDTH, scrollLeftSec, visibleSec);
+  vp.style.left = rect.left + 'px'; vp.style.width = rect.width + 'px';
+}
+function jumpFromMinimap(ev) {
+  if (!lastTimelineModel) return;
+  const el = document.getElementById('timeline-minimap');
+  const rect = el.getBoundingClientRect();
+  const t = kimoMinimap.timeFromClick(ev.clientX - rect.left, MINIMAP_WIDTH, lastTimelineModel.duration);
+  scrubTo(t);
+  const scrollEl = document.getElementById('timeline-scroll');
+  if (scrollEl) scrollEl.scrollLeft = Math.max(0, t * pxPerSec - (scrollEl.clientWidth - labelWidth) / 2);
+  updateMinimapViewport();
 }
 
 // v7.4: one audio_transients call per media clip (image:"waveform"), fired after the timeline itself has

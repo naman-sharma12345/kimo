@@ -135,6 +135,10 @@ const CONTEXTMENU_JS: &str = include_str!("gui_contextmenu.js");
 /// URL), served the same way for the same reason -- gui_index.html's media bin panel and
 /// tests/js/mediabin_test.js (Node) run the exact same bytes.
 const MEDIABIN_JS: &str = include_str!("gui_mediabin.js");
+/// v7.6: the timeline minimap/overview's view model (fit-to-width scale, per-clip blocks across the whole
+/// duration, the viewport rectangle, click-to-jump time), served the same way for the same reason --
+/// gui_index.html's minimap strip and tests/js/minimap_test.js (Node) run the exact same bytes.
+const MINIMAP_JS: &str = include_str!("gui_minimap.js");
 
 /// Parses `?t=1.5` (or any single-key query) out of a raw query string; used for /preview.png's `t`.
 fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
@@ -160,6 +164,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
         ("GET", "/gui_keyframes.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: KEYFRAMES_JS.as_bytes().to_vec() },
         ("GET", "/gui_contextmenu.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: CONTEXTMENU_JS.as_bytes().to_vec() },
         ("GET", "/gui_mediabin.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: MEDIABIN_JS.as_bytes().to_vec() },
+        ("GET", "/gui_minimap.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: MINIMAP_JS.as_bytes().to_vec() },
         ("GET", "/api/timeline") => { let ss = ss.lock().unwrap(); json_response(200, timeline_view_model(&ss)) }
         ("GET", "/api/registry") => json_response(200, registry_summary()),
         ("GET", "/api/clip") => { // ?id=<clip_id>
@@ -209,7 +214,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
                 Err(e) => json_response(200, json!({"ok": false, "error": e})),
             }
         }
-        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/gui_zoom.js") | (_, "/gui_trackstate.js") | (_, "/gui_multiselect.js") | (_, "/gui_waveform.js") | (_, "/gui_fxbrowser.js") | (_, "/gui_clipboard.js") | (_, "/gui_markerpanel.js") | (_, "/gui_renderqueue.js") | (_, "/gui_keyframes.js") | (_, "/gui_contextmenu.js") | (_, "/gui_mediabin.js") | (_, "/asset_thumb.png") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
+        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/gui_zoom.js") | (_, "/gui_trackstate.js") | (_, "/gui_multiselect.js") | (_, "/gui_waveform.js") | (_, "/gui_fxbrowser.js") | (_, "/gui_clipboard.js") | (_, "/gui_markerpanel.js") | (_, "/gui_renderqueue.js") | (_, "/gui_keyframes.js") | (_, "/gui_contextmenu.js") | (_, "/gui_mediabin.js") | (_, "/asset_thumb.png") | (_, "/gui_minimap.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
         _ => err_response(404, format!("no route for {path}")),
     }
 }
@@ -1502,5 +1507,35 @@ mod tests {
         let ss = fixture();
         let r = handle_request(&ss, "GET", "/asset_thumb.png", "", &[]);
         assert_eq!(r.status, 400);
+    }
+
+    // ---- v7.6: timeline minimap ----
+
+    #[test]
+    fn served_minimap_js_matches_the_file_on_disk() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_minimap.js", "", &[]);
+        assert_eq!(r.status, 200); assert_eq!(r.content_type, "application/javascript; charset=utf-8");
+        assert_eq!(r.body, include_bytes!("gui_minimap.js").to_vec());
+    }
+
+    #[test]
+    fn the_index_page_wires_up_the_minimap() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["gui_minimap.js", "kimoMinimap.buildBlocks", "kimoMinimap.viewportRect", "kimoMinimap.timeFromClick", "function renderMinimap", "function jumpFromMinimap", "function updateMinimapViewport", "timeline-minimap", "timeline-scroll"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn timeline_view_model_duration_feeds_the_minimap_with_the_real_project_span() {
+        let ss = fixture(); // one clip 0..2 on one track
+        let add = serde_json::to_vec(&json!({"tool": "add_clip", "args": {"track_id": { let s = ss.lock().unwrap(); s.project.tracks[0].id.clone() }, "source_type": "solid", "color": [0.0, 0.0, 0.0], "start": 5.0, "duration": 3.0}})).unwrap();
+        handle_request(&ss, "POST", "/api/call", "", &add);
+        let r = handle_request(&ss, "GET", "/api/timeline", "", &[]);
+        let tl: Value = serde_json::from_slice(&r.body).unwrap();
+        assert_eq!(tl["duration"], 8.0, "{tl}"); // the minimap's whole-strip scale depends on this being the real furthest clip end
     }
 }
