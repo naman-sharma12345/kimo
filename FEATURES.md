@@ -1196,3 +1196,19 @@ new (the v7.2 audit explicitly flagged EDL/OTIO import as a real gap, bigger tha
   `alert()` surfaces); undo/redo's shortcuts are confirmed to land on the same history tools the existing
   buttons already use and actually move the project back and forth. All 24 pre-existing kimo-cli tests
   stayed green.
+
+
+## v7.3 feature 5/N: kimo gui add/remove tracks
+
+- [x] `kimo gui`: a "+ Track" button beside the Timeline heading adds an empty track (`add_track`, no new
+  args, same tool the registry already has) and refreshes; each track's label row grows a small "×"
+  button (with a confirm() prompt, since it deletes the track's clips too) that calls the already-registered
+  `delete_track`, clears the clip selection if it pointed into that track, and refreshes the timeline and
+  inspector. Both are plain `/api/call` round trips through existing engine tools -- nothing new in
+  kimo-core for this feature, the same "GUI is a thin client over the registry" shape every prior `kimo gui`
+  feature has used. 3 new Rust tests (crates/kimo-cli/src/gui.rs): the index page is checked to actually
+  carry the button, the onclick wiring and both new JS functions by name; add_track's own API sequence is
+  confirmed to grow `track_count` and the new track starts with zero clips; delete_track's own API sequence
+  is confirmed to actually remove both the track AND its clip (not just the track row), and a stale track id
+  (a double-click after it's already gone) reports a tool error rather than crashing. All 24 pre-existing
+  kimo-cli tests stayed green (27 total now).

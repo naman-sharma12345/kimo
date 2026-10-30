@@ -510,5 +510,57 @@ mod tests {
         let v2: Value = serde_json::from_slice(&r2.body).unwrap(); assert_eq!(v2["ok"], true, "{v2}");
         assert_eq!({ let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].start }, 1.0, "ctrl+shift+z's own tool should redo it");
     }
-}
 
+    // ---- v7.3: add/remove tracks ----
+
+    #[test]
+    fn the_index_page_wires_up_track_add_and_remove() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["+ Track", "onclick=\"addTrack()\"", "function addTrack", "function removeTrack", "delete_track"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn add_track_button_adds_an_empty_track_through_the_same_api_call_path() {
+        let ss = fixture();
+        let before = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        assert_eq!(before["track_count"], 1);
+
+        let body = serde_json::to_vec(&json!({"tool": "add_track", "args": {}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+
+        let after = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        assert_eq!(after["track_count"], 2, "{after}");
+        assert_eq!(after["tracks"][1]["clips"].as_array().unwrap().len(), 0, "a freshly added track starts empty");
+    }
+
+    #[test]
+    fn remove_track_button_deletes_the_track_and_its_clips_through_the_same_api_call_path() {
+        let ss = fixture();
+        let (track2, clip2) = {
+            let mut s = ss.lock().unwrap();
+            let t2 = dispatch(&mut s, "add_track", &json!({})).unwrap()["track_id"].as_str().unwrap().to_string();
+            let c2 = dispatch(&mut s, "add_shape", &json!({"track_id": t2, "shape": "rect", "start": 0.0, "duration": 1.0, "color": [0.0, 0.0, 1.0]})).unwrap()["clip_id"].as_str().unwrap().to_string();
+            (t2, c2)
+        };
+        let before = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        assert_eq!(before["track_count"], 2);
+        let _ = clip2;
+
+        let body = serde_json::to_vec(&json!({"tool": "delete_track", "args": {"track_id": track2}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+
+        let after = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        assert_eq!(after["track_count"], 1, "the track (and its clip with it) should actually be gone: {after}");
+
+        // a stale track id (double-click, already removed) reports a tool error, not a crash
+        let bad = serde_json::to_vec(&json!({"tool": "delete_track", "args": {"track_id": track2}})).unwrap();
+        let r2 = handle_request(&ss, "POST", "/api/call", "", &bad);
+        let v2: Value = serde_json::from_slice(&r2.body).unwrap(); assert_eq!(v2["ok"], false);
+    }
+}

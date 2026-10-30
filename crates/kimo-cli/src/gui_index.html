@@ -51,7 +51,7 @@
       <img id="frame" alt="(no frame rendered yet)">
     </section>
     <section id="timeline" style="margin-top:12px">
-      <h2>Timeline</h2>
+      <h2>Timeline <button class="small" style="font-size:11px;padding:2px 6px" onclick="addTrack()">+ Track</button></h2>
       <div id="tracks"></div>
     </section>
     <section id="inspector" style="margin-top:12px">
@@ -105,7 +105,12 @@ async function loadTimeline() {
   el.onmousedown = (ev) => { if (!ev.target.closest('.clip')) scrubToPixel(ev.clientX, el); };
   for (const t of tl.tracks) {
     const row = document.createElement('div'); row.className = 'track'; row.style.position = 'relative';
-    const label = document.createElement('div'); label.className = 'track-label'; label.textContent = t.name || t.id; row.appendChild(label);
+    const label = document.createElement('div'); label.className = 'track-label'; label.style.display = 'flex'; label.style.justifyContent = 'space-between'; label.style.alignItems = 'center';
+    const labelText = document.createElement('span'); labelText.textContent = t.name || t.id; label.appendChild(labelText);
+    const removeBtn = document.createElement('span'); removeBtn.textContent = '\u00d7'; removeBtn.title = 'remove this track and all its clips';
+    removeBtn.style.cursor = 'pointer'; removeBtn.style.color = '#f77'; removeBtn.style.padding = '0 4px';
+    removeBtn.onclick = (ev) => { ev.stopPropagation(); removeTrack(t.id); };
+    label.appendChild(removeBtn); row.appendChild(label);
     const lane = document.createElement('div'); lane.style.position = 'relative'; lane.style.height = '20px'; lane.style.flex = '1 1 auto';
     for (const c of t.clips) {
       const bar = document.createElement('div'); bar.className = 'clip' + (c.id === selectedClipId ? ' selected' : '');
@@ -142,6 +147,14 @@ async function loadHistory() {
   if (h.undo.length === 0 && h.redo.length === 0) el.innerHTML = '<div style="color:#667">(nothing yet)</div>';
   document.getElementById('undo-btn').disabled = h.undo.length === 0;
   document.getElementById('redo-btn').disabled = h.redo.length === 0;
+}
+async function addTrack() { await callApi('add_track', {}); await loadTimeline(); }
+async function removeTrack(trackId) {
+  if (!confirm('Remove this track and all its clips?')) return;
+  const v = await callApi('delete_track', { track_id: trackId });
+  if (!v.ok) { alert(typeof v.error === 'string' ? v.error : 'could not remove that track'); return; }
+  if (selectedClipId) { selectedClipId = null; await loadInspector(); } // the selected clip may have lived on this track
+  await loadTimeline();
 }
 async function doUndo() { const v = await callApi('undo', {}); if (!v.ok) { alert(v.error && v.error.message || 'nothing to undo'); return; } await loadTimeline(); if (selectedClipId) await loadInspector(); }
 async function doRedo() { const v = await callApi('redo', {}); if (!v.ok) { alert(v.error && v.error.message || 'nothing to redo'); return; } await loadTimeline(); if (selectedClipId) await loadInspector(); }
