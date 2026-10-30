@@ -52,7 +52,7 @@
       <img id="frame" alt="(no frame rendered yet)">
     </section>
     <section id="timeline" style="margin-top:12px">
-      <h2>Timeline <button class="small" style="font-size:11px;padding:2px 6px" onclick="addTrack()">+ Track</button> <button class="small" style="font-size:11px;padding:2px 6px" onclick="addMarkerAtPlayhead()">+ Marker</button></h2>
+      <h2>Timeline <button class="small" style="font-size:11px;padding:2px 6px" onclick="addTrack()">+ Track</button> <button class="small" style="font-size:11px;padding:2px 6px" onclick="addMarkerAtPlayhead()">+ Marker</button> <label style="font-size:11px;font-weight:normal;text-transform:none;letter-spacing:normal;color:#9ab"><input type="checkbox" id="snap-enabled" checked style="vertical-align:middle"> snap</label></h2>
       <div id="tracks"></div>
     </section>
     <section id="inspector" style="margin-top:12px">
@@ -87,6 +87,7 @@
   </section>
 </main>
 <script src="/gui_keymap.js"></script>
+<script src="/gui_snap.js"></script>
 <script>
 let registry = [];
 let projectFps = 30; // set from /api/timeline; used by J/K/L's frame step
@@ -100,6 +101,7 @@ let playing = false; let playTimer = null; let playLastWall = 0;
 
 async function loadTimeline() {
   const r = await fetch('/api/timeline'); const tl = await r.json();
+  lastTimeline = tl; // cached for snapProposed() -- a drag's candidates need no mid-drag API call
   projectDuration = tl.duration;
   if (tl.fps) projectFps = tl.fps;
   const el = document.getElementById('tracks'); el.innerHTML = '';
@@ -244,6 +246,14 @@ document.addEventListener('keydown', (ev) => {
 });
 
 let justDragged = false;
+let lastTimeline = null; // cached from the most recent loadTimeline(), so a drag's snap candidates need no mid-drag API call
+const SNAP_PX = 8; // pixel tolerance for snapping, converted to seconds via pxPerSec (matches the drag's own units)
+function snapEnabled() { const el = document.getElementById('snap-enabled'); return !el || el.checked; }
+function snapProposed(proposed, excludeClipId) {
+  if (!snapEnabled() || !window.kimoSnap || !lastTimeline) return proposed;
+  const candidates = window.kimoSnap.candidatesFromTimeline(lastTimeline, excludeClipId);
+  return window.kimoSnap.snapTime(proposed, candidates, SNAP_PX / pxPerSec);
+}
 function startDrag(ev, clip, mode) {
   ev.preventDefault(); ev.stopPropagation();
   const startX = ev.clientX; const origStart = clip.start; const origDuration = clip.duration;
@@ -252,15 +262,25 @@ function startDrag(ev, clip, mode) {
     const deltaSec = (mv.clientX - startX) / pxPerSec;
     if (Math.abs(mv.clientX - startX) > 3) justDragged = true;
     const bar = document.querySelector(`.clip[data-clip-id="${CSS.escape(clip.id)}"]`); if (!bar) return;
-    if (mode === 'move') bar.style.left = Math.max(0, origStart + deltaSec) * pxPerSec + 'px';
-    else bar.style.width = Math.max(4, (origDuration + deltaSec) * pxPerSec) + 'px';
+    if (mode === 'move') {
+      const snapped = snapProposed(Math.max(0, origStart + deltaSec), clip.id);
+      bar.style.left = snapped * pxPerSec + 'px';
+    } else {
+      const proposedEnd = snapProposed(origStart + Math.max(0.04, origDuration + deltaSec), clip.id);
+      bar.style.width = Math.max(4, (proposedEnd - origStart) * pxPerSec) + 'px';
+    }
   }
   async function onUp(up) {
     document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp);
     const deltaSec = (up.clientX - startX) / pxPerSec;
     if (Math.abs(up.clientX - startX) <= 3) return; // a click, not a drag: selectClip's onclick handles it
-    if (mode === 'move') await callApi('move_clip', { clip_id: clip.id, start: Math.max(0, origStart + deltaSec) });
-    else await callApi('trim_clip', { clip_id: clip.id, duration: Math.max(0.04, origDuration + deltaSec) });
+    if (mode === 'move') {
+      const snapped = snapProposed(Math.max(0, origStart + deltaSec), clip.id);
+      await callApi('move_clip', { clip_id: clip.id, start: snapped });
+    } else {
+      const snappedEnd = snapProposed(origStart + Math.max(0.04, origDuration + deltaSec), clip.id);
+      await callApi('trim_clip', { clip_id: clip.id, duration: Math.max(0.04, snappedEnd - origStart) });
+    }
     await loadTimeline(); if (selectedClipId === clip.id) await loadInspector();
     setTimeout(() => { justDragged = false; }, 0);
   }

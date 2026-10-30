@@ -1229,3 +1229,26 @@ new (the v7.2 audit explicitly flagged EDL/OTIO import as a real gap, bigger tha
   new JS functions by name; add_marker's own API sequence is confirmed to land the marker at the given time
   with its name; remove_marker's own API sequence is confirmed to actually remove it (and a stale marker id
   reports a tool error, not a crash). All 27 pre-existing kimo-cli tests stayed green (32 total now).
+
+
+## v7.3 feature 7/N: kimo gui timeline snapping
+
+- [x] `kimo gui`: drag-to-move and drag-to-trim now snap to nearby edit points -- the exact honest gap
+  v7.1's own FEATURES.md entry named ("no snapping to other clips/markers"). The snap decision is its own
+  pure function, `gui_snap.js` (`snapTime(proposed, candidates, toleranceSec)` -- nearest candidate within
+  tolerance, else the proposed value unchanged; `candidatesFromTimeline(tl, excludeClipId)` gathers every
+  clip edge on every track, every marker time, and 0 from the already-loaded `/api/timeline` view-model,
+  the same candidate set `snap_time`'s own description already names -- "clip edges, markers, playhead 0"),
+  served as a real static file at `GET /gui_snap.js` so the browser and a headless Node test run the exact
+  same bytes. Candidates are gathered once per drag from the view-model already in memory (`lastTimeline`,
+  cached by `loadTimeline()`), not fetched mid-drag, so snapping costs no extra API round trip and updates
+  live as the mouse moves. A "snap" checkbox beside "+ Track"/"+ Marker" toggles it (default on); tolerance
+  is 8px converted to seconds via the current zoom (`pxPerSec`), so it stays a constant screen distance at
+  any zoom level. 10 new headless Node tests (tests/js/snap_test.js): nearest-candidate selection within and
+  outside tolerance, an empty candidate list, tie-breaking, exact matches, snapping to 0, and
+  `candidatesFromTimeline` gathering every edge/marker/0 while excluding the dragged clip's own edges (so a
+  clip never snaps to itself) -- plus 5 new Rust tests (crates/kimo-cli/src/gui.rs): the JS file is served
+  correctly (405 on non-GET); the index page is checked to wire up the checkbox and both snap functions by
+  name; and the actual payoff -- a clip moved with an already-snapped value lands its edge EXACTLY flush
+  against its neighbour (not a near-miss), confirmed through the real `move_clip` call and a re-read of the
+  timeline. All 31 pre-existing kimo-cli tests stayed green (36 total now).

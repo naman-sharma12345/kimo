@@ -66,6 +66,10 @@ const INDEX_HTML: &str = include_str!("gui_index.html");
 /// gui_index.html's <script src="/gui_keymap.js"> and tests/js/keymap_test.js (Node, headless) run the
 /// exact same bytes -- one mapping, not two to keep in sync.
 const KEYMAP_JS: &str = include_str!("gui_keymap.js");
+/// v7.3: the timeline-snapping helper (nearest clip edge / marker / 0, within tolerance), served the same
+/// way and for the same reason -- gui_index.html's drag handlers and tests/js/snap_test.js (Node) run the
+/// exact same bytes.
+const SNAP_JS: &str = include_str!("gui_snap.js");
 
 /// Parses `?t=1.5` (or any single-key query) out of a raw query string; used for /preview.png's `t`.
 fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
@@ -79,6 +83,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
     match (method, path) {
         ("GET", "/") => Response { status: 200, content_type: "text/html; charset=utf-8", body: INDEX_HTML.as_bytes().to_vec() },
         ("GET", "/gui_keymap.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: KEYMAP_JS.as_bytes().to_vec() },
+        ("GET", "/gui_snap.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: SNAP_JS.as_bytes().to_vec() },
         ("GET", "/api/timeline") => { let ss = ss.lock().unwrap(); json_response(200, timeline_view_model(&ss)) }
         ("GET", "/api/registry") => json_response(200, registry_summary()),
         ("GET", "/api/clip") => { // ?id=<clip_id>
@@ -115,7 +120,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
                 Err(e) => json_response(200, json!({"ok": false, "error": e})),
             }
         }
-        (_, "/") | (_, "/gui_keymap.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
+        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
         _ => err_response(404, format!("no route for {path}")),
     }
 }
@@ -630,5 +635,61 @@ mod tests {
         let bad = serde_json::to_vec(&json!({"tool": "remove_marker", "args": {"marker_id": marker_id}})).unwrap();
         let r2 = handle_request(&ss, "POST", "/api/call", "", &bad);
         let v2: Value = serde_json::from_slice(&r2.body).unwrap(); assert_eq!(v2["ok"], false);
+    }
+
+    // ---- v7.3: timeline snapping ----
+
+    #[test]
+    fn gui_snap_js_is_served_as_a_real_static_file() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_snap.js", "", &[]);
+        assert_eq!(r.status, 200);
+        assert!(r.content_type.contains("javascript"), "{}", r.content_type);
+        let body = String::from_utf8(r.body).unwrap();
+        assert!(body.contains("snapTime"), "should serve the real snap module");
+        assert!(body.contains("candidatesFromTimeline"), "{body}");
+        assert!(body.contains("module.exports"), "must stay requireable from Node for the headless test");
+    }
+
+    #[test]
+    fn gui_snap_js_rejects_non_get() {
+        let ss = fixture();
+        let r = handle_request(&ss, "POST", "/gui_snap.js", "", &[]);
+        assert_eq!(r.status, 405);
+    }
+
+    #[test]
+    fn the_index_page_wires_up_snapping() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["/gui_snap.js", "snap-enabled", "kimoSnap.candidatesFromTimeline", "kimoSnap.snapTime", "function snapProposed", "lastTimeline"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn a_snapped_move_lands_the_dragged_clip_exactly_flush_against_its_neighbour() {
+        // The pure snapping math itself lives in gui_snap.js (tested headless in tests/js/snap_test.js);
+        // what's tested here is what a snapped drag actually produces once move_clip is called with the
+        // already-snapped value -- the second clip's start should land EXACTLY on the first clip's end,
+        // not a near-miss a few milliseconds off (which is the whole point of snapping).
+        let ss = fixture(); // one 2s clip, start 0, on track1
+        let (track_id, second_id) = {
+            let mut s = ss.lock().unwrap();
+            let t = s.project.tracks[0].id.clone();
+            let c2 = dispatch(&mut s, "add_shape", &json!({"track_id": t, "shape": "rect", "start": 2.1, "duration": 1.5, "color": [0.0, 1.0, 0.0]})).unwrap()["clip_id"].as_str().unwrap().to_string();
+            (t, c2)
+        };
+        let _ = track_id;
+        // the drag proposed 2.05s (a near miss); gui_snap.js's own candidatesFromTimeline+snapTime would
+        // resolve this to 2.0 (the first clip's end) within the default 8px tolerance at any sane zoom --
+        // this call is what onUp() sends once that snap has already happened client-side.
+        let body = serde_json::to_vec(&json!({"tool": "move_clip", "args": {"clip_id": second_id, "start": 2.0}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let tl = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        let clips = tl["tracks"][0]["clips"].as_array().unwrap();
+        assert_eq!(clips[0]["end"], 2.0); assert_eq!(clips[1]["start"], 2.0, "snapped clips must be exactly flush, not a near-miss: {tl}");
     }
 }
