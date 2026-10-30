@@ -1362,7 +1362,7 @@ Real gaps found and built this pass:
 - [ ] kimo gui: copy/paste clips
 - [ ] kimo gui: ripple-delete in GUI (wire the existing ripple_delete tool to a shortcut/button distinct from
   plain delete)
-- [ ] kimo gui: track mute/solo/lock controls (now that track_mute_solo exists to wire to)
+- [x] kimo gui: track mute/solo/lock controls -- feature 5, now that track_mute_solo exists to wire to
 - [ ] kimo gui: audio waveforms on clips
 - [ ] kimo gui: a visible effects/transitions browser applying to the selected clip (today's inspector has a
   bare effect-kind <select>, no transitions, no search/categories -- the brief's "browser" bar is higher)
@@ -1438,3 +1438,18 @@ Real gaps found and built this pass:
   ones, the whole application is one undo step, and every template in the catalog is internally consistent
   (its own reported track count matches what it actually created). Registered in the `project` toolgroup.
   Tools 510->512.
+
+## v7.4 feature 5/8: kimo gui track mute/solo/lock controls
+
+- [x] `kimo gui`: each track row gets three small toggle buttons -- M (mute), S (solo), L (lock) -- styled
+  distinctly when active (mute tints red-brown, solo amber, lock red), wired straight onto `set_track`
+  (feature 1). A locked track's clip bars stop accepting drag/trim (dimmed, "track is locked" in their
+  title) rather than letting a drag run and failing only on mouseup. The button/interaction logic is pure
+  JS, `gui_trackstate.js` (`buttonState(track)` -> each button's label/active/title, `clipInteractionAllowed
+  (track)` -> whether drag/trim should start, `toggleArgs(track, which)` -> the exact one-key set_track
+  args to send), served at `GET /gui_trackstate.js` so the browser and `tests/js/trackstate_test.js` run the
+  exact same bytes (v7.3's pattern: pure logic as a real file, not duplicated in two places). 13 new headless
+  Node tests plus 4 new Rust tests (`crates/kimo-cli/src/gui.rs`): the JS file is served byte-identical to
+  disk, the index page wires up the file and all three functions by name, `timeline_view_model` carries
+  locked/muted/solo per track, and a real `set_track` call through `/api/call` is reflected in the very next
+  `/api/timeline` fetch. All 46 pre-existing kimo-cli tests stayed green (50 total now).

@@ -26,7 +26,7 @@ pub fn timeline_view_model(ss: &Session) -> Value {
             "id": c.id, "name": c.name, "role": c.role, "source_kind": source_kind(c),
             "start": c.start, "duration": c.duration, "end": c.start + c.duration,
         })).collect();
-        json!({"id": t.id, "name": t.name, "clip_count": clips.len(), "clips": clips})
+        json!({"id": t.id, "name": t.name, "clip_count": clips.len(), "clips": clips, "locked": t.locked, "muted": t.muted, "solo": t.solo})
     }).collect();
     // v7.3: markers, sorted by time (same order list_markers already returns), for the timeline's marker
     // ticks -- the GUI's own display, not a second source of truth (add_marker/list_markers/remove_marker
@@ -73,6 +73,10 @@ const SNAP_JS: &str = include_str!("gui_snap.js");
 /// v7.3: the timeline-zoom helper (bounds-clamped px/sec), served the same way for the same reason --
 /// gui_index.html's zoomBy()/zoomReset() and tests/js/zoom_test.js (Node) run the exact same bytes.
 const ZOOM_JS: &str = include_str!("gui_zoom.js");
+/// v7.4: the track mute/solo/lock button-state helper (button label/active/title + whether clip drag/trim
+/// is allowed + the toggle args to send), served the same way for the same reason -- gui_index.html's
+/// track-row renderer and tests/js/trackstate_test.js (Node) run the exact same bytes.
+const TRACKSTATE_JS: &str = include_str!("gui_trackstate.js");
 
 /// Parses `?t=1.5` (or any single-key query) out of a raw query string; used for /preview.png's `t`.
 fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
@@ -88,6 +92,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
         ("GET", "/gui_keymap.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: KEYMAP_JS.as_bytes().to_vec() },
         ("GET", "/gui_snap.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: SNAP_JS.as_bytes().to_vec() },
         ("GET", "/gui_zoom.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: ZOOM_JS.as_bytes().to_vec() },
+        ("GET", "/gui_trackstate.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: TRACKSTATE_JS.as_bytes().to_vec() },
         ("GET", "/api/timeline") => { let ss = ss.lock().unwrap(); json_response(200, timeline_view_model(&ss)) }
         ("GET", "/api/registry") => json_response(200, registry_summary()),
         ("GET", "/api/clip") => { // ?id=<clip_id>
@@ -124,7 +129,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
                 Err(e) => json_response(200, json!({"ok": false, "error": e})),
             }
         }
-        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/gui_zoom.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
+        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/gui_zoom.js") | (_, "/gui_trackstate.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
         _ => err_response(404, format!("no route for {path}")),
     }
 }
@@ -841,4 +846,45 @@ mod tests {
         let r = handle_request(&ss, "POST", "/api/call", "", &body);
         let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], false, "{v}");
     }
+
+    // ---- v7.4: track mute/solo/lock ----
+
+    #[test]
+    fn served_trackstate_js_matches_the_file_on_disk() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_trackstate.js", "", &[]);
+        assert_eq!(r.status, 200); assert_eq!(r.content_type, "application/javascript; charset=utf-8");
+        assert_eq!(r.body, include_bytes!("gui_trackstate.js").to_vec());
+    }
+
+    #[test]
+    fn the_index_page_wires_up_track_state_buttons() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["gui_trackstate.js", "kimoTrackState.buttonState", "kimoTrackState.clipInteractionAllowed", "kimoTrackState.toggleArgs", "function toggleTrackState", "track-state-btn"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn timeline_view_model_carries_locked_muted_solo_per_track() {
+        let ss = fixture();
+        let v = timeline_view_model(&ss.lock().unwrap());
+        let t0 = &v["tracks"][0];
+        assert_eq!(t0["locked"], false); assert_eq!(t0["muted"], false); assert_eq!(t0["solo"], false);
+    }
+
+    #[test]
+    fn set_track_through_api_call_actually_changes_what_the_next_timeline_fetch_reports() {
+        let ss = fixture();
+        let tid = { let s = ss.lock().unwrap(); s.project.tracks[0].id.clone() };
+        let body = serde_json::to_vec(&json!({"tool": "set_track", "args": {"track_id": tid, "muted": true, "solo": true, "locked": true}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let tl = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        let t0 = &tl["tracks"][0];
+        assert_eq!(t0["muted"], true); assert_eq!(t0["solo"], true); assert_eq!(t0["locked"], true);
+    }
 }
+

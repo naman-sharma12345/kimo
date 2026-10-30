@@ -40,6 +40,11 @@
   #history-list .step { padding: 1px 0; color: #9ab; }
   #history-list .step.next-undo { color: #fd6; font-weight: bold; }
   #history-list .step.redo { color: #6a9; }
+  .track-state-btn { font-size: 9px; padding: 1px 4px; margin-left: 2px; border-radius: 3px; cursor: pointer; border: 1px solid #445; background: #2a2a33; color: #889; }
+  .track-state-btn.active { background: #c74; color: #fff; border-color: #c74; }
+  .track-state-btn.active.mute { background: #966; border-color: #966; }
+  .track-state-btn.active.solo { background: #a90; border-color: #a90; }
+  .track.locked .clip { cursor: not-allowed; opacity: .55; }
 </style>
 </head>
 <body>
@@ -102,6 +107,7 @@
 <script src="/gui_keymap.js"></script>
 <script src="/gui_snap.js"></script>
 <script src="/gui_zoom.js"></script>
+<script src="/gui_trackstate.js"></script>
 <script>
 let registry = [];
 let projectFps = 30; // set from /api/timeline; used by J/K/L's frame step
@@ -121,25 +127,37 @@ async function loadTimeline() {
   const el = document.getElementById('tracks'); el.innerHTML = '';
   el.onmousedown = (ev) => { if (!ev.target.closest('.clip')) scrubToPixel(ev.clientX, el); };
   for (const t of tl.tracks) {
-    const row = document.createElement('div'); row.className = 'track'; row.style.position = 'relative';
+    const row = document.createElement('div'); row.className = 'track' + (t.locked ? ' locked' : ''); row.style.position = 'relative';
     const label = document.createElement('div'); label.className = 'track-label'; label.style.display = 'flex'; label.style.justifyContent = 'space-between'; label.style.alignItems = 'center';
     const labelText = document.createElement('span'); labelText.textContent = t.name || t.id; label.appendChild(labelText);
+    const btnBar = document.createElement('span');
+    const bs = kimoTrackState.buttonState(t);
+    for (const which of ['mute', 'solo', 'lock']) {
+      const b = bs[which];
+      const btn = document.createElement('button'); btn.className = 'track-state-btn ' + which + (b.active ? ' active' : '');
+      btn.textContent = b.label; btn.title = b.title;
+      btn.onclick = (ev) => { ev.stopPropagation(); toggleTrackState(t, which); };
+      btnBar.appendChild(btn);
+    }
     const removeBtn = document.createElement('span'); removeBtn.textContent = '\u00d7'; removeBtn.title = 'remove this track and all its clips';
     removeBtn.style.cursor = 'pointer'; removeBtn.style.color = '#f77'; removeBtn.style.padding = '0 4px';
     removeBtn.onclick = (ev) => { ev.stopPropagation(); removeTrack(t.id); };
-    label.appendChild(removeBtn); row.appendChild(label);
+    btnBar.appendChild(removeBtn); label.appendChild(btnBar); row.appendChild(label);
     const lane = document.createElement('div'); lane.style.position = 'relative'; lane.style.height = '20px'; lane.style.flex = '1 1 auto';
+    const interactive = kimoTrackState.clipInteractionAllowed(t);
     for (const c of t.clips) {
       const bar = document.createElement('div'); bar.className = 'clip' + (c.id === selectedClipId ? ' selected' : '');
       bar.style.position = 'absolute'; bar.style.left = (c.start * pxPerSec) + 'px';
       bar.style.width = Math.max(4, c.duration * pxPerSec) + 'px';
-      bar.title = (c.name || c.id) + ' (' + c.source_kind + ') ' + c.start.toFixed(2) + 's..' + c.end.toFixed(2) + 's -- drag to move, drag the right edge to trim, click to inspect';
+      bar.title = (c.name || c.id) + ' (' + c.source_kind + ') ' + c.start.toFixed(2) + 's..' + c.end.toFixed(2) + 's' + (interactive ? ' -- drag to move, drag the right edge to trim, click to inspect' : ' -- track is locked');
       bar.textContent = c.name || c.source_kind;
       bar.dataset.clipId = c.id;
       const handle = document.createElement('div'); handle.className = 'trim-handle';
-      handle.onmousedown = (ev) => startDrag(ev, c, 'trim');
+      if (interactive) {
+        handle.onmousedown = (ev) => startDrag(ev, c, 'trim');
+        bar.onmousedown = (ev) => { if (ev.target === handle) return; startDrag(ev, c, 'move'); };
+      }
       bar.appendChild(handle);
-      bar.onmousedown = (ev) => { if (ev.target === handle) return; startDrag(ev, c, 'move'); };
       bar.onclick = () => { if (!justDragged) selectClip(c.id); };
       lane.appendChild(bar);
     }
@@ -259,6 +277,11 @@ async function removeMarkerAt(markerId) {
   if (!confirm('Remove this marker?')) return;
   const v = await callApi('remove_marker', { marker_id: markerId });
   if (!v.ok) { alert(typeof v.error === 'string' ? v.error : 'could not remove that marker'); return; }
+  await loadTimeline();
+}
+async function toggleTrackState(track, which) {
+  const args = kimoTrackState.toggleArgs(track, which); args.track_id = track.id;
+  await callApi('set_track', args);
   await loadTimeline();
 }
 async function removeTrack(trackId) {
