@@ -18,10 +18,10 @@ fn media_fixture(name: &str) -> String {
 /// A clean project with one real media clip (not a solid -- lint_edit's own top_media check only
 /// counts Source::Media as "a picture", so a solid-only timeline always reads empty_frame; that is
 /// lint_edit's existing, pre-existing behaviour, not something to route around in self_review).
-fn clean_media_scene() -> (Session, String) {
+fn clean_media_scene(tag: &str) -> (Session, String) {
     let mut ss = Session::new(); c(&mut ss, "project_set", json!({"width": 64, "height": 48, "fps": 25}));
     let t = c(&mut ss, "add_track", json!({}))["track_id"].as_str().unwrap().to_string();
-    let path = media_fixture("clean");
+    let path = media_fixture(tag); // tag must be unique per call site -- two tests sharing one tag race on the same /tmp path (same pid) under real concurrency
     let aid = c(&mut ss, "import_media", json!({"path": path.clone()}))["asset_id"].as_str().unwrap().to_string();
     c(&mut ss, "add_clip", json!({"track_id": t, "source_type": "media", "asset_id": aid, "start": 0.0, "duration": 3.0}));
     (ss, path)
@@ -39,7 +39,7 @@ fn scene_with_a_gap() -> Session {
     // Not asserting lint_edit finds zero problems on the fixture (loudness/dark-frame thresholds are
     // lint_edit's own business, not self_review's) -- only that self_review's own "ok" is exactly the
     // AND of the three sources it combines, which is the actual thing this tool is responsible for.
-    let (mut ss, path) = clean_media_scene();
+    let (mut ss, path) = clean_media_scene("ok-and");
     let r = c(&mut ss, "self_review", json!({}));
     assert_eq!(r["summary"]["timeline_issues"], 0, "{r}");
     assert_eq!(r["summary"]["missing_media"], 0, "{r}");
@@ -99,7 +99,7 @@ fn scene_with_a_gap() -> Session {
 }
 
 #[test] fn path_given_but_nothing_flagged_skips_rendering() {
-    let (mut ss, path) = clean_media_scene();
+    let (mut ss, path) = clean_media_scene("skip-render");
     let out = format!("/tmp/kimo-selfreview-nosheet-{}.png", std::process::id());
     let r = c(&mut ss, "self_review", json!({"path": out.clone()}));
     assert_eq!(r["contact_sheet"]["rendered"], false, "{r}");
