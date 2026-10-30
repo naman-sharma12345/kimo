@@ -234,6 +234,43 @@ fn silent_no_audio_track(name: &str, dur: f64) -> String {
     assert!(!probs2.iter().any(|p| p["code"] == json!("text_over_subject") && p["clip_id"] == json!(title)), "moved title still flagged: {r2}");
 }
 
+/// text_over_subject's fix must not cross the vertical midline: a bottom-band caption clearing a subject
+/// should never land in the TOP half (a cold-open hook title's own territory) even when the un-capped math
+/// would have jumped it all the way to top_lim. Reproduces the real shape Tab found on rendered output: a
+/// caption pushed off a subject landing right on top of the hook title.
+#[test] fn text_over_subject_fix_never_crosses_the_midline_into_the_other_half() {
+    fn spot_png(name: &str, w: usize, h: usize, cx: f64, cy: f64) -> String {
+        let p = dir().join(name); if p.exists() { return p.to_string_lossy().into_owned(); }
+        use std::io::Write;
+        let mut st: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut ch = Command::new("ffmpeg").args(["-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", &format!("{w}x{h}"), "-i", "-", "-frames:v", "1", p.to_str().unwrap()]).stdin(Stdio::piped()).spawn().expect("ffmpeg");
+        { let mut si = ch.stdin.take().unwrap(); let mut o = Vec::with_capacity(w * h * 3);
+            for y in 0..h { for x in 0..w {
+                st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); let grain = (st >> 61) as i32 - 4;
+                let d = ((x as f64 + 0.5 - cx).powi(2) + (y as f64 + 0.5 - cy).powi(2)).sqrt();
+                let vv = if d <= 46.0 { 255u8 } else { (128 + grain) as u8 };
+                o.extend_from_slice(&[vv, vv, vv]); } }
+            si.write_all(&o).unwrap(); }
+        assert!(ch.wait().unwrap().success()); p.to_string_lossy().into_owned()
+    }
+    let mut ss = Session::new(); call(&mut ss, "project_set", json!({"width": 1280, "height": 720, "fps": 30}));
+    let mt = sid(&call(&mut ss, "add_track", json!({})), "track_id");
+    // the bright subject sits just below the canvas centre (y=430 of 720, centre 360) -- close enough to the
+    // midline that an un-clamped "clear it" nudge overshoots past centre into the top half.
+    let a = sid(&call(&mut ss, "import_media", json!({"path": spot_png("midline_subject.png", 1280, 720, 640.0, 430.0)})), "asset_id");
+    call(&mut ss, "add_clip", json!({"track_id": mt, "source_type": "media", "asset_id": a, "start": 0.0, "duration": 2.0, "fit": "cover"}));
+    let tt = sid(&call(&mut ss, "add_track", json!({})), "track_id");
+    // a caption-like text just below centre (y=40 of a 720-tall canvas, centre 360) -- a small, realistic
+    // "slightly low" placement, not already deep in the bottom band.
+    let cap = sid(&call(&mut ss, "add_text", json!({"track_id": tt, "text": "CAPTION LINE", "start": 0.0, "duration": 2.0, "size": 70})), "clip_id");
+    call(&mut ss, "set_property", json!({"clip_id": cap, "property": "y", "value": 40.0}));
+    let r = call(&mut ss, "lint_edit", json!({"platform": "none"}));
+    let hit = r["problems"].as_array().unwrap().iter().find(|p| p["code"] == json!("text_over_subject") && p["clip_id"] == json!(cap))
+        .unwrap_or_else(|| panic!("bottom caption over the low subject was not flagged: {r}"));
+    let fixed_y = hit["fix"]["args"]["value"].as_f64().unwrap_or_else(|| panic!("no numeric fix y: {hit}"));
+    assert!(fixed_y >= 0.0, "a bottom-band caption's fix must not cross the midline into the top half: suggested y={fixed_y} ({hit})");
+}
+
 /// The eval's talking head: models left 1-3 s of dead air between takes (laid whole clips) or cut words off (guessed times).
 #[test] fn auto_rough_cut_drops_the_dead_air_and_keeps_every_word() {
     let mut ss = portrait();

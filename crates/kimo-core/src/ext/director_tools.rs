@@ -821,14 +821,21 @@ fn lint_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
             // Clearing the subject needs to get the box off the salient peak, not relocate it across the
             // whole frame: a caption sitting in the bottom band that trips this on one sampled instant used
             // to jump all the way to top_lim -- right into a cold-open hook title's own territory, the exact
-            // "a fix introduced a new problem" shape apply_review_fixes' re-check (previous commit) exists to
+            // "a fix introduced a new problem" shape apply_review_fixes' re-check (two commits ago) exists to
             // catch, except this one is avoidable at the source. Capped to one box-height of clearance plus a
             // margin, in the same direction the un-capped math already picked; a subject too large for that
             // to clear shows up as a remaining/introduced problem on the re-check instead of silently landing
             // somewhere worse.
             let full_dy = if peak_y >= r[1] + r[3] / 2.0 { top_lim - r[1] } else { bottom_lim - r[1] };
             let nudge_cap = r[3] + 24.0;
-            let dy = full_dy.clamp(-nudge_cap, nudge_cap);
+            let mut dy = full_dy.clamp(-nudge_cap, nudge_cap);
+            // Never cross the vertical midline: a bottom-band caption clearing a subject must not land in
+            // the upper half (where a cold-open hook title typically sits) and vice versa -- the nudge stops
+            // at the midline even when the capped distance above would have carried it further.
+            let box_center = r[1] + r[3] / 2.0; let mid = h / 2.0; let was_bottom = box_center >= mid;
+            let new_center = box_center + dy;
+            if was_bottom && new_center < mid { dy = mid - box_center; }
+            if !was_bottom && new_center > mid { dy = mid - box_center; }
             let fix = match &cap {
                 Some(c) => json!({"tool": "set_caption_style", "args": {"caption_id": c, "style": "boxed", "y": r3(cur_y + dy)}}),
                 None => json!({"tool": "set_property", "args": {"clip_id": id, "property": "y", "value": r3(cur_y + dy)}}),
