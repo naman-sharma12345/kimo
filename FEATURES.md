@@ -1698,3 +1698,27 @@ gaps, candidates for this pass:
   captions is a harmless no-op, an explicit empty list styles nothing, an unknown named group id errors, an
   unknown style name errors, and undo restores every styled group in one step. `golden_registry.txt`
   hand-updated (515 -> 516 tools); added to the `text` toolgroup up front. Full targeted pass green.
+
+## v7.5 feature 8/8: kimo gui keyframe lane
+
+- [x] A "keyframes" section in the inspector: a dropdown of every animated property on the selected clip
+  (clip transform props and effect params, each entry labelled with its key count -- an effect param is
+  prefixed with the effect's kind so two effects animating the same param name don't collide), and below it
+  a lane showing that property's keyframes laid out across the clip's own duration. Click an existing
+  diamond to remove that keyframe (`remove_key`); click empty lane space to add one at that clip-local time
+  seeded with whatever value is already playing there (`sample_property`, so adding a keyframe never
+  silently resets the value), then `set_keyframe`. A click is told "this is an existing key" from "this is
+  empty lane" by mirroring the server's own `move_key`/`remove_key` rule -- nearest key within half a frame
+  -- so the lane never guesses differently than the tools it is calling. Honest scope limit: no dragging a
+  key in time yet; that is `move_key` through the generic tool invoker already in the GUI, not this lane.
+- `gui_keyframes.js`: `propertyKey`/`parsePropertyKey` (a composite key so an effect param can't collide with
+  a same-named clip property or another effect's param of the same name), `buildPropertyOptions` (labels,
+  singular/plural key count), `buildKeyMarkers` (clip-local time -> lane pixel x, divide-by-zero guarded on
+  a zero-duration clip), `timeForLaneX` (the inverse, for a click), `nearestKeyWithinHalfFrame` (mirrors
+  `move_key`/`remove_key`'s own matching rule). Served at `GET /gui_keyframes.js`, wired into
+  `gui_index.html` (dropdown + lane markup, `loadKeyframePanel`/`loadKeyframeLane`, called from the existing
+  `loadInspector()`) and `gui.rs` (route, 405 list). 21 new JS tests (`tests/js/keyframes_test.js`) + 5 new
+  Rust tests (served bytes match disk, index page wires up the lane, `list_animated_properties`/`get_curve`
+  feed it real keys through `/api/call`, `remove_key` removes exactly the clicked keyframe,
+  `sample_property` reads back the value a new keyframe would be seeded with); all 80 kimo-cli tests green
+  (75 prior + 5 new), no registry change (GUI-only, no new MCP tool).

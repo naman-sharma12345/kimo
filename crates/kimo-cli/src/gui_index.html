@@ -70,6 +70,8 @@
   #render-queue-list .rq-state.rq-failed { color: #f77; }
   #render-queue-list .rq-clear { color: #778; cursor: pointer; margin-left: 6px; flex: none; }
   #render-queue-list .rq-empty { padding: 6px; color: #667; }
+  #keyframe-lane .kf-key { position: absolute; top: 4px; width: 9px; height: 9px; margin-left: -4px; background: #fd6; border: 1px solid #a80; transform: rotate(45deg); cursor: pointer; }
+  #keyframe-lane .kf-key:hover { background: #fff; }
 </style>
 </head>
 <body>
@@ -103,6 +105,12 @@
         <div style="font-size:12px;margin-bottom:6px"><strong id="insp-name"></strong> <span id="insp-timing" style="color:#889"></span></div>
         <div id="insp-props"></div>
         <div id="insp-effects"></div>
+        <div id="keyframe-panel" style="margin-top:6px">
+          <div style="font-size:11px;color:#9ab;margin:4px 0">keyframes</div>
+          <select id="keyframe-property" onchange="loadKeyframeLane()" style="width:100%;box-sizing:border-box;font-size:11px"></select>
+          <div id="keyframe-lane" style="position:relative;height:24px;margin-top:4px;background:#111;border:1px solid #333;border-radius:4px;display:none"></div>
+          <div id="keyframe-hint" style="font-size:10px;color:#667;margin-top:2px"></div>
+        </div>
         <div id="fx-browser">
           <div style="font-size:11px;color:#9ab;margin:4px 0">effects &amp; transitions</div>
           <input id="fx-browser-filter" placeholder="filter effects/transitions..." oninput="renderFxBrowser()">
@@ -148,6 +156,7 @@
 <script src="/gui_clipboard.js"></script>
 <script src="/gui_markerpanel.js"></script>
 <script src="/gui_renderqueue.js"></script>
+<script src="/gui_keyframes.js"></script>
 <script>
 let registry = [];
 let projectFps = 30; // set from /api/timeline; used by J/K/L's frame step
@@ -670,6 +679,65 @@ async function loadInspector() {
     }
     fxEl.appendChild(box);
   }
+  await loadKeyframePanel(c);
+}
+
+// v7.5: keyframe lane -- pick an animated property on the selected clip, see its keyframes laid out
+// across the clip's own duration, click an existing diamond to remove it, click empty lane to add one at
+// that clip-local time with whatever value is already playing there (sample_property), so adding a
+// keyframe never silently resets the value. No dragging yet -- moving a key in time is left to move_key
+// through the generic tool invoker below; this lane is add/remove, the same honest scope the multiselect
+// panel already states for group trim.
+let keyframeClip = null; // {id, duration}
+async function loadKeyframePanel(c) {
+  keyframeClip = { id: c.id, duration: c.end - c.start };
+  const sel = document.getElementById('keyframe-property');
+  const prev = sel.value;
+  const r = await callApi('list_animated_properties', { clip_id: c.id });
+  const animated = (r.ok && r.result && Array.isArray(r.result.animated)) ? r.result.animated : [];
+  const options = kimoKeyframes.buildPropertyOptions(animated);
+  sel.innerHTML = '<option value="">(choose a property)</option>' + options.map((o) => `<option value="${o.key}">${o.label}</option>`).join('');
+  sel.value = options.some((o) => o.key === prev) ? prev : '';
+  await loadKeyframeLane();
+}
+async function loadKeyframeLane() {
+  const sel = document.getElementById('keyframe-property');
+  const lane = document.getElementById('keyframe-lane');
+  const hint = document.getElementById('keyframe-hint');
+  lane.innerHTML = ''; lane.onclick = null;
+  if (!sel.value || !keyframeClip) { lane.style.display = 'none'; hint.textContent = ''; return; }
+  const { effectId, property } = kimoKeyframes.parsePropertyKey(sel.value);
+  const args = { clip_id: keyframeClip.id, property }; if (effectId) args.effect_id = effectId;
+  const r = await callApi('get_curve', args);
+  if (!r.ok) { lane.style.display = 'none'; hint.textContent = typeof r.error === 'string' ? r.error : 'could not read that curve'; return; }
+  lane.style.display = 'block';
+  const width = lane.clientWidth || 300;
+  const fps = projectFps || 25;
+  const keys = r.result.keys || [];
+  const markers = kimoKeyframes.buildKeyMarkers(keys, keyframeClip.duration, width);
+  for (const m of markers) {
+    const dot = document.createElement('div'); dot.className = 'kf-key'; dot.style.left = m.x + 'px';
+    dot.title = `t=${m.time.toFixed(2)}s v=${m.value} -- click to remove`;
+    dot.onclick = async (ev) => {
+      ev.stopPropagation();
+      const rr = await callApi('remove_key', Object.assign({ time: m.time }, args));
+      if (!rr.ok) { alert(typeof rr.error === 'string' ? rr.error : 'could not remove that keyframe'); return; }
+      await loadKeyframeLane(); await loadInspector();
+    };
+    lane.appendChild(dot);
+  }
+  hint.textContent = markers.length ? `${markers.length} keyframe${markers.length === 1 ? '' : 's'} -- click one to remove, click empty space to add` : 'no keyframes yet -- click to add one';
+  lane.onclick = async (ev) => {
+    const rect = lane.getBoundingClientRect();
+    const x = ev.clientX - rect.left;
+    const t = kimoKeyframes.timeForLaneX(x, keyframeClip.duration, width);
+    if (kimoKeyframes.nearestKeyWithinHalfFrame(keys, t, fps)) return; // a diamond's own handler covers this
+    const sv = await callApi('sample_property', Object.assign({}, args, { space: 'clip', times: [t] }));
+    const value = (sv.ok && sv.result && Array.isArray(sv.result.values)) ? sv.result.values[0] : 0;
+    const kr = await callApi('set_keyframe', Object.assign({ time: t, value }, args));
+    if (!kr.ok) { alert(typeof kr.error === 'string' ? kr.error : 'could not add a keyframe there'); return; }
+    await loadKeyframeLane(); await loadInspector();
+  };
 }
 
 async function callApi(tool, args) {

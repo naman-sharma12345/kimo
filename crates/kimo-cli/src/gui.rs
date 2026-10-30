@@ -104,6 +104,10 @@ const MARKERPANEL_JS: &str = include_str!("gui_markerpanel.js");
 /// rows), served the same way for the same reason -- gui_index.html's render queue panel and
 /// tests/js/renderqueue_test.js (Node) run the exact same bytes.
 const RENDERQUEUE_JS: &str = include_str!("gui_renderqueue.js");
+/// v7.5: the keyframe lane's view model (property option list, lane pixel mapping, the server's own
+/// "nearest key within half a frame" rule mirrored for click-handling), served the same way for the same
+/// reason -- gui_index.html's keyframe lane and tests/js/keyframes_test.js (Node) run the exact same bytes.
+const KEYFRAMES_JS: &str = include_str!("gui_keyframes.js");
 
 /// Parses `?t=1.5` (or any single-key query) out of a raw query string; used for /preview.png's `t`.
 fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
@@ -126,6 +130,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
         ("GET", "/gui_clipboard.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: CLIPBOARD_JS.as_bytes().to_vec() },
         ("GET", "/gui_markerpanel.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: MARKERPANEL_JS.as_bytes().to_vec() },
         ("GET", "/gui_renderqueue.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: RENDERQUEUE_JS.as_bytes().to_vec() },
+        ("GET", "/gui_keyframes.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: KEYFRAMES_JS.as_bytes().to_vec() },
         ("GET", "/api/timeline") => { let ss = ss.lock().unwrap(); json_response(200, timeline_view_model(&ss)) }
         ("GET", "/api/registry") => json_response(200, registry_summary()),
         ("GET", "/api/clip") => { // ?id=<clip_id>
@@ -162,7 +167,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
                 Err(e) => json_response(200, json!({"ok": false, "error": e})),
             }
         }
-        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/gui_zoom.js") | (_, "/gui_trackstate.js") | (_, "/gui_multiselect.js") | (_, "/gui_waveform.js") | (_, "/gui_fxbrowser.js") | (_, "/gui_clipboard.js") | (_, "/gui_markerpanel.js") | (_, "/gui_renderqueue.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
+        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/gui_zoom.js") | (_, "/gui_trackstate.js") | (_, "/gui_multiselect.js") | (_, "/gui_waveform.js") | (_, "/gui_fxbrowser.js") | (_, "/gui_clipboard.js") | (_, "/gui_markerpanel.js") | (_, "/gui_renderqueue.js") | (_, "/gui_keyframes.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
         _ => err_response(404, format!("no route for {path}")),
     }
 }
@@ -1262,4 +1267,75 @@ mod tests {
         assert!(sv["result"].get("state").is_some(), "job_status result should carry a state field: {sv}");
     }
 
+    // ---- v7.5: keyframe lane ----
+
+    #[test]
+    fn served_keyframes_js_matches_the_file_on_disk() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_keyframes.js", "", &[]);
+        assert_eq!(r.status, 200); assert_eq!(r.content_type, "application/javascript; charset=utf-8");
+        assert_eq!(r.body, include_bytes!("gui_keyframes.js").to_vec());
+    }
+
+    #[test]
+    fn the_index_page_wires_up_the_keyframe_lane() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["gui_keyframes.js", "kimoKeyframes.buildKeyMarkers", "kimoKeyframes.nearestKeyWithinHalfFrame", "function loadKeyframePanel", "function loadKeyframeLane", "keyframe-lane", "keyframe-property"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn list_animated_properties_and_get_curve_through_api_call_feed_the_keyframe_lane_with_real_keys() {
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        let sk = serde_json::to_vec(&json!({"tool": "set_keyframe", "args": {"clip_id": clip_id, "property": "opacity", "time": 0.0, "value": 1.0}})).unwrap();
+        handle_request(&ss, "POST", "/api/call", "", &sk);
+        let sk2 = serde_json::to_vec(&json!({"tool": "set_keyframe", "args": {"clip_id": clip_id, "property": "opacity", "time": 0.5, "value": 0.2}})).unwrap();
+        handle_request(&ss, "POST", "/api/call", "", &sk2);
+
+        let la = serde_json::to_vec(&json!({"tool": "list_animated_properties", "args": {"clip_id": clip_id}})).unwrap();
+        let lar = handle_request(&ss, "POST", "/api/call", "", &la);
+        let lav: Value = serde_json::from_slice(&lar.body).unwrap(); assert_eq!(lav["ok"], true, "{lav}");
+        let entries = lav["result"]["animated"].as_array().unwrap();
+        assert!(entries.iter().any(|e| e["property"] == "opacity" && e["key_count"] == 2), "{entries:?}");
+
+        let gc = serde_json::to_vec(&json!({"tool": "get_curve", "args": {"clip_id": clip_id, "property": "opacity"}})).unwrap();
+        let gcr = handle_request(&ss, "POST", "/api/call", "", &gc);
+        let gcv: Value = serde_json::from_slice(&gcr.body).unwrap(); assert_eq!(gcv["ok"], true, "{gcv}");
+        let keys = gcv["result"]["keys"].as_array().unwrap();
+        assert_eq!(keys.len(), 2, "{keys:?}");
+    }
+
+    #[test]
+    fn remove_key_through_api_call_removes_exactly_the_clicked_keyframe() {
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        for t in [0.0, 0.5, 1.0] {
+            let sk = serde_json::to_vec(&json!({"tool": "set_keyframe", "args": {"clip_id": clip_id, "property": "opacity", "time": t, "value": 0.5}})).unwrap();
+            handle_request(&ss, "POST", "/api/call", "", &sk);
+        }
+        let rm = serde_json::to_vec(&json!({"tool": "remove_key", "args": {"clip_id": clip_id, "property": "opacity", "time": 0.5}})).unwrap();
+        let rmr = handle_request(&ss, "POST", "/api/call", "", &rm);
+        let rmv: Value = serde_json::from_slice(&rmr.body).unwrap(); assert_eq!(rmv["ok"], true, "{rmv}");
+        let gc = serde_json::to_vec(&json!({"tool": "get_curve", "args": {"clip_id": clip_id, "property": "opacity"}})).unwrap();
+        let gcr = handle_request(&ss, "POST", "/api/call", "", &gc);
+        let gcv: Value = serde_json::from_slice(&gcr.body).unwrap();
+        let times: Vec<f64> = gcv["result"]["keys"].as_array().unwrap().iter().map(|k| k["time"].as_f64().unwrap()).collect();
+        assert_eq!(times, vec![0.0, 1.0], "the keyframe nearest the clicked time should be the one that is gone");
+    }
+
+    #[test]
+    fn sample_property_through_api_call_reads_the_value_the_lane_would_seed_a_new_keyframe_with() {
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        let sk = serde_json::to_vec(&json!({"tool": "set_keyframe", "args": {"clip_id": clip_id, "property": "opacity", "time": 0.0, "value": 0.4, "ease": "hold"}})).unwrap();
+        handle_request(&ss, "POST", "/api/call", "", &sk);
+        let sp = serde_json::to_vec(&json!({"tool": "sample_property", "args": {"clip_id": clip_id, "property": "opacity", "space": "clip", "times": [0.3]}})).unwrap();
+        let spr = handle_request(&ss, "POST", "/api/call", "", &sp);
+        let spv: Value = serde_json::from_slice(&spr.body).unwrap(); assert_eq!(spv["ok"], true, "{spv}");
+        assert_eq!(spv["result"]["values"][0], 0.4, "a held value before any later key should sample back unchanged, matching what the lane would seed a new keyframe with");
+    }
 }
