@@ -62,6 +62,7 @@ apply_asc_cdl 86d1717d70b3605b
 apply_camera_solve 01dc5fd029068bb6
 apply_motion_preset 7cfb92221fb1f5d8
 apply_responsive_time cf77602d5eaadee4
+apply_review_fixes 421cfe5d59f29b6b
 audio_effect_describe 07a0a16b3052585b
 audio_filter_response 4cae8e36278fcc87
 audio_probe 15e29ff927c2d40a

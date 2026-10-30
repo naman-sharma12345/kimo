@@ -1082,3 +1082,42 @@ the time box here; `project_merge`/`batch`/`project_diff` already cover kimo's o
   hand-updated (504 tools), toolgroups.rs updated (`color_grade`, beside `match_shots`). Full `--lib`
   suite green (372 passed, 12 ignored, pre-existing) plus the targeted suite (golden_frames_registry_and_
   projects, description_first_sentence, external_refs) all green.
+
+
+## v7.3 additions
+
+Naman (12:43 PM IST Oct 30): "make ai agent a complete editor", "better than any editor in the world".
+Audit before building (nothing below duplicates an existing tool; v7.2's audit habit continued):
+batch_normalize_loudness is new (normalize_loudness existed but only one clip at a time -- find_by_loudness's
+own v7.2 precedent, applied to the fix side); apply_review_fixes is new (self_review documented but
+deliberately did not build "apply the fix" -- this is that step, built directly against lint_edit, the
+tool whose problems actually carry `fix` payloads); auto_chapters is new (mux_chapters existed but required
+markers to already exist -- this composes mark_scene_cuts + mux_chapters so "no markers yet" isn't a
+precondition the agent has to notice and clear itself); the GUI's keyboard shortcuts, split-at-playhead,
+track add/remove, marker display, snapping, zoom, project open/save and export-with-progress are new (the
+v7.1/v7.2 `kimo gui` had none of them -- FEATURES.md's own honest gaps list named several). import_edl is
+new (the v7.2 audit explicitly flagged EDL/OTIO import as a real gap, bigger than that pass's time box).
+
+## v7.3 feature 1/N: apply_review_fixes
+
+- [x] `apply_review_fixes`: new tool, the "apply the fix" step self_review's own v7.2 writeup deliberately
+  left undone ("lint_edit's problems already carry the exact fix call each needs; applying them is a
+  deliberate separate step, not this tool's"). Runs `lint_edit` itself, and for every problem whose `fix`
+  is a concrete, fully-specified tool call -- no human-fill-in placeholder value (lint_edit's own
+  convention: angle-bracketed prose like `"<the text without those characters>"`) -- dispatches it,
+  including a chained `then` step (e.g. `move_clip` then `trim_clip` for `broll_over_silence`) when the
+  primary call succeeds. A problem whose fix needs a human judgment call (a placeholder, an `"or"`
+  alternative, or no fix at all) is reported under `skipped_manual` with why, never guessed at. `codes`
+  (optional) scopes which problem codes to act on; everything else is left alone entirely, not even listed.
+  `dry_run` reports exactly what would be applied/skipped (`would_call`) without mutating anything -- the
+  documented way to check first. One fix failing (e.g. a clip an earlier fix in the same batch already
+  removed) is recorded in `failed` and does not stop the rest. Read path is `lint_edit` (unchanged);
+  nothing about `lint_edit` or `self_review` was touched -- pure composition through `dispatch_nested`,
+  the same pattern `mark_scene_cuts`/`self_review` already established. 5 new TDD tests
+  (tests/apply_review_fixes.rs): a concrete fix (`transition_from_black` -> `remove_transition`) is
+  actually applied and the transition is verified gone from the project, not just reported; `dry_run`
+  reports the exact call and mutates nothing; a placeholder fix (`missing_glyph` -> `set_text` with a
+  fill-in-the-blank value) is skipped as manual and the clip's text is verified untouched (no placeholder
+  string ever dispatched); `codes` scopes which problems are even considered; an empty timeline is `ok`
+  with `problems_seen: 0`, not an error. golden_registry.txt hand-updated (504 -> 505 tools), toolgroups.rs
+  updated (`output` group, beside `self_review`).
