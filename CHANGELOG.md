@@ -4,6 +4,72 @@
 
 ## Unreleased
 
+## v7.3.0 (2026-10-30)
+
+Naman's standing instruction continued: "make ai agent a complete editor," "better than any editor
+in the world," "keep working, and keep sending updates." Picked up straight from v7.2.0 (504 tools).
+Re-audited the registry and FEATURES.md first against the two stated directions -- GUI usability and
+agent-superiority engine tools -- before writing anything: several GUI gaps were real (zero keyboard
+shortcuts, no track add/remove, no marker display, no snapping, no zoom bounds, no project open/save
+button, no export progress bar) even though the underlying engine tools (`add_marker`/`list_markers`,
+`add_track`/`delete_track`, `snap_time`, `export_job_start`/`job_status`/`cancel_job`) already
+existed; on the engine side, `apply_review_fixes`, `auto_chapters` and `batch_normalize_loudness`
+were genuine gaps, and EDL/OTIO import was a real missing capability with nothing close to it in the
+registry. 11 features shipped, each with its own TDD commit:
+
+- New `apply_review_fixes`: batch-applies `lint_edit`'s (and so `self_review`'s) machine-actionable
+  fixes in one call instead of reading each problem and dispatching its fix by hand. Skips anything
+  needing a human decision (a placeholder value, an "or" choice) under `skipped_manual`, never
+  guesses. `dry_run` supported. 5 new tests. Tools: 504 -> 505.
+- New `auto_chapters`: composes `mark_scene_cuts` + `mux_chapters` -- `mux_chapters` alone needs
+  markers to already exist; this detects them first if there aren't enough, and reports plainly
+  (not a failure) when even detection can't reach the minimum. 4 new tests. Tools: 505 -> 506.
+- New `batch_normalize_loudness`: the write-side counterpart to v7.2's `find_by_loudness` --
+  normalizes every/filtered media clip to a target LUFS in one call instead of calling
+  `normalize_loudness` once per clip by hand. `tolerance_db` skips near-target clips. 6 new tests.
+  Tools: 506 -> 507.
+- `kimo gui` keyboard shortcuts: space/J/K/L/Delete/S/ctrl+z/ctrl+shift+z, served as a real static
+  module (`gui_keymap.js`) so the browser and a headless Node test run the exact same bytes. 18 Node
+  tests + 6 Rust tests.
+- `kimo gui` add/remove tracks: a "+ Track" button and a per-track remove button, wired onto the
+  existing `add_track`/`delete_track`. 3 new Rust tests.
+- `kimo gui` marker display + add: markers render as ticks on the timeline (click to remove), a
+  "+ Marker" button adds one at the playhead, wired onto the existing `add_marker`/`list_markers`/
+  `remove_marker`. 5 new Rust tests.
+- `kimo gui` timeline snapping: drag-to-move/trim snaps to clip edges, markers and 0 within an 8px
+  tolerance (toggle checkbox, default on) -- the exact gap v7.1's own FEATURES.md entry named. The
+  snap decision is a pure module (`gui_snap.js`) shared by the browser and a headless Node test. 10
+  Node tests + 5 Rust tests.
+- `kimo gui` timeline zoom: in/out/reset, bounds-clamped 4-400px/sec, also a pure shared module
+  (`gui_zoom.js`). 10 Node tests + 3 Rust tests.
+- `kimo gui` export with progress: a path field, Export button, live progress bar, ETA with
+  uncertainty band, and Cancel, wired onto the chunked export system that already existed
+  (`export_job_start`/`job_status`/`cancel_job`). 3 new Rust tests, including a real export reaching
+  "done" with the file actually on disk.
+- `kimo gui` project open/save: a path field with Save/Open buttons wired onto `save_project`/
+  `load_project`; a successful open actually re-renders the timeline and clears the stale selection.
+  4 new Rust tests, including a real save-then-reopen that replaces the live project.
+- New `import_edl`: the editorial-interchange gap -- kimo could export EDL-adjacent things but had no
+  way to bring a cut list IN. Imports a standard CMX3600 EDL or a simple single-video-track OTIO JSON
+  timeline as real clips, resolving each event's source name via an explicit `media_map`, a
+  `media_dir` scan, or a path the file already names, reporting anything unresolved rather than
+  dropping it or failing the whole import. 9 new tests. Tools: 507 -> 508.
+
+Also fixed along the way: `batch_normalize_loudness`'s own description ran 256 characters before its
+first ". " (limit 149, caught by the full-suite run, not by its own feature commit -- a contract bug
+of this release's own making, fixed in its own commit); `import_edl.rs`'s one `read_to_string` call
+needed registering in `external_refs.rs`'s open-sites classification table (a caller-supplied tool
+argument, not project-derived, not stored in the project).
+
+golden_registry.txt hand-updated at every new-tool commit (504 -> 508 registered tools); goldens
+(golden_frames, golden_registry) green throughout. Full workspace test suite green apart from the two
+pre-existing issues already on record (README tool-count phrasing, out of scope; the `robust_est`
+doctest, a pre-existing doc-comment artifact unrelated to this release) -- `pick_thumbnail` and
+`external_refs` each showed one transient/real issue during this session's own full-suite runs and
+were confirmed fixed (the latter) or confirmed a CPU-load flake, clean alone (the former), same as
+`director_small`'s long-documented sensitivity. Warning count unchanged (35). No push anywhere --
+all 11 commits plus this release are local to the `v7` branch.
+
 ## v7.2.0 (2026-10-30)
 
 Naman asked to keep shipping new editor features; partway through, steered toward favoring
