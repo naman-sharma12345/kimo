@@ -4,6 +4,60 @@
 
 ## Unreleased
 
+## v7.5.0 (2026-10-30)
+
+Naman's standing instruction continued: "keep working, and keep sending updates." Picked up straight
+from v7.4.0 (512 tools). Re-audited the registry and FEATURES.md first (most candidate ideas --
+caption styling, a rough cut, project diff -- were already covered pre-v7.5; real gaps found and
+built instead). 8 features shipped, each with its own TDD commit:
+
+- New `close_gaps`: general ripple-close for any/all gaps on named or all-unlocked tracks in one
+  call, where before it was one `ripple_delete`/`drop_short_segments` call per gap. `min_gap`,
+  `include_leading_gap`, `dry_run`; a locked track named explicitly errors, one omitted is skipped and
+  reported. 11 new tests. Tools: 512 -> 513.
+- New `duck_timeline`: ducks every named music track under the union of speech from every named
+  dialogue track in one call, reusing `auto_duck`'s own `speech_windows` path rather than
+  reimplementing it. 6 new tests with synthetic voice-burst audio. Tools: 513 -> 514.
+- `kimo gui` copy/paste and ripple-delete: Ctrl/Cmd+C/V copies and pastes selected clips as one
+  atomic `batch` of `duplicate_clip` calls preserving relative offsets; Shift+Delete ripple-deletes a
+  single clip. Pure shared module `gui_clipboard.js`. 20 Node tests + 5 Rust tests.
+- `kimo gui` marker/chapter list panel: every project marker in one scrollable list, click a row to
+  seek the playhead there, `x` removes it. Pure shared module `gui_markerpanel.js`. 13 Node tests + 3
+  Rust tests.
+- `kimo gui` render queue panel: every export job started from the GUI gets its own row, polled
+  independently of the main preview loop until it reaches a terminal state, then it is dismissable.
+  Pure shared module `gui_renderqueue.js`. 15 Node tests + 3 Rust tests.
+- New `import_clips`: copy specific clips -- with everything a clip itself holds (effects, keyframes,
+  masks, its own embedded grade graph, speed) -- from another project revision into the live project
+  at a chosen track and time. Reuses `project_diff`'s own revision forms (`current | undo:<n> |
+  checkpoint:<name> | file:<path.kimo>`) rather than re-implementing project loading. Every copied
+  clip gets a fresh id (two independent project files can reuse the same ids); a media clip's asset
+  imports into the destination's own asset pool too, reused by file path or created fresh. Honest gap:
+  a project-level shared grade-scope binding does not travel, only a clip's own embedded grade. 13 new
+  tests. Tools: 514 -> 515.
+- New `style_captions_batch`: apply one style to every caption group in the project, or a named list
+  of them, in one call -- `set_caption_style` already restyles every cue inside ONE group, but a
+  project can hold several groups (different speakers, different tracks, an SRT import plus a later
+  `caption_from_words` pass), and restyling all of them before this was one call per group. Reuses
+  `set_caption_style` itself rather than reimplementing the per-cue styling math. 8 new tests. Tools:
+  515 -> 516.
+- `kimo gui` keyframe lane: a dropdown of every animated property on the selected clip (clip
+  transform props and effect params, labelled with key count), and a lane showing that property's
+  keyframes across the clip's own duration. Click a diamond to remove it, click empty lane space to
+  add one seeded with the value already playing there (so adding a keyframe never silently resets the
+  value). A click is classified existing-key vs empty-lane by mirroring `move_key`/`remove_key`'s own
+  "nearest key within half a frame" rule. No dragging yet (left to `move_key` through the generic tool
+  invoker). Pure shared module `gui_keyframes.js`. 21 Node tests + 5 Rust tests.
+
+Also fixed along the way: `close_gaps` had no toolgroup heuristic match (`every_tool_has_a_real_group`
+caught it at the mid-lane checkpoint); added to the `timeline` exact-match list.
+
+Full workspace suite: 2590 passed, 2 failed -- both pre-existing and untouched by this release:
+`readme_v3_tool_count_matches_the_registry` (the README's tool count is stale; fixing it is out of
+scope for this lane) and a doctest in `robust_est.rs` (a vendored OpenCV license notice inside a `//!`
+doc comment that rustdoc tries to compile as code; the file is byte-identical to v7.4.0). `kimo-core`
+lib warnings held at 34 (budget 35), no new warnings introduced. Tools: 516.
+
 ## v7.4.0 (2026-10-30)
 
 Naman's standing instruction continued: "keep working, and keep sending updates." Picked up straight

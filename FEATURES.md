@@ -1,5 +1,7 @@
 # kimo features
 
+New in v7.5.0: `close_gaps` (general ripple-close for any/all gaps in one call), `duck_timeline` (ducks every music track under every dialogue track's speech in one call), `import_clips` (copy specific clips, with their own effects/keyframes/grade, from another project file into the live one), `style_captions_batch` (one call restyles every caption group, or a named list), plus `kimo gui` copy/paste + ripple-delete, a marker/chapter panel, a render queue panel, and a keyframe lane. See the "v7.5 additions" section below and CHANGELOG.md for the full list.
+
 New in v7.1.0: `kimo gui` is now an actually-editable local editor (clip/effect-params panel, drag-to-move/trim, scrub+play, undo/redo), plus 3 new tools (`project_merge`, `mark_scene_cuts`, `export_variants`) and a `has_effect` filter on `find`. See the "v7 additions" section below and CHANGELOG.md for the full list.
 
 New in v7.0.0: a local [`kimo gui`](crates/kimo-cli/src/gui.rs) web UI (timeline view, real engine preview, a tool-invocation panel over the same registry the CLI and MCP server use), a MOGRT-style `export_template_package`/`import_template_package` bundle, an optional `gpu2d` wgpu compute path (blur, colour matrix), and new particle presets (bubbles, foam, card_dance). See CHANGELOG.md for the full list, honest gaps included.
