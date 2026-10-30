@@ -142,6 +142,7 @@ effect_describe 4c04333355609e5d
 effect_uv_sample c4075e4402f9c60d
 evaluate_grade_graph_samples e9370ef17ee49951
 evaluate_hlg_reference_display d6dcb3d3d9272b80
+explain_cut b18de9c6817e418b
 explain_invalidation b8ff41ad113ac528
 export 2393506cd9af274b
 export_aces2_reference_video aeadc88e69eedbab

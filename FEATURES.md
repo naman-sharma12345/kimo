@@ -1016,10 +1016,26 @@ Real gaps found (perception/feedback and agent-superiority), built below, cheape
   tools), toolgroups.rs updated (output group). All green including golden_frames_registry_and_projects;
   director_small's lint_edit timing test hit its 9.0s ceiling once under concurrent load and passed clean
   alone (12.49s single-threaded) -- the pre-existing documented flake, not a regression from this tool.
-- [ ] No explainability for why a cut exists (north star: "explainable edits"): a clip boundary today
-  carries no record of which tool made it or why. -> `explain_cut` (BETA, best-effort: reads nearby
-  markers/tags as evidence; explicitly not a real decision ledger -- building one would mean threading
-  provenance through every mutating tool, out of scope for this pass).
+- [x] `explain_cut`: new BETA, best-effort tool -- why a clip's incoming cut might exist. No new
+  detection logic: reads the clip's own `transition_in`, correlates with timeline markers within
+  `window_seconds` (default 0.5s) of the boundary (`add_marker`/`mark_scene_cuts`), whether it's the
+  same source asset as the clip before it (a split within one shot vs. a cut to new footage), and asks
+  `detect_cuts` (via `dispatch_nested`, a small window around the exact boundary) whether the footage
+  itself shows a real visual change there -- a signal the composition can't get any other way without
+  running its own scoring. Built for an agent with no eye on the monitor: it can't glance at a cut and
+  judge it the way a human editor would, so this hands it the same evidence a human would have used,
+  phrased as a plain-English `explanation`, and says so explicitly when the evidence runs out (no
+  transition, no marker, no conclusive detect_cuts read) rather than inventing a reason. Explicitly not
+  a real decision ledger (north star: "explainable edits") -- building one would mean threading
+  provenance through every mutating tool, out of scope for this pass; this reads what's already on the
+  timeline instead. The first clip on a track reports `is_first_on_track` rather than guessing at a
+  nonexistent predecessor. 11 new TDD tests (tests/explain_cut.rs): first-clip case, unknown clip_id
+  errors plainly, an explicit transition is named in the explanation, same-asset-as-previous true/false,
+  a marker inside the window is reported and named in the explanation (and excluded when the window is
+  tightened past it), a real colour change across the cut IS detected by detect_cuts, an identical-
+  colour cut (zero visual change) is correctly reported as NOT detected, gap_before_s is reported when
+  the previous clip doesn't touch, read-only. golden_registry.txt hand-updated (503 tools), toolgroups.rs
+  updated (output group). All green including golden_frames_registry_and_projects.
 - [x] `review_export` grows QC, corrected scope after checking first: `review_export` already exists
   and already reports duration/size/width/height/LUFS/peak plus an inline contact sheet of an exported
   file (a planned new `export_qc` tool would have duplicated nearly all of it). The real gaps: no codec
