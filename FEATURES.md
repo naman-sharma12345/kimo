@@ -1358,7 +1358,7 @@ Real gaps found and built this pass:
 - [x] project_template -- feature 4: starter project templates (canvas size + fps + track layout
   conventions for vertical/square social, 16:9 widescreen, podcast interview, multicam panel) so a new
   project doesn't start from a blank canvas every time. Not template_define/apply (clip/op templates).
-- [ ] kimo gui: multi-select + group move/delete
+- [x] kimo gui: multi-select + group move/delete -- feature 6
 - [ ] kimo gui: copy/paste clips
 - [ ] kimo gui: ripple-delete in GUI (wire the existing ripple_delete tool to a shortcut/button distinct from
   plain delete)
@@ -1453,3 +1453,24 @@ Real gaps found and built this pass:
   disk, the index page wires up the file and all three functions by name, `timeline_view_model` carries
   locked/muted/solo per track, and a real `set_track` call through `/api/call` is reflected in the very next
   `/api/timeline` fetch. All 46 pre-existing kimo-cli tests stayed green (50 total now).
+
+## v7.4 feature 6/8: kimo gui multi-select and group move/delete
+
+- [x] `kimo gui`: shift/cmd/ctrl-click adds or removes a clip from a multi-selection (a plain click still
+  replaces the selection with just that one clip, or deselects it if it was already the lone selection);
+  every selected clip gets the existing `.selected` highlight. Dragging any one clip that is part of a
+  2+ selection moves the whole group together, un-snapped, clamped only so the earliest clip in the group
+  can never be dragged to a negative start -- sent on mouseup as ONE atomic `batch` call (one undo step for
+  the whole group, not one per clip). Delete with 2+ selected removes every selected clip as one atomic
+  `batch` call too. Trim stays single-clip only -- there is no settled meaning yet for "trim a group" the
+  way there is for "move a group", and this is stated rather than guessed at.
+- `gui_multiselect.js`: pure JS, no DOM -- `toggleSelect(selected, clipId, additive)`, `isSelected(selected,
+  clipId)`, `clampGroupDelta(starts, deltaSec)` (bounds a leftward drag to the earliest clip's own start),
+  `buildGroupMoveOps`/`buildGroupDeleteOps` (the exact `batch` op lists). Served at `GET
+  /gui_multiselect.js`, same file the browser and the Node test run.
+
+19 new headless Node tests (`tests/js/multiselect_test.js`) plus 5 new Rust tests: the JS file served
+byte-identical to disk, the index page wires up the file and its functions by name, a real group-move batch
+through `/api/call` moves exactly the selected clips and leaves the rest, that move is one undo step for the
+whole group, and a group-delete batch removes exactly the selected clips. All 50 pre-existing kimo-cli tests
+stayed green (55 total now).

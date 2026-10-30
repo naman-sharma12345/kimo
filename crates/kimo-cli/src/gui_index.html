@@ -108,11 +108,13 @@
 <script src="/gui_snap.js"></script>
 <script src="/gui_zoom.js"></script>
 <script src="/gui_trackstate.js"></script>
+<script src="/gui_multiselect.js"></script>
 <script>
 let registry = [];
 let projectFps = 30; // set from /api/timeline; used by J/K/L's frame step
 let effectCatalog = [];
 let selectedClipId = null;
+let selectedClipIds = []; // v7.4 multi-select: every selected clip id, newest last; selectedClipId mirrors its last element
 let pxPerSec = (window.kimoZoom ? window.kimoZoom.DEFAULT_PX_PER_SEC : 40); // v7.3: mutable for zoom in/out (bounds live in gui_zoom.js)
 const labelWidth = 70; // matches .track-label's CSS width
 let projectDuration = 0;
@@ -146,10 +148,10 @@ async function loadTimeline() {
     const lane = document.createElement('div'); lane.style.position = 'relative'; lane.style.height = '20px'; lane.style.flex = '1 1 auto';
     const interactive = kimoTrackState.clipInteractionAllowed(t);
     for (const c of t.clips) {
-      const bar = document.createElement('div'); bar.className = 'clip' + (c.id === selectedClipId ? ' selected' : '');
+      const bar = document.createElement('div'); bar.className = 'clip' + (kimoMultiselect.isSelected(selectedClipIds, c.id) ? ' selected' : '');
       bar.style.position = 'absolute'; bar.style.left = (c.start * pxPerSec) + 'px';
       bar.style.width = Math.max(4, c.duration * pxPerSec) + 'px';
-      bar.title = (c.name || c.id) + ' (' + c.source_kind + ') ' + c.start.toFixed(2) + 's..' + c.end.toFixed(2) + 's' + (interactive ? ' -- drag to move, drag the right edge to trim, click to inspect' : ' -- track is locked');
+      bar.title = (c.name || c.id) + ' (' + c.source_kind + ') ' + c.start.toFixed(2) + 's..' + c.end.toFixed(2) + 's' + (interactive ? ' -- drag to move (shift/cmd-click to select several and drag any one to move the group), drag the right edge to trim, click to inspect' : ' -- track is locked');
       bar.textContent = c.name || c.source_kind;
       bar.dataset.clipId = c.id;
       const handle = document.createElement('div'); handle.className = 'trim-handle';
@@ -158,7 +160,7 @@ async function loadTimeline() {
         bar.onmousedown = (ev) => { if (ev.target === handle) return; startDrag(ev, c, 'move'); };
       }
       bar.appendChild(handle);
-      bar.onclick = () => { if (!justDragged) selectClip(c.id); };
+      bar.onclick = (ev) => { if (!justDragged) selectClip(c.id, ev); };
       lane.appendChild(bar);
     }
     row.appendChild(lane);
@@ -288,7 +290,7 @@ async function removeTrack(trackId) {
   if (!confirm('Remove this track and all its clips?')) return;
   const v = await callApi('delete_track', { track_id: trackId });
   if (!v.ok) { alert(typeof v.error === 'string' ? v.error : 'could not remove that track'); return; }
-  if (selectedClipId) { selectedClipId = null; await loadInspector(); } // the selected clip may have lived on this track
+  if (selectedClipId || selectedClipIds.length) { selectedClipId = null; selectedClipIds = []; await loadInspector(); } // a selected clip may have lived on this track
   await loadTimeline();
 }
 async function doUndo() { const v = await callApi('undo', {}); if (!v.ok) { alert(v.error && v.error.message || 'nothing to undo'); return; } await loadTimeline(); if (selectedClipId) await loadInspector(); }
@@ -323,11 +325,19 @@ function stepFrame(dir) {
 }
 
 async function deleteSelectedClip() {
+  if (selectedClipIds.length > 1) {
+    const ops = kimoMultiselect.buildGroupDeleteOps(selectedClipIds);
+    const v = await callApi('batch', { ops });
+    if (!v.ok) { alert(typeof v.error === 'string' ? v.error : 'could not delete the selected clips'); return; }
+    selectedClipId = null; selectedClipIds = [];
+    await loadTimeline(); await loadInspector();
+    return;
+  }
   if (!selectedClipId) return;
   const id = selectedClipId;
   const v = await callApi('delete_clip', { clip_id: id });
   if (!v.ok) { alert(typeof v.error === 'string' ? v.error : 'could not delete that clip'); return; }
-  selectedClipId = null;
+  selectedClipId = null; selectedClipIds = [];
   await loadTimeline(); await loadInspector();
 }
 
@@ -370,9 +380,23 @@ function startDrag(ev, clip, mode) {
   ev.preventDefault(); ev.stopPropagation();
   const startX = ev.clientX; const origStart = clip.start; const origDuration = clip.duration;
   justDragged = false;
+  // v7.4: dragging a clip that is part of a multi-selection of 2+ moves the whole group together, as one
+  // atomic batch call (one undo step) -- un-snapped (snapping a whole group against every other clip's
+  // edges at once is a different, harder feature; this drags the group by the raw pixel delta, clamped only
+  // so the earliest clip in the group never goes negative). Trim stays single-clip: there is no settled
+  // meaning for "trim a group" the way there is for "move a group".
+  const isGroupMove = mode === 'move' && kimoMultiselect.isSelected(selectedClipIds, clip.id) && selectedClipIds.length > 1;
+  const groupClips = isGroupMove ? selectedClipIds.map(findClipInTimeline).filter((c) => c) : [];
   function onMove(mv) {
     const deltaSec = (mv.clientX - startX) / pxPerSec;
     if (Math.abs(mv.clientX - startX) > 3) justDragged = true;
+    if (isGroupMove) {
+      const delta = kimoMultiselect.clampGroupDelta(groupClips.map((c) => c.start), deltaSec);
+      for (const gc of groupClips) {
+        const bar = document.querySelector(`.clip[data-clip-id="${CSS.escape(gc.id)}"]`); if (bar) bar.style.left = ((gc.start + delta) * pxPerSec) + 'px';
+      }
+      return;
+    }
     const bar = document.querySelector(`.clip[data-clip-id="${CSS.escape(clip.id)}"]`); if (!bar) return;
     if (mode === 'move') {
       const snapped = snapProposed(Math.max(0, origStart + deltaSec), clip.id);
@@ -386,6 +410,14 @@ function startDrag(ev, clip, mode) {
     document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp);
     const deltaSec = (up.clientX - startX) / pxPerSec;
     if (Math.abs(up.clientX - startX) <= 3) return; // a click, not a drag: selectClip's onclick handles it
+    if (isGroupMove) {
+      const delta = kimoMultiselect.clampGroupDelta(groupClips.map((c) => c.start), deltaSec);
+      const ops = kimoMultiselect.buildGroupMoveOps(groupClips, delta);
+      await callApi('batch', { ops });
+      await loadTimeline();
+      setTimeout(() => { justDragged = false; }, 0);
+      return;
+    }
     if (mode === 'move') {
       const snapped = snapProposed(Math.max(0, origStart + deltaSec), clip.id);
       await callApi('move_clip', { clip_id: clip.id, start: snapped });
@@ -399,9 +431,24 @@ function startDrag(ev, clip, mode) {
   document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
 }
 
-async function selectClip(id) {
-  selectedClipId = id;
-  document.querySelectorAll('.clip').forEach(el => el.classList.toggle('selected', el.dataset.clipId === id));
+function findClipInTimeline(id) {
+  if (!lastTimeline) return null;
+  for (const t of lastTimeline.tracks) { const c = t.clips.find((x) => x.id === id); if (c) return c; }
+  return null;
+}
+async function selectClip(id, ev) {
+  const additive = !!(ev && (ev.shiftKey || ev.metaKey || ev.ctrlKey));
+  selectedClipIds = kimoMultiselect.toggleSelect(selectedClipIds, id, additive);
+  selectedClipId = selectedClipIds.length ? selectedClipIds[selectedClipIds.length - 1] : null;
+  document.querySelectorAll('.clip').forEach(el => el.classList.toggle('selected', kimoMultiselect.isSelected(selectedClipIds, el.dataset.clipId)));
+  if (selectedClipIds.length > 1) {
+    document.getElementById('inspector-body').style.display = 'none';
+    const ns = document.getElementById('no-selection');
+    ns.textContent = selectedClipIds.length + ' clips selected -- drag one to move the group, Delete removes them all.';
+    ns.style.display = '';
+    return;
+  }
+  document.getElementById('no-selection').textContent = 'Click a clip on the timeline to inspect it.';
   await loadInspector();
 }
 

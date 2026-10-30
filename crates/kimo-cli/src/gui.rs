@@ -77,6 +77,11 @@ const ZOOM_JS: &str = include_str!("gui_zoom.js");
 /// is allowed + the toggle args to send), served the same way for the same reason -- gui_index.html's
 /// track-row renderer and tests/js/trackstate_test.js (Node) run the exact same bytes.
 const TRACKSTATE_JS: &str = include_str!("gui_trackstate.js");
+/// v7.4: the multi-select / group-move / group-delete helper (selection-set toggling, group-move delta
+/// clamping, the atomic `batch` op lists for a group move/delete), served the same way for the same reason
+/// -- gui_index.html's selection/drag handlers and tests/js/multiselect_test.js (Node) run the exact same
+/// bytes.
+const MULTISELECT_JS: &str = include_str!("gui_multiselect.js");
 
 /// Parses `?t=1.5` (or any single-key query) out of a raw query string; used for /preview.png's `t`.
 fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
@@ -93,6 +98,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
         ("GET", "/gui_snap.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: SNAP_JS.as_bytes().to_vec() },
         ("GET", "/gui_zoom.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: ZOOM_JS.as_bytes().to_vec() },
         ("GET", "/gui_trackstate.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: TRACKSTATE_JS.as_bytes().to_vec() },
+        ("GET", "/gui_multiselect.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: MULTISELECT_JS.as_bytes().to_vec() },
         ("GET", "/api/timeline") => { let ss = ss.lock().unwrap(); json_response(200, timeline_view_model(&ss)) }
         ("GET", "/api/registry") => json_response(200, registry_summary()),
         ("GET", "/api/clip") => { // ?id=<clip_id>
@@ -129,7 +135,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
                 Err(e) => json_response(200, json!({"ok": false, "error": e})),
             }
         }
-        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/gui_zoom.js") | (_, "/gui_trackstate.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
+        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/gui_zoom.js") | (_, "/gui_trackstate.js") | (_, "/gui_multiselect.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
         _ => err_response(404, format!("no route for {path}")),
     }
 }
@@ -885,6 +891,82 @@ mod tests {
         let tl = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
         let t0 = &tl["tracks"][0];
         assert_eq!(t0["muted"], true); assert_eq!(t0["solo"], true); assert_eq!(t0["locked"], true);
+    }
+    // ---- v7.4: multi-select / group move / group delete ----
+
+    #[test]
+    fn served_multiselect_js_matches_the_file_on_disk() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_multiselect.js", "", &[]);
+        assert_eq!(r.status, 200); assert_eq!(r.content_type, "application/javascript; charset=utf-8");
+        assert_eq!(r.body, include_bytes!("gui_multiselect.js").to_vec());
+    }
+
+    #[test]
+    fn the_index_page_wires_up_multiselect() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["gui_multiselect.js", "kimoMultiselect.toggleSelect", "kimoMultiselect.isSelected", "kimoMultiselect.clampGroupDelta", "kimoMultiselect.buildGroupMoveOps", "kimoMultiselect.buildGroupDeleteOps", "function findClipInTimeline", "isGroupMove"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    /// A fixture with three clips on one track at 0..2, 3..5, 6..8, for group-move/delete tests.
+    fn three_clip_fixture() -> (Arc<Mutex<Session>>, Vec<String>) {
+        let ss = fixture();
+        let (tid, first_clip) = { let s = ss.lock().unwrap(); (s.project.tracks[0].id.clone(), s.project.tracks[0].clips[0].id.clone()) };
+        let mut ids = vec![first_clip];
+        for start in [3.0, 6.0] {
+            let mut s = ss.lock().unwrap();
+            let id = dispatch(&mut s, "add_shape", &json!({"track_id": tid, "shape": "rect", "start": start, "duration": 2.0, "color": [0.0, 1.0, 0.0]})).unwrap()["clip_id"].as_str().unwrap().to_string();
+            ids.push(id);
+        }
+        (ss, ids)
+    }
+
+    #[test]
+    fn a_group_move_batch_moves_every_selected_clip_in_one_atomic_call() {
+        let (ss, ids) = three_clip_fixture();
+        // move the first two clips (0..2, 3..5) by +10s, leave the third (6..8) alone
+        let ops: Vec<Value> = ids[..2].iter().map(|id| json!({"tool": "move_clip", "args": {"clip_id": id, "start": 10.0 + if id == &ids[0] { 0.0 } else { 3.0 }}})).collect();
+        let body = serde_json::to_vec(&json!({"tool": "batch", "args": {"ops": ops}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let tl = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        let clips = tl["tracks"][0]["clips"].as_array().unwrap();
+        let starts: std::collections::HashMap<&str, f64> = clips.iter().map(|c| (c["id"].as_str().unwrap(), c["start"].as_f64().unwrap())).collect();
+        assert!((starts[ids[0].as_str()] - 10.0).abs() < 1e-6, "{starts:?}");
+        assert!((starts[ids[1].as_str()] - 13.0).abs() < 1e-6, "{starts:?}");
+        assert!((starts[ids[2].as_str()] - 6.0).abs() < 1e-6, "the untouched third clip should not have moved: {starts:?}");
+    }
+
+    #[test]
+    fn a_group_move_batch_is_one_undo_step_for_the_whole_group() {
+        let (ss, ids) = three_clip_fixture();
+        let ops: Vec<Value> = ids[..2].iter().map(|id| json!({"tool": "move_clip", "args": {"clip_id": id, "start": 20.0}})).collect();
+        let body = serde_json::to_vec(&json!({"tool": "batch", "args": {"ops": ops}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        { let mut s = ss.lock().unwrap(); dispatch(&mut s, "undo", &json!({})).unwrap(); }
+        let tl = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        let clips = tl["tracks"][0]["clips"].as_array().unwrap();
+        let starts: std::collections::HashMap<&str, f64> = clips.iter().map(|c| (c["id"].as_str().unwrap(), c["start"].as_f64().unwrap())).collect();
+        assert!((starts[ids[0].as_str()] - 0.0).abs() < 1e-6, "one undo should restore both moved clips at once: {starts:?}");
+        assert!((starts[ids[1].as_str()] - 3.0).abs() < 1e-6, "one undo should restore both moved clips at once: {starts:?}");
+    }
+
+    #[test]
+    fn a_group_delete_batch_removes_every_selected_clip_and_leaves_the_rest() {
+        let (ss, ids) = three_clip_fixture();
+        let ops = vec![json!({"tool": "delete_clip", "args": {"clip_id": ids[0]}}), json!({"tool": "delete_clip", "args": {"clip_id": ids[2]}})];
+        let body = serde_json::to_vec(&json!({"tool": "batch", "args": {"ops": ops}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let tl = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        let clips = tl["tracks"][0]["clips"].as_array().unwrap();
+        assert_eq!(clips.len(), 1, "two of three clips should be gone: {clips:?}");
+        assert_eq!(clips[0]["id"], json!(ids[1]), "the untouched middle clip should be the only one left: {clips:?}");
     }
 }
 
