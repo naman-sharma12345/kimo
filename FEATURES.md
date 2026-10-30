@@ -1286,3 +1286,18 @@ new (the v7.2 audit explicitly flagged EDL/OTIO import as a real gap, bigger tha
   through real `job_status` calls to a real "done" state with the file actually on disk; a real running job
   is actually cancelled through `/api/call` and reaches cancelled-or-done. All 39 pre-existing kimo-cli
   tests stayed green (42 total now).
+
+
+## v7.3 feature 10: kimo gui project open/save
+
+- [x] `kimo gui`: a path field in the header with Save/Open buttons and a status line. Pure wiring onto
+  `save_project`/`load_project`, which already existed (atomic temp-file-then-rename writes, JSON schema
+  migration on load, optional history persistence) -- `saveProject()` and `openProject()` are plain
+  `/api/call` round trips, same shape as every other button; a successful open clears the clip selection and
+  re-renders the timeline and history list so the GUI actually reflects the newly loaded project, not a
+  stale view of the old one. Nothing new in kimo-core. 4 new Rust tests (crates/kimo-cli/src/gui.rs): the
+  index page is checked to wire up the field, both buttons and both functions by name; Save actually writes
+  a real project JSON file to disk (read back and checked for a `tracks` key); Open actually replaces the
+  live session's project with a previously-saved one (save 1 track, add a 2nd live, open, confirm back to 1
+  -- not just "no error"); opening a path that does not exist comes back as a clean tool error, not a crash.
+  All 42 pre-existing kimo-cli tests stayed green (46 total now).

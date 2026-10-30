@@ -788,4 +788,57 @@ mod tests {
         assert!(matches!(v["result"]["state"].as_str(), Some("cancelled") | Some("done")), "{v}");
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    // ---- v7.3: project open/save ----
+
+    #[test]
+    fn the_index_page_wires_up_project_open_and_save() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["project-path", "function saveProject", "function openProject", "save_project", "load_project", "project-status"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn save_button_writes_a_real_project_file_through_the_same_api_call_path() {
+        let ss = fixture();
+        let path = std::env::temp_dir().join(format!("kimo_gui_save_test_{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let body = serde_json::to_vec(&json!({"tool": "save_project", "args": {"path": path.to_str().unwrap()}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        assert!(path.is_file(), "save_project should have actually written the file");
+        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(saved.get("tracks").is_some(), "saved file should be a real project: {saved}");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn open_button_loads_a_saved_project_back_through_the_same_api_call_path() {
+        let ss = fixture();
+        let path = std::env::temp_dir().join(format!("kimo_gui_open_test_{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        // save the fixture's one-track, one-clip project, then add a second track so the live session
+        // genuinely differs from the file before re-opening it
+        { let save_body = serde_json::to_vec(&json!({"tool": "save_project", "args": {"path": path.to_str().unwrap()}})).unwrap();
+          let r = handle_request(&ss, "POST", "/api/call", "", &save_body); let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}"); }
+        { let mut s = ss.lock().unwrap(); dispatch(&mut s, "add_track", &json!({})).unwrap(); }
+        assert_eq!({ let s = ss.lock().unwrap(); timeline_view_model(&s)["track_count"].clone() }, json!(2));
+
+        let open_body = serde_json::to_vec(&json!({"tool": "load_project", "args": {"path": path.to_str().unwrap()}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &open_body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        assert_eq!({ let s = ss.lock().unwrap(); timeline_view_model(&s)["track_count"].clone() }, json!(1), "opening should have replaced the live project with the saved one");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn opening_a_nonexistent_project_file_is_a_clean_tool_error_not_a_crash() {
+        let ss = fixture();
+        let body = serde_json::to_vec(&json!({"tool": "load_project", "args": {"path": "/no/such/file/kimo_does_not_exist.json"}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], false, "{v}");
+    }
 }

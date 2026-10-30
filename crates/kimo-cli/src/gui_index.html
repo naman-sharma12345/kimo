@@ -43,7 +43,14 @@
 </style>
 </head>
 <body>
-<header><strong>kimo</strong> &middot; v7 minimal GUI over the MCP registry</header>
+<header><strong>kimo</strong> &middot; v7 minimal GUI over the MCP registry
+  <span style="float:right;font-size:12px">
+    <input id="project-path" placeholder="project.json" style="width:220px">
+    <button class="small" style="font-size:11px;padding:3px 8px" onclick="saveProject()">Save</button>
+    <button class="small" style="font-size:11px;padding:3px 8px" onclick="openProject()">Open</button>
+    <span id="project-status" style="color:#9ab;margin-left:6px"></span>
+  </span>
+</header>
 <main>
   <div>
     <section id="preview">
@@ -218,6 +225,28 @@ async function cancelExport() {
   if (!exportJobId) return;
   await callApi('cancel_job', { job_id: exportJobId });
   await pollExportJob();
+}
+// v7.3: project open/save -- save_project/load_project already exist in kimo-core (atomic write with a
+// temp+rename, optional with_history); this just wires the existing path field + buttons onto them.
+async function saveProject() {
+  const path = document.getElementById('project-path').value.trim();
+  const status = document.getElementById('project-status');
+  if (!path) { status.textContent = 'enter a path first'; return; }
+  const r = await callApi('save_project', { path });
+  status.textContent = r.ok ? `saved ${path}` : ('could not save: ' + (typeof r.error === 'string' ? r.error : JSON.stringify(r.error)));
+}
+async function openProject() {
+  const path = document.getElementById('project-path').value.trim();
+  const status = document.getElementById('project-status');
+  if (!path) { status.textContent = 'enter a path first'; return; }
+  const r = await callApi('load_project', { path });
+  if (!r.ok) { status.textContent = 'could not open: ' + (typeof r.error === 'string' ? r.error : JSON.stringify(r.error)); return; }
+  status.textContent = `opened ${path}`;
+  selectedClipId = null;
+  document.getElementById('inspector-body').style.display = 'none';
+  document.getElementById('no-selection').style.display = 'block';
+  await loadTimeline();
+  await loadHistory();
 }
 async function addTrack() { await callApi('add_track', {}); await loadTimeline(); }
 async function addMarkerAtPlayhead() {
