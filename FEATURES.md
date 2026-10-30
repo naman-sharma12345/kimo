@@ -1733,7 +1733,7 @@ gaps, candidates for this pass:
   unused), creating the bins as needed, in one call.
 - [x] batch_set_meta: apply a role/color/tags to many clips at once, by explicit ids or by a
   find-style filter, in one call.
-- [ ] kimo gui: clip context menu (right-click: split/duplicate/delete/properties).
+- [x] kimo gui: clip context menu (right-click: split/duplicate/delete/properties).
 - [ ] kimo gui: media bin panel with search and a thumbnail list.
 - [ ] kimo gui: timeline minimap/overview.
 - [ ] kimo gui: inline caption text editing directly on the timeline.
@@ -1801,3 +1801,27 @@ gaps, candidates for this pass:
   tools); added to the `project` toolgroup up front. Full targeted pass green including
   `golden_frames_registry_and_projects`, `golden_registry_contract`, `description_first_sentence` and
   `external_refs`.
+
+## v7.6 feature 4/8: kimo gui clip context menu
+
+- [x] Right-click a clip bar for a real visible menu: Split at Playhead, Duplicate, Delete, Properties --
+  the same tools (`split_clip`, `duplicate_clip`, `delete_clip`) and inspector the keyboard shortcuts and
+  click-to-inspect already use, surfaced for discovery instead of needing to be known by heart. Split
+  mirrors the server's own "split point outside clip" rule client-side, so the item shows disabled (with
+  a reason on hover) exactly when the server would refuse it, rather than enabled and failing on click.
+  Duplicate is a genuinely new direct path: before this, duplicating a clip only existed indirectly via
+  copy-then-paste (v7.5's clipboard); the menu places the copy immediately after the original on the same
+  track, one click. The menu is viewport-clamped so a right-click near the window edge never renders
+  off-screen, and a click anywhere else on the page closes it.
+- `gui_contextmenu.js`: pure JS, no DOM -- `buildMenuItems(clip, playheadTime)` (which of the 4 items are
+  enabled, with a disabled reason for Split), `actionFor(itemId, clip, playheadTime)` (the exact
+  `{tool, args}` to call, or `{open: "properties"}` to open the inspector instead), `menuPosition(x, y,
+  viewportW, viewportH, menuW, menuH)` (clamped placement). Served at `GET /gui_contextmenu.js`, wired
+  into `gui_index.html` (the clip bar's new `oncontextmenu` handler, a `#clip-context-menu` div, CSS, and
+  `showContextMenu`/`hideContextMenu`/`runContextMenuAction`) and `gui.rs` (route, 405 list).
+- 17 new headless Node tests (`tests/js/contextmenu_test.js`) plus 4 new Rust tests: the JS file served
+  byte-identical to disk, the index page wires up the menu by name, a real `duplicate_clip` through
+  `/api/call` actually creates a second clip at the computed start, and `split_clip` at the exact boundary
+  the JS marks disabled fails server-side too (so the menu's enabled state never promises something the
+  API refuses) while splitting inside the clip succeeds. No registry change (GUI-only, no new MCP tool,
+  same shape as v7.5's keyframe lane). All 80 prior kimo-cli tests stayed green (84 total).

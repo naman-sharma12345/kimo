@@ -14,6 +14,11 @@
   .track { display: flex; align-items: center; height: 28px; border-bottom: 1px solid #2c2c33; }
   .track-label { width: 70px; font-size: 11px; color: #889; flex: none; }
   .clip { position: relative; height: 20px; background: #3a6; border-radius: 3px; margin-right: 1px; font-size: 10px; color: #012; padding: 2px 4px; overflow: hidden; white-space: nowrap; flex: none; }
+  #clip-context-menu { position: fixed; background: #222; border: 1px solid #444; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,.5); padding: 4px 0; font-size: 12px; z-index: 50; min-width: 140px; }
+  #clip-context-menu .ctx-item { padding: 5px 12px; cursor: pointer; color: #eee; }
+  #clip-context-menu .ctx-item:hover { background: #357; }
+  #clip-context-menu .ctx-item.disabled { color: #667; cursor: default; }
+  #clip-context-menu .ctx-item.disabled:hover { background: none; }
   #preview img { max-width: 100%; border: 1px solid #333; background: #000; display: block; }
   #preview input { width: 70px; }
   textarea { width: 100%; box-sizing: border-box; background: #111; color: #cfc; border: 1px solid #333; font-family: monospace; font-size: 12px; }
@@ -146,6 +151,7 @@
     <div id="result"></div>
   </section>
 </main>
+<div id="clip-context-menu" style="display:none"></div>
 <script src="/gui_keymap.js"></script>
 <script src="/gui_snap.js"></script>
 <script src="/gui_zoom.js"></script>
@@ -157,6 +163,7 @@
 <script src="/gui_markerpanel.js"></script>
 <script src="/gui_renderqueue.js"></script>
 <script src="/gui_keyframes.js"></script>
+<script src="/gui_contextmenu.js"></script>
 <script>
 let registry = [];
 let projectFps = 30; // set from /api/timeline; used by J/K/L's frame step
@@ -212,6 +219,7 @@ async function loadTimeline() {
       bar.appendChild(handle);
       if (kimoWaveform.shouldFetchWaveform(c)) { const wf = document.createElement('div'); wf.className = 'waveform'; bar.appendChild(wf); }
       bar.onclick = (ev) => { if (!justDragged) selectClip(c.id, ev); };
+      bar.oncontextmenu = (ev) => { ev.preventDefault(); showContextMenu(ev, c); };
       lane.appendChild(bar);
     }
     row.appendChild(lane);
@@ -499,6 +507,42 @@ async function rippleDeleteSelected() {
   const v = await callApi(op.tool, op.args);
   if (!v.ok) { alert(typeof v.error === 'string' ? v.error : 'could not ripple-delete that clip'); return; }
   selectedClipId = null; selectedClipIds = [];
+  await loadTimeline(); await loadInspector();
+}
+
+// v7.6: right-click context menu on a clip bar (Split/Duplicate/Delete/Properties) -- the same tools the
+// keyboard shortcuts and inspector already call, surfaced as a visible menu so they don't need to be known
+// by heart. kimoContextMenu owns which items are enabled and the exact action for each; this just renders
+// that model and dispatches the click.
+let contextMenuClip = null;
+function showContextMenu(ev, clip) {
+  contextMenuClip = clip;
+  const items = kimoContextMenu.buildMenuItems(clip, currentT);
+  const menu = document.getElementById('clip-context-menu');
+  menu.innerHTML = '';
+  for (const item of items) {
+    const row = document.createElement('div');
+    row.className = 'ctx-item' + (item.enabled ? '' : ' disabled');
+    row.textContent = item.label;
+    if (item.reason) row.title = item.reason;
+    if (item.enabled) row.onclick = () => runContextMenuAction(item.id);
+    menu.appendChild(row);
+  }
+  const pos = kimoContextMenu.menuPosition(ev.clientX, ev.clientY, window.innerWidth, window.innerHeight, 150, items.length * 26 + 8);
+  menu.style.left = pos.left + 'px'; menu.style.top = pos.top + 'px';
+  menu.style.display = '';
+}
+function hideContextMenu() { const menu = document.getElementById('clip-context-menu'); if (menu) menu.style.display = 'none'; contextMenuClip = null; }
+document.addEventListener('click', () => hideContextMenu());
+async function runContextMenuAction(itemId) {
+  const clip = contextMenuClip;
+  const action = kimoContextMenu.actionFor(itemId, clip, currentT);
+  hideContextMenu();
+  if (!action) return;
+  if (action.open === 'properties') { selectedClipId = clip.id; selectedClipIds = [clip.id]; await loadTimeline(); await loadInspector(); return; }
+  const v = await callApi(action.tool, action.args);
+  if (!v.ok) { alert(typeof v.error === 'string' ? v.error : `could not ${itemId} that clip`); return; }
+  if (itemId === 'delete') { selectedClipId = null; selectedClipIds = []; }
   await loadTimeline(); await loadInspector();
 }
 

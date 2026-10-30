@@ -108,6 +108,10 @@ const RENDERQUEUE_JS: &str = include_str!("gui_renderqueue.js");
 /// "nearest key within half a frame" rule mirrored for click-handling), served the same way for the same
 /// reason -- gui_index.html's keyframe lane and tests/js/keyframes_test.js (Node) run the exact same bytes.
 const KEYFRAMES_JS: &str = include_str!("gui_keyframes.js");
+/// v7.6: the clip context menu's view model (which items are enabled, the exact tool call or inspector-
+/// open for each, viewport-clamped menu positioning), served the same way for the same reason --
+/// gui_index.html's right-click handler and tests/js/contextmenu_test.js (Node) run the exact same bytes.
+const CONTEXTMENU_JS: &str = include_str!("gui_contextmenu.js");
 
 /// Parses `?t=1.5` (or any single-key query) out of a raw query string; used for /preview.png's `t`.
 fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
@@ -131,6 +135,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
         ("GET", "/gui_markerpanel.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: MARKERPANEL_JS.as_bytes().to_vec() },
         ("GET", "/gui_renderqueue.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: RENDERQUEUE_JS.as_bytes().to_vec() },
         ("GET", "/gui_keyframes.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: KEYFRAMES_JS.as_bytes().to_vec() },
+        ("GET", "/gui_contextmenu.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: CONTEXTMENU_JS.as_bytes().to_vec() },
         ("GET", "/api/timeline") => { let ss = ss.lock().unwrap(); json_response(200, timeline_view_model(&ss)) }
         ("GET", "/api/registry") => json_response(200, registry_summary()),
         ("GET", "/api/clip") => { // ?id=<clip_id>
@@ -167,7 +172,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
                 Err(e) => json_response(200, json!({"ok": false, "error": e})),
             }
         }
-        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/gui_zoom.js") | (_, "/gui_trackstate.js") | (_, "/gui_multiselect.js") | (_, "/gui_waveform.js") | (_, "/gui_fxbrowser.js") | (_, "/gui_clipboard.js") | (_, "/gui_markerpanel.js") | (_, "/gui_renderqueue.js") | (_, "/gui_keyframes.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
+        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/gui_zoom.js") | (_, "/gui_trackstate.js") | (_, "/gui_multiselect.js") | (_, "/gui_waveform.js") | (_, "/gui_fxbrowser.js") | (_, "/gui_clipboard.js") | (_, "/gui_markerpanel.js") | (_, "/gui_renderqueue.js") | (_, "/gui_keyframes.js") | (_, "/gui_contextmenu.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
         _ => err_response(404, format!("no route for {path}")),
     }
 }
@@ -1337,5 +1342,52 @@ mod tests {
         let spr = handle_request(&ss, "POST", "/api/call", "", &sp);
         let spv: Value = serde_json::from_slice(&spr.body).unwrap(); assert_eq!(spv["ok"], true, "{spv}");
         assert_eq!(spv["result"]["values"][0], 0.4, "a held value before any later key should sample back unchanged, matching what the lane would seed a new keyframe with");
+    }
+
+    // ---- v7.6: clip context menu ----
+
+    #[test]
+    fn served_contextmenu_js_matches_the_file_on_disk() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_contextmenu.js", "", &[]);
+        assert_eq!(r.status, 200); assert_eq!(r.content_type, "application/javascript; charset=utf-8");
+        assert_eq!(r.body, include_bytes!("gui_contextmenu.js").to_vec());
+    }
+
+    #[test]
+    fn the_index_page_wires_up_the_context_menu() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["gui_contextmenu.js", "kimoContextMenu.buildMenuItems", "kimoContextMenu.actionFor", "kimoContextMenu.menuPosition", "function showContextMenu", "oncontextmenu", "clip-context-menu"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn contextmenu_duplicate_action_through_api_call_creates_a_real_second_clip() {
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        // mirrors kimoContextMenu.actionFor('duplicate', clip, t): duplicate_clip at the clip's own end
+        let dup = serde_json::to_vec(&json!({"tool": "duplicate_clip", "args": {"clip_id": clip_id, "start": 2.0}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &dup);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let s = ss.lock().unwrap();
+        assert_eq!(s.project.tracks[0].clips.len(), 2, "duplicate should add a real second clip, not just report one");
+        assert_eq!(s.project.tracks[0].clips[1].start, 2.0);
+    }
+
+    #[test]
+    fn contextmenu_split_action_through_api_call_matches_the_js_disabled_rule() {
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        // the fixture clip runs 0..2; splitting exactly at its end (what the JS marks disabled) must
+        // fail server-side too, so the menu's enabled/disabled state never promises something the API refuses.
+        let bad = serde_json::to_vec(&json!({"tool": "split_clip", "args": {"clip_id": clip_id, "at": 2.0}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &bad);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], false, "{v}");
+        let good = serde_json::to_vec(&json!({"tool": "split_clip", "args": {"clip_id": clip_id, "at": 1.0}})).unwrap();
+        let r2 = handle_request(&ss, "POST", "/api/call", "", &good);
+        let v2: Value = serde_json::from_slice(&r2.body).unwrap(); assert_eq!(v2["ok"], true, "{v2}");
     }
 }
