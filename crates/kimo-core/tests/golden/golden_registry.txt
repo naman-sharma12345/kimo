@@ -281,6 +281,7 @@ move_clip 7a2fedebbc66bea9
 move_key 6ff462a36f5e1225
 mux_chapters d4c909f56caca1e1
 normalize_loudness d77d16d8f58e8b00
+organize_bins 1d9acfb9e939f902
 particle_simulate_raw 13a7503832a95aad
 paste_attributes 836988433eac2c08
 path_info bd40d934b727ca02

@@ -1727,9 +1727,9 @@ gaps, candidates for this pass:
 
 ## v7.6 additions
 
-- [ ] project_stats: one-call aggregate project summary for an agent (duration, track/clip counts by
+- [x] project_stats: one-call aggregate project summary for an agent (duration, track/clip counts by
   kind, unused media, caption/marker counts) instead of reading the whole project or paging find_assets.
-- [ ] organize_bins: file every asset into bins automatically by kind/extension or by usage (used/
+- [x] organize_bins: file every asset into bins automatically by kind/extension or by usage (used/
   unused), creating the bins as needed, in one call.
 - [ ] batch_set_meta: apply a name/role/color/tags to many clips at once, by explicit ids or by a
   find-style filter, in one call.
@@ -1755,5 +1755,26 @@ gaps, candidates for this pass:
   that used an asset makes it unused again, markers/captions/bins/track-mute counts, clips-with-effects
   and clips-with-keyframes counts, and that the call adds no history entry. `golden_registry.txt`
   hand-updated (516 -> 517 tools); added to the `project` toolgroup up front. Full targeted pass green
+  including `golden_frames_registry_and_projects`, `golden_registry_contract`, `description_first_sentence`
+  and `external_refs`.
+
+## v7.6 feature 2/8: organize_bins
+
+- [x] File every asset in the media pool into bins automatically, by kind (Video/Image/Audio from the
+  file extension via the project's existing `deps::asset_kind` classifier, already used for dependency
+  reporting) or by usage (Used/Unused, by whether a clip on any track references the asset right now).
+  `create_bin`/`move_asset_to_bin` already do the mechanics one asset at a time; a library of any size
+  makes that a manual "create a bin per kind, then move each asset in" pass. `only_unfiled` (default
+  true) leaves an asset alone if it is already filed in some bin, so a sweep never undoes a person's own
+  manual organisation; an asset already sitting in exactly the bin this call would choose is left
+  untouched either way. `dry_run` reports the plan and changes nothing. The whole sweep is one atomic
+  undo step however many assets move (dispatch_nested per move inside the one outer mutating call, the
+  same shape `close_gaps` and `style_captions_batch` already use for their own per-item loops).
+- New MCP tool `organize_bins` (`crates/kimo-core/src/ext/organize_bins.rs`). 7 new TDD tests
+  (`tests/organize_bins.rs`): by:"kind" sorts video/image/audio assets into their own bins, by:"usage"
+  sorts used vs. unused, the default `only_unfiled` leaves a manually-filed asset alone,
+  `only_unfiled:false` re-files everything, `dry_run` reports the plan without moving anything, the whole
+  sweep over 3 assets lands as exactly one undo step, and an unknown `by` value errors. `golden_registry.txt`
+  hand-updated (517 -> 518 tools); added to the `project` toolgroup up front. Full targeted pass green
   including `golden_frames_registry_and_projects`, `golden_registry_contract`, `description_first_sentence`
   and `external_refs`.
