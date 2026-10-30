@@ -247,7 +247,7 @@ fn build(ss: &mut Session, a: &Value, l: &Look, takes: Vec<(Take, Vec<sw::TimedW
     let mut freq: HashMap<String, usize> = HashMap::new(); for x in &tw { *freq.entry(sw::norm_word(&x.text)).or_insert(0) += 1; }
     // track
     if let Some(old) = a.get("replace").and_then(|v| v.as_str()) { remove_group(ss, old)?; }
-    let track_id = ss.project.gen_id("track"); ss.project.tracks.push(Track { id: track_id.clone(), clips: vec![], locked: false, muted: false, name: "Captions".into() });
+    let track_id = ss.project.gen_id("track"); ss.project.tracks.push(Track { id: track_id.clone(), clips: vec![], locked: false, muted: false, solo: false, name: "Captions".into() });
     let y = (band.0 - 0.5) * h; let mut clip_ids = vec![]; let mut prev_end = f64::NEG_INFINITY;
     for (pi, pg) in pages.iter().enumerate() {
         let idx: Vec<usize> = (pg.first..=pg.last).map(|k| keep[k]).collect();

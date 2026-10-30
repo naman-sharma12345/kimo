@@ -823,6 +823,7 @@ fn add_multicam_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {
         clips: vec![],
         locked: false,
         muted: false,
+        solo: false,
         name: id.clone(),
     });
     rebuild(ss, &id)?;

@@ -28,7 +28,7 @@ fn apply_clip(ss: &mut Session, theirs: &Project, id: &str, created_tracks: &mut
     let their_track = &theirs.tracks[their_ti];
     let Some(clip_arc) = their_track.clips.iter().find(|c| c.id == id).cloned() else { return };
     if !ss.project.tracks.iter().any(|t| t.id == their_track.id) {
-        ss.project.tracks.push(Track { id: their_track.id.clone(), clips: vec![], locked: false, muted: their_track.muted, name: their_track.name.clone() });
+        ss.project.tracks.push(Track { id: their_track.id.clone(), clips: vec![], locked: false, muted: their_track.muted, solo: their_track.solo, name: their_track.name.clone() });
         created_tracks.push(their_track.id.clone());
     }
     let ti = ss.project.tracks.iter().position(|t| t.id == their_track.id).unwrap();

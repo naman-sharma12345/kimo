@@ -52,7 +52,7 @@ pub fn sync_fills(p: &mut Project) {
         let mut nf = tpl.clone(); nf.id = p.gen_id("clip"); for e in nf.effects.iter_mut().filter(|e| is_fill(e)) { e.id = p.gen_id("fx"); e.strings.insert("fill_of".into(), cid.clone()); }
         let fg = (*p.tracks[ti].clips[ci]).clone(); take_timing(&mut nf, &fg);
         let ftrack = pos(p, &tpl.id).map(|x| x.0).filter(|&ft| ft < ti && !p.tracks[ft].locked);
-        let ft = match ftrack { Some(ft) => ft, None => { let tid = p.gen_id("track"); p.tracks.insert(ti, Track { id: tid, clips: vec![], locked: false, muted: false, name: "blur fill".into() }); ti } };
+        let ft = match ftrack { Some(ft) => ft, None => { let tid = p.gen_id("track"); p.tracks.insert(ti, Track { id: tid, clips: vec![], locked: false, muted: false, solo: false, name: "blur fill".into() }); ti } };
         p.tracks[ft].clips.push(std::sync::Arc::new(nf));
         if let Some((ti, ci)) = pos(p, &cid) { set_tag(p.tracks[ti].cm(ci), Some(&cid)); }
     }
@@ -64,7 +64,7 @@ pub fn sync_fills(p: &mut Project) {
         let fg = p.tracks[gti].clips[gci].clone();
         if timing(&p.tracks[fti].clips[fci]) != timing(&fg) { take_timing(p.tracks[fti].cm(fci), &fg); }
         if fti >= gti { // the clip moved onto or under its fill's track: the fill gets a new track directly under the clip
-            let c = p.tracks[fti].clips.remove(fci); let tid = p.gen_id("track"); p.tracks.insert(gti, Track { id: tid, clips: vec![c], locked: false, muted: false, name: "blur fill".into() });
+            let c = p.tracks[fti].clips.remove(fci); let tid = p.gen_id("track"); p.tracks.insert(gti, Track { id: tid, clips: vec![c], locked: false, muted: false, solo: false, name: "blur fill".into() });
             drop_if_empty(p, fti + 1); }
     }
 }
@@ -90,7 +90,7 @@ pub fn commands() -> Vec<Command> { vec![
                 return Ok(json!({"removed": 1, "fill_clip_id": fid, "track_removed": dropped})); }
             let effects = vec![fx(&mut ss.project, "blur", "radius", blur, &cid), fx(&mut ss.project, "exposure", "stops", -dim, &cid)];
             let (fti, fci, created) = match find_fill(&ss.project, &fg) { Some((t, c)) => (t, c, false), None => {
-                let tid = ss.project.gen_id("track"); ss.project.tracks.insert(ti, Track { id: tid, clips: vec![], locked: false, muted: false, name: "blur fill".into() });
+                let tid = ss.project.gen_id("track"); ss.project.tracks.insert(ti, Track { id: tid, clips: vec![], locked: false, muted: false, solo: false, name: "blur fill".into() });
                 let mut c = fg.clone(); c.id = ss.project.gen_id("clip"); c.transition_in = None; c.mask = None; c.motion_path = None; c.echo = None; c.text_fx = None; c.corners = None; c.parent = None; c.audio.mute = true;
                 ss.project.tracks[ti].clips.push(std::sync::Arc::new(c)); (ti, 0, true) } };
             let c = ss.project.tracks[fti].cm(fci); c.effects = effects;

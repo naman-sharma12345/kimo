@@ -75,7 +75,7 @@ pub fn build(p: &Project, f_start: u64, f_end: u64, chunk_frames: u64, include_a
     for (ti, t) in p.tracks.iter().enumerate() { for (ci, c) in t.clips.iter().enumerate() {
         let (dep, parts, files) = clip_parts(p, c, &mut ctx, 0); ctx.clip_hash.insert(c.id.clone(), dep.clone());
         for f in &files { asset_hashes.insert(f.0.clone(), (f.1.clone(), f.2)); }
-        clips.insert(c.id.clone(), json!({"dep": dep, "parts": parts, "files": files.iter().map(|f| json!({"ref": f.0, "hash": f.1})).collect::<Vec<_>>(), "track": t.id, "muted": t.muted}));
+        clips.insert(c.id.clone(), json!({"dep": dep, "parts": parts, "files": files.iter().map(|f| json!({"ref": f.0, "hash": f.1})).collect::<Vec<_>>(), "track": t.id, "muted": t.muted, "effective_muted": crate::model::effective_mute(&p.tracks, t)}));
         order.push((ti, ci, c.id.clone(), c.start, c.start + c.duration));
     } }
     let settings = settings_value(p); let sh = deps::sha256_hex(canon(&json!([settings, p.width, p.height, p.fps, include_audio])).as_bytes());

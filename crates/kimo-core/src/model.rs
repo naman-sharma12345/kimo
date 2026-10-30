@@ -173,8 +173,20 @@ fn d_center() -> [f64; 2] { [0.5, 0.5] }
 fn d_ease() -> String { "in_out".into() } fn d_soft() -> f64 { 0.08 } fn d_one() -> f64 { 1.0 } fn d_count() -> f64 { 10.0 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Track { pub id: String, pub clips: Vec<std::sync::Arc<Clip>>, #[serde(default)] pub locked: bool, #[serde(default)] pub muted: bool, #[serde(default)] pub name: String }
+pub struct Track { pub id: String, pub clips: Vec<std::sync::Arc<Clip>>, #[serde(default)] pub locked: bool, #[serde(default)] pub muted: bool, #[serde(default)] pub solo: bool, #[serde(default)] pub name: String }
 impl Track { pub fn cm(&mut self, i: usize) -> &mut Clip { std::sync::Arc::make_mut(&mut self.clips[i]) } }
+
+/// v7.4: solo overrides mute project-wide (standard NLE behaviour -- Premiere/Resolve/Reaper all do this):
+/// when any track in the project is soloed, every non-soloed track is effectively muted regardless of its
+/// own `muted` flag, and a soloed track plays even if its own `muted` happens to be true (solo wins). With
+/// no track soloed, a track's own `muted` flag is the whole answer. Centralised here so every call site
+/// that used to read `t.muted` directly (audio render, auto_captions' speech gather, director_tools'
+/// broll/pacing/hook scanners, lint_frame's visual checks, export_manifest's audit) applies solo the same
+/// way instead of five subtly different reimplementations.
+pub fn effective_mute(tracks: &[Track], t: &Track) -> bool {
+    let any_solo = tracks.iter().any(|x| x.solo);
+    if any_solo { !t.solo } else { t.muted }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Asset { #[serde(default,skip_serializing_if="Option::is_none")] pub origin:Option<String>, #[serde(default,skip_serializing_if="Option::is_none")] pub hash:Option<String>, #[serde(default,skip_serializing_if="Option::is_none")] pub kind:Option<String>, pub id: String, pub path: String, pub width: u32, pub height: u32, pub duration: f64, pub fps: f64,
