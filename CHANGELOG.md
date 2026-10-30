@@ -4,6 +4,72 @@
 
 ## Unreleased
 
+## v7.2.0 (2026-10-30)
+
+Naman asked to keep shipping new editor features; partway through, steered toward favoring
+"agent-superior" features -- things that make an AI driving kimo through MCP alone, with no GUI and no
+human eye on the monitor, better able to do a full professional edit, over GUI-parity features. Audited
+the registry (501 tools before this session's growth) and FEATURES.md first: several planned candidates
+turned out to already exist under other names once checked (`review_export` already did most of what a
+planned `export_qc` would have; `get_curve`/`move_key`/`remove_key` already existed before
+`list_keyframes`/`remove_keyframe` would have duplicated them; `find_assets` already had duration/fps/
+size before `asset_info` would have duplicated it) -- extended instead of duplicated in each case. The 8
+features shipped, each with its own commit:
+
+- New `validate_timeline`: a structural health check (gaps, overlaps, zero/negative-duration clips,
+  negative starts) independent of `lint_edit` (platform/export-readiness) and `list_dependencies`
+  (missing media) -- the one structural check neither of those already does. Read-only. 10 new tests.
+  Tools: 498 -> 499.
+- `get_curve`/`move_key`/`remove_key` grow an optional `effect_id` to reach keyframes on an effect's own
+  params, not just a clip's transform properties (backward compatible); new `list_animated_properties`
+  discovers what's keyframed on a clip without already knowing the property name. 11 new tests. Tools:
+  499 -> 500.
+- New `find_by_loudness`: whole-project loudness query in one call (Naman's own example: "all clips under
+  -20 LUFS"), reusing the existing `measure_loudness` per clip via `dispatch_nested` rather than
+  reimplementing loudness measurement. 8 new tests. Tools: 500 -> 501.
+- `find_assets` grows into a shot list: `kind`/`hash`/`origin` (already on the `Asset` model, just
+  unsurfaced), a new `used_by_clips` reverse-lookup count, and an opt-in `probe_audio` flag for
+  `has_audio` (reuses `audio::source_info`, default off so the common call stays cheap). 5 new tests.
+  Tool count unchanged (501) -- an extension, not a new tool.
+- New `self_review`: one-call orchestration of `lint_edit` + `validate_timeline` + `list_dependencies`,
+  correlating every source's flagged moments into one merged report instead of calling three tools and
+  matching times up by hand; an optional `path` also renders a `contact_sheet` of what it found, so the
+  report comes with evidence. Pure composition (`dispatch_nested`, no new checking logic); deliberately
+  NOT auto-fix -- `lint_edit`'s own problems already carry the exact fix call each needs, and applying
+  them unasked is outside this tool's scope. 8 new tests. Tools: 501 -> 502.
+- `review_export` grows QC: checked for duplication first and found `review_export` already reports
+  duration/size/width/height/LUFS/peak plus a contact sheet, so a separately-planned `export_qc` would
+  have nearly duplicated it. Added `video_codec`/`audio_codec` (same ffprobe call) and an opt-in
+  `expect_project` that compares the exported file's duration and resolution against what the LIVE
+  project should currently produce (the same max-clip-end technique `lint_edit` uses), catching a stale
+  or wrong-size export; an empty project reports no expectation rather than a false mismatch. Backward
+  compatible. 7 new tests. Tool count unchanged (502).
+- New `explain_cut` (BETA, best-effort): why a clip's incoming cut might exist. Built for an agent with
+  no eye on the monitor -- it can't glance at a cut and judge it the way a human editor would, so this
+  hands it the same evidence instead: the clip's own `transition_in`, nearby timeline markers
+  (`add_marker`/`mark_scene_cuts`) within a configurable window, whether it's the same source asset as
+  the clip before it (a split within one shot vs. a cut to new footage), and whether `detect_cuts` finds
+  a real visual change right at the boundary. Says plainly when the evidence runs out rather than
+  inventing a reason; not a real decision ledger (that would mean threading provenance through every
+  mutating tool). 11 new tests. Tools: 502 -> 503.
+- New `check_color_consistency`: the read-only diagnosis `match_color` (one clip) and `match_shots`
+  (every clip, mutating, uniform) had no counterpart for -- which clips actually disagree in brightness/
+  color before reaching for either fix, or whether a fix afterward actually closed the gap. No new pixel
+  analysis: samples each clip's own midpoint through the existing `get_scopes`, compared against a named
+  `ref_clip_id` or, by default, the checked group's own median. 9 new tests. Tools: 503 -> 504.
+
+69 new TDD tests across the 8 feature commits, plus one small test-fixture fixup caught by this
+release's own full-suite run: `self_review.rs`'s `clean_media_scene` helper built its fixture path from
+a fixed tag, and two different tests sharing it wrote to the exact same path under the full suite's real
+concurrency -- a test-fixture bug, not a `kimo-core` bug; fixed by giving each caller its own tag.
+golden_registry.txt hand-updated at every tool change (498 -> 504 registered tools); goldens
+(golden_frames, golden_registry) green throughout. Full workspace test suite green apart from the two
+pre-existing issues already on record (README tool-count phrasing, out of scope; `director_small`'s
+`lint_edit` timing test, which is sensitive to concurrent CPU load on this machine and passes clean
+every time it's run alone -- confirmed repeatedly during this session). Warning count unchanged (35).
+No push anywhere -- all 8 commits plus this release are local to the `v7` branch.
+
+
 ## v7.1.0 (2026-10-30)
 
 Naman asked for new features added to the local v7 branch. Audited the registry (495 tools) and
