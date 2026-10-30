@@ -20,6 +20,15 @@
   #tool-list { max-height: 160px; overflow-y: auto; font-size: 11px; }
   #tool-list div { padding: 2px 0; cursor: pointer; color: #9cf; }
   #result { white-space: pre-wrap; font-family: monospace; font-size: 11px; background: #111; padding: 6px; border-radius: 4px; max-height: 220px; overflow: auto; }
+  .clip.selected { outline: 2px solid #fd6; }
+  #inspector .fx { border: 1px solid #333; border-radius: 4px; padding: 6px; margin-bottom: 6px; }
+  #inspector .fx-head { display: flex; justify-content: space-between; font-size: 11px; color: #9cf; margin-bottom: 4px; }
+  #inspector .param-row { display: flex; justify-content: space-between; align-items: center; font-size: 11px; margin: 2px 0; }
+  #inspector .param-row input { width: 90px; }
+  #inspector .prop-row { display: flex; justify-content: space-between; align-items: center; font-size: 11px; margin: 2px 0; }
+  #inspector .prop-row input { width: 90px; }
+  #inspector select, #inspector button.small { font-size: 11px; padding: 3px 6px; }
+  #no-selection { font-size: 11px; color: #778; }
 </style>
 </head>
 <body>
@@ -34,6 +43,19 @@
     <section id="timeline" style="margin-top:12px">
       <h2>Timeline</h2>
       <div id="tracks"></div>
+    </section>
+    <section id="inspector" style="margin-top:12px">
+      <h2>Clip &middot; effect params</h2>
+      <div id="no-selection">Click a clip on the timeline to inspect it.</div>
+      <div id="inspector-body" style="display:none">
+        <div style="font-size:12px;margin-bottom:6px"><strong id="insp-name"></strong> <span id="insp-timing" style="color:#889"></span></div>
+        <div id="insp-props"></div>
+        <div id="insp-effects"></div>
+        <div style="margin-top:6px">
+          <select id="insp-add-effect-kind"></select>
+          <button class="small" onclick="addEffectToSelected()">Add effect</button>
+        </div>
+      </div>
     </section>
   </div>
   <section>
@@ -50,22 +72,92 @@
 </main>
 <script>
 let registry = [];
+let effectCatalog = [];
+let selectedClipId = null;
+const pxPerSec = 40;
+
 async function loadTimeline() {
   const r = await fetch('/api/timeline'); const tl = await r.json();
   const el = document.getElementById('tracks'); el.innerHTML = '';
-  const pxPerSec = 40;
   for (const t of tl.tracks) {
     const row = document.createElement('div'); row.className = 'track';
     const label = document.createElement('div'); label.className = 'track-label'; label.textContent = t.name || t.id; row.appendChild(label);
     for (const c of t.clips) {
-      const bar = document.createElement('div'); bar.className = 'clip';
+      const bar = document.createElement('div'); bar.className = 'clip' + (c.id === selectedClipId ? ' selected' : '');
       bar.style.width = Math.max(4, c.duration * pxPerSec) + 'px';
-      bar.title = (c.name || c.id) + ' (' + c.source_kind + ') ' + c.start.toFixed(2) + 's..' + c.end.toFixed(2) + 's';
+      bar.title = (c.name || c.id) + ' (' + c.source_kind + ') ' + c.start.toFixed(2) + 's..' + c.end.toFixed(2) + 's -- click to inspect';
       bar.textContent = c.name || c.source_kind;
+      bar.dataset.clipId = c.id;
+      bar.onclick = () => selectClip(c.id);
       row.appendChild(bar);
     }
     el.appendChild(row);
   }
+}
+
+async function selectClip(id) {
+  selectedClipId = id;
+  document.querySelectorAll('.clip').forEach(el => el.classList.toggle('selected', el.dataset.clipId === id));
+  await loadInspector();
+}
+
+async function loadEffectCatalog() {
+  if (effectCatalog.length) return;
+  const r = await fetch('/api/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tool: 'list_effects', args: {} }) });
+  const v = await r.json();
+  if (v.ok) { effectCatalog = v.result; const sel = document.getElementById('insp-add-effect-kind'); sel.innerHTML = effectCatalog.map(e => `<option value="${e.kind}">${e.kind}</option>`).join(''); }
+}
+
+async function loadInspector() {
+  if (!selectedClipId) { document.getElementById('no-selection').style.display = ''; document.getElementById('inspector-body').style.display = 'none'; return; }
+  await loadEffectCatalog();
+  const r = await fetch('/api/clip?id=' + encodeURIComponent(selectedClipId));
+  if (!r.ok) { selectedClipId = null; document.getElementById('no-selection').textContent = 'that clip is gone.'; document.getElementById('no-selection').style.display = ''; document.getElementById('inspector-body').style.display = 'none'; return; }
+  const c = await r.json();
+  document.getElementById('no-selection').style.display = 'none';
+  document.getElementById('inspector-body').style.display = '';
+  document.getElementById('insp-name').textContent = c.name || c.id;
+  document.getElementById('insp-timing').textContent = c.start.toFixed(2) + 's .. ' + c.end.toFixed(2) + 's (' + c.source_kind + ')';
+
+  const propsEl = document.getElementById('insp-props'); propsEl.innerHTML = '<div style="font-size:11px;color:#9ab;margin:4px 0">properties</div>';
+  for (const [name, value] of Object.entries(c.props)) {
+    const row = document.createElement('div'); row.className = 'prop-row';
+    row.innerHTML = `<span>${name}</span>`;
+    const input = document.createElement('input'); input.type = 'number'; input.step = 'any'; input.value = value;
+    input.onchange = () => setProperty(c.id, name, parseFloat(input.value));
+    row.appendChild(input); propsEl.appendChild(row);
+  }
+
+  const fxEl = document.getElementById('insp-effects'); fxEl.innerHTML = '<div style="font-size:11px;color:#9ab;margin:4px 0">effects (in order)</div>';
+  for (const fx of c.effects) {
+    const box = document.createElement('div'); box.className = 'fx';
+    const head = document.createElement('div'); head.className = 'fx-head';
+    head.innerHTML = `<span>${fx.kind}</span>`;
+    const rm = document.createElement('button'); rm.className = 'small'; rm.textContent = 'remove'; rm.onclick = () => removeEffect(c.id, fx.id);
+    head.appendChild(rm); box.appendChild(head);
+    for (const [pname, pval] of Object.entries(fx.params)) {
+      const row = document.createElement('div'); row.className = 'param-row';
+      row.innerHTML = `<span>${pname}</span>`;
+      const input = document.createElement('input'); input.type = 'number'; input.step = 'any'; input.value = pval;
+      input.onchange = () => setEffectParam(c.id, fx.id, pname, parseFloat(input.value));
+      row.appendChild(input); box.appendChild(row);
+    }
+    fxEl.appendChild(box);
+  }
+}
+
+async function callApi(tool, args) {
+  const r = await fetch('/api/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tool, args }) });
+  return r.json();
+}
+async function setProperty(clipId, property, value) { await callApi('set_property', { clip_id: clipId, property, value }); loadInspector(); loadTimeline(); }
+async function setEffectParam(clipId, effectId, param, value) { await callApi('set_effect_param', { clip_id: clipId, effect_id: effectId, param, value }); loadInspector(); }
+async function removeEffect(clipId, effectId) { await callApi('remove_effect', { clip_id: clipId, effect_id: effectId }); loadInspector(); }
+async function addEffectToSelected() {
+  if (!selectedClipId) return;
+  const kind = document.getElementById('insp-add-effect-kind').value;
+  await callApi('add_effect', { clip_id: selectedClipId, kind, params: {} });
+  loadInspector();
 }
 async function loadPreview() {
   const t = document.getElementById('t').value;

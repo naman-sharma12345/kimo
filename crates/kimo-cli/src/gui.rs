@@ -31,6 +31,21 @@ pub fn timeline_view_model(ss: &Session) -> Value {
     json!({"width": p.width, "height": p.height, "fps": p.fps, "duration": p.duration(), "track_count": tracks.len(), "tracks": tracks})
 }
 
+/// Full detail for one clip -- the effect-params panel's data: id/name/role/timing, every property's base
+/// value (not its keyframes; this panel edits base values the same way set_property does without a time),
+/// and every effect with its id, kind and params (again base values) so the panel can list and edit them
+/// through the same set_effect_param the tool-invocation panel already exposes generically.
+pub fn clip_detail(ss: &Session, clip_id: &str) -> Option<Value> {
+    let c = ss.project.find_clip(clip_id)?;
+    let props: Value = json!(c.props.iter().map(|(k, p)| (k.clone(), json!(p.base))).collect::<serde_json::Map<_, _>>());
+    let effects: Vec<Value> = c.effects.iter().map(|e| json!({
+        "id": e.id, "kind": e.kind,
+        "params": e.params.iter().map(|(k, p)| (k.clone(), json!(p.base))).collect::<serde_json::Map<_, _>>(),
+        "strings": e.strings,
+    })).collect();
+    Some(json!({"id": c.id, "name": c.name, "role": c.role, "start": c.start, "duration": c.duration, "end": c.start + c.duration, "source_kind": source_kind(c), "props": props, "effects": effects}))
+}
+
 /// Every registered tool, name + first line of its description + mutates, for the tool-invocation panel's
 /// picker (the full schema is available per-tool at GET /api/tool/<name> so the picker stays small).
 pub fn registry_summary() -> Value {
@@ -56,6 +71,11 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
         ("GET", "/") => Response { status: 200, content_type: "text/html; charset=utf-8", body: INDEX_HTML.as_bytes().to_vec() },
         ("GET", "/api/timeline") => { let ss = ss.lock().unwrap(); json_response(200, timeline_view_model(&ss)) }
         ("GET", "/api/registry") => json_response(200, registry_summary()),
+        ("GET", "/api/clip") => { // ?id=<clip_id>
+            let Some(id) = query_param(query, "id") else { return err_response(400, "missing_arg: id") };
+            let ss = ss.lock().unwrap();
+            match clip_detail(&ss, id) { Some(v) => json_response(200, v), None => err_response(404, format!("unknown_clip: no clip '{id}'")) }
+        }
         ("GET", "/api/tool") => { // ?name=<tool>
             let Some(name) = query_param(query, "name") else { return err_response(400, "missing_arg: name") };
             match registry_ref().iter().find(|c| c.name == name) {
@@ -85,7 +105,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
                 Err(e) => json_response(200, json!({"ok": false, "error": e})),
             }
         }
-        (_, "/") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
+        (_, "/") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
         _ => err_response(404, format!("no route for {path}")),
     }
 }
@@ -263,5 +283,50 @@ mod tests {
         assert_eq!(r.status, 404);
         let r2 = handle_request(&ss, "POST", "/api/timeline", "", &[]);
         assert_eq!(r2.status, 405);
+    }
+
+    #[test]
+    fn clip_detail_lists_props_and_effects_with_base_values() {
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        dispatch(&mut ss.lock().unwrap(), "add_effect", &json!({"clip_id": clip_id, "kind": "glow", "params": {"amount": 0.6}})).unwrap();
+        let v = { let s = ss.lock().unwrap(); clip_detail(&s, &clip_id).expect("clip should exist") };
+        assert_eq!(v["id"], clip_id); assert_eq!(v["duration"], 2.0); assert_eq!(v["end"], 2.0); assert_eq!(v["source_kind"], "shape");
+        assert!(v["props"]["opacity"].as_f64().is_some(), "{v}");
+        let effects = v["effects"].as_array().unwrap(); assert_eq!(effects.len(), 1);
+        assert_eq!(effects[0]["kind"], "glow"); assert_eq!(effects[0]["params"]["amount"], 0.6);
+        let s = ss.lock().unwrap(); assert!(clip_detail(&s, "not_a_real_clip").is_none());
+    }
+
+    #[test]
+    fn handle_request_serves_clip_detail_and_404s_an_unknown_id() {
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        let r = handle_request(&ss, "GET", "/api/clip", &format!("id={clip_id}"), &[]);
+        assert_eq!(r.status, 200);
+        let v: Value = serde_json::from_slice(&r.body).unwrap();
+        assert_eq!(v["id"], clip_id);
+        let r2 = handle_request(&ss, "GET", "/api/clip", "id=nope", &[]);
+        assert_eq!(r2.status, 404);
+        let r3 = handle_request(&ss, "GET", "/api/clip", "", &[]);
+        assert_eq!(r3.status, 400);
+        let r4 = handle_request(&ss, "POST", "/api/clip", "", &[]);
+        assert_eq!(r4.status, 405);
+    }
+
+    #[test]
+    fn the_effect_params_panel_round_trips_through_the_same_api_call_path() {
+        // The panel itself is HTML/JS (no DOM in this test binary); what's tested here is the exact
+        // sequence it drives: fetch clip detail, edit a param through /api/call, refetch and see it moved.
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        let eid = { let mut s = ss.lock().unwrap(); dispatch(&mut s, "add_effect", &json!({"clip_id": clip_id, "kind": "blur", "params": {"radius": 2.0}})).unwrap()["effect_id"].as_str().unwrap().to_string() };
+        let before = { let s = ss.lock().unwrap(); clip_detail(&s, &clip_id).unwrap() };
+        assert_eq!(before["effects"][0]["params"]["radius"], 2.0);
+        let body = serde_json::to_vec(&json!({"tool": "set_effect_param", "args": {"clip_id": clip_id, "effect_id": eid, "param": "radius", "value": 9.0}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        assert_eq!(r.status, 200); let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true);
+        let after = { let s = ss.lock().unwrap(); clip_detail(&s, &clip_id).unwrap() };
+        assert_eq!(after["effects"][0]["params"]["radius"], 9.0, "the panel's own round trip actually moved the param: {after}");
     }
 }
