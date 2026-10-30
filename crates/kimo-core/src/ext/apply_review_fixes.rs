@@ -74,17 +74,40 @@ fn apply_review_fixes(ss: &mut Session, a: &Value) -> Result<Value, String> {
         }
     }
 
+    // A fix can solve the problem it targets and create a different one -- a caption moved off a subject
+    // can land squarely on a title that was already there (the v7.6Q benchmark's own finding: a
+    // text_over_subject fix pushed a caption up into a hook title neither lint_edit nor this tool had
+    // checked against each other). Not applicable to dry_run (nothing moved) or when nothing was applied
+    // (nothing could have changed). A fresh lint_edit pass after applying is the only honest way to know;
+    // comparing to the pre-fix problem list (by code + clip_id) separates what a fix actually introduced
+    // from what was already there and simply wasn't this fix's to solve.
+    let mut lint_edit_after: Option<Value> = None;
+    let mut introduced_problems: Vec<Value> = vec![];
+    if !dry_run && !applied.is_empty() {
+        if let Ok(fresh) = dispatch_nested(ss, "lint_edit", &json!({"platform": platform})) {
+            let before_keys: std::collections::HashSet<(String, String)> = problems.iter()
+                .map(|p| (p["code"].as_str().unwrap_or("").to_string(), p.get("clip_id").and_then(|v| v.as_str()).unwrap_or("").to_string())).collect();
+            for p in fresh["problems"].as_array().cloned().unwrap_or_default() {
+                let key = (p["code"].as_str().unwrap_or("").to_string(), p.get("clip_id").and_then(|v| v.as_str()).unwrap_or("").to_string());
+                if !before_keys.contains(&key) { introduced_problems.push(p); }
+            }
+            lint_edit_after = Some(fresh);
+        }
+    }
+
     Ok(json!({
         "ok": failed.is_empty(),
         "dry_run": dry_run,
         "problems_seen": problems.len(),
         "applied": applied, "skipped_manual": skipped_manual, "failed": failed,
         "lint_edit": lint,
-        "note": "one pass over lint_edit's own problems, in the order lint_edit returned them; a fix is applied only when it is a concrete tool call with no placeholder value -- anything needing a human judgment call is reported in skipped_manual, not guessed at",
+        "lint_edit_after": lint_edit_after,
+        "introduced_problems": introduced_problems,
+        "note": "one pass over lint_edit's own problems, in the order lint_edit returned them; a fix is applied only when it is a concrete tool call with no placeholder value -- anything needing a human judgment call is reported in skipped_manual, not guessed at. When anything was applied, lint_edit runs once more and introduced_problems lists anything new a fix created that wasn't a problem before (e.g. moving a caption off a subject and onto another title) -- check it, this tool does not chase it automatically.",
     }))
 }
 
 pub fn commands() -> Vec<Command> { vec![
-    Command { name: "apply_review_fixes", description: "Apply lint_edit's (and so self_review's) machine-actionable fixes in one batch call, instead of reading each problem and calling its fix by hand. Runs lint_edit itself (platform passes through, default none). For each problem: if `fix` names a concrete tool call with no placeholder value (lint_edit marks a human-fill-in value like \"<the text without those characters>\" this way), it is dispatched, including a chained `then` step when the primary succeeds; a fix needing a human decision (a placeholder, an \"or\" alternative, or no fix at all) is reported under skipped_manual with why, never guessed at. `codes` (optional) limits which problem codes to act on, e.g. [\"transition_from_black\"]; default every code lint_edit returns. `dry_run` reports exactly what would be applied/skipped without mutating anything -- run this first. One fix failing (e.g. a clip an earlier fix already removed) is recorded in `failed` and does not stop the rest. Returns problems_seen, applied, skipped_manual, failed and the full lint_edit result for context.", mutates: true,
+    Command { name: "apply_review_fixes", description: "Apply lint_edit's (and so self_review's) machine-actionable fixes in one batch call, instead of reading each problem and calling its fix by hand. Runs lint_edit itself (platform passes through, default none). For each problem: if `fix` names a concrete tool call with no placeholder value (lint_edit marks a human-fill-in value like \"<the text without those characters>\" this way), it is dispatched, including a chained `then` step when the primary succeeds; a fix needing a human decision (a placeholder, an \"or\" alternative, or no fix at all) is reported under skipped_manual with why, never guessed at. `codes` (optional) limits which problem codes to act on, e.g. [\"transition_from_black\"]; default every code lint_edit returns. `dry_run` reports exactly what would be applied/skipped without mutating anything -- run this first. One fix failing (e.g. a clip an earlier fix already removed) is recorded in `failed` and does not stop the rest. Returns problems_seen, applied, skipped_manual, failed and the full lint_edit result for context. When anything was applied (not dry_run), lint_edit runs once more and introduced_problems lists anything new a fix created -- a caption moved off a subject can land on a title that was already there, and this is the one honest way to see that happened.", mutates: true,
         schema: obj(vec![("platform", s("passed through to lint_edit: tiktok|reels|shorts|none, default none")), ("codes", json!({"type":"array","items":{"type":"string"},"description":"only act on these lint_edit problem codes; default: all"})), ("dry_run", json!({"type":"boolean","description":"report what would be applied/skipped, mutate nothing"}))], &[]), run: apply_review_fixes },
 ] }

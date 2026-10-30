@@ -93,3 +93,67 @@ fn portrait() -> Session { let mut ss = Session::new(); call(&mut ss, "project_s
     assert_eq!(r["ok"], true, "{r}");
     assert_eq!(r["problems_seen"], json!(0), "{r}");
 }
+
+/// The v7.6Q benchmark finding: text_over_subject's own fix moves a caption off a bright/salient object,
+/// but nothing checks whether that new spot already has another title sitting on it. A second apply_review_fixes
+/// pass (lint_edit run again after applying) must say so in introduced_problems -- not silently leave two
+/// text boxes stacked on screen together.
+#[test] fn a_fix_that_creates_a_new_overlap_is_reported_in_introduced_problems() {
+    fn spot_png(name: &str, w: usize, h: usize) -> String {
+        let p = dir().join(name); if p.exists() { return p.to_string_lossy().into_owned(); }
+        use std::io::Write;
+        let mut st: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut ch = Command::new("ffmpeg").args(["-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", &format!("{w}x{h}"), "-i", "-", "-frames:v", "1", p.to_str().unwrap()]).stdin(Stdio::piped()).spawn().expect("ffmpeg");
+        { let mut si = ch.stdin.take().unwrap(); let mut o = Vec::with_capacity(w * h * 3);
+            for y in 0..h { for x in 0..w {
+                st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); let grain = (st >> 61) as i32 - 4;
+                let d = ((x as f64 + 0.5 - (w as f64 / 2.0)).powi(2) + (y as f64 + 0.5 - (h as f64 * 0.75)).powi(2)).sqrt();
+                let vv = if d <= 46.0 { 255u8 } else { (128 + grain) as u8 };
+                o.extend_from_slice(&[vv, vv, vv]); } }
+            si.write_all(&o).unwrap(); }
+        assert!(ch.wait().unwrap().success()); p.to_string_lossy().into_owned()
+    }
+    let mut ss = portrait(); // 360x640
+    let mt = sid(&call(&mut ss, "add_track", json!({})), "track_id");
+    // a bright salient spot in the LOWER half (y = 0.75 * h) -- text_over_subject's fix pushes text toward
+    // the TOP safe area to get clear of it (see director_tools.rs: dy picks top_lim when peak_y is below).
+    let a = sid(&call(&mut ss, "import_media", json!({"path": spot_png("arf_subject.png", 360, 640)})), "asset_id");
+    call(&mut ss, "add_clip", json!({"track_id": mt, "source_type": "media", "asset_id": a, "start": 0.0, "duration": 2.0, "fit": "cover"}));
+    let tt = sid(&call(&mut ss, "add_track", json!({})), "track_id");
+    // default position (y=0, canvas centre) -- not yet over the spot in the lower half, so this one clip
+    // alone would not trigger text_over_subject; nudge it down onto the spot.
+    let over_spot = sid(&call(&mut ss, "add_text", json!({"track_id": tt, "text": "CAPTION HERE", "start": 0.0, "duration": 2.0, "size": 70})), "clip_id");
+    call(&mut ss, "set_property", json!({"clip_id": over_spot, "property": "y", "value": 160.0}));
+
+    // dry_run first to read exactly where the real fix would move it, with no second clip in the way yet.
+    let probe = call(&mut ss, "apply_review_fixes", json!({"dry_run": true, "codes": ["text_over_subject"]}));
+    let hit = probe["applied"].as_array().unwrap().iter().find(|e| e["code"] == json!("text_over_subject"))
+        .unwrap_or_else(|| panic!("fixture should trigger text_over_subject: {probe}"));
+    let target_y = hit["would_call"]["args"]["value"].as_f64().unwrap_or_else(|| panic!("expected a set_property y fix: {hit}"));
+
+    // now place a second, independent title exactly where the fix is about to move the first one, overlapping in time.
+    let tt2 = sid(&call(&mut ss, "add_track", json!({})), "track_id");
+    let blocker = sid(&call(&mut ss, "add_text", json!({"track_id": tt2, "text": "HOOK TITLE", "start": 0.0, "duration": 2.0, "size": 70})), "clip_id");
+    call(&mut ss, "set_property", json!({"clip_id": blocker, "property": "y", "value": target_y}));
+
+    let r = call(&mut ss, "apply_review_fixes", json!({"codes": ["text_over_subject"]}));
+    assert_eq!(r["ok"], true, "the apply itself should still succeed: {r}");
+    assert!(r["lint_edit_after"].is_object(), "a fix was applied; lint_edit_after should be the fresh re-check: {r}");
+    let introduced: Vec<&str> = r["introduced_problems"].as_array().unwrap().iter().filter_map(|p| p["code"].as_str()).collect();
+    assert!(introduced.contains(&"text_overlap"), "moving the caption onto the blocker should show up as a newly introduced text_overlap: {r}");
+    let overlap = r["introduced_problems"].as_array().unwrap().iter().find(|p| p["code"] == json!("text_overlap")).unwrap();
+    assert!([overlap["clip_id"].as_str(), overlap["other_clip_id"].as_str()].contains(&Some(blocker.as_str())), "the introduced overlap should name the blocker clip: {r}");
+}
+
+/// dry_run never re-checks (nothing was actually moved, so a recheck would just repeat the same scan).
+#[test] fn dry_run_never_reruns_lint_edit_after() {
+    let mut ss = portrait(); let t = sid(&call(&mut ss, "add_track", json!({})), "track_id");
+    let a = sid(&call(&mut ss, "import_media", json!({"path": broll("arf_dry.mp4", 2.0, "")})), "asset_id");
+    let b = sid(&call(&mut ss, "import_media", json!({"path": broll("arf_dry2.mp4", 2.0, "hue=h=90")})), "asset_id");
+    call(&mut ss, "add_clip", json!({"track_id": t, "source_type": "media", "asset_id": a, "start": 0, "duration": 2, "fit": "cover"}));
+    let c2 = sid(&call(&mut ss, "add_clip", json!({"track_id": t, "source_type": "media", "asset_id": b, "start": 2, "duration": 2, "fit": "cover"})), "clip_id");
+    call(&mut ss, "add_transition", json!({"clip_id": c2, "kind": "crossfade", "duration": 0.5}));
+    let r = call(&mut ss, "apply_review_fixes", json!({"dry_run": true}));
+    assert!(r["lint_edit_after"].is_null(), "dry_run must not trigger a recheck: {r}");
+    assert_eq!(r["introduced_problems"], json!([]), "{r}");
+}

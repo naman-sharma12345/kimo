@@ -122,11 +122,20 @@ fn auto_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
     stages.insert("audio".into(), audio.clone());
 
     // 9. Let the edit catch its own remaining mistakes: lint_edit's own checks, auto-applying whatever has
-    // a concrete fix (no guessing at anything that needs a human call).
+    // a concrete fix (no guessing at anything that needs a human call). apply_review_fixes re-checks with a
+    // fresh lint_edit pass after applying anything, so a fix that solves one problem and creates a new one
+    // (the real bug this chain exists to prevent -- a caption fix landing on the hook title) is caught here
+    // rather than silently shipped.
     let fixes = call(ss, "apply_review_fixes", &json!({"platform": platform}))?;
-    let lint_ok = fixes["lint_edit"]["ok"].as_bool().unwrap_or(true);
-    let remaining: Vec<Value> = fixes["lint_edit"]["problems"].as_array().cloned().unwrap_or_default().into_iter()
-        .filter(|p| !fixes["applied"].as_array().map(|v| v.iter().any(|f| f["code"] == p["code"] && f["clip_id"] == p["clip_id"])).unwrap_or(false)).collect();
+    let after = if fixes["lint_edit_after"].is_object() { &fixes["lint_edit_after"] } else { &fixes["lint_edit"] };
+    let lint_ok = after["ok"].as_bool().unwrap_or(true);
+    let applied_keys: Vec<(Option<&str>, Option<&str>)> = fixes["applied"].as_array().map(|v| v.iter().map(|f| (f["code"].as_str(), f["clip_id"].as_str())).collect()).unwrap_or_default();
+    let mut remaining: Vec<Value> = after["problems"].as_array().cloned().unwrap_or_default().into_iter()
+        .filter(|p| !applied_keys.contains(&(p["code"].as_str(), p.get("clip_id").and_then(|v| v.as_str())))).collect();
+    if let Some(introduced) = fixes["introduced_problems"].as_array() {
+        for p in introduced { if !remaining.iter().any(|r| r["code"] == p["code"] && r["clip_id"] == p["clip_id"]) { remaining.push(p.clone()); } }
+        if !introduced.is_empty() { warnings.push(format!("a fix introduced {} new problem(s) of its own (see remaining_problems) -- not auto-chased, worth a look", introduced.len())); }
+    }
     stages.insert("review".into(), fixes);
 
     Ok(json!({
