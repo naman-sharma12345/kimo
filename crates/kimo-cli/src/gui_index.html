@@ -47,6 +47,14 @@
   .track.locked .clip { cursor: not-allowed; opacity: .55; }
   .clip .waveform { position: absolute; inset: 0; z-index: -1; pointer-events: none; opacity: .6; }
   .clip .waveform svg { display: block; }
+  #fx-browser { margin-top: 6px; }
+  #fx-browser input { width: 100%; box-sizing: border-box; margin-bottom: 4px; }
+  #fx-browser-list { max-height: 140px; overflow-y: auto; font-size: 11px; border: 1px solid #333; border-radius: 4px; }
+  #fx-browser-list .fx-entry { padding: 3px 6px; cursor: pointer; display: flex; justify-content: space-between; }
+  #fx-browser-list .fx-entry:hover { background: #2a2a33; }
+  #fx-browser-list .fx-entry .fx-kind { color: #eee; }
+  #fx-browser-list .fx-entry .fx-type { color: #789; font-size: 10px; text-transform: uppercase; }
+  #fx-browser-list .fx-empty { padding: 6px; color: #667; }
 </style>
 </head>
 <body>
@@ -76,9 +84,10 @@
         <div style="font-size:12px;margin-bottom:6px"><strong id="insp-name"></strong> <span id="insp-timing" style="color:#889"></span></div>
         <div id="insp-props"></div>
         <div id="insp-effects"></div>
-        <div style="margin-top:6px">
-          <select id="insp-add-effect-kind"></select>
-          <button class="small" onclick="addEffectToSelected()">Add effect</button>
+        <div id="fx-browser">
+          <div style="font-size:11px;color:#9ab;margin:4px 0">effects &amp; transitions</div>
+          <input id="fx-browser-filter" placeholder="filter effects/transitions..." oninput="renderFxBrowser()">
+          <div id="fx-browser-list"></div>
         </div>
       </div>
     </section>
@@ -112,10 +121,12 @@
 <script src="/gui_trackstate.js"></script>
 <script src="/gui_multiselect.js"></script>
 <script src="/gui_waveform.js"></script>
+<script src="/gui_fxbrowser.js"></script>
 <script>
 let registry = [];
 let projectFps = 30; // set from /api/timeline; used by J/K/L's frame step
 let effectCatalog = [];
+let transitionKinds = []; // v7.4: list_transitions' kinds, cached alongside effectCatalog for the fx browser
 let selectedClipId = null;
 let selectedClipIds = []; // v7.4 multi-select: every selected clip id, newest last; selectedClipId mirrors its last element
 let pxPerSec = (window.kimoZoom ? window.kimoZoom.DEFAULT_PX_PER_SEC : 40); // v7.3: mutable for zoom in/out (bounds live in gui_zoom.js)
@@ -478,10 +489,37 @@ async function selectClip(id, ev) {
 }
 
 async function loadEffectCatalog() {
-  if (effectCatalog.length) return;
-  const r = await fetch('/api/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tool: 'list_effects', args: {} }) });
-  const v = await r.json();
-  if (v.ok) { effectCatalog = v.result; const sel = document.getElementById('insp-add-effect-kind'); sel.innerHTML = effectCatalog.map(e => `<option value="${e.kind}">${e.kind}</option>`).join(''); }
+  if (effectCatalog.length) { renderFxBrowser(); return; }
+  const [ev, tv] = await Promise.all([callApi('list_effects', {}), callApi('list_transitions', {})]);
+  if (ev.ok) effectCatalog = ev.result;
+  if (tv.ok) transitionKinds = tv.result;
+  renderFxBrowser();
+}
+
+// v7.4: the effects/transitions browser -- one searchable list combining list_effects' catalog and
+// list_transitions' kinds (kimoFxBrowser.buildEntries), filtered by the box above it
+// (kimoFxBrowser.filterEntries), each entry clickable to add itself to the selected clip
+// (kimoFxBrowser.addArgsFor -> the exact {tool, args} to call).
+function renderFxBrowser() {
+  const listEl = document.getElementById('fx-browser-list'); if (!listEl) return;
+  const entries = kimoFxBrowser.buildEntries(effectCatalog, transitionKinds);
+  const q = document.getElementById('fx-browser-filter').value;
+  const shown = kimoFxBrowser.filterEntries(entries, q);
+  listEl.innerHTML = '';
+  if (shown.length === 0) { listEl.innerHTML = '<div class="fx-empty">no match</div>'; return; }
+  for (const entry of shown) {
+    const row = document.createElement('div'); row.className = 'fx-entry'; row.title = entry.description || entry.kind;
+    row.innerHTML = `<span class="fx-kind">${entry.kind}</span><span class="fx-type">${entry.type}</span>`;
+    row.onclick = () => addFxToSelected(entry);
+    listEl.appendChild(row);
+  }
+}
+async function addFxToSelected(entry) {
+  if (!selectedClipId) return;
+  const call = kimoFxBrowser.addArgsFor(entry, selectedClipId);
+  const v = await callApi(call.tool, call.args);
+  if (!v.ok) { alert(typeof v.error === 'string' ? v.error : `could not add ${entry.kind}`); return; }
+  await loadInspector();
 }
 
 async function loadInspector() {
@@ -529,12 +567,6 @@ async function callApi(tool, args) {
 async function setProperty(clipId, property, value) { await callApi('set_property', { clip_id: clipId, property, value }); loadInspector(); loadTimeline(); }
 async function setEffectParam(clipId, effectId, param, value) { await callApi('set_effect_param', { clip_id: clipId, effect_id: effectId, param, value }); loadInspector(); }
 async function removeEffect(clipId, effectId) { await callApi('remove_effect', { clip_id: clipId, effect_id: effectId }); loadInspector(); }
-async function addEffectToSelected() {
-  if (!selectedClipId) return;
-  const kind = document.getElementById('insp-add-effect-kind').value;
-  await callApi('add_effect', { clip_id: selectedClipId, kind, params: {} });
-  loadInspector();
-}
 async function loadPreview() {
   const t = document.getElementById('t').value;
   currentT = parseFloat(t) || 0;

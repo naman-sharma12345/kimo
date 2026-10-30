@@ -1364,8 +1364,7 @@ Real gaps found and built this pass:
   plain delete)
 - [x] kimo gui: track mute/solo/lock controls -- feature 5, now that track_mute_solo exists to wire to
 - [x] kimo gui: audio waveforms on clips -- feature 7
-- [ ] kimo gui: a visible effects/transitions browser applying to the selected clip (today's inspector has a
-  bare effect-kind <select>, no transitions, no search/categories -- the brief's "browser" bar is higher)
+- [x] kimo gui: a visible effects/transitions browser applying to the selected clip -- feature 8
 
 ## v7.4 feature 1/8: track_mute_solo
 
@@ -1498,3 +1497,26 @@ ffmpeg-generated tone) gets back a real `<svg>...<path>...</svg>` waveform throu
 shape clip gets a clean tool error rather than a crash, and `timeline_view_model` reports `media` as the
 source kind the GUI keys its fetch decision on. All 55 pre-existing kimo-cli tests stayed green (60 total
 now).
+
+## v7.4 feature 8/8: kimo gui effects/transitions browser
+
+- [x] `kimo gui`: the inspector's bare effect-kind `<select>` is now a real searchable browser combining
+  BOTH catalogs that exist on the engine side -- `list_effects` (object entries with description/params) and
+  `list_transitions` (a bare array of kind strings, a genuinely different shape, not papered over). A filter
+  box narrows the combined list by kind or description (so "screen" finds `chroma_key` without knowing its
+  exact name); clicking an effect calls `add_effect` with empty params (the existing per-param inspector
+  controls set real values afterward, unchanged); clicking a transition calls `add_transition` with a 1s
+  default duration. Honest, stated gap: duration is fixed at add time -- there is no `set_transition_param`
+  cousin of `set_effect_param` yet to edit it afterward from the GUI, so this is not pretended away.
+- `gui_fxbrowser.js`: pure JS, no DOM -- `buildEntries(effectsCatalog, transitionKinds)` (flattens both
+  catalogs into one `{type, kind, description}` list), `filterEntries(entries, query)`, `addArgsFor(entry,
+  clipId)` (the exact `{tool, args}` call). Served at `GET /gui_fxbrowser.js`, same bytes the browser and the
+  Node test run.
+
+12 new headless Node tests (`tests/js/fxbrowser_test.js`) plus 4 new Rust tests: the JS file served
+byte-identical to disk, the index page wires up the file and its functions by name, `list_effects` and
+`list_transitions` are both reachable through `/api/call` in their two real (different) shapes, and a real
+`add_transition` call through `/api/call` actually sets `transition_in` on the clip. All 60 pre-existing
+kimo-cli tests stayed green (64 total now). Fixed a filesystem-fixture race along the way: two waveform tests
+(feature 7) shared one PID-keyed temp dir name and could stomp each other's in-flight ffmpeg write when run
+on parallel test threads -- now carries a per-call counter too.

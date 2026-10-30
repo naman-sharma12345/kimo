@@ -87,6 +87,11 @@ const MULTISELECT_JS: &str = include_str!("gui_multiselect.js");
 /// same way for the same reason -- gui_index.html's timeline renderer and tests/js/waveform_test.js (Node)
 /// run the exact same bytes.
 const WAVEFORM_JS: &str = include_str!("gui_waveform.js");
+/// v7.4: the effects/transitions browser helper (combines list_effects' and list_transitions' two different
+/// catalog shapes into one searchable list, filters it, builds the add call), served the same way for the
+/// same reason -- gui_index.html's fx-browser panel and tests/js/fxbrowser_test.js (Node) run the exact same
+/// bytes.
+const FXBROWSER_JS: &str = include_str!("gui_fxbrowser.js");
 
 /// Parses `?t=1.5` (or any single-key query) out of a raw query string; used for /preview.png's `t`.
 fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
@@ -105,6 +110,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
         ("GET", "/gui_trackstate.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: TRACKSTATE_JS.as_bytes().to_vec() },
         ("GET", "/gui_multiselect.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: MULTISELECT_JS.as_bytes().to_vec() },
         ("GET", "/gui_waveform.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: WAVEFORM_JS.as_bytes().to_vec() },
+        ("GET", "/gui_fxbrowser.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: FXBROWSER_JS.as_bytes().to_vec() },
         ("GET", "/api/timeline") => { let ss = ss.lock().unwrap(); json_response(200, timeline_view_model(&ss)) }
         ("GET", "/api/registry") => json_response(200, registry_summary()),
         ("GET", "/api/clip") => { // ?id=<clip_id>
@@ -141,7 +147,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
                 Err(e) => json_response(200, json!({"ok": false, "error": e})),
             }
         }
-        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/gui_zoom.js") | (_, "/gui_trackstate.js") | (_, "/gui_multiselect.js") | (_, "/gui_waveform.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
+        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/gui_zoom.js") | (_, "/gui_trackstate.js") | (_, "/gui_multiselect.js") | (_, "/gui_waveform.js") | (_, "/gui_fxbrowser.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
         _ => err_response(404, format!("no route for {path}")),
     }
 }
@@ -997,11 +1003,17 @@ mod tests {
     }
 
     /// A one-track project with a real audible media clip (an ffmpeg-generated tone), for waveform tests --
-    /// the same fixture shape feature 1's mute test used.
+    /// the same fixture shape feature 1's mute test used. The dir name carries a per-call counter, not just
+    /// the test binary's one shared PID: two tests calling this fixture run on different threads in the
+    /// same process (cargo test's default), and a PID-only name raced one test's remove_dir_all/create_dir
+    /// against the other's in-flight ffmpeg write of the exact same path.
     fn media_clip_fixture() -> (Arc<Mutex<Session>>, String) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
         let mut ss = Session::new();
         dispatch(&mut ss, "project_set", &json!({"width": 64, "height": 36, "fps": 25})).unwrap();
-        let dir = std::env::temp_dir().join(format!("kimo_gui_waveform_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kimo_gui_waveform_{}_{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir); std::fs::create_dir_all(&dir).unwrap();
         let wav = dir.join("tone.wav");
         let status = std::process::Command::new("ffmpeg").args(["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-ar", "48000"]).arg(&wav).status().unwrap();
@@ -1037,6 +1049,50 @@ mod tests {
         let r = handle_request(&ss, "POST", "/api/call", "", &body);
         let v: Value = serde_json::from_slice(&r.body).unwrap();
         assert_eq!(v["ok"], false, "a silent clip should report a clean tool error, not a crash: {v}");
+    }
+    // ---- v7.4: effects/transitions browser ----
+
+    #[test]
+    fn served_fxbrowser_js_matches_the_file_on_disk() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_fxbrowser.js", "", &[]);
+        assert_eq!(r.status, 200); assert_eq!(r.content_type, "application/javascript; charset=utf-8");
+        assert_eq!(r.body, include_bytes!("gui_fxbrowser.js").to_vec());
+    }
+
+    #[test]
+    fn the_index_page_wires_up_the_fx_browser() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["gui_fxbrowser.js", "kimoFxBrowser.buildEntries", "kimoFxBrowser.filterEntries", "kimoFxBrowser.addArgsFor", "function renderFxBrowser", "function addFxToSelected", "fx-browser-filter", "fx-browser-list"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn list_effects_and_list_transitions_are_both_reachable_through_api_call_for_the_browser_to_combine() {
+        let ss = fixture();
+        let er = handle_request(&ss, "POST", "/api/call", "", &serde_json::to_vec(&json!({"tool": "list_effects", "args": {}})).unwrap());
+        let ev: Value = serde_json::from_slice(&er.body).unwrap(); assert_eq!(ev["ok"], true, "{ev}");
+        let effects = ev["result"].as_array().unwrap(); assert!(!effects.is_empty()); assert!(effects[0].get("kind").is_some()); assert!(effects[0].get("description").is_some());
+        let tr = handle_request(&ss, "POST", "/api/call", "", &serde_json::to_vec(&json!({"tool": "list_transitions", "args": {}})).unwrap());
+        let tv: Value = serde_json::from_slice(&tr.body).unwrap(); assert_eq!(tv["ok"], true, "{tv}");
+        let transitions = tv["result"].as_array().unwrap(); assert!(!transitions.is_empty(), "transitions catalog should not be empty");
+        assert!(transitions.iter().all(|t| t.is_string()), "list_transitions is a bare array of kind strings, a genuinely different shape than list_effects: {transitions:?}");
+    }
+
+    #[test]
+    fn adding_a_transition_through_api_call_actually_sets_it_on_the_clip() {
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        let body = serde_json::to_vec(&json!({"tool": "add_transition", "args": {"clip_id": clip_id, "kind": "crossfade", "duration": 1.0}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let s = ss.lock().unwrap();
+        let c = s.project.tracks[0].clips.iter().find(|c| c.id == clip_id).unwrap();
+        let t = c.transition_in.as_ref().expect("the clip should now carry a transition_in");
+        assert_eq!(t.kind, "crossfade"); assert_eq!(t.duration, 1.0);
     }
 }
 
