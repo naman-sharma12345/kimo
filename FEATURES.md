@@ -1680,3 +1680,21 @@ gaps, candidates for this pass:
   onto one destination track in one call. `golden_registry.txt` hand-updated (514 -> 515 tools); added to
   the `project` toolgroup (`toolgroups.rs`) up front this time, caught nothing missing on the full suite.
   Full targeted pass green including `golden_frames_registry_and_projects` and `registry_lint`.
+
+## v7.5 feature 7/8+: style_captions_batch
+
+- [x] Apply one style to every caption GROUP in the project, or a named list of them, in one call.
+  `set_caption_style` already restyles every CUE inside ONE group (its own description: "Apply caption
+  preset to every cue") -- the real gap is that a project can hold several groups (one per
+  `add_captions`/`add_caption_cues` call: different speakers, different tracks, an SRT import plus a later
+  `caption_from_words` pass), and restyling all of them today is one `set_caption_style` call per group.
+  `style_captions_batch` reuses `set_caption_style` itself (`dispatch_nested`, one call per named group)
+  rather than reimplementing the per-cue styling math a second time. `caption_ids` omitted means every
+  caption group in the project; an EXPLICIT empty array styles nothing (never silently falls back to "all").
+  `size`/`y` pass straight through as the same optional overrides `set_caption_style` already takes.
+- New MCP tool `style_captions_batch` (`crates/kimo-core/src/ext/style_captions_batch.rs`). 8 new TDD tests
+  (`tests/style_captions_batch.rs`): styles every group when none are named, styles only the named ones and
+  leaves the rest alone, size/y overrides pass through to every styled group's cues, a project with no
+  captions is a harmless no-op, an explicit empty list styles nothing, an unknown named group id errors, an
+  unknown style name errors, and undo restores every styled group in one step. `golden_registry.txt`
+  hand-updated (515 -> 516 tools); added to the `text` toolgroup up front. Full targeted pass green.
