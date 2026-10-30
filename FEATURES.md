@@ -1301,3 +1301,33 @@ new (the v7.2 audit explicitly flagged EDL/OTIO import as a real gap, bigger tha
   live session's project with a previously-saved one (save 1 track, add a 2nd live, open, confirm back to 1
   -- not just "no error"); opening a path that does not exist comes back as a clean tool error, not a crash.
   All 42 pre-existing kimo-cli tests stayed green (46 total now).
+
+
+## v7.3 feature 11: import_edl -- CMX3600 EDL / OTIO timeline import
+
+- [x] `import_edl` -- the real editorial-interchange gap flagged after the v7.3 audit: kimo could export
+  EDL-adjacent things but had no way to bring a cut list IN. Takes a standard CMX3600 EDL (the
+  lowest-common-denominator format every NLE speaks) or a simple single-video-track OTIO JSON timeline and
+  creates real clips on the project's timeline. Format auto-detects from content (valid JSON with an
+  OTIO_SCHEMA/tracks field -> otio, else cmx3600) or is set explicitly. Each event's record in/out places
+  and sizes the resulting clip; its source in point offsets into the media. Source resolution: an EDL's `*
+  FROM CLIP NAME:` comment (CMX3600 convention: it follows the event it names, not precedes it) names the
+  source when present, else the reel field; an OTIO clip uses its own name or media_reference.target_url.
+  Each name is resolved to a real file by `media_map` (exact name -> path) first, then a `media_dir` scan
+  (exact filename, else case-insensitive stem match), then the name itself if it is already a real path --
+  anything that resolves to nothing is reported under `unresolved` with its record range rather than
+  silently dropped or failing the whole import (the same honest-gap reporting collect_project/relink_media
+  already use for missing media). CMX3600: only V/B (video) events become clips; dissolve/wipe transitions
+  import as a cut at the same record range (no transition-duration concept on this timeline, stated as a
+  limitation). OTIO: the first Video track under tracks.children; a Gap advances position without a clip,
+  anything else (nested stacks, transitions) is skipped, a real stated limitation for a first pass.
+  `track_id` places onto an existing track; omitted creates a new one. `dry_run` reports
+  events_total/imported/unresolved and the exact would-be clips without creating anything. Composes
+  `import_media` (deduped by resolved path, reusing an already-imported asset) + `add_clip` through
+  dispatch_nested -- no new placement logic, the same primitives every other add-clip path uses. 9 TDD tests
+  in `tests/import_edl.rs`: two-event CMX3600 import at correct record positions, source in point from the
+  EDL's own timecode (not 0), an unresolvable name reported not dropped/failed, media_map taking priority
+  over media_dir, dry_run touching nothing, an explicit track_id reused instead of a new track, an OTIO
+  timeline with a Gap landing the second clip at the right position, format auto-detection from content with
+  a non-.otio extension, and a missing file as a clean error. Registered in the `project` toolgroup. Tools
+  507->508.

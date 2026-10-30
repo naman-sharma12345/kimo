@@ -196,6 +196,7 @@ gpu_gaussian_blur_frame 24112f892cffa87c
 grade_node_tracking 1ffa2a4a07a2951e
 group_clips 39d53498853f9730
 history_list bb1a0f89a5fcc401
+import_edl db0bf7cee5567efc
 import_gltf_surface 2b840ef7d0dd6209
 import_media 71b2675a5298c594
 import_mesh_raw 333cadbf73de6f0d

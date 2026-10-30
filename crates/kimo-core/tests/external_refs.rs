@@ -204,6 +204,7 @@ fn open_sites_are_classified() {
         ("threed/lit_raster.rs", 6, "no project path: an ffmpeg stdin pipe (-i -) fed with raw RGBA frames inside a #[cfg(test)] #[ignore] frame-dump harness; output goes to a test-supplied directory (KIMO_*_FRAMES env), nothing is read from or stored in the project (here: KIMO_PBR_FRAMES)"),
         ("threed/perspective.rs", 1, "no project path: an ffmpeg stdin pipe (-i -) fed with raw RGBA frames inside a #[cfg(test)] #[ignore] frame-dump harness; output goes to a test-supplied directory (KIMO_*_FRAMES env), nothing is read from or stored in the project (here: KIMO_PRIMITIVE_FRAMES)"),
         ("threed/textured_fixture.rs", 1, "no project path: an ffmpeg stdin pipe (-i -) fed with raw RGBA frames inside a #[cfg(test)] #[ignore] frame-dump harness; output goes to a test-supplied directory (KIMO_*_FRAMES env), nothing is read from or stored in the project (here: KIMO_TEXTURE_FRAMES)"),
+        ("ext/import_edl.rs", 1, "caller path (the EDL/OTIO file named by import_edl's own `path` argument), not resolved through Project::resolve and not stored in the project"),
     ];
     let pat = ["\"-i\"", "File::open", "fs::read(", "read_to_string", "fs::metadata", "image::open", "from_file("];
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
