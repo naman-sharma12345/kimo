@@ -932,10 +932,24 @@ Already covered (checked, NOT gaps -- listed so the next pass doesn't re-discove
   from batch, which is everything except the short deny-list).
 
 Real gaps found (perception/feedback and agent-superiority), built below, cheapest first:
-- [ ] No structural timeline health check (gaps, overlaps, zero/negative-duration or negative-start
-  clips) independent of `lint_edit` (which is a platform/export-readiness lint: dark frames, text under
-  UI, b-roll-over-silence, loudness/captions/fonts for tiktok/reels/shorts -- it does not check raw
-  timeline structure at all, confirmed by reading lint_edit's full source). -> `validate_timeline`.
+- [x] `validate_timeline`: new tool, structural health check independent of `lint_edit` (platform/
+  export-readiness lint: dark frames, text under UI, b-roll-over-silence, loudness/captions/fonts --
+  confirmed by reading its full source, it never looks at raw clip start/duration structure) and
+  `list_dependencies` (missing/changed media files -- not re-checked here). Per track: gaps (empty time
+  between consecutive clips, with duration), overlaps (two clips sharing time on the same track);
+  anywhere: zero/negative-duration clips, negative clip starts. `min_gap_seconds` ignores gaps under a
+  threshold (e.g. sub-frame rounding from other tools); `track_id` (id or @name, same resolution as
+  `find`) scopes to one track. Read-only. 10 new TDD tests (tests/validate_timeline.rs): a clean butt-
+  joined timeline is ok, a gap is reported with both clips and its duration, an overlap is reported with
+  its duration, min_gap_seconds filters small gaps, tracks are independent (same-span clips on different
+  tracks never conflict), track_id scoping, negative-start/zero-duration clips reached by constructing
+  the project directly (add_clip itself refuses these -- proves the check also catches a state that
+  arrived some other way, e.g. a hand-edited .kimo loaded with load_project), empty project/track, and
+  the two track_id edge cases (a plain unmatched id scopes to nothing silently; an unknown @name errors,
+  matching find's own behaviour). golden_registry.txt hand-updated (499 tools; hash computed with a
+  throwaway test against the live registry, same technique as every prior v7/v7.1 addition, then
+  removed), toolgroups.rs updated (output group, next to lint_edit). All green including
+  golden_registry_contract, description_first_sentence, external_refs and toolgroups::tests::*.
 - [ ] No generic keyframe CRUD: `set_keyframe`/`set_camera_keyframe`/`set_mask_keyframe` only add/
   overwrite a key; there is no way to list what's keyframed on a clip, or delete one key, without
   pulling the entire `get_project` JSON (which the engine's own docs tell you not to use for this) and
