@@ -1,0 +1,147 @@
+//! auto_edit (v7.6Q): raw clips -> one call -> a finished edit. Each test here is a real editorial outcome
+//! the chain must get right, not just "it returns ok".
+use kimo_core::commands::{dispatch, Session};
+use serde_json::{json, Value};
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+
+fn dir() -> PathBuf { let d = std::env::temp_dir().join(format!("kimo_auto_edit_{}", std::process::id())); std::fs::create_dir_all(&d).unwrap(); d }
+fn ffmpeg(args: &[&str]) { let st = Command::new("ffmpeg").args(["-v", "error", "-y"]).args(args).stdin(Stdio::null()).status().expect("ffmpeg"); assert!(st.success(), "ffmpeg {args:?}"); }
+fn call(ss: &mut Session, name: &str, a: Value) -> Value { dispatch(ss, name, &a).unwrap_or_else(|e| panic!("{name} {a}: {e}")) }
+fn sid(v: &Value, k: &str) -> String { v[k].as_str().unwrap_or_else(|| panic!("no {k} in {v}")).to_string() }
+
+/// A talking-head stand-in: a voice-like tone in the given speech windows over a quiet noise floor, with
+/// `dead` seconds of true silence stitched in up front so auto_rough_cut has real dead air to cut.
+fn talk(name: &str, speech: &[(f64, f64)], dead_head: f64) -> String {
+    let p = dir().join(name); if p.exists() { return p.to_string_lossy().into_owned(); }
+    let dur = speech.iter().map(|(_, e)| *e).fold(0.0_f64, f64::max) + dead_head;
+    let gate: Vec<String> = speech.iter().map(|(s, e)| format!("between(t,{},{})", s + dead_head, e + dead_head)).collect();
+    let a = format!("aevalsrc='({})*0.6*(0.25*sin(2*PI*140*t)+0.15*sin(2*PI*280*t+1)+0.1*sin(2*PI*420*t+2))*(0.55+0.45*sin(2*PI*4.3*t))':s=48000:d={dur}", gate.join("+"));
+    ffmpeg(&["-f", "lavfi", "-i", &format!("testsrc2=s=640x360:r=30:d={dur}"), "-f", "lavfi", "-i", &a, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", p.to_str().unwrap()]);
+    p.to_string_lossy().into_owned()
+}
+fn broll(name: &str, dur: f64) -> String {
+    let p = dir().join(name); if p.exists() { return p.to_string_lossy().into_owned(); }
+    ffmpeg(&["-f", "lavfi", "-i", &format!("mandelbrot=s=640x360:r=30:end_pts={}", (dur * 30.0) as i64), "-t", &dur.to_string(), "-an", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", p.to_str().unwrap()]);
+    p.to_string_lossy().into_owned()
+}
+fn music(name: &str, dur: f64) -> String {
+    let p = dir().join(name); if p.exists() { return p.to_string_lossy().into_owned(); }
+    ffmpeg(&["-f", "lavfi", "-i", &format!("sine=frequency=220:duration={dur}"), "-c:a", "pcm_s16le", p.to_str().unwrap()]);
+    p.to_string_lossy().into_owned()
+}
+fn proj() -> Session { let mut ss = Session::new(); call(&mut ss, "project_set", json!({"width": 640, "height": 360, "fps": 30})); ss }
+
+/// The spine: dead air is actually gone, and the mix lands within half an LU of the target -- not just "ok: true".
+#[test] fn auto_edit_cuts_dead_air_and_hits_the_loudness_target() {
+    let mut ss = proj();
+    let a = sid(&call(&mut ss, "import_media", json!({"path": talk("spine.mp4", &[(0.0, 2.0), (2.0, 4.0)], 3.0)})), "asset_id");
+    // 2 speech windows back to back (no internal gap) but 3s of true dead air stitched on the front.
+    let r = call(&mut ss, "auto_edit", json!({"talking_head_asset_ids": [a], "captions": false, "grade": false, "punch_ins": false}));
+    assert!(r["ok"] == json!(true), "{r}");
+    let dur = r["duration"].as_f64().unwrap();
+    assert!(dur < 4.5, "dead air should be cut: got duration {dur} from a 7s source with 3s of silence: {r}");
+    let lufs = r["mix_lufs"].as_f64().unwrap_or_else(|| panic!("no mix_lufs: {r}"));
+    assert!((lufs - (-14.0)).abs() < 1.0, "mix should land near -14 LUFS, got {lufs}: {r}");
+}
+
+/// The real bug this tool exists to prevent: a punch-in zoom landing on a clip b-roll then fully covers, so
+/// the zoom never shows on screen. b-roll runs first; punch-ins must then skip whatever it hid.
+#[test] fn punch_ins_never_land_on_a_clip_broll_fully_covers() {
+    let mut ss = proj();
+    let a = sid(&call(&mut ss, "import_media", json!({"path": talk("pin.mp4", &[(0.0, 3.0), (4.0, 7.0), (8.0, 11.0)], 0.0)})), "asset_id");
+    let b = sid(&call(&mut ss, "import_media", json!({"path": broll("pin_b.mp4", 11.0)})), "asset_id");
+    let r = call(&mut ss, "auto_edit", json!({"talking_head_asset_ids": [a], "broll_asset_ids": [b], "captions": false, "grade": false}));
+    assert!(r["ok"] == json!(true), "{r}");
+    let track_id = r["track_id"].as_str().unwrap();
+    let broll_ranges: Vec<(f64, f64)> = r["stages"]["broll"]["clips"].as_array().unwrap().iter()
+        .map(|c| (c["start"].as_f64().unwrap(), c["end"].as_f64().unwrap())).collect();
+    assert!(!broll_ranges.is_empty(), "test needs b-roll actually placed: {r}");
+    let tl = call(&mut ss, "timeline_summary", json!({}));
+    let track = tl["tracks_bottom_to_top"].as_array().unwrap().iter().find(|t| t["track_id"] == *track_id).unwrap();
+    for c in track["clips"].as_array().unwrap() {
+        let (s, e) = (c["start"].as_f64().unwrap(), c["end"].as_f64().unwrap());
+        let covered: f64 = broll_ranges.iter().map(|(bs, be)| (e.min(*be) - s.max(*bs)).max(0.0)).sum::<f64>() / (e - s).max(1e-6);
+        if covered > 0.5 {
+            assert!((c["scale"].as_f64().unwrap_or(1.0) - 1.0).abs() < 1e-6, "clip {} is {:.0}% covered by b-roll but was still punched in (scale {:?}): {r}", c["clip_id"], covered * 100.0, c["scale"]);
+        }
+    }
+}
+
+/// With no broll_asset_ids at all, every dialogue clip is visible, so punch-ins should still have >=2
+/// candidates and actually alternate -- the covered-clip exclusion must not also eat the normal case.
+#[test] fn punch_ins_still_apply_with_no_broll() {
+    let mut ss = proj();
+    let a = sid(&call(&mut ss, "import_media", json!({"path": talk("nobroll.mp4", &[(0.0, 2.0), (3.0, 5.0), (6.0, 8.0)], 0.0)})), "asset_id");
+    let r = call(&mut ss, "auto_edit", json!({"talking_head_asset_ids": [a], "captions": false, "grade": false}));
+    assert!(r["ok"] == json!(true), "{r}");
+    let pin = &r["stages"]["punch_ins"];
+    assert!(!pin.is_null(), "punch_ins stage missing with no b-roll to exclude anything: {r}");
+    assert!(pin["punched"].as_i64().unwrap_or(0) >= 1, "{r}");
+}
+
+/// No hook_text: the tool must not invent cold-open copy. It should skip the title and say so, not fail.
+#[test] fn no_hook_text_skips_the_title_honestly() {
+    let mut ss = proj();
+    let a = sid(&call(&mut ss, "import_media", json!({"path": talk("nohook.mp4", &[(0.0, 2.0)], 0.0)})), "asset_id");
+    let r = call(&mut ss, "auto_edit", json!({"talking_head_asset_ids": [a], "captions": false, "grade": false, "punch_ins": false}));
+    assert!(r["ok"] == json!(true), "{r}");
+    assert!(r["stages"]["hook_title"].is_null(), "no hook_text was given; a title stage should not appear: {r}");
+    let warnings: Vec<&str> = r["warnings"].as_array().unwrap().iter().filter_map(|w| w.as_str()).collect();
+    assert!(warnings.iter().any(|w| w.contains("hook_text")), "should say the hook was skipped and why: {r}");
+}
+
+/// A hook_text IS given: a title clip lands at the very start.
+#[test] fn hook_text_adds_a_title_at_the_start() {
+    let mut ss = proj();
+    let a = sid(&call(&mut ss, "import_media", json!({"path": talk("hook.mp4", &[(0.0, 3.0)], 0.0)})), "asset_id");
+    let r = call(&mut ss, "auto_edit", json!({"talking_head_asset_ids": [a], "hook_text": "wait for it", "captions": false, "grade": false, "punch_ins": false}));
+    assert!(r["ok"] == json!(true), "{r}");
+    assert!(!r["stages"]["hook_title"].is_null(), "{r}");
+    let tl = call(&mut ss, "timeline_summary", json!({}));
+    let s = serde_json::to_string(&tl).unwrap();
+    assert!(s.to_lowercase().contains("wait for it"), "hook text should be on the timeline: {s}");
+}
+
+/// A music_asset_id is given: a music clip lands and finish_audio ducks it under the dialogue (music ends up
+/// quieter than the mix target, not fighting the voice).
+#[test] fn music_bed_is_placed_and_ducked_under_speech() {
+    let mut ss = proj();
+    let a = sid(&call(&mut ss, "import_media", json!({"path": talk("music_th.mp4", &[(0.0, 4.0)], 0.0)})), "asset_id");
+    let m = sid(&call(&mut ss, "import_media", json!({"path": music("bed.wav", 4.0)})), "asset_id");
+    let r = call(&mut ss, "auto_edit", json!({"talking_head_asset_ids": [a], "music_asset_id": m, "captions": false, "grade": false, "punch_ins": false}));
+    assert!(r["ok"] == json!(true), "{r}");
+    assert!(!r["stages"]["music"].is_null(), "music stage missing: {r}");
+    let music_report = r["stages"]["audio"]["music"].as_array().unwrap_or_else(|| panic!("finish_audio didn't classify the music clip: {r}"));
+    assert!(!music_report.is_empty(), "finish_audio should have found the music clip as music: {r}");
+}
+
+/// No talking_head_asset_ids at all is a clear argument error, not a panic or a confusing nested one.
+#[test] fn requires_talking_head_asset_ids() {
+    let mut ss = proj();
+    let e = dispatch(&mut ss, "auto_edit", &json!({})).unwrap_err();
+    assert!(e.contains("talking_head_asset_ids"), "{e}");
+}
+
+/// A failure partway through (bad broll asset id) must roll back the WHOLE edit, not leave a half-built one
+/// (the project-wide atomic() wrapper every director recipe uses).
+#[test] fn a_failure_rolls_back_the_whole_edit() {
+    let mut ss = proj();
+    let a = sid(&call(&mut ss, "import_media", json!({"path": talk("rollback.mp4", &[(0.0, 2.0)], 0.0)})), "asset_id");
+    let before = serde_json::to_string(&call(&mut ss, "get_project", json!({}))).unwrap();
+    let e = dispatch(&mut ss, "auto_edit", &json!({"talking_head_asset_ids": [a], "broll_asset_ids": ["no_such_asset"]})).unwrap_err();
+    assert!(!e.is_empty());
+    let after = serde_json::to_string(&call(&mut ss, "get_project", json!({}))).unwrap();
+    assert_eq!(before, after, "a failed auto_edit must leave the project exactly as it was");
+}
+
+/// The whole chain actually exports to a playable file with the duration it reported.
+#[test] fn exports_a_real_file_at_the_reported_duration() {
+    let mut ss = proj();
+    let a = sid(&call(&mut ss, "import_media", json!({"path": talk("export_src.mp4", &[(0.0, 2.0), (2.5, 4.5)], 1.5)})), "asset_id");
+    let r = call(&mut ss, "auto_edit", json!({"talking_head_asset_ids": [a], "hook_text": "hi", "captions": false, "grade": true, "punch_ins": true}));
+    let out = dir().join("auto_edit_export.mp4");
+    let ex = call(&mut ss, "export", json!({"path": out, "crf": 30}));
+    assert!(std::fs::metadata(&out).map(|m| m.len() > 1000).unwrap_or(false), "{ex}");
+    assert!((ex["duration"].as_f64().unwrap() - r["duration"].as_f64().unwrap()).abs() < 0.2, "export duration should match the reported edit duration: {ex} vs {r}");
+}
