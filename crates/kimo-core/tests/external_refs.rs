@@ -104,6 +104,7 @@ fn unregistered_path_fields_fail() {
         ("color/bake.rs", "path", "NOT A PROJECT FIELD: bake step input, per call"), ("color/bake.rs", "config_path", "NOT A PROJECT FIELD: bake step input, per call"),
         ("color/mux.rs", "dir", "NOT A PROJECT FIELD: temp transaction dir"), ("audio.rs", "path", "NOT A PROJECT FIELD: temp wav"), ("commands.rs", "path", "OUTPUT: Media.path, an image a tool call produced (cleared every dispatch), not stored in the project"),
         ("analysis_proxy.rs", "path", "OUTPUT: AnalysisProxy.path, a cached short-GOP analysis proxy file path (keyed by source path+size+mtime+fps), not stored in the project; analysis decode only, never export"),
+        ("ext/export_edl.rs", "path", "NOT A PROJECT FIELD: ExEvent.path, a clip's media path already resolved through deps, held for one export call, never stored"),
     ];
     let reg_keys: &[(&str, &str)] = &[("aux_path", "REF pixel_expr/displace map resolved through deps"), ("path", "REF lut effect"), ("config_path", "REF OCIO config on any effect"), ("dir", "REF matte store on mask layers"), ("cube_text", "inline, not a file"), ("d", "SVG path data, not a file"), ("profile", "inline table"), ("mask_layer", "layer id")];
     let looks = |n: &str| { n == "path" || n == "file" || n == "src" || n == "lut" || n == "font" || n == "texture" || n == "occlusion" || n == "font_file" || n.ends_with("_path") || n.ends_with("_file") || n.ends_with("_dir") || n == "dir" };

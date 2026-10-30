@@ -156,6 +156,7 @@ export_audio 24abf7a62d81ecac
 export_camera_solve 55844ee547289f42
 export_captions 7467456686f5ca4f
 export_color_pipeline_lut cc32ea2c0dd1b8a6
+export_edl 629fa1df814470b0
 export_gif e3829ad88866844c
 export_grade_lut c25c05b9400b97b1
 export_high_bit c67d5e5efd756824

@@ -1331,3 +1331,68 @@ new (the v7.2 audit explicitly flagged EDL/OTIO import as a real gap, bigger tha
   timeline with a Gap landing the second clip at the right position, format auto-detection from content with
   a non-.otio extension, and a missing file as a clean error. Registered in the `project` toolgroup. Tools
   507->508.
+
+## v7.4 additions
+
+Naman (5:26 PM IST Oct 30): "keep working, and keep sending updates". Audit before building, same habit as
+v7.2/v7.3 (nothing below duplicates an existing tool):
+
+Already covered, NOT duplicated: close_gaps/ripple delete (ripple_delete already existed, pre-v7);
+batch caption styling (set_caption_style already applies a style preset to every cue in a group in one call,
+pre-v7); timeline diff between two project versions (project_diff already exists, pre-v7, revision-to-revision);
+a one-call rough cut already exists in two forms (auto_rough_cut for talking-head assets, transcript_edit's
+machinery for transcript-driven cuts) so a third generic version would be a fourth way to do the same job,
+not a gap.
+
+Real gaps found and built this pass:
+- [x] export_edl -- feature 2: EDL/OTIO/FCPXML EXPORT. v7.3 built import_edl (bring a cut list in) and
+  explicitly left export for later; this is that other half, so an edit can leave kimo for another NLE
+  (or come back from one).
+- [x] track_mute_solo -- feature 1: not from the audit's own direction list, but a real pre-existing bug
+  found while reading the audio path for this pass -- Track.muted has existed since before v7 and every
+  audio-render/analysis path already honoured it, but no tool could ever set it. Fixed, plus the standard
+  NLE companion (solo).
+- [ ] reframe_timeline -- auto-reframe (v7.2) is a single-clip, export-time-only operation (export_variants
+  applies and then removes it per variant); a persistent, undoable whole-timeline aspect conversion that
+  actually changes the canvas and keys every clip is still missing.
+- [ ] project_template -- starter project templates (canvas size + track layout conventions for "vertical
+  social", "podcast/interview", "16:9 widescreen", etc.) so a new project doesn't start from a blank canvas
+  every time. Not to be confused with template_define/apply (those are clip/op templates, a different thing).
+- [ ] kimo gui: multi-select + group move/delete
+- [ ] kimo gui: copy/paste clips
+- [ ] kimo gui: ripple-delete in GUI (wire the existing ripple_delete tool to a shortcut/button distinct from
+  plain delete)
+- [ ] kimo gui: track mute/solo/lock controls (now that track_mute_solo exists to wire to)
+- [ ] kimo gui: audio waveforms on clips
+- [ ] kimo gui: a visible effects/transitions browser applying to the selected clip (today's inspector has a
+  bare effect-kind <select>, no transitions, no search/categories -- the brief's "browser" bar is higher)
+
+## v7.4 feature 1/8: track_mute_solo
+
+- [x] `set_track` can now actually set `muted` (it never could before -- schema only took locked/name/index,
+  even though Track.muted has existed since before v7 and every audio-render and analysis path already
+  honoured it; a track could never be muted by any tool). Plus the standard NLE companion, `solo`
+  (Premiere/Resolve/Reaper semantics: when any track is soloed, every non-soloed track is silent regardless
+  of its own muted flag; with nothing soloed, a track's own muted flag is the whole answer; soloing a track
+  that is also marked muted still plays -- solo wins). `effective_mute(tracks, track)` in model.rs centralises
+  the rule; `audio::mix`/`mix_strict` (the real rendered-audio paths) now use it. 9 TDD tests including a
+  real ffmpeg-generated tone that actually disappears from the mix once its track is muted, not just a flag
+  check, and an old project JSON with neither key still loading with both false. No new tool; set_track
+  extended (its description's first sentence kept under the 150-char contract). Tools: 508 (unchanged).
+
+## v7.4 feature 2/8: export_edl -- CMX3600 EDL / OTIO / FCPXML timeline EXPORT
+
+- [x] The write-side counterpart to v7.3's `import_edl`. Exports the current timeline (or a named track) as
+  a CMX3600 EDL, a simple single-video-track OTIO JSON timeline (the same shape import_edl's own parser
+  reads, so export then import_edl round-trips), or a minimal but real FCPXML project (resources + a
+  sequence/spine of frame-exact asset-clips) -- the three interchange formats a v7.2/v7.3-generation NLE
+  audit keeps naming. Only media clips are representable on a cut list; a non-media clip on the exported
+  track is reported under `skipped_non_media`, never silently dropped. A clip at a non-1.0 speed has no
+  universal cross-format representation kimo's model carries, so its source range covers the actual footage
+  consumed and it is listed under `approximated_speed` -- a real, stated limitation rather than a silently
+  wrong number. `track_id` is required only when more than one track actually has media clips (the error
+  names every candidate and its clip count). 10 TDD tests: CMX3600 timecodes and FROM CLIP NAME comments,
+  a full export-then-reimport round trip for both CMX3600 and OTIO (via import_edl's own dry_run), OTIO Gap
+  preservation between clips, FCPXML parsed back with roxmltree and checked for frame-exact rational times,
+  writing straight to a file, non-media skip reporting, and the ambiguous-multi-track error naming both
+  tracks by id. Registered in the `project` toolgroup (beside import_edl). Tools 508->509.
