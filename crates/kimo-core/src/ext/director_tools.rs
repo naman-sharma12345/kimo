@@ -305,7 +305,19 @@ fn zones(ss: &mut Session, platform: &str) -> Result<(Vec<[f64; 4]>, [f64; 4]), 
 }
 fn text_rect(ss: &mut Session, cid: &str, t: f64) -> Option<([f64; 4], bool)> {
     let b = call(ss, "compute_text_bounds", &json!({"clip_id": cid, "t": r3(t.max(0.0))})).ok()?;
-    Some((rect4(&b["canvas_rect"])?, b["font"]["substituted"].as_bool().unwrap_or(false)))
+    let mut r = rect4(&b["canvas_rect"])?;
+    // compute_text_bounds measures ink only, by design ("ink excludes shadow, glow and background box" --
+    // the right answer for a safe-area/ink check, the wrong one for "does this collide with other text on
+    // screen": a boxed/pop caption's actual visible pill is ink padded by its own TextFx.bg_pad, scaled by
+    // the clip's own transform. Grown here, not in compute_text_bounds, because only the collision checks
+    // below need the visible box; everything else that calls compute_text_bounds wants the ink.
+    // (A title preset whose pill is a SEPARATE shape clip, not a TextFx background -- hook_box, subscribe_pop
+    // -- is not covered by this: its box stays invisible to this text-only scan. Known, not fixed here.)
+    if let Some(c) = ss.project.find_clip(cid) { if let Some(fx) = &c.text_fx { if fx.bg.is_some() {
+        let scale = crate::render::resolve_xform(&ss.project, c, t.max(0.0)).scale; let pad = fx.bg_pad * scale;
+        r = [r[0] - pad, r[1] - pad, r[2] + 2.0 * pad, r[3] + 2.0 * pad];
+    } } }
+    Some((r, b["font"]["substituted"].as_bool().unwrap_or(false)))
 }
 fn clip_span(ss: &Session, cid: &str) -> Option<(f64, f64)> { ss.project.tracks.iter().flat_map(|t| t.clips.iter()).find(|c| c.id == cid).map(|c| (c.start, c.duration)) }
 fn caption_from_words(ss: &mut Session, a: &Value) -> Result<Value, String> {

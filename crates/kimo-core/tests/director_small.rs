@@ -445,7 +445,7 @@ fn gray_pixels(png: &str, w: usize, h: usize) -> Vec<u8> {
     assert!(r2["problems"].as_array().unwrap().iter().all(|p| p["code"] != json!("text_crowded")), "the fix should clear the crowding: {r2}");
 }
 
-/// A generous, obviously-fine gap between two texts in the same band must not be flagged -- the check is
+/// A generous, obviously-fine gap between two texts/// A generous, obviously-fine gap between two texts in the same band must not be flagged -- the check is
 /// for genuine crowding, not any two texts that happen to share a time window.
 #[test] fn a_generous_gap_between_two_texts_is_not_flagged() {
     let mut ss = Session::new(); call(&mut ss, "project_set", json!({"width": 1280, "height": 720, "fps": 30}));
