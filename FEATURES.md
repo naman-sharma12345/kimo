@@ -1595,3 +1595,26 @@ gaps, candidates for this pass:
   errors, and undo clears the ducking. `golden_registry.txt` hand-updated (513 -> 514 tools). Full targeted
   pass green including `golden_frames_registry_and_projects` (no frame/project golden moved) and
   `registry_lint`'s `via` advice check.
+
+## v7.5 feature 3/8+: kimo gui copy/paste and ripple delete
+
+- [x] `kimo gui`: Ctrl/Cmd+C copies the current selection (one or more clips), Ctrl/Cmd+V pastes it at the
+  playhead, keeping the copied clips' relative arrangement (the earliest-starting one lands exactly on the
+  playhead; the rest keep their original offset from it) -- a multi-clip paste is one atomic `batch` call of
+  `duplicate_clip` ops (one undo step for the whole paste), and `duplicate_clip` already carries every
+  effect/keyframe/mask, so nothing about a clip's content needs to pass through the clipboard itself, only
+  `{id, start}`. Shift+Delete/Backspace ripple-deletes the selected clip (closes the gap via `ripple_delete`)
+  instead of the plain Delete/Backspace, which still only removes it (leaves a gap) -- a deliberately
+  different key so an accidental plain Delete never ripples clips the user did not mean to shift. Ripple
+  delete is single-clip only (same honest limit this codebase already states for group trim: there is no
+  settled meaning yet for "ripple a group").
+- `gui_clipboard.js`: pure JS, no DOM -- `copySelection(clips)` (snapshots `{id, start}` at copy time,
+  independent of later selection changes), `buildPasteOps(clipboard, pasteAtTime)` (the exact `batch` op
+  list, relative arrangement preserved, never pastes negative, rounds to 1e-4s), `buildRippleDeleteOp(clipId)`.
+  Served at `GET /gui_clipboard.js`, same bytes the browser and the Node test run. `gui_keymap.js` extended
+  (Ctrl/Cmd+C/V, Shift+Delete/Backspace) with 10 new Node keymap tests alongside the existing ones.
+- 10 new headless Node tests (`tests/js/clipboard_test.js`) plus 10 new Node keymap tests
+  (`tests/js/keymap_test.js` additions) plus 5 new Rust tests: the JS file served byte-identical to disk,
+  the index page wires up every new function and action by name, a real `duplicate_clip` through `/api/call`
+  copies a clip WITH its effect, a two-clip batch paste is one atomic undo step, and `ripple_delete` through
+  `/api/call` actually closes the gap. All 64 pre-existing kimo-cli tests stayed green (69 total now).

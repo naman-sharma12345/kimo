@@ -4,6 +4,11 @@
 // bytes a Node test requires directly), so there is nothing to keep in sync between "what the browser does"
 // and "what is tested". Editing while focus is in a text field never fires a shortcut (space in a filter
 // box must type a space, not toggle play).
+//
+// v7.5: Ctrl/Cmd+C copies the current selection, Ctrl/Cmd+V pastes it at the playhead (gui_clipboard.js
+// builds the duplicate_clip ops); Shift+Delete/Backspace ripple-deletes the selected clip (closes the gap)
+// instead of plain delete_clip (leaves one) -- a second, deliberately different key so an accidental plain
+// Delete never ripples clips the user did not mean to shift.
 (function (root, factory) {
   if (typeof module !== 'undefined' && module.exports) { module.exports = factory(); }
   else { root.kimoKeymap = factory(); }
@@ -19,6 +24,8 @@
     if (ev.altKey) return null;
     if (ctrlOrMeta) {
       if (key === 'z' || key === 'Z') return ev.shiftKey ? 'redo' : 'undo';
+      if (key === 'c' || key === 'C') return 'copy_clip';
+      if (key === 'v' || key === 'V') return 'paste_clip';
       return null; // any other modified combo is not one of ours (browser/OS shortcuts pass through)
     }
     switch (key) {
@@ -26,7 +33,7 @@
       case 'j': case 'J': return 'step_back';
       case 'k': case 'K': return 'pause';
       case 'l': case 'L': return 'step_forward';
-      case 'Delete': case 'Backspace': return 'delete_clip';
+      case 'Delete': case 'Backspace': return ev.shiftKey ? 'ripple_delete_clip' : 'delete_clip';
       case 's': case 'S': return 'split_at_playhead';
       default: return null;
     }

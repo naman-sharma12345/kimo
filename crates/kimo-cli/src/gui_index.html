@@ -122,6 +122,7 @@
 <script src="/gui_multiselect.js"></script>
 <script src="/gui_waveform.js"></script>
 <script src="/gui_fxbrowser.js"></script>
+<script src="/gui_clipboard.js"></script>
 <script>
 let registry = [];
 let projectFps = 30; // set from /api/timeline; used by J/K/L's frame step
@@ -129,6 +130,7 @@ let effectCatalog = [];
 let transitionKinds = []; // v7.4: list_transitions' kinds, cached alongside effectCatalog for the fx browser
 let selectedClipId = null;
 let selectedClipIds = []; // v7.4 multi-select: every selected clip id, newest last; selectedClipId mirrors its last element
+let clipboardClips = []; // v7.5: {id, start} snapshots from the last copy_clip, independent of current selection
 let pxPerSec = (window.kimoZoom ? window.kimoZoom.DEFAULT_PX_PER_SEC : 40); // v7.3: mutable for zoom in/out (bounds live in gui_zoom.js)
 const labelWidth = 70; // matches .track-label's CSS width
 let projectDuration = 0;
@@ -384,6 +386,30 @@ async function splitAtPlayhead() {
   await loadTimeline(); await loadInspector();
 }
 
+// v7.5: copy/paste (one or more selected clips) and ripple-delete (single clip only -- see
+// gui_clipboard.js's own doc comment for why group ripple has no settled meaning yet).
+function copySelectedClips() {
+  if (!selectedClipIds.length) return;
+  const clips = selectedClipIds.map(findClipInTimeline).filter(Boolean);
+  clipboardClips = kimoClipboard.copySelection(clips);
+}
+async function pasteClipboard() {
+  if (!clipboardClips.length) return;
+  const ops = kimoClipboard.buildPasteOps(clipboardClips, currentT);
+  const v = await callApi('batch', { ops });
+  if (!v.ok) { alert(typeof v.error === 'string' ? v.error : 'could not paste'); return; }
+  await loadTimeline(); await loadInspector();
+}
+async function rippleDeleteSelected() {
+  if (selectedClipIds.length > 1) { alert('ripple delete works on one clip at a time; use Delete to remove the whole group'); return; }
+  if (!selectedClipId) return;
+  const op = kimoClipboard.buildRippleDeleteOp(selectedClipId);
+  const v = await callApi(op.tool, op.args);
+  if (!v.ok) { alert(typeof v.error === 'string' ? v.error : 'could not ripple-delete that clip'); return; }
+  selectedClipId = null; selectedClipIds = [];
+  await loadTimeline(); await loadInspector();
+}
+
 // v7.3 keyboard shortcuts: space play/pause, J/K/L shuttle (step back / pause / step forward -- this is a
 // frame-stepped preview, not continuous video playback, so J/L step one frame rather than shuttling at
 // speed), Delete removes the selected clip, S splits it at the playhead, Ctrl/Cmd+Z undoes, +Shift redoes.
@@ -398,7 +424,10 @@ document.addEventListener('keydown', (ev) => {
   else if (action === 'step_back') stepFrame(-1);
   else if (action === 'step_forward') stepFrame(1);
   else if (action === 'delete_clip') deleteSelectedClip();
+  else if (action === 'ripple_delete_clip') rippleDeleteSelected();
   else if (action === 'split_at_playhead') splitAtPlayhead();
+  else if (action === 'copy_clip') copySelectedClips();
+  else if (action === 'paste_clip') pasteClipboard();
   else if (action === 'undo') doUndo();
   else if (action === 'redo') doRedo();
 });

@@ -92,6 +92,10 @@ const WAVEFORM_JS: &str = include_str!("gui_waveform.js");
 /// same reason -- gui_index.html's fx-browser panel and tests/js/fxbrowser_test.js (Node) run the exact same
 /// bytes.
 const FXBROWSER_JS: &str = include_str!("gui_fxbrowser.js");
+/// v7.5: the clipboard helper (copy/paste op lists for one or more clips, the ripple-delete op), served the
+/// same way for the same reason -- gui_index.html's copy/paste/ripple-delete shortcuts and
+/// tests/js/clipboard_test.js (Node) run the exact same bytes.
+const CLIPBOARD_JS: &str = include_str!("gui_clipboard.js");
 
 /// Parses `?t=1.5` (or any single-key query) out of a raw query string; used for /preview.png's `t`.
 fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
@@ -111,6 +115,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
         ("GET", "/gui_multiselect.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: MULTISELECT_JS.as_bytes().to_vec() },
         ("GET", "/gui_waveform.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: WAVEFORM_JS.as_bytes().to_vec() },
         ("GET", "/gui_fxbrowser.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: FXBROWSER_JS.as_bytes().to_vec() },
+        ("GET", "/gui_clipboard.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: CLIPBOARD_JS.as_bytes().to_vec() },
         ("GET", "/api/timeline") => { let ss = ss.lock().unwrap(); json_response(200, timeline_view_model(&ss)) }
         ("GET", "/api/registry") => json_response(200, registry_summary()),
         ("GET", "/api/clip") => { // ?id=<clip_id>
@@ -147,7 +152,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
                 Err(e) => json_response(200, json!({"ok": false, "error": e})),
             }
         }
-        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/gui_zoom.js") | (_, "/gui_trackstate.js") | (_, "/gui_multiselect.js") | (_, "/gui_waveform.js") | (_, "/gui_fxbrowser.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
+        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/gui_zoom.js") | (_, "/gui_trackstate.js") | (_, "/gui_multiselect.js") | (_, "/gui_waveform.js") | (_, "/gui_fxbrowser.js") | (_, "/gui_clipboard.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
         _ => err_response(404, format!("no route for {path}")),
     }
 }
@@ -1094,5 +1099,82 @@ mod tests {
         let t = c.transition_in.as_ref().expect("the clip should now carry a transition_in");
         assert_eq!(t.kind, "crossfade"); assert_eq!(t.duration, 1.0);
     }
-}
 
+    // ---- v7.5: copy/paste and ripple-delete ----
+
+    #[test]
+    fn served_clipboard_js_matches_the_file_on_disk() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_clipboard.js", "", &[]);
+        assert_eq!(r.status, 200); assert_eq!(r.content_type, "application/javascript; charset=utf-8");
+        assert_eq!(r.body, include_bytes!("gui_clipboard.js").to_vec());
+    }
+
+    #[test]
+    fn the_index_page_wires_up_copy_paste_and_ripple_delete() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["gui_clipboard.js", "kimoClipboard.copySelection", "kimoClipboard.buildPasteOps", "kimoClipboard.buildRippleDeleteOp", "function copySelectedClips", "function pasteClipboard", "function rippleDeleteSelected", "'copy_clip'", "'paste_clip'", "'ripple_delete_clip'"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn a_real_duplicate_clip_through_api_call_copies_a_clip_with_its_effect() {
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        // give the source clip an effect, so a copy is proven to carry it, not just geometry
+        let addfx = serde_json::to_vec(&json!({"tool": "add_effect", "args": {"clip_id": clip_id, "kind": "blur"}})).unwrap();
+        handle_request(&ss, "POST", "/api/call", "", &addfx);
+        let body = serde_json::to_vec(&json!({"tool": "duplicate_clip", "args": {"clip_id": clip_id, "start": 5.0}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let new_id = v["result"]["clip_id"].as_str().unwrap().to_string();
+        let s = ss.lock().unwrap();
+        let newc = s.project.tracks[0].clips.iter().find(|c| c.id == new_id).expect("pasted clip should exist");
+        assert_eq!(newc.start, 5.0);
+        assert!(!newc.effects.is_empty(), "the pasted clip should carry the source clip's effect");
+    }
+
+    #[test]
+    fn a_batch_paste_of_two_clips_is_one_atomic_undo_step() {
+        let ss = fixture();
+        let (clip_id, second_id) = {
+            let s = ss.lock().unwrap();
+            let tr = s.project.tracks[0].id.clone();
+            let c1 = s.project.tracks[0].clips[0].id.clone();
+            drop(s);
+            let c2 = dispatch(&mut *ss.lock().unwrap(), "add_shape", &json!({"track_id": tr, "shape": "rect", "start": 3.0, "duration": 1.0, "color": [0.0, 1.0, 0.0]})).unwrap()["clip_id"].as_str().unwrap().to_string();
+            (c1, c2)
+        };
+        let before_count = { let s = ss.lock().unwrap(); s.project.tracks[0].clips.len() };
+        let ops = json!([
+            {"tool": "duplicate_clip", "args": {"clip_id": clip_id, "start": 10.0}},
+            {"tool": "duplicate_clip", "args": {"clip_id": second_id, "start": 13.0}},
+        ]);
+        let body = serde_json::to_vec(&json!({"tool": "batch", "args": {"ops": ops}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let after_count = { let s = ss.lock().unwrap(); s.project.tracks[0].clips.len() };
+        assert_eq!(after_count, before_count + 2, "both pasted clips should exist");
+        // one undo should remove BOTH pasted clips (one atomic step), not just the last one
+        let ub = serde_json::to_vec(&json!({"tool": "undo", "args": {}})).unwrap();
+        handle_request(&ss, "POST", "/api/call", "", &ub);
+        let after_undo = { let s = ss.lock().unwrap(); s.project.tracks[0].clips.len() };
+        assert_eq!(after_undo, before_count, "undo should remove the whole pasted group in one step");
+    }
+
+    #[test]
+    fn ripple_delete_through_api_call_closes_the_gap_it_leaves() {
+        let ss = fixture();
+        let tr = { let s = ss.lock().unwrap(); s.project.tracks[0].id.clone() };
+        let second_id = dispatch(&mut *ss.lock().unwrap(), "add_shape", &json!({"track_id": tr, "shape": "rect", "start": 2.0, "duration": 1.0, "color": [0.0, 0.0, 1.0]})).unwrap()["clip_id"].as_str().unwrap().to_string();
+        let body = serde_json::to_vec(&json!({"tool": "ripple_delete", "args": {"clip_id": second_id}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let s = ss.lock().unwrap();
+        assert_eq!(s.project.tracks[0].clips.len(), 1, "ripple_delete should actually remove the clip");
+    }
+
+}

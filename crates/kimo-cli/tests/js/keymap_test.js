@@ -39,5 +39,18 @@ check('Delete while focused in a textarea does nothing (editing text, not the ti
 check('ctrl+z while focused in an input still does nothing (field owns its own undo)', resolveKeyAction({ key: 'z', ctrlKey: true, target: input }), null);
 check('j while focused in a select does nothing', resolveKeyAction({ key: 'j', target: { tagName: 'SELECT' } }), null);
 
+
+// v7.5: copy/paste and ripple-delete.
+check('ctrl+c copies the selection', resolveKeyAction({ key: 'c', ctrlKey: true, target: body }), 'copy_clip');
+check('cmd+c (meta) also copies', resolveKeyAction({ key: 'c', metaKey: true, target: body }), 'copy_clip');
+check('ctrl+C (shifted C alone) still copies on the key value', resolveKeyAction({ key: 'C', ctrlKey: true, target: body }), 'copy_clip');
+check('ctrl+v pastes at the playhead', resolveKeyAction({ key: 'v', ctrlKey: true, target: body }), 'paste_clip');
+check('cmd+v (meta) also pastes', resolveKeyAction({ key: 'v', metaKey: true, target: body }), 'paste_clip');
+check('shift+Delete ripple-deletes (closes the gap) instead of plain delete', resolveKeyAction({ key: 'Delete', shiftKey: true, target: body }), 'ripple_delete_clip');
+check('shift+Backspace also ripple-deletes', resolveKeyAction({ key: 'Backspace', shiftKey: true, target: body }), 'ripple_delete_clip');
+check('plain Delete (no shift) still only plain-deletes, unchanged', resolveKeyAction({ key: 'Delete', target: body }), 'delete_clip');
+check('ctrl+c while focused in an input does nothing (field owns copy/paste)', resolveKeyAction({ key: 'c', ctrlKey: true, target: input }), null);
+check('ctrl+v while focused in a textarea does nothing', resolveKeyAction({ key: 'v', ctrlKey: true, target: textarea }), null);
+
 if (failures > 0) { console.log(`\n${failures} failure(s)`); process.exit(1); }
 console.log('\nall keymap tests passed');
