@@ -1352,9 +1352,9 @@ Real gaps found and built this pass:
   found while reading the audio path for this pass -- Track.muted has existed since before v7 and every
   audio-render/analysis path already honoured it, but no tool could ever set it. Fixed, plus the standard
   NLE companion (solo).
-- [ ] reframe_timeline -- auto-reframe (v7.2) is a single-clip, export-time-only operation (export_variants
-  applies and then removes it per variant); a persistent, undoable whole-timeline aspect conversion that
-  actually changes the canvas and keys every clip is still missing.
+- [x] reframe_timeline -- feature 3: auto-reframe (v7.2) is a single-clip, export-time-only operation
+  (export_variants applies and then removes it per variant); this is the persistent, undoable
+  whole-timeline aspect conversion that actually changes the canvas and keys every clip.
 - [ ] project_template -- starter project templates (canvas size + track layout conventions for "vertical
   social", "podcast/interview", "16:9 widescreen", etc.) so a new project doesn't start from a blank canvas
   every time. Not to be confused with template_define/apply (those are clip/op templates, a different thing).
@@ -1396,3 +1396,23 @@ Real gaps found and built this pass:
   preservation between clips, FCPXML parsed back with roxmltree and checked for frame-exact rational times,
   writing straight to a file, non-media skip reporting, and the ambiguous-multi-track error naming both
   tracks by id. Registered in the `project` toolgroup (beside import_edl). Tools 508->509.
+
+## v7.4 feature 3/8: reframe_timeline -- real, persistent whole-timeline aspect conversion
+
+- [x] `auto_reframe` (v7.2) keys one clip. `export_variants` (v7.3) touches every clip but restores the
+  canvas and every reframe window right after that one export -- by its own doc comment, "net effect on the
+  project is nothing". Neither actually changes the project as a real edit. `reframe_timeline` does: it sets
+  `project.width`/`height` for real and keys `auto_reframe` on every media clip in scope (`track_id` restricts
+  to one track; default every track), as one ordinary mutating tool call -- one undo step reverses the whole
+  conversion, same as any other tool. `aspect` takes the same small named-preset table export_variants uses
+  (16:9/9:16/1:1/4:5), or give `width`+`height` directly. `auto_reframe: false` resizes the canvas only and
+  leaves every clip's existing fit (contain/cover/stretch) alone. A clip that already has an active reframe
+  window (set by hand, or by an earlier call) is left alone and listed under `skipped_already_framed` unless
+  `overwrite_existing` -- a manually-framed shot is never silently clobbered. `dry_run` reports
+  `would_reframe`/`skipped_already_framed` without touching anything. 11 TDD tests: the canvas change sticks
+  (not restored like export_variants), undo reverses the whole conversion including every clip's reframe
+  window in one step, `auto_reframe: false` leaves clip fit alone, a manually-framed clip is protected unless
+  `overwrite_existing`, dry_run touches nothing, an already-matching aspect reframes nothing, explicit
+  width/height without a named aspect, non-media clips are never touched, `track_id` restricts scope, and two
+  clean-error cases (unknown aspect name, no size given at all). Registered in the `timeline` toolgroup
+  (beside `ripple_delete`/`auto_reframe`). Tools 509->510.
