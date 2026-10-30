@@ -73,19 +73,34 @@ fn move_asset_to_bin(ss: &mut Session, a: &Value) -> Result<Value, String> {
     ss.project.assets.get_mut(&asset_id).unwrap().bin = bin.clone();
     Ok(json!({"asset_id": asset_id, "bin": bin}))
 }
+/// v7.2: how many clips (across every track) reference this asset -- a "shot list" reverse lookup an
+/// agent otherwise has no way to get without scanning get_project's full clip list by hand.
+fn asset_usage(p: &crate::model::Project, asset_id: &str) -> usize {
+    p.tracks.iter().flat_map(|t| t.clips.iter()).filter(|c| matches!(&c.source, crate::model::Source::Media { asset } if asset == asset_id)).count()
+}
+
 fn find_assets(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let bin = match a.get("bin") { None => None, Some(Value::Null) => Some(None), Some(Value::String(s)) => Some(Some(s.clone())), _ => return Err("bin must be a string or null".into()) };
     let name_glob = match a.get("name_glob") { None | Some(Value::Null) => None, Some(Value::String(s)) => Some(s.clone()), _ => return Err("name_glob must be a string".into()) };
     let limit = match a.get("limit") { None | Some(Value::Null) => 100usize, Some(v) => v.as_u64().filter(|n| (1..=500).contains(n)).ok_or("limit must be an integer 1..500")? as usize };
+    let probe_audio = a.get("probe_audio").and_then(|v| v.as_bool()).unwrap_or(false);
     let (mut out, mut total) = (vec![], 0usize);
-    for (id, asset) in &ss.project.assets {
+    let ids: Vec<String> = ss.project.assets.keys().cloned().collect();
+    for id in &ids {
+        let asset = ss.project.assets.get(id).unwrap();
         if let Some(want) = &bin { if asset.bin != *want { continue; } }
         if let Some(g) = &name_glob {
             let fname = std::path::Path::new(&asset.path).file_name().and_then(|x| x.to_str()).unwrap_or(&asset.path);
             if !simple_glob(g, fname) { continue; }
         }
         total += 1;
-        if out.len() < limit { out.push(json!({"asset_id": id, "path": asset.path, "bin": asset.bin, "width": asset.width, "height": asset.height, "duration": asset.duration, "fps": asset.fps})); }
+        if out.len() >= limit { continue; }
+        let used_by = asset_usage(&ss.project, id);
+        let has_audio = if probe_audio {
+            let resolved = ss.project.resolve(&asset.path);
+            match crate::audio::source_info(&resolved) { Ok(_) => Some(true), Err(crate::audio::AudioError::NoAudioTrack) => Some(false), Err(_) => None }
+        } else { None };
+        out.push(json!({"asset_id": id, "path": asset.path, "bin": asset.bin, "width": asset.width, "height": asset.height, "duration": asset.duration, "fps": asset.fps, "kind": asset.kind, "hash": asset.hash, "origin": asset.origin, "used_by_clips": used_by, "has_audio": has_audio}));
     }
     Ok(json!({"matches": out, "count": out.len(), "total": total, "truncated": total > out.len()}))
 }
@@ -148,8 +163,8 @@ pub fn commands() -> Vec<Command> { vec![
         schema: obj(vec![("name", s("bin to delete")), ("reassign_to", json!({"type":["string","null"],"description":"bin for its assets to move to; omitted/null = unfiled"}))], &["name"]), run: delete_bin },
     Command { name: "move_asset_to_bin", description: "File an asset into a bin (creating the bin if it doesn't exist yet), or back to unfiled with bin: null.", mutates: true,
         schema: obj(vec![("asset_id", s("asset")), ("bin", json!({"type":["string","null"]}))], &["asset_id", "bin"]), run: move_asset_to_bin },
-    Command { name: "find_assets", description: "Read-only search of imported media-pool assets by bin and name_glob. bin: omit = any, null = unfiled only, a name = that bin. name_glob matches the file name (* and ?). Returns up to limit matches (default 100, max 500) with asset_id, path, bin, width, height, duration, fps; total and truncated say whether more matched.", mutates: false,
-        schema: obj(vec![("bin", json!({"type":["string","null"]})), ("name_glob", s("file-name pattern with * and ?")), ("limit", json!({"type":"integer","minimum":1,"maximum":500}))], &[]), run: find_assets },
+    Command { name: "find_assets", description: "Read-only search of imported media-pool assets (the shot list): technical metadata per asset plus how many timeline clips use it. bin: omit = any, null = unfiled only, a name = that bin. name_glob matches the file name (* and ?). Returns up to limit matches (default 100, max 500) with asset_id, path, bin, width, height, duration, fps, kind, hash, origin, and used_by_clips (how many clips across every track reference this asset -- the agent-facing reverse lookup get_project doesn't give you directly); total and truncated say whether more matched. probe_audio (default false, costs one ffprobe per matched asset) also reports has_audio (true/false/null if the probe itself failed, e.g. a missing file).", mutates: false,
+        schema: obj(vec![("bin", json!({"type":["string","null"]})), ("name_glob", s("file-name pattern with * and ?")), ("limit", json!({"type":"integer","minimum":1,"maximum":500})), ("probe_audio", json!({"type":"boolean","description":"also report has_audio per matched asset (one ffprobe each)"}))], &[]), run: find_assets },
     Command { name: "create_subclip", description: "Save a named [in_point, out_point) source-seconds bookmark on a media asset (a subclip). Find it again with list_subclips, place it on the timeline with add_clip_from_subclip, without re-remembering the exact numbers. Does not itself appear on any track. Errors: invalid in_point/out_point, out_point beyond the asset's known duration.", mutates: true,
         schema: obj(vec![("asset_id", s("media asset")), ("in_point", n("source seconds, >= 0")), ("out_point", n("source seconds, > in_point")), ("name", json!({"type":["string","null"],"description":"optional label, 1..64 characters"}))], &["asset_id", "in_point", "out_point"]), run: create_subclip },
     Command { name: "list_subclips", description: "List saved subclips, optionally filtered to one asset. Nothing is changed.", mutates: false,

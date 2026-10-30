@@ -983,10 +983,21 @@ Real gaps found (perception/feedback and agent-superiority), built below, cheape
   failed, track_id scoping, min>max errors, read-only (byte-identical project, no undo entry).
   golden_registry.txt hand-updated (501 tools), toolgroups.rs updated (scopes group, next to
   measure_loudness). All green including golden_frames_registry_and_projects.
-- [ ] No per-asset technical metadata query (shot list: duration, fps, has_audio, width/height, kind,
-  hash, which bin, which clips reference it) in one call -- `find` returns timeline placement, not the
-  underlying asset's own technical facts; the only way to read `Asset.duration/fps/...` today is
-  `get_project`'s full dump. -> `asset_info`.
+- [x] `find_assets` grows into the shot list: checked first and found `find_assets` already returns
+  asset_id/path/bin/width/height/duration/fps (would have duplicated a new `asset_info` tool). The real
+  gaps: `kind`/`hash`/`origin` already sit on the `Asset` model but were never surfaced; nothing counts
+  how many timeline clips use an asset (a reverse lookup, new `used_by_clips`, scanning every track);
+  `has_audio` isn't a stored fact at all (an opt-in `probe_audio` flag now reports it via one ffprobe per
+  matched asset, reusing `crate::audio::source_info` rather than a second ffprobe call site -- default
+  false so an ordinary find_assets call spends nothing extra). Backward compatible: every existing field
+  and caller (bins_subclips_colors.rs) is untouched, new fields are additive. 5 new TDD tests
+  (tests/find_assets_shot_list_v72.rs): kind/hash/origin ride along, used_by_clips counts correctly
+  across two tracks (0 before placement), has_audio is null by default and populated true/false per
+  asset with probe_audio (silent vs sine-tone fixtures, same ffmpeg-lavfi technique as
+  bins_subclips_colors.rs's own fixture()), existing bin/name_glob filters unaffected, read-only.
+  golden_registry.txt hand-updated (find_assets' grown schema+description hash, still 501 tools -- no
+  new tool name this time). All green including golden_frames_registry_and_projects and the existing
+  bins_subclips_colors.rs (8 tests, unaffected).
 - [ ] No one-call self-review: an agent today must call `lint_edit`, `validate_timeline` and
   `contact_sheet` separately and manually correlate their times to get a single "what's wrong, and show
   me" answer. -> `self_review` (read-only orchestration of existing tools, no new dispatch path).
