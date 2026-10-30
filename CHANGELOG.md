@@ -4,6 +4,62 @@
 
 ## Unreleased
 
+## v7.4.0 (2026-10-30)
+
+Naman's standing instruction continued: "keep working, and keep sending updates." Picked up straight
+from v7.3.0 (508 tools). Re-audited the registry and FEATURES.md first (close_gaps/ripple delete,
+batch caption styling, timeline diff and a generic rough-cut were all already covered pre-v7 --
+confirmed and NOT duplicated); real gaps found and built instead. 8 features shipped, each with its
+own TDD commit:
+
+- New `track_mute_solo`: not from the audit's suggestion list, but a real pre-existing bug found while
+  reading the audio path -- `Track.muted` has existed since before v7 and every audio-render/analysis
+  path already honoured it, but no tool could ever set it. `set_track` now accepts `muted` and the
+  standard NLE companion `solo` (solo-overrides-mute semantics, centralised in
+  `model::effective_mute`). 9 new tests including a real ffmpeg-tone-silenced-by-mute test. Tools: 508
+  (unchanged).
+- New `export_edl`: the write-side counterpart to v7.3's `import_edl`. Exports the timeline as
+  CMX3600 EDL, OTIO JSON (round-trips through `import_edl`'s own parser) or a minimal FCPXML. Non-media
+  clips and non-1.0-speed clips are reported, never silently dropped or wrong. 10 new tests. Tools:
+  508 -> 509.
+- New `reframe_timeline`: v7.2's `auto_reframe` keys one clip; v7.3's `export_variants` touches every
+  clip but restores everything after one export. This is the persistent, undoable whole-timeline
+  aspect conversion that actually changes the canvas for real -- one undo step reverses the whole
+  thing. Protects manually-framed clips unless `overwrite_existing`. 11 new tests. Tools: 509 -> 510.
+- New `list_project_templates`/`create_project_from_template`: 5 starter templates (vertical/square
+  social, 16:9 widescreen, podcast interview, multicam panel) with canvas/fps/named-track-layout, one
+  call instead of a blank canvas plus manual `add_track` calls every time. 7 new tests. Tools:
+  510 -> 512.
+- `kimo gui` track mute/solo/lock controls: M/S/L buttons per track wired onto `set_track`; a locked
+  track's clips stop accepting drag/trim in the GUI. Pure shared module `gui_trackstate.js`. 13 Node
+  tests + 4 Rust tests.
+- `kimo gui` multi-select and group move/delete: shift/cmd/ctrl-click selects several clips; dragging
+  any one moves the whole group as one atomic `batch` call (one undo step); Delete removes them all
+  the same way. Pure shared module `gui_multiselect.js`. 19 Node tests + 5 Rust tests.
+- `kimo gui` clip waveforms: every media clip bar shows its real audio waveform, wired onto
+  `audio_transients`' existing `image: "waveform"` SVG option (no new peak-computation code). Pure
+  shared module `gui_waveform.js`. 15 Node tests + 5 Rust tests.
+- `kimo gui` effects/transitions browser: the bare effect-kind `<select>` is now a real searchable
+  list combining `list_effects` and `list_transitions` (two genuinely different catalog shapes),
+  click to add to the selected clip. Pure shared module `gui_fxbrowser.js`. 12 Node tests + 4 Rust
+  tests.
+
+Also fixed along the way: `reframe_timeline`'s hand-rolled aspect-enum error message collided with
+`dispatch_ex`'s own `invalid_value` short-circuit and tripped `registry_lint`'s
+`every_schema_enum_rejection_lists_allowed_values` check (caught by the full-suite run, not by its own
+feature commit); rephrased to the same "X must be ..., got 'Y'" shape `export_edl`'s own enum error
+already used successfully. A filesystem-fixture race in the waveform tests (two tests sharing one
+PID-keyed temp dir name, racing on parallel test threads) was found and fixed with a per-call counter.
+Two trivial unused-`mut` warnings removed (zero behaviour change), taking kimo-core's own warning
+count from 36 to 34.
+
+`kimo-gui` (the separate Tauri spectator shell under `crates/kimo-gui`) is deliberately its own
+workspace (see its Cargo.toml comment) and carries its own `6.0.0` version, unrelated to and not
+tracking this workspace's version -- not touched by this release, by design, not oversight.
+
+README.md's own tool count is out of date as of this release (not updated by this pass; a prior
+release noted the same `readme_count` test as a known, deliberately-left failure).
+
 ## v7.3.0 (2026-10-30)
 
 Naman's standing instruction continued: "make ai agent a complete editor," "better than any editor
