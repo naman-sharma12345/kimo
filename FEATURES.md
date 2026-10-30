@@ -1168,3 +1168,31 @@ new (the v7.2 audit explicitly flagged EDL/OTIO import as a real gap, bigger tha
   nothing; `clip_ids` scopes to an explicit list and an unknown id errors; a too-short clip is skipped, not
   a failure; `track_id` scopes the batch. golden_registry.txt hand-updated (506 -> 507 tools), toolgroups.rs
   updated (`audio` group, beside `normalize_loudness`).
+
+
+## v7.3 feature 4/N: kimo gui keyboard shortcuts
+
+- [x] `kimo gui` keyboard shortcuts: space play/pause, J/K/L (step back one frame / pause / step forward
+  one frame -- this is a frame-stepped preview, not continuous video playback, so J/L step rather than
+  shuttle at speed), Delete/Backspace removes the selected clip, S splits it at the playhead, Ctrl/Cmd+Z
+  undoes, Ctrl/Cmd+Shift+Z redoes. Was a real, named gap: v7.1/v7.2's "kimo gui" had no keyboard handling
+  at all (FEATURES.md's own honest-gaps list for the GUI never even got that far). The key-to-action
+  mapping is its own pure function, `gui_keymap.js` (`resolveKeyAction(event) -> action name | null`, no
+  DOM) -- served as a real static file at `GET /gui_keymap.js` so the browser's
+  `<script src="/gui_keymap.js">` and a headless Node test run the exact same bytes; there is one mapping,
+  not two to keep in sync, and typing in an input/textarea/select never fires a shortcut (space in the
+  tool-filter box types a space, not play/pause). `gui_index.html`'s keydown listener is thin DOM glue:
+  it calls `resolveKeyAction` and dispatches to the existing `togglePlay`/`doUndo`/`doRedo` and two new
+  small functions, `deleteSelectedClip()` and `splitAtPlayhead()`, both plain `/api/call` round trips
+  through `delete_clip`/`split_clip` (already-registered engine tools; nothing new in kimo-core for this
+  feature) followed by a timeline/inspector refresh, the same shape the move/trim drag and undo/redo
+  buttons already use. 18 new headless Node tests (tests/js/keymap_test.js, no browser, no DOM -- every
+  key combo this feature claims, plus the "ignored while typing in a field" cases) + 6 new Rust tests
+  (crates/kimo-cli/src/gui.rs): `/gui_keymap.js` is served with the right content-type and really is the
+  requireable module (405 on non-GET); the index page is checked to actually wire up the listener and
+  reference every new function by name; delete's own API sequence actually removes the clip from the
+  project (and a stale id reports a tool error, not a crash); split's own API sequence actually produces
+  two clips at the right boundary (and an out-of-range playhead errors plainly, the path `splitAtPlayhead`'s
+  `alert()` surfaces); undo/redo's shortcuts are confirmed to land on the same history tools the existing
+  buttons already use and actually move the project back and forth. All 24 pre-existing kimo-cli tests
+  stayed green.

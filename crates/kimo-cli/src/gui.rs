@@ -57,6 +57,10 @@ fn json_response(status: u16, v: Value) -> Response { Response { status, content
 fn err_response(status: u16, msg: impl Into<String>) -> Response { json_response(status, json!({"error": msg.into()})) }
 
 const INDEX_HTML: &str = include_str!("gui_index.html");
+/// v7.3: the keyboard-shortcut resolver (space/J/K/L/Delete/S/undo/redo), served as a real static file so
+/// gui_index.html's <script src="/gui_keymap.js"> and tests/js/keymap_test.js (Node, headless) run the
+/// exact same bytes -- one mapping, not two to keep in sync.
+const KEYMAP_JS: &str = include_str!("gui_keymap.js");
 
 /// Parses `?t=1.5` (or any single-key query) out of a raw query string; used for /preview.png's `t`.
 fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
@@ -69,6 +73,7 @@ fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
 pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query: &str, body: &[u8]) -> Response {
     match (method, path) {
         ("GET", "/") => Response { status: 200, content_type: "text/html; charset=utf-8", body: INDEX_HTML.as_bytes().to_vec() },
+        ("GET", "/gui_keymap.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: KEYMAP_JS.as_bytes().to_vec() },
         ("GET", "/api/timeline") => { let ss = ss.lock().unwrap(); json_response(200, timeline_view_model(&ss)) }
         ("GET", "/api/registry") => json_response(200, registry_summary()),
         ("GET", "/api/clip") => { // ?id=<clip_id>
@@ -105,7 +110,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
                 Err(e) => json_response(200, json!({"ok": false, "error": e})),
             }
         }
-        (_, "/") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
+        (_, "/") | (_, "/gui_keymap.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
         _ => err_response(404, format!("no route for {path}")),
     }
 }
@@ -409,4 +414,101 @@ mod tests {
         let after = { let s = ss.lock().unwrap(); clip_detail(&s, &clip_id).unwrap() };
         assert_eq!(after["effects"][0]["params"]["radius"], 9.0, "the panel's own round trip actually moved the param: {after}");
     }
+
+    // ---- v7.3: keyboard shortcuts ----
+
+    #[test]
+    fn gui_keymap_js_is_served_as_a_real_static_file() {
+        // Served so the browser's <script src="/gui_keymap.js"> and tests/js/keymap_test.js (Node,
+        // headless) run the exact same bytes -- one mapping, not two to keep in sync.
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_keymap.js", "", &[]);
+        assert_eq!(r.status, 200);
+        assert!(r.content_type.contains("javascript"), "{}", r.content_type);
+        let body = String::from_utf8(r.body).unwrap();
+        assert!(body.contains("resolveKeyAction"), "should serve the real keymap module");
+        assert!(body.contains("module.exports"), "must stay requireable from Node for the headless test");
+    }
+
+    #[test]
+    fn gui_keymap_js_rejects_non_get() {
+        let ss = fixture();
+        let r = handle_request(&ss, "POST", "/gui_keymap.js", "", &[]);
+        assert_eq!(r.status, 405);
+    }
+
+    #[test]
+    fn the_index_page_wires_up_the_keyboard_shortcuts() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["/gui_keymap.js", "addEventListener('keydown'", "kimoKeymap.resolveKeyAction", "deleteSelectedClip", "splitAtPlayhead", "stepFrame"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn delete_shortcut_removes_the_selected_clip_through_the_same_api_call_path() {
+        // The keypress itself is DOM (tested in tests/js/keymap_test.js + the wiring check above); what's
+        // tested here is the exact call deleteSelectedClip() makes and its effect on the project.
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        let before = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        assert_eq!(before["tracks"][0]["clips"].as_array().unwrap().len(), 1);
+
+        let body = serde_json::to_vec(&json!({"tool": "delete_clip", "args": {"clip_id": clip_id}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let after = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        assert_eq!(after["tracks"][0]["clips"].as_array().unwrap().len(), 0, "the clip should actually be gone: {after}");
+
+        // a clip that's already gone (double-press, or stale selection) reports a tool error, not a crash
+        let bad = serde_json::to_vec(&json!({"tool": "delete_clip", "args": {"clip_id": clip_id}})).unwrap();
+        let r2 = handle_request(&ss, "POST", "/api/call", "", &bad);
+        let v2: Value = serde_json::from_slice(&r2.body).unwrap(); assert_eq!(v2["ok"], false);
+    }
+
+    #[test]
+    fn split_shortcut_splits_the_selected_clip_at_the_playhead() {
+        let ss = fixture(); // a 2s shape clip, start 0
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+
+        let body = serde_json::to_vec(&json!({"tool": "split_clip", "args": {"clip_id": clip_id, "at": 1.25}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let after = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        let clips = after["tracks"][0]["clips"].as_array().unwrap();
+        assert_eq!(clips.len(), 2, "splitting should leave two clips: {after}");
+        assert_eq!(clips[0]["duration"], 1.25);
+        assert_eq!(clips[1]["start"], 1.25);
+        assert_eq!(clips[1]["end"], 2.0);
+
+        // a playhead outside the (new, shorter) clip is a plain tool error, not a crash -- this is the
+        // path splitAtPlayhead()'s alert() surfaces to the person
+        let outside = serde_json::to_vec(&json!({"tool": "split_clip", "args": {"clip_id": clips[0]["id"], "at": 5.0}})).unwrap();
+        let r2 = handle_request(&ss, "POST", "/api/call", "", &outside);
+        let v2: Value = serde_json::from_slice(&r2.body).unwrap(); assert_eq!(v2["ok"], false);
+    }
+
+    #[test]
+    fn undo_redo_shortcuts_use_the_same_history_tools_the_buttons_already_use() {
+        // Ctrl+Z / Ctrl+Shift+Z call the same doUndo()/doRedo() the existing Undo/Redo buttons do --
+        // nothing new to dispatch, just confirming the mapping lands on tools that actually exist and work.
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        let move_body = serde_json::to_vec(&json!({"tool": "move_clip", "args": {"clip_id": clip_id, "start": 1.0}})).unwrap();
+        handle_request(&ss, "POST", "/api/call", "", &move_body);
+        assert_eq!({ let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].start }, 1.0);
+
+        let undo_body = serde_json::to_vec(&json!({"tool": "undo", "args": {}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &undo_body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        assert_eq!({ let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].start }, 0.0, "ctrl+z's own tool should undo the move");
+
+        let redo_body = serde_json::to_vec(&json!({"tool": "redo", "args": {}})).unwrap();
+        let r2 = handle_request(&ss, "POST", "/api/call", "", &redo_body);
+        let v2: Value = serde_json::from_slice(&r2.body).unwrap(); assert_eq!(v2["ok"], true, "{v2}");
+        assert_eq!({ let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].start }, 1.0, "ctrl+shift+z's own tool should redo it");
+    }
 }
+
