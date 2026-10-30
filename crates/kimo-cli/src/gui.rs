@@ -57,6 +57,25 @@ pub fn registry_summary() -> Value {
     json!(registry_ref().iter().map(|c| { let first = c.description.split(". ").next().unwrap_or(&c.description); json!({"name": c.name, "summary": first, "mutates": c.mutates}) }).collect::<Vec<_>>())
 }
 
+/// Renders one PNG frame of a single media asset, for the media bin panel's thumbnails -- NOT a frame of
+/// the live project. Builds a throwaway Session carrying just that one asset on a fresh one-clip
+/// project (through add_track/add_clip, the same tools any caller uses, so this needs no new clip-
+/// construction code of its own) and renders its midpoint with the same render_png /preview.png already
+/// uses. The real session (and its undo history) is never touched: `ss` is read only to look up the
+/// asset's own record.
+fn asset_thumbnail_png(ss: &Session, asset_id: &str, path_str: &str) -> Result<(), String> {
+    let asset = ss.project.assets.get(asset_id).cloned().ok_or_else(|| format!("unknown_asset: no asset '{asset_id}'"))?;
+    let mut temp = Session::new();
+    temp.project.width = ss.project.width;
+    temp.project.height = ss.project.height;
+    temp.project.fps = ss.project.fps;
+    temp.project.assets.insert(asset_id.to_string(), asset.clone());
+    let tid = kimo_core::commands::dispatch(&mut temp, "add_track", &json!({}))?["track_id"].as_str().unwrap_or_default().to_string();
+    let dur = if asset.duration > 0.0 { asset.duration.min(4.0) } else { 1.0 };
+    kimo_core::commands::dispatch(&mut temp, "add_clip", &json!({"track_id": tid, "source_type": "media", "asset_id": asset_id, "start": 0.0, "duration": dur, "fit": "cover"}))?;
+    kimo_core::render::render_png(&temp.project, dur / 2.0, path_str, &mut temp.cache)
+}
+
 pub struct Response { pub status: u16, pub content_type: &'static str, pub body: Vec<u8> }
 fn json_response(status: u16, v: Value) -> Response { Response { status, content_type: "application/json", body: serde_json::to_vec(&v).unwrap_or_default() } }
 fn err_response(status: u16, msg: impl Into<String>) -> Response { json_response(status, json!({"error": msg.into()})) }
@@ -112,6 +131,10 @@ const KEYFRAMES_JS: &str = include_str!("gui_keyframes.js");
 /// open for each, viewport-clamped menu positioning), served the same way for the same reason --
 /// gui_index.html's right-click handler and tests/js/contextmenu_test.js (Node) run the exact same bytes.
 const CONTEXTMENU_JS: &str = include_str!("gui_contextmenu.js");
+/// v7.6: the media bin panel's view model (search/filter, used/unfiled display, the per-asset thumbnail
+/// URL), served the same way for the same reason -- gui_index.html's media bin panel and
+/// tests/js/mediabin_test.js (Node) run the exact same bytes.
+const MEDIABIN_JS: &str = include_str!("gui_mediabin.js");
 
 /// Parses `?t=1.5` (or any single-key query) out of a raw query string; used for /preview.png's `t`.
 fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
@@ -136,6 +159,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
         ("GET", "/gui_renderqueue.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: RENDERQUEUE_JS.as_bytes().to_vec() },
         ("GET", "/gui_keyframes.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: KEYFRAMES_JS.as_bytes().to_vec() },
         ("GET", "/gui_contextmenu.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: CONTEXTMENU_JS.as_bytes().to_vec() },
+        ("GET", "/gui_mediabin.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: MEDIABIN_JS.as_bytes().to_vec() },
         ("GET", "/api/timeline") => { let ss = ss.lock().unwrap(); json_response(200, timeline_view_model(&ss)) }
         ("GET", "/api/registry") => json_response(200, registry_summary()),
         ("GET", "/api/clip") => { // ?id=<clip_id>
@@ -163,6 +187,19 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
                 Err(e) => err_response(500, format!("render failed: {e}")),
             }
         }
+        ("GET", "/asset_thumb.png") => { // ?asset_id=<id> -- an ephemeral one-clip render of just that asset, never touching the live project
+            let Some(asset_id) = query_param(query, "asset_id") else { return err_response(400, "missing_arg: asset_id") };
+            let ss = ss.lock().unwrap();
+            let dir = std::env::temp_dir().join("kimo_gui_asset_thumb");
+            if std::fs::create_dir_all(&dir).is_err() { return err_response(500, "could not create thumbnail temp dir"); }
+            let safe_id: String = asset_id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect();
+            let path = dir.join(format!("thumb_{}_{safe_id}.png", std::process::id()));
+            let path_str = match path.to_str() { Some(s) => s, None => return err_response(500, "non-utf8 temp path") };
+            match asset_thumbnail_png(&ss, asset_id, path_str) {
+                Ok(()) => match std::fs::read(&path) { Ok(bytes) => Response { status: 200, content_type: "image/png", body: bytes }, Err(e) => err_response(500, format!("rendered but could not read back: {e}")) },
+                Err(e) => err_response(404, e),
+            }
+        }
         ("POST", "/api/call") => {
             let v: Value = match serde_json::from_slice(body) { Ok(v) => v, Err(e) => return err_response(400, format!("body is not valid JSON: {e}")) };
             let Some(tool) = v.get("tool").and_then(|v| v.as_str()) else { return err_response(400, "missing_arg: tool") };
@@ -172,7 +209,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
                 Err(e) => json_response(200, json!({"ok": false, "error": e})),
             }
         }
-        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/gui_zoom.js") | (_, "/gui_trackstate.js") | (_, "/gui_multiselect.js") | (_, "/gui_waveform.js") | (_, "/gui_fxbrowser.js") | (_, "/gui_clipboard.js") | (_, "/gui_markerpanel.js") | (_, "/gui_renderqueue.js") | (_, "/gui_keyframes.js") | (_, "/gui_contextmenu.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
+        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/gui_zoom.js") | (_, "/gui_trackstate.js") | (_, "/gui_multiselect.js") | (_, "/gui_waveform.js") | (_, "/gui_fxbrowser.js") | (_, "/gui_clipboard.js") | (_, "/gui_markerpanel.js") | (_, "/gui_renderqueue.js") | (_, "/gui_keyframes.js") | (_, "/gui_contextmenu.js") | (_, "/gui_mediabin.js") | (_, "/asset_thumb.png") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
         _ => err_response(404, format!("no route for {path}")),
     }
 }
@@ -1389,5 +1426,81 @@ mod tests {
         let good = serde_json::to_vec(&json!({"tool": "split_clip", "args": {"clip_id": clip_id, "at": 1.0}})).unwrap();
         let r2 = handle_request(&ss, "POST", "/api/call", "", &good);
         let v2: Value = serde_json::from_slice(&r2.body).unwrap(); assert_eq!(v2["ok"], true, "{v2}");
+    }
+
+    // ---- v7.6: media bin panel ----
+
+    #[test]
+    fn served_mediabin_js_matches_the_file_on_disk() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_mediabin.js", "", &[]);
+        assert_eq!(r.status, 200); assert_eq!(r.content_type, "application/javascript; charset=utf-8");
+        assert_eq!(r.body, include_bytes!("gui_mediabin.js").to_vec());
+    }
+
+    #[test]
+    fn the_index_page_wires_up_the_media_bin_panel() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["gui_mediabin.js", "kimoMediaBin.buildAssetRows", "function loadMediaBin", "function renderMediaBin", "function importMediaBinAsset", "media-bin-list", "media-bin-search"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    fn test_video(name: &str) -> String {
+        let dir = std::env::temp_dir().join(format!("kimo_gui_mediabin_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join(name);
+        if !p.exists() {
+            let st = std::process::Command::new("ffmpeg").args(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=64x36:r=25:d=1", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", p.to_str().unwrap()]).status().expect("ffmpeg");
+            assert!(st.success());
+        }
+        p.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn import_media_through_api_call_feeds_find_assets_for_the_media_bin_panel() {
+        let ss = fixture();
+        let path = test_video("mb1.mp4");
+        let body = serde_json::to_vec(&json!({"tool": "import_media", "args": {"path": path}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let fa = serde_json::to_vec(&json!({"tool": "find_assets", "args": {"limit": 500}})).unwrap();
+        let far = handle_request(&ss, "POST", "/api/call", "", &fa);
+        let fav: Value = serde_json::from_slice(&far.body).unwrap();
+        assert_eq!(fav["result"]["matches"].as_array().unwrap().len(), 1, "{fav}");
+    }
+
+    #[test]
+    fn asset_thumb_png_renders_a_real_png_for_an_imported_asset() {
+        let ss = fixture();
+        let path = test_video("mb2.mp4");
+        let body = serde_json::to_vec(&json!({"tool": "import_media", "args": {"path": path}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap();
+        let asset_id = v["result"]["asset_id"].as_str().unwrap().to_string();
+        let thumb = handle_request(&ss, "GET", "/asset_thumb.png", &format!("asset_id={asset_id}"), &[]);
+        assert_eq!(thumb.status, 200, "{thumb:?}", thumb = String::from_utf8_lossy(&thumb.body));
+        assert_eq!(thumb.content_type, "image/png");
+        assert!(thumb.body.len() > 100, "a real PNG should not be near-empty, got {} bytes", thumb.body.len());
+        assert_eq!(&thumb.body[0..8], &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], "should start with the PNG magic bytes");
+        // the live project must be untouched -- a thumbnail is a read, not an edit
+        let s = ss.lock().unwrap();
+        assert_eq!(s.project.tracks[0].clips.len(), 1, "asset_thumb.png must not add a clip to the real project");
+    }
+
+    #[test]
+    fn asset_thumb_png_of_an_unknown_asset_is_a_clean_404_not_a_crash() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/asset_thumb.png", "asset_id=no-such-asset", &[]);
+        assert_eq!(r.status, 404, "{r:?}", r = String::from_utf8_lossy(&r.body));
+    }
+
+    #[test]
+    fn asset_thumb_png_without_asset_id_is_a_clean_400() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/asset_thumb.png", "", &[]);
+        assert_eq!(r.status, 400);
     }
 }

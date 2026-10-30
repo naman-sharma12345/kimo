@@ -1734,7 +1734,7 @@ gaps, candidates for this pass:
 - [x] batch_set_meta: apply a role/color/tags to many clips at once, by explicit ids or by a
   find-style filter, in one call.
 - [x] kimo gui: clip context menu (right-click: split/duplicate/delete/properties).
-- [ ] kimo gui: media bin panel with search and a thumbnail list.
+- [x] kimo gui: media bin panel with search and a thumbnail list.
 - [ ] kimo gui: timeline minimap/overview.
 - [ ] kimo gui: inline caption text editing directly on the timeline.
 - [ ] kimo gui: transitions drag-drop between clips.
@@ -1825,3 +1825,30 @@ gaps, candidates for this pass:
   the JS marks disabled fails server-side too (so the menu's enabled state never promises something the
   API refuses) while splitting inside the clip succeeds. No registry change (GUI-only, no new MCP tool,
   same shape as v7.5's keyframe lane). All 80 prior kimo-cli tests stayed green (84 total).
+
+## v7.6 feature 5/8: kimo gui media bin panel
+
+- [x] A searchable, thumbnailed list of every asset in the media pool -- before this, the GUI had no view
+  at all of imported-but-not-yet-placed media; only clips already on the timeline showed up anywhere.
+  Reshapes `find_assets`' own result (name, bin, duration, whether anything on the timeline currently uses
+  it) for display, filters by file name as you type, and renders a real thumbnail per asset. A plain path
+  input lets media actually get into the bin from the GUI (`import_media`), which the GUI had no control
+  for before either. Honest scope: the thumbnail is the asset's own midpoint frame, not a scrubbable
+  filmstrip, and the panel refreshes on load, after an import, and after any call through the generic
+  Tools invoke panel -- not on every mutation made through a dedicated button elsewhere in the GUI.
+- New server route `GET /asset_thumb.png?asset_id=<id>` (`gui.rs`'s `asset_thumbnail_png`): builds a
+  throwaway one-clip project holding just that asset through `add_track`/`add_clip` (the same tools any
+  caller uses, so no new clip-construction code) and renders its midpoint with the same `render_png`
+  `/preview.png` already uses. The real session and its undo history are never touched -- this is a read,
+  not an edit. No new MCP tool (an HTTP-only route, like `/preview.png` itself).
+- `gui_mediabin.js`: pure JS, no DOM -- `basename`, `formatDuration`, `matchesQuery` (case-insensitive
+  substring match on the file name), `buildAssetRows` (filters and reshapes `find_assets`' matches into
+  display rows, sorted by name so the list does not reshuffle while typing). Served at `GET
+  /gui_mediabin.js`, wired into `gui_index.html` (a Media bin section with an import path input, a search
+  box, and the thumbnailed list) and `gui.rs` (route, 405 list).
+- 24 new headless Node tests (`tests/js/mediabin_test.js`) plus 6 new Rust tests: the JS file served
+  byte-identical to disk, the index page wires up the panel by name, a real `import_media` through
+  `/api/call` feeds `find_assets` for the panel, `/asset_thumb.png` renders a real PNG (checked against
+  the actual PNG magic bytes) for an imported asset without adding a clip to the live project, an unknown
+  asset id is a clean 404, and a missing `asset_id` query param is a clean 400. All 84 prior kimo-cli tests
+  stayed green (90 total).

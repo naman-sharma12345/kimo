@@ -77,6 +77,13 @@
   #render-queue-list .rq-empty { padding: 6px; color: #667; }
   #keyframe-lane .kf-key { position: absolute; top: 4px; width: 9px; height: 9px; margin-left: -4px; background: #fd6; border: 1px solid #a80; transform: rotate(45deg); cursor: pointer; }
   #keyframe-lane .kf-key:hover { background: #fff; }
+  #media-bin-list .mb-row { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 3px; }
+  #media-bin-list .mb-row:hover { background: #2a2a33; }
+  #media-bin-list .mb-thumb { width: 48px; height: 27px; object-fit: cover; background: #111; border: 1px solid #333; border-radius: 2px; flex: none; }
+  #media-bin-list .mb-meta { flex: 1 1 auto; overflow: hidden; }
+  #media-bin-list .mb-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #media-bin-list .mb-sub { color: #9ab; font-size: 10px; }
+  #media-bin-list .mb-empty { padding: 6px; color: #667; }
 </style>
 </head>
 <body>
@@ -102,6 +109,15 @@
     <section id="marker-panel" style="margin-top:12px">
       <h2>Markers &amp; chapters</h2>
       <div id="marker-list" style="max-height:140px;overflow-y:auto;font-size:11px"></div>
+    </section>
+    <section id="media-bin" style="margin-top:12px">
+      <h2>Media bin</h2>
+      <div style="display:flex;gap:4px;margin-bottom:6px">
+        <input id="media-bin-import-path" placeholder="path to import..." style="flex:1 1 auto;box-sizing:border-box">
+        <button class="small" style="font-size:11px;padding:3px 8px" onclick="importMediaBinAsset()">Import</button>
+      </div>
+      <input id="media-bin-search" placeholder="search media..." oninput="renderMediaBin()" style="width:100%;box-sizing:border-box;margin-bottom:6px">
+      <div id="media-bin-list" style="max-height:200px;overflow-y:auto;font-size:11px"></div>
     </section>
     <section id="inspector" style="margin-top:12px">
       <h2>Clip &middot; effect params</h2>
@@ -164,6 +180,7 @@
 <script src="/gui_renderqueue.js"></script>
 <script src="/gui_keyframes.js"></script>
 <script src="/gui_contextmenu.js"></script>
+<script src="/gui_mediabin.js"></script>
 <script>
 let registry = [];
 let projectFps = 30; // set from /api/timeline; used by J/K/L's frame step
@@ -819,8 +836,45 @@ async function callTool() {
   const v = await r.json();
   document.getElementById('result').textContent = JSON.stringify(v, null, 2);
   loadTimeline();
+  loadMediaBin();
 }
-loadTimeline(); loadRegistry(); renderQueuePanel();
+// v7.6: media bin panel -- a searchable, thumbnailed view of every imported asset (find_assets' own
+// result reshaped by kimoMediaBin), with a plain path input to import more. Nothing the GUI did not
+// already let you do through the generic Tools panel; this is the first place the GUI shows media that
+// is not yet placed on the timeline at all.
+let mediaBinAssets = [];
+async function loadMediaBin() {
+  const r = await callApi('find_assets', { limit: 500 });
+  mediaBinAssets = r.ok ? (r.result.matches || []) : [];
+  renderMediaBin();
+}
+function renderMediaBin() {
+  const listEl = document.getElementById('media-bin-list'); if (!listEl) return;
+  const q = document.getElementById('media-bin-search').value;
+  const rows = kimoMediaBin.buildAssetRows(mediaBinAssets, q);
+  listEl.innerHTML = '';
+  if (rows.length === 0) { listEl.innerHTML = '<div class="mb-empty">no media imported yet</div>'; return; }
+  for (const row of rows) {
+    const el = document.createElement('div'); el.className = 'mb-row';
+    const img = document.createElement('img'); img.className = 'mb-thumb'; img.src = row.thumbUrl; img.alt = '';
+    const meta = document.createElement('div'); meta.className = 'mb-meta';
+    const name = document.createElement('div'); name.className = 'mb-name'; name.title = row.path; name.textContent = row.name;
+    const sub = document.createElement('div'); sub.className = 'mb-sub'; sub.textContent = row.bin + ' \u00b7 ' + row.durationLabel + (row.used ? ' \u00b7 used' : '');
+    meta.appendChild(name); meta.appendChild(sub);
+    el.appendChild(img); el.appendChild(meta);
+    listEl.appendChild(el);
+  }
+}
+async function importMediaBinAsset() {
+  const pathEl = document.getElementById('media-bin-import-path');
+  const path = pathEl.value.trim(); if (!path) return;
+  const v = await callApi('import_media', { path: path });
+  if (!v.ok) { alert(typeof v.error === 'string' ? v.error : 'could not import that file'); return; }
+  pathEl.value = '';
+  await loadMediaBin();
+}
+
+loadTimeline(); loadRegistry(); renderQueuePanel(); loadMediaBin();
 </script>
 </body>
 </html>
