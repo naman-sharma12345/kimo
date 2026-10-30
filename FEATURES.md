@@ -891,3 +891,73 @@ Audited against the registry (495 tools at the start of this pass) and FEATURES.
 - [x] `kimo gui`: editable timeline -- drag to move or trim a clip. Clip bars are now absolutely positioned within their track lane (start * px/sec), which the previous flex layout needed for a gapless sequence but a movable clip does not. Dragging the body of a bar moves it (`move_clip`, new start); dragging its right-edge handle trims it (`trim_clip`, new duration); both resolve on mouseup through the same `/api/call` the tool panel already drives -- no new dispatch path. A sub-3px drag is treated as a click (selects the clip for the effect-params panel) rather than a move, so clicking still works. 1 new headless TDD test driving the exact move-then-trim sequence the JS performs (through handle_request, confirming position survives the trim and a stale clip id reports a tool error not an HTTP one) -- 15/15 gui tests green. Hand smoke-tested against a live server (move_clip + trim_clip through /api/call, confirmed on /api/timeline). Honest gap: no snapping to other clips/markers, no multi-select drag, no keyboard nudge.
 - [x] `kimo gui`: scrub and play. No new backend route -- this is JS driving the existing `/preview.png?t=` endpoint repeatedly, honestly: a play control steps `t` forward on a 150 ms tick (real-elapsed-time based, so it tracks wall-clock speed rather than drifting), each tick re-rendering a still frame through the real engine; clicking or dragging anywhere on the timeline (not on a clip) scrubs the playhead to that time and renders it immediately; a red playhead line tracks the current time, kept in sync whether it moved by scrub, play, or typing into the time field directly. Explicitly a frame-stepped preview, not a video element -- the same honesty the original GUI commit held for the single preview frame. 1 new headless test confirming the page actually carries the controls it claims (play-btn, togglePlay, scrubTo, the playhead element) -- 16/16 gui tests green. Hand smoke-tested against a live server: repeated /preview.png ticks at the play-loop's own cadence all render real frames.
 - [x] `kimo gui`: undo/redo + history panel. Undo/Redo buttons call the existing `undo`/`redo` tools through `/api/call`, refreshing the timeline and (if one is open) the effect-params panel afterward -- the engine's bounded linear undo/redo (100 steps, pre-v7) was already there; the GUI just didn't expose it. A History panel lists every undo step by tool name (oldest first, the one `undo` reverts next highlighted) and every redo step, both from `history_list`, disabling each button when its stack is empty. 2 new tests: a headless undo -> history_list -> redo round trip through the exact sequence the panel drives (confirming undo/redo actually move the live project, not just the history bookkeeping), and the page-carries-its-controls check extended to the new buttons/functions -- 17/17 gui tests green. Hand smoke-tested against a live server (project_set, add_track, history_list before/after, undo, undo reverted the track, redo, redo brought it back).
+
+## v7.2 additions
+
+PRIORITY CHANGE (Naman, 8:00-8:01 AM IST Oct 30): the north star is "an AI agent driving kimo over MCP
+alone, with no human and no GUI, can do a complete professional edit end to end" and "editor that is
+better than any editor in the world" -- favour features where an agent-driven editor beats Premiere/
+Resolve/Final Cut, not features that copy them. GUI work (direction a from the original brief) is
+deprioritized below the agent-completeness and agent-superiority gaps.
+
+Step 1 audit: walked the full workflow (ingest -> rough cut -> fine cut -> transitions -> titles/graphics
+-> color -> audio mix -> captions -> review -> export/deliver) against the registry (498 tools at the
+start of this pass) and FEATURES.md, grep-verifying every claim below before writing it.
+
+Already covered (checked, NOT gaps -- listed so the next pass doesn't re-discover them):
+- Textual/structured timeline summary: `timeline_summary`. Whole-project read: `get_project`.
+- "What changed" readback after an edit: `project_diff` (read) / `project_merge` (write), v7.1.
+- Render a frame or a range as a contact sheet for visual review: `render_frame`, `contact_sheet`
+  (times[], start/end/n, at_cuts, keyframes_of -- already takes a time or a range, 16-tile grid).
+- Searchable transcript / finding a moment by spoken words: `transcript_search` (exact normalized
+  text search over transcript takes, returns timeline ranges).
+- Atomic edit-plan / EDL-apply tool with dry-run, diff and rollback: `batch` already does exactly this
+  -- ops list, atomic (all-or-nothing + restores ids), dry_run (rehearses + returns a revision hash),
+  expect_revision drift rejection, foreach with `{"find":{...filters...}}` as the source. This is also
+  already "apply an effect/preset to a filtered set of clips in one call": `batch` with
+  `foreach:{var,in:{find:{...}},ops:[...]}` substitutes `{{c}}`/`{{c.id}}` per match -- no new tool
+  needed, confirmed by hand-running it against a live project (foreach + find + add_effect in one batch
+  call, 3 matching clips all got the effect, non-matching clips untouched).
+- Missing/broken media references: `list_dependencies` (status ok|missing|changed per external file,
+  read-only) -- so `validate_timeline` below is scoped to pure timeline structure, not file presence.
+- Per-clip and per-mix loudness measurement: `measure_loudness` already takes `clip_id` (not just the
+  whole mix) -- the gap is QUERYING across every clip at once (see `find_by_loudness` below), not
+  measuring one.
+- Auto chapter generation from markers: `mux_chapters` already writes the timeline's own markers into
+  an exported file as real container chapters.
+- Ripple-close every gap on a track: `distribute_clips` with gap=0 already re-lays every clip butt-
+  joined in start order (a dedicated `close_gaps` would be a thin alias of this, not a new capability).
+- Multi-variant output from one timeline: `export_variants` (v7.1).
+- Dry-run/preview of any op: covered generically by `batch`'s `dry_run` (works for any tool reachable
+  from batch, which is everything except the short deny-list).
+
+Real gaps found (perception/feedback and agent-superiority), built below, cheapest first:
+- [ ] No structural timeline health check (gaps, overlaps, zero/negative-duration or negative-start
+  clips) independent of `lint_edit` (which is a platform/export-readiness lint: dark frames, text under
+  UI, b-roll-over-silence, loudness/captions/fonts for tiktok/reels/shorts -- it does not check raw
+  timeline structure at all, confirmed by reading lint_edit's full source). -> `validate_timeline`.
+- [ ] No generic keyframe CRUD: `set_keyframe`/`set_camera_keyframe`/`set_mask_keyframe` only add/
+  overwrite a key; there is no way to list what's keyframed on a clip, or delete one key, without
+  pulling the entire `get_project` JSON (which the engine's own docs tell you not to use for this) and
+  hand-parsing `props`/effect params. -> `list_keyframes`, `remove_keyframe`.
+- [ ] No whole-project loudness query ("all clips under -20 LUFS" -- the north star's own example of
+  agent-superior "whole-project reasoning in one call"): `measure_loudness` answers one clip per call.
+  -> `find_by_loudness`.
+- [ ] No per-asset technical metadata query (shot list: duration, fps, has_audio, width/height, kind,
+  hash, which bin, which clips reference it) in one call -- `find` returns timeline placement, not the
+  underlying asset's own technical facts; the only way to read `Asset.duration/fps/...` today is
+  `get_project`'s full dump. -> `asset_info`.
+- [ ] No one-call self-review: an agent today must call `lint_edit`, `validate_timeline` and
+  `contact_sheet` separately and manually correlate their times to get a single "what's wrong, and show
+  me" answer. -> `self_review` (read-only orchestration of existing tools, no new dispatch path).
+- [ ] No explainability for why a cut exists (north star: "explainable edits"): a clip boundary today
+  carries no record of which tool made it or why. -> `explain_cut` (BETA, best-effort: reads nearby
+  markers/tags as evidence; explicitly not a real decision ledger -- building one would mean threading
+  provenance through every mutating tool, out of scope for this pass).
+- [ ] No post-export QC: nothing inspects an already-rendered deliverable (duration/resolution/codec/
+  loudness) against what the project should have produced -- `mux_chapters` is the only existing tool
+  that touches an exported file, and it doesn't read it back. -> `export_qc`.
+
+Not built this pass (noted honestly): a true cut-provenance ledger (every mutating tool tagging its own
+clips with why), and EDL/OTIO import (out-of-kimo edit decision lists) -- both real but bigger lifts than
+the time box here; `project_merge`/`batch`/`project_diff` already cover kimo's own interchange needs.
