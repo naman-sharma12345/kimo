@@ -1532,7 +1532,8 @@ mod tests {
     #[test]
     fn timeline_view_model_duration_feeds_the_minimap_with_the_real_project_span() {
         let ss = fixture(); // one clip 0..2 on one track
-        let add = serde_json::to_vec(&json!({"tool": "add_clip", "args": {"track_id": { let s = ss.lock().unwrap(); s.project.tracks[0].id.clone() }, "source_type": "solid", "color": [0.0, 0.0, 0.0], "start": 5.0, "duration": 3.0}})).unwrap();
+        let track_id = { let s = ss.lock().unwrap(); s.project.tracks[0].id.clone() };
+        let add = serde_json::to_vec(&json!({"tool": "add_clip", "args": {"track_id": track_id, "source_type": "solid", "color": [0.0, 0.0, 0.0], "start": 5.0, "duration": 3.0}})).unwrap();
         handle_request(&ss, "POST", "/api/call", "", &add);
         let r = handle_request(&ss, "GET", "/api/timeline", "", &[]);
         let tl: Value = serde_json::from_slice(&r.body).unwrap();
