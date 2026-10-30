@@ -950,10 +950,23 @@ Real gaps found (perception/feedback and agent-superiority), built below, cheape
   throwaway test against the live registry, same technique as every prior v7/v7.1 addition, then
   removed), toolgroups.rs updated (output group, next to lint_edit). All green including
   golden_registry_contract, description_first_sentence, external_refs and toolgroups::tests::*.
-- [ ] No generic keyframe CRUD: `set_keyframe`/`set_camera_keyframe`/`set_mask_keyframe` only add/
-  overwrite a key; there is no way to list what's keyframed on a clip, or delete one key, without
-  pulling the entire `get_project` JSON (which the engine's own docs tell you not to use for this) and
-  hand-parsing `props`/effect params. -> `list_keyframes`, `remove_keyframe`.
+- [x] Keyframe CRUD, corrected scope after digging in: `get_curve`/`move_key`/`remove_key` (the
+  existing graph-editor tools) already read/move/delete a clip's own transform-property keys -- I
+  initially planned new `list_keyframes`/`remove_keyframe` tools before finding this and would have
+  duplicated them. The REAL gap: all three only ever reached `c.props`, never an effect's own param,
+  even though `set_keyframe` has always been able to target one (`effect_id` + `property`). Added an
+  optional `effect_id` to all three (backward compatible: omitted behaves exactly as before, every
+  existing call site is clip-props-only and untouched) so an effect param's curve can be read, moved and
+  deleted the same way a transform prop's can. Separately, nothing listed what IS animated on a clip
+  without already knowing a property name -> new `list_animated_properties` (read-only: every clip prop
+  and effect param carrying >=1 key, with scope/effect_id/effect_kind/base/key_count/expression count).
+  11 new TDD tests: tests/graph_editor_effect_params_v72.rs (6: get_curve/move_key/remove_key against an
+  effect param, confirming effect_id omitted still only reaches clip props with no cross-talk, unknown
+  effect_id errors on all three) and tests/list_animated_properties.rs (5: empty clip, a static prop is
+  not listed but a keyframed one is, effect params carry their effect_id/kind, clip+effect mixed, unknown
+  clip_id errors). golden_registry.txt hand-updated for the 3 changed tools' grown schema+description
+  hashes plus the 1 new tool (500 tools), toolgroups.rs updated (animate group). All green including
+  golden_frames_registry_and_projects (rendered frames and existing curves.rs's 22 tests unaffected).
 - [ ] No whole-project loudness query ("all clips under -20 LUFS" -- the north star's own example of
   agent-superior "whole-project reasoning in one call"): `measure_loudness` answers one clip per call.
   -> `find_by_loudness`.

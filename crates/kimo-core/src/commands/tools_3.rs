@@ -2,6 +2,24 @@
 #![allow(unused_imports)]
 use super::*;
 
+/// v7.2: get_curve/move_key/remove_key originally only reached a clip's own transform props
+/// (`c.props`); set_keyframe has always also been able to target an effect's param (effect_id +
+/// property). These two resolve the same (clip, property, effect_id) triple those three graph-editor
+/// tools take, so an effect param's curve can be read/edited/deleted the same way a transform prop's
+/// can, without a second family of tools.
+fn curve_prop<'a>(c: &'a Clip, property: &str, effect_id: Option<&str>) -> Result<&'a Prop, String> {
+    match effect_id {
+        Some(eid) => c.effects.iter().find(|e| e.id == eid).ok_or("no such effect")?.params.get(property).ok_or_else(|| "no such property".to_string()),
+        None => c.props.get(property).ok_or_else(|| "no such property".to_string()),
+    }
+}
+fn curve_prop_mut<'a>(c: &'a mut Clip, property: &str, effect_id: Option<&str>) -> Result<&'a mut Prop, String> {
+    match effect_id {
+        Some(eid) => c.effects.iter_mut().find(|e| e.id == eid).ok_or("no such effect")?.params.get_mut(property).ok_or_else(|| "no such property".to_string()),
+        None => c.props.get_mut(property).ok_or_else(|| "no such property".to_string()),
+    }
+}
+
 pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
     vec![
     Command { name: "add_mask", description: "Add a mask / selection layer to a clip's mask stack (any number, combined in order by `mode`). kind: rect|ellipse (cx,cy,w,h,rot,round) | path (bezier points [{x,y,ix,iy,ox,oy,f,fi,fo}] normalized 0..1, in/out tangents are offsets, f/fi/fo = per-point feather / inner / outer px; precision=1 exact curves, falloff=1 linear; or ngon {sides,inner,r,cx,cy,rot} for polygon/star) | linear (angle,pos,soft) | radial (cx,cy,r,soft) | luma (lo,hi,soft) | color (r,g,b,tol,soft) | hsl (hue,hue_width,s_lo,s_hi,l_lo,l_hi,soft; optional per-range ramps hue_soft deg 0..180, sat_soft/lum_soft 0..1, default from soft) | difference (ref_clip=clean-plate clip id, tol, soft) | wand (x,y,tol,soft,contiguous) | scribble (fg/bg point lists [[x,y],..]) | edge (thr,soft,thickness) | alpha (thr,soft) | noise (scale,thr,soft,seed,speed). mode: add|subtract|intersect|xor|lighten|darken|difference|none. Every layer has feather (px@720p), expand (px, negative = choke), opacity, invert; all params are keyframable via set_mask_prop_key. Returns mask_id.", mutates: true,
@@ -137,21 +155,21 @@ pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
             else { let q: Vec<f64> = a.get("quad").and_then(|v| v.as_array()).ok_or("quad needed")?.iter().filter_map(|v| v.as_f64()).collect(); list.push((opt_num(a, "time", 0.0), q)); }
             if list.iter().any(|(_, q)| q.len() != 8) { return Err("quad needs 8 numbers".into()); }
             c.props.insert("pin_on".into(), Prop::new(1.0)); for (t, q) in &list { for k in 0..4 { for (ax, nm) in [(0usize, "x"), (1, "y")] { let key = format!("pin{k}{nm}"); let pr = c.props.entry(key).or_insert_with(|| Prop::new(q[k * 2 + ax])); pr.set_key(*t, q[k * 2 + ax], Ease::Linear); } } } Ok(json!({"ok":true,"keys":list.len()})) } },
-    Command { name: "get_curve", description: "Read all keyframes of a clip property, with optional dense samples of value and speed for the graph editor. Graph editor read: all keyframes of a clip property (time, value, ease, bezier handles) plus optional dense samples of value and SPEED (units per second) for the speed graph. samples=N evaluates N points across [t0,t1] (default the key range).", mutates: false,
-        schema: obj(vec![("clip_id", s("clip")), ("property", s("property name, e.g. x, scale, opacity, pin0x")), ("samples", n("0..500")), ("t0", n("")), ("t1", n(""))], &["clip_id","property"]),
-        run: |ss, a| { let c = ss.project.find_clip(str_arg(a, "clip_id")?).ok_or("no such clip")?; let pr = c.props.get(str_arg(a, "property")?).ok_or("no such property")?;
+    Command { name: "get_curve", description: "Read all keyframes of a clip property or effect param, with optional dense samples of value and speed for the graph editor. Graph editor read: all keyframes (time, value, ease, bezier handles) plus optional dense samples of value and SPEED (units per second) for the speed graph. samples=N evaluates N points across [t0,t1] (default the key range). effect_id targets an effect's param instead of the clip's own transform property.", mutates: false,
+        schema: obj(vec![("clip_id", s("clip")), ("property", s("property name, e.g. x, scale, opacity, pin0x, or an effect param name with effect_id")), ("effect_id", s("optional: property belongs to this effect, not the clip's own transform props")), ("samples", n("0..500")), ("t0", n("")), ("t1", n(""))], &["clip_id","property"]),
+        run: |ss, a| { let c = ss.project.find_clip(str_arg(a, "clip_id")?).ok_or("no such clip")?; let eid = a.get("effect_id").and_then(|v| v.as_str()); let pr = curve_prop(c, str_arg(a, "property")?, eid)?;
             let keys: Vec<Value> = pr.keys.iter().map(|k| { let mut o = json!({"time":k.t,"value":k.v,"ease":format!("{:?}",k.ease).to_lowercase(),"bezier":k.bez}); if let Some(h) = k.out { o["out"] = json!({"dt": h.dt, "dv": h.dv}); } if let Some(h) = k.inn { o["in"] = json!({"dt": h.dt, "dv": h.dv}); } o }).collect(); let mut o = json!({"base":pr.base,"keys":keys,"expressions":pr.expr.len()});
             let ns = opt_num(a, "samples", 0.0).clamp(0.0, 500.0) as usize; if ns >= 2 { let t0 = opt_num(a, "t0", pr.keys.first().map(|k| k.t).unwrap_or(0.0)); let t1 = opt_num(a, "t1", pr.keys.last().map(|k| k.t).unwrap_or(c.duration)); let dt = (t1 - t0) / (ns - 1) as f64;
                 let ts: Vec<f64> = (0..ns).map(|i| t0 + dt * i as f64).collect(); let vs: Vec<f64> = ts.iter().map(|&t| pr.at(t)).collect(); let sp: Vec<f64> = ts.iter().map(|&t| (pr.at(t + 1e-3) - pr.at(t - 1e-3)) / 2e-3).collect(); o["t"] = json!(ts); o["value"] = json!(vs); o["speed"] = json!(sp); }
             Ok(o) } },
-    Command { name: "move_key", description: "Graph editor: move a keyframe in time and/or change its value. Identify it by its current `time` (nearest key within 1/2 frame). new_time and new_value optional.", mutates: true,
-        schema: obj(vec![("clip_id", s("clip")), ("property", s("property")), ("time", n("current key time")), ("new_time", n("")), ("new_value", n(""))], &["clip_id","property","time"]),
-        run: |ss, a| { let t = num_arg(a, "time")?; let fps = ss.project.fps; let c = clip(&mut ss.project, a)?; let pr = c.props.get_mut(str_arg(a, "property")?).ok_or("no such property")?;
+    Command { name: "move_key", description: "Graph editor: move a keyframe in time and/or change its value. Identify it by its current `time` (nearest key within 1/2 frame). new_time and new_value optional. effect_id targets an effect's param instead of the clip's own transform property.", mutates: true,
+        schema: obj(vec![("clip_id", s("clip")), ("property", s("property")), ("effect_id", s("optional: property belongs to this effect, not the clip's own transform props")), ("time", n("current key time")), ("new_time", n("")), ("new_value", n(""))], &["clip_id","property","time"]),
+        run: |ss, a| { let t = num_arg(a, "time")?; let fps = ss.project.fps; let eid = a.get("effect_id").and_then(|v| v.as_str()).map(String::from); let c = clip(&mut ss.project, a)?; let pr = curve_prop_mut(c, str_arg(a, "property")?, eid.as_deref())?;
             let i = pr.keys.iter().enumerate().min_by(|x, y| (x.1.t - t).abs().partial_cmp(&(y.1.t - t).abs()).unwrap()).filter(|(_, k)| (k.t - t).abs() <= 0.5 / fps).map(|(i, _)| i).ok_or("no key at that time")?;
             if let Some(v) = a.get("new_value").and_then(|v| v.as_f64()) { pr.keys[i].v = v; } if let Some(nt) = a.get("new_time").and_then(|v| v.as_f64()) { pr.keys[i].t = nt; pr.keys.sort_by(|x, y| x.t.partial_cmp(&y.t).unwrap()); } Ok(json!({"ok":true,"keys":pr.keys.len()})) } },
-    Command { name: "remove_key", description: "Graph editor: delete the keyframe nearest `time` (within half a frame).", mutates: true,
-        schema: obj(vec![("clip_id", s("clip")), ("property", s("property")), ("time", n("key time"))], &["clip_id","property","time"]),
-        run: |ss, a| { let t = num_arg(a, "time")?; let fps = ss.project.fps; let c = clip(&mut ss.project, a)?; let pr = c.props.get_mut(str_arg(a, "property")?).ok_or("no such property")?; let n0 = pr.keys.len(); pr.keys.retain(|k| (k.t - t).abs() > 0.5 / fps); if pr.keys.len() == n0 { return Err("no key at that time".into()); } Ok(json!({"ok":true,"keys":pr.keys.len()})) } },
+    Command { name: "remove_key", description: "Graph editor: delete the keyframe nearest `time` (within half a frame). effect_id targets an effect's param instead of the clip's own transform property.", mutates: true,
+        schema: obj(vec![("clip_id", s("clip")), ("property", s("property")), ("effect_id", s("optional: property belongs to this effect, not the clip's own transform props")), ("time", n("key time"))], &["clip_id","property","time"]),
+        run: |ss, a| { let t = num_arg(a, "time")?; let fps = ss.project.fps; let eid = a.get("effect_id").and_then(|v| v.as_str()).map(String::from); let c = clip(&mut ss.project, a)?; let pr = curve_prop_mut(c, str_arg(a, "property")?, eid.as_deref())?; let n0 = pr.keys.len(); pr.keys.retain(|k| (k.t - t).abs() > 0.5 / fps); if pr.keys.len() == n0 { return Err("no key at that time".into()); } Ok(json!({"ok":true,"keys":pr.keys.len()})) } },
     Command { name: "copy_curve", description: "Copy a property's keyframes onto another clip or property, with optional time/value offset, scale, reverse or invert. Graph editor copy/paste: copy a property's keyframes onto another clip/property with optional time offset, time scale, value scale/offset, reverse, invert. Replaces the destination keys.", mutates: true,
         schema: obj(vec![("from_clip", s("source clip")), ("from_property", s("")), ("to_clip", s("destination clip")), ("to_property", s("")), ("time_offset", n("seconds added")), ("time_scale", n("default 1")), ("value_scale", n("default 1")), ("value_offset", n("default 0")), ("reverse", json!({"type":"boolean"})), ("invert", json!({"type":"boolean"}))], &["from_clip","from_property","to_clip","to_property"]),
         run: |ss, a| { let src = ss.project.find_clip(str_arg(a, "from_clip")?).ok_or("no source clip")?.props.get(str_arg(a, "from_property")?).ok_or("no source property")?.clone(); let (to, tp) = (str_arg(a, "to_clip")?.to_string(), str_arg(a, "to_property")?.to_string());

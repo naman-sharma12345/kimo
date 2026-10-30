@@ -178,7 +178,7 @@ freeze_frame c6a17e82ed026eb3
 frozen_frames d296c70d5e736dff
 generate_lut_node dc51792e6bab1b2e
 generate_mesh_primitive 16644c9c0289a6f2
-get_curve 166dfa1a0157224c
+get_curve 1a3519f7e159ae2a
 get_limits 2c2b2d5ae5bcde50
 get_project 2fa2cd0084662a79
 get_scopes 7e5e8a96e99a1fed
@@ -225,6 +225,7 @@ light_rig 2d21a8c90d40d65f
 link_property 6f0a18a9af4371ff
 lint_edit 283156133621ecfd
 lint_frame e2ac027590d57fb0
+list_animated_properties ff1575a5548784c7
 list_bins e70cb3e4438b2c8f
 list_camera_solves 492655c34a9e22aa
 list_captions 524db21fe840e247
@@ -264,7 +265,7 @@ motion_diff daa6747b3e2f0f44
 motion_extract 40677d74bedf2eb2
 move_asset_to_bin 23a63229fa937d23
 move_clip 7a2fedebbc66bea9
-move_key 8db0720360eda83d
+move_key 6ff462a36f5e1225
 mux_chapters d4c909f56caca1e1
 normalize_loudness d77d16d8f58e8b00
 particle_simulate_raw 13a7503832a95aad
@@ -305,7 +306,7 @@ remove_audio_effect 0efeb2144dd5d9f7
 remove_effect e5c9246d4f7c20de
 remove_grade_node 96f0bed092feb2d4
 remove_hook 82a1eab6c867de68
-remove_key 2851ce7e50af840d
+remove_key 158916f94a30e519
 remove_layer_style 69a7851b1eb14e5b
 remove_light 2264fcd8e32fe212
 remove_marker fa41d4de9e4ff8ea
