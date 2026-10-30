@@ -55,6 +55,13 @@
   #fx-browser-list .fx-entry .fx-kind { color: #eee; }
   #fx-browser-list .fx-entry .fx-type { color: #789; font-size: 10px; text-transform: uppercase; }
   #fx-browser-list .fx-empty { padding: 6px; color: #667; }
+  #marker-list .marker-row { display: flex; justify-content: space-between; align-items: center; padding: 3px 4px; cursor: pointer; border-radius: 3px; }
+  #marker-list .marker-row:hover { background: #2a2a33; }
+  #marker-list .marker-swatch { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; flex: none; }
+  #marker-list .marker-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #marker-list .marker-time { color: #9ab; margin-left: 6px; flex: none; }
+  #marker-list .marker-remove { color: #f77; cursor: pointer; margin-left: 6px; flex: none; }
+  #marker-list .marker-empty { padding: 6px; color: #667; }
 </style>
 </head>
 <body>
@@ -76,6 +83,10 @@
     <section id="timeline" style="margin-top:12px">
       <h2>Timeline <button class="small" style="font-size:11px;padding:2px 6px" onclick="addTrack()">+ Track</button> <button class="small" style="font-size:11px;padding:2px 6px" onclick="addMarkerAtPlayhead()">+ Marker</button> <label style="font-size:11px;font-weight:normal;text-transform:none;letter-spacing:normal;color:#9ab"><input type="checkbox" id="snap-enabled" checked style="vertical-align:middle"> snap</label> <button class="small" style="font-size:11px;padding:2px 6px" onclick="zoomBy(0.5)">−</button> <span id="zoom-label" style="font-size:11px;color:#9ab">40px/s</span> <button class="small" style="font-size:11px;padding:2px 6px" onclick="zoomBy(2)">+</button> <button class="small" style="font-size:11px;padding:2px 6px" onclick="zoomReset()">reset</button></h2>
       <div id="tracks"></div>
+    </section>
+    <section id="marker-panel" style="margin-top:12px">
+      <h2>Markers &amp; chapters</h2>
+      <div id="marker-list" style="max-height:140px;overflow-y:auto;font-size:11px"></div>
     </section>
     <section id="inspector" style="margin-top:12px">
       <h2>Clip &middot; effect params</h2>
@@ -123,6 +134,7 @@
 <script src="/gui_waveform.js"></script>
 <script src="/gui_fxbrowser.js"></script>
 <script src="/gui_clipboard.js"></script>
+<script src="/gui_markerpanel.js"></script>
 <script>
 let registry = [];
 let projectFps = 30; // set from /api/timeline; used by J/K/L's frame step
@@ -193,8 +205,30 @@ async function loadTimeline() {
   }
   const ph = document.createElement('div'); ph.id = 'playhead'; ph.style.left = (labelWidth + currentT * pxPerSec) + 'px'; ph.style.pointerEvents = 'none';
   el.appendChild(ph);
+  renderMarkerPanel(tl);
   loadHistory();
   loadWaveforms(tl);
+}
+
+// v7.5: the marker/chapter LIST panel beside the timeline ruler's own ticks -- same markers
+// (kimoMarkerPanel.buildMarkerRows formats each one), click a row to seek there, click the x to remove it
+// (removeMarkerAt already exists for the ruler ticks; reused here, not reimplemented).
+function renderMarkerPanel(tl) {
+  const listEl = document.getElementById('marker-list'); if (!listEl) return;
+  const rows = kimoMarkerPanel.buildMarkerRows(tl.markers || []);
+  listEl.innerHTML = '';
+  if (!rows.length) { const empty = document.createElement('div'); empty.className = 'marker-empty'; empty.textContent = 'no markers yet'; listEl.appendChild(empty); return; }
+  for (const r of rows) {
+    const row = document.createElement('div'); row.className = 'marker-row';
+    const swatch = document.createElement('span'); swatch.className = 'marker-swatch'; swatch.style.background = r.color;
+    const name = document.createElement('span'); name.className = 'marker-name'; name.textContent = r.label;
+    const time = document.createElement('span'); time.className = 'marker-time'; time.textContent = r.timeLabel;
+    const remove = document.createElement('span'); remove.className = 'marker-remove'; remove.textContent = '\u00d7'; remove.title = 'remove this marker';
+    row.appendChild(swatch); row.appendChild(name); row.appendChild(time); row.appendChild(remove);
+    row.onclick = () => scrubTo(r.time);
+    remove.onclick = (ev) => { ev.stopPropagation(); removeMarkerAt(r.id); };
+    listEl.appendChild(row);
+  }
 }
 
 // v7.4: one audio_transients call per media clip (image:"waveform"), fired after the timeline itself has

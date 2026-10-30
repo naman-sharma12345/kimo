@@ -1618,3 +1618,19 @@ gaps, candidates for this pass:
   the index page wires up every new function and action by name, a real `duplicate_clip` through `/api/call`
   copies a clip WITH its effect, a two-clip batch paste is one atomic undo step, and `ripple_delete` through
   `/api/call` actually closes the gap. All 64 pre-existing kimo-cli tests stayed green (69 total now).
+
+## v7.5 feature 4/8+: kimo gui marker/chapter list panel
+
+- [x] `kimo gui`: markers already render as ticks on the timeline ruler; this adds a scrollable LIST panel
+  beside the timeline (same markers `timeline_view_model` already returns, sorted by time) -- each row shows
+  a color swatch, the marker's name (or a generic placeholder so an unnamed marker is never a blank row),
+  and a formatted timestamp. Clicking a row seeks the playhead there (`scrubTo`); the row's own `x` removes
+  the marker through the existing `removeMarkerAt` (reused, not reimplemented -- the ruler's ticks and the
+  panel's rows both end up calling the same remove path).
+- `gui_markerpanel.js`: pure JS, no DOM -- `formatTime(seconds)` (a timeline-duration label: `M:SS.ss`, or
+  `H:MM:SS.ss` past an hour), `buildMarkerRows(markers)` (the exact display rows: id, label, time,
+  timeLabel, color). Served at `GET /gui_markerpanel.js`, same bytes the browser and the Node test run.
+- 13 new headless Node tests (`tests/js/markerpanel_test.js`) plus 3 new Rust tests: the JS file served
+  byte-identical to disk, the index page wires up the panel and its function by name, and
+  `timeline_view_model` (through `/api/call` + `/api/timeline`) feeds the panel real, sorted markers. All 69
+  pre-existing kimo-cli tests stayed green (72 total now).

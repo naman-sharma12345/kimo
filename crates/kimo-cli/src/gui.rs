@@ -96,6 +96,10 @@ const FXBROWSER_JS: &str = include_str!("gui_fxbrowser.js");
 /// same way for the same reason -- gui_index.html's copy/paste/ripple-delete shortcuts and
 /// tests/js/clipboard_test.js (Node) run the exact same bytes.
 const CLIPBOARD_JS: &str = include_str!("gui_clipboard.js");
+/// v7.5: the marker/chapter list panel's view model (format timestamps, build display rows from
+/// timeline_view_model's own markers array), served the same way for the same reason -- gui_index.html's
+/// marker panel and tests/js/markerpanel_test.js (Node) run the exact same bytes.
+const MARKERPANEL_JS: &str = include_str!("gui_markerpanel.js");
 
 /// Parses `?t=1.5` (or any single-key query) out of a raw query string; used for /preview.png's `t`.
 fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
@@ -116,6 +120,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
         ("GET", "/gui_waveform.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: WAVEFORM_JS.as_bytes().to_vec() },
         ("GET", "/gui_fxbrowser.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: FXBROWSER_JS.as_bytes().to_vec() },
         ("GET", "/gui_clipboard.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: CLIPBOARD_JS.as_bytes().to_vec() },
+        ("GET", "/gui_markerpanel.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: MARKERPANEL_JS.as_bytes().to_vec() },
         ("GET", "/api/timeline") => { let ss = ss.lock().unwrap(); json_response(200, timeline_view_model(&ss)) }
         ("GET", "/api/registry") => json_response(200, registry_summary()),
         ("GET", "/api/clip") => { // ?id=<clip_id>
@@ -152,7 +157,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
                 Err(e) => json_response(200, json!({"ok": false, "error": e})),
             }
         }
-        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/gui_zoom.js") | (_, "/gui_trackstate.js") | (_, "/gui_multiselect.js") | (_, "/gui_waveform.js") | (_, "/gui_fxbrowser.js") | (_, "/gui_clipboard.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
+        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/gui_zoom.js") | (_, "/gui_trackstate.js") | (_, "/gui_multiselect.js") | (_, "/gui_waveform.js") | (_, "/gui_fxbrowser.js") | (_, "/gui_clipboard.js") | (_, "/gui_markerpanel.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
         _ => err_response(404, format!("no route for {path}")),
     }
 }
@@ -1175,6 +1180,43 @@ mod tests {
         let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
         let s = ss.lock().unwrap();
         assert_eq!(s.project.tracks[0].clips.len(), 1, "ripple_delete should actually remove the clip");
+    }
+
+
+    // ---- v7.5: marker/chapter list panel ----
+
+    #[test]
+    fn served_markerpanel_js_matches_the_file_on_disk() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_markerpanel.js", "", &[]);
+        assert_eq!(r.status, 200); assert_eq!(r.content_type, "application/javascript; charset=utf-8");
+        assert_eq!(r.body, include_bytes!("gui_markerpanel.js").to_vec());
+    }
+
+    #[test]
+    fn the_index_page_wires_up_the_marker_panel() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["gui_markerpanel.js", "kimoMarkerPanel.buildMarkerRows", "function renderMarkerPanel", "marker-list", "marker-panel"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn timeline_view_model_feeds_the_marker_panel_with_real_markers_through_api_call() {
+        let ss = fixture();
+        let add1 = serde_json::to_vec(&json!({"tool": "add_marker", "args": {"time": 1.5, "name": "Intro"}})).unwrap();
+        handle_request(&ss, "POST", "/api/call", "", &add1);
+        let add2 = serde_json::to_vec(&json!({"tool": "add_marker", "args": {"time": 0.5}})).unwrap();
+        handle_request(&ss, "POST", "/api/call", "", &add2);
+        let r = handle_request(&ss, "GET", "/api/timeline", "", &[]);
+        let tl: Value = serde_json::from_slice(&r.body).unwrap();
+        let markers = tl["markers"].as_array().unwrap();
+        assert_eq!(markers.len(), 2, "{tl}");
+        // sorted by time -- the panel relies on timeline_view_model's own ordering, same as the ruler ticks
+        assert_eq!(markers[0]["time"], 0.5, "{markers:?}");
+        assert_eq!(markers[1]["name"], "Intro", "{markers:?}");
     }
 
 }
