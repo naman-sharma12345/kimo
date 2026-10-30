@@ -296,6 +296,7 @@ preview_subject_match 8fbee66dc3095cb4
 project_diff 9156e2b0c03e1a9a
 project_merge 992b01703be15a3d
 project_set 00170b74c8eb4359
+project_stats bad08dfe04a7688f
 proxy_generate 7704814ae86f6208
 proxy_list 5742f71cbabbd289
 proxy_relink 5bdf050a6d54218e

@@ -1724,3 +1724,36 @@ gaps, candidates for this pass:
   feed it real keys through `/api/call`, `remove_key` removes exactly the clicked keyframe,
   `sample_property` reads back the value a new keyframe would be seeded with); all 80 kimo-cli tests green
   (75 prior + 5 new), no registry change (GUI-only, no new MCP tool).
+
+## v7.6 additions
+
+- [ ] project_stats: one-call aggregate project summary for an agent (duration, track/clip counts by
+  kind, unused media, caption/marker counts) instead of reading the whole project or paging find_assets.
+- [ ] organize_bins: file every asset into bins automatically by kind/extension or by usage (used/
+  unused), creating the bins as needed, in one call.
+- [ ] batch_set_meta: apply a name/role/color/tags to many clips at once, by explicit ids or by a
+  find-style filter, in one call.
+- [ ] kimo gui: clip context menu (right-click: split/duplicate/delete/properties).
+- [ ] kimo gui: media bin panel with search and a thumbnail list.
+- [ ] kimo gui: timeline minimap/overview.
+- [ ] kimo gui: inline caption text editing directly on the timeline.
+- [ ] kimo gui: transitions drag-drop between clips.
+
+## v7.6 feature 1/8: project_stats
+
+- [x] One-call aggregate project summary for an agent: canvas, total timeline duration, track count with
+  muted/solo/locked breakdowns, total clip count with a breakdown by source kind (media/text/generated),
+  how many clips carry an effect or a keyframed property, total asset count against how many are actually
+  used by a clip somewhere on the timeline (unused_assets lists the rest by id and path), bin count,
+  marker count, and caption group/cue counts. `find_assets` already reports `used_by_clips` per asset and
+  `timeline_summary` already reports full per-clip detail; neither gives the agent a fast aggregate read
+  without paging results and counting by hand. Computed directly off the live project on every call, so it
+  is always exact, never a cached guess.
+- New MCP tool `project_stats` (`crates/kimo-core/src/ext/project_stats.rs`), read-only (`mutates: false`).
+  7 new TDD tests (`tests/project_stats.rs`): zeroed counts on an empty project, clip counts by kind with
+  duration as the furthest clip end, an imported-but-unplaced asset reported unused, deleting the clip
+  that used an asset makes it unused again, markers/captions/bins/track-mute counts, clips-with-effects
+  and clips-with-keyframes counts, and that the call adds no history entry. `golden_registry.txt`
+  hand-updated (516 -> 517 tools); added to the `project` toolgroup up front. Full targeted pass green
+  including `golden_frames_registry_and_projects`, `golden_registry_contract`, `description_first_sentence`
+  and `external_refs`.
