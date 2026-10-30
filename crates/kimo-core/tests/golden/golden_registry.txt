@@ -72,6 +72,7 @@ audio_to_keyframes 4190ab7dd0c34307
 audio_transients fdd42015ab3821b9
 audit_color_output 58cf03598cf93fb6
 auto_captions eb2ea2f83777efbd
+auto_chapters fff8eaf584738d1c
 auto_color 86d35765cf0dcf74
 auto_duck 782881168d8430d5
 auto_grade 64db55ba3dd926ff

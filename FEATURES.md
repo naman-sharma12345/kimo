@@ -1121,3 +1121,25 @@ new (the v7.2 audit explicitly flagged EDL/OTIO import as a real gap, bigger tha
   string ever dispatched); `codes` scopes which problems are even considered; an empty timeline is `ok`
   with `problems_seen: 0`, not an error. golden_registry.txt hand-updated (504 -> 505 tools), toolgroups.rs
   updated (`output` group, beside `self_review`).
+
+
+## v7.3 feature 2/N: auto_chapters
+
+- [x] `auto_chapters`: new tool, closes the precondition gap the v7.2 audit named: `mux_chapters` needs at
+  least 2 timeline markers to already exist, so an agent starting from a bare timeline had to notice that
+  itself, call `mark_scene_cuts`, then call `mux_chapters` -- three separate decisions to do one obvious
+  thing ("chapter this export"). `auto_chapters` composes them: if the timeline already has `min_markers`
+  (default 2, mux_chapters' own minimum) markers, it chapters straight from them, no detection run, nothing
+  added; otherwise it runs `mark_scene_cuts` (source timeline) first to create them, then chapters from the
+  result. If even scene-cut detection does not reach `min_markers` (a single continuous shot with no
+  detectable cuts), it returns `ok:false, chaptered:false` with why -- never guesses a chapter boundary or
+  fails loudly from inside `mux_chapters`. `sensitivity` passes through to `mark_scene_cuts` when it runs;
+  `dry_run` reports whether it would use existing markers or run detection, and whether chaptering would
+  succeed, without creating a marker or touching the exported file. Pure composition through
+  `dispatch_nested` (same pattern `mark_scene_cuts`/`self_review` already established) -- no new marker or
+  chapter logic. 4 new TDD tests (tests/auto_chapters.rs): no markers yet -> scene-cut detection runs and
+  the file gets chaptered, markers verified to actually exist afterward; markers already present ->
+  detection verified NOT to run (`scene_cut_detection.ran: false`) and marker count verified unchanged;
+  `dry_run` verified to create no markers and leave the exported file's mtime untouched; a single
+  continuous shot (no detectable cuts) reports `ok:false` plainly rather than erroring. golden_registry.txt
+  hand-updated (505 -> 506 tools), toolgroups.rs updated (`output` group, beside `mux_chapters`).
