@@ -836,6 +836,41 @@ fn lint_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
             let new_center = box_center + dy;
             if was_bottom && new_center < mid { dy = mid - box_center; }
             if !was_bottom && new_center > mid { dy = mid - box_center; }
+            // Still not enough on its own: a box can stay on its own side of the midline and still land on
+            // another text clip that's on screen at the same moment (a hook title straddles the midline by
+            // design, reaching down into the bottom half). Real benchmark finding: the capped, midline-safe
+            // nudge above still put a caption on top of a cold-open hook title, which apply_review_fixes'
+            // re-check caught as an introduced text_overlap -- but the honest fix here is to not create that
+            // collision in the first place, not to let a later pass delete the hook title to silence it.
+            // Check the shifted rect against every OTHER text clip on screen during this clip's own span
+            // (same geometry text_overlap/text_crowded already use); a fix that would trade one problem for
+            // another is simply not applied (dy stays 0), left to show up as this same text_over_subject
+            // warning on the re-check rather than a new, worse collision.
+            // The fix moves the whole CAPTION GROUP by dy (set_caption_style's y applies to every page), not
+            // just the one clip that happened to sample over the subject -- so every page in the group needs
+            // checking against other on-screen text at its own (shifted) span, not only this one clip's span.
+            let group_members: Vec<(String, f64, f64)> = match &cap {
+                Some(c) => texts.iter().filter(|(id2, _, _)| caption_of(ss, id2).as_deref() == Some(c.as_str())).cloned().collect(),
+                None => vec![(id.clone(), *s0, *d)],
+            };
+            let collides_other_text = group_members.iter().any(|(gid, gs0, gd)| {
+                let (gs0, gd) = (*gs0, *gd);
+                if gd <= 0.0 { return false; }
+                let goff = (gd / 2.0).clamp(0.0, (gd - 0.01).max(0.0));
+                let Some((gr, _)) = text_rect(ss, gid, goff) else { return false };
+                let shifted = [gr[0], gr[1] + dy, gr[2], gr[3]];
+                texts.iter().any(|(id2, s2, d2)| {
+                    let (s2, d2) = (*s2, *d2);
+                    if id2 == gid || d2 <= 0.0 { return false; }
+                    if caption_of(ss, id2) == cap { return false; }
+                    let (ws, we) = (gs0.max(s2), (gs0 + gd).min(s2 + d2)); if we <= ws { return false; }
+                    let off2 = ((ws + we) / 2.0 - s2).clamp(0.0, (d2 - 0.01).max(0.0));
+                    let Some((r2, _)) = text_rect(ss, id2, off2) else { return false };
+                    let (ix, iy) = ((shifted[0] + shifted[2]).min(r2[0] + r2[2]) - shifted[0].max(r2[0]), (shifted[1] + shifted[3]).min(r2[1] + r2[3]) - shifted[1].max(r2[1]));
+                    ix > 0.0 && iy > 0.0
+                })
+            });
+            if collides_other_text { dy = 0.0; }
             let fix = match &cap {
                 Some(c) => json!({"tool": "set_caption_style", "args": {"caption_id": c, "style": "boxed", "y": r3(cur_y + dy)}}),
                 None => json!({"tool": "set_property", "args": {"clip_id": id, "property": "y", "value": r3(cur_y + dy)}}),
