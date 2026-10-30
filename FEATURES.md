@@ -1212,3 +1212,20 @@ new (the v7.2 audit explicitly flagged EDL/OTIO import as a real gap, bigger tha
   is confirmed to actually remove both the track AND its clip (not just the track row), and a stale track id
   (a double-click after it's already gone) reports a tool error rather than crashing. All 24 pre-existing
   kimo-cli tests stayed green (27 total now).
+
+
+## v7.3 feature 6/N: kimo gui marker display + add
+
+- [x] `kimo gui`: `timeline_view_model` now also returns `markers` (id, time, duration, name, color, sorted
+  by time -- the same order `list_markers` already returns, not a second source of truth) so the timeline
+  can actually show them: each marker renders as a thin coloured tick across the full track height at its
+  time, titled with its name and time, clicking it removes it (confirm()-guarded) through the
+  already-registered `remove_marker`. A "+ Marker" button beside "+ Track" adds one at the current playhead
+  time via the already-registered `add_marker` (optionally prompting for a name). Every mutation is a plain
+  `/api/call` round trip through existing engine tools, same shape as every prior `kimo gui` feature; nothing
+  new in kimo-core. 5 new Rust tests (crates/kimo-cli/src/gui.rs): `timeline_view_model` lists markers sorted
+  by time (added out of order, read back in order) and returns an empty array rather than omitting the key
+  when there are none; the index page is checked to actually carry the button, the tick rendering and both
+  new JS functions by name; add_marker's own API sequence is confirmed to land the marker at the given time
+  with its name; remove_marker's own API sequence is confirmed to actually remove it (and a stale marker id
+  reports a tool error, not a crash). All 27 pre-existing kimo-cli tests stayed green (32 total now).

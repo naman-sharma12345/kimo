@@ -28,7 +28,12 @@ pub fn timeline_view_model(ss: &Session) -> Value {
         })).collect();
         json!({"id": t.id, "name": t.name, "clip_count": clips.len(), "clips": clips})
     }).collect();
-    json!({"width": p.width, "height": p.height, "fps": p.fps, "duration": p.duration(), "track_count": tracks.len(), "tracks": tracks})
+    // v7.3: markers, sorted by time (same order list_markers already returns), for the timeline's marker
+    // ticks -- the GUI's own display, not a second source of truth (add_marker/list_markers/remove_marker
+    // are untouched; this just surfaces what they already hold).
+    let mut markers: Vec<Value> = p.markers.iter().map(|m| json!({"id": m.id, "time": m.time, "duration": m.duration, "name": m.name, "color": m.color})).collect();
+    markers.sort_by(|a, b| a["time"].as_f64().unwrap_or(0.0).partial_cmp(&b["time"].as_f64().unwrap_or(0.0)).unwrap_or(std::cmp::Ordering::Equal));
+    json!({"width": p.width, "height": p.height, "fps": p.fps, "duration": p.duration(), "track_count": tracks.len(), "tracks": tracks, "markers": markers})
 }
 
 /// Full detail for one clip -- the effect-params panel's data: id/name/role/timing, every property's base
@@ -560,6 +565,69 @@ mod tests {
 
         // a stale track id (double-click, already removed) reports a tool error, not a crash
         let bad = serde_json::to_vec(&json!({"tool": "delete_track", "args": {"track_id": track2}})).unwrap();
+        let r2 = handle_request(&ss, "POST", "/api/call", "", &bad);
+        let v2: Value = serde_json::from_slice(&r2.body).unwrap(); assert_eq!(v2["ok"], false);
+    }
+
+    // ---- v7.3: marker display + add ----
+
+    #[test]
+    fn timeline_view_model_lists_markers_sorted_by_time() {
+        let ss = fixture();
+        { let mut s = ss.lock().unwrap();
+          dispatch(&mut s, "add_marker", &json!({"time": 1.5, "name": "Second"})).unwrap();
+          dispatch(&mut s, "add_marker", &json!({"time": 0.25, "name": "First"})).unwrap(); }
+        let v = timeline_view_model(&ss.lock().unwrap());
+        let markers = v["markers"].as_array().unwrap();
+        assert_eq!(markers.len(), 2);
+        assert_eq!(markers[0]["name"], "First", "{v}");
+        assert_eq!(markers[0]["time"], 0.25);
+        assert_eq!(markers[1]["name"], "Second");
+    }
+
+    #[test]
+    fn timeline_view_model_markers_is_empty_not_missing_when_there_are_none() {
+        let ss = fixture();
+        let v = timeline_view_model(&ss.lock().unwrap());
+        assert_eq!(v["markers"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn the_index_page_wires_up_marker_display_and_add() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["+ Marker", "marker-tick", "function addMarkerAtPlayhead", "function removeMarkerAt", "tl.markers", "add_marker", "remove_marker"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn add_marker_button_adds_a_marker_at_the_given_time_through_the_same_api_call_path() {
+        let ss = fixture();
+        let body = serde_json::to_vec(&json!({"tool": "add_marker", "args": {"time": 0.9, "name": "beat"}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let tl = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        let markers = tl["markers"].as_array().unwrap();
+        assert_eq!(markers.len(), 1, "{tl}");
+        assert_eq!(markers[0]["name"], "beat");
+        assert_eq!(markers[0]["time"], 0.9);
+    }
+
+    #[test]
+    fn remove_marker_tick_deletes_it_through_the_same_api_call_path() {
+        let ss = fixture();
+        let marker_id = { let mut s = ss.lock().unwrap(); dispatch(&mut s, "add_marker", &json!({"time": 0.5, "name": "x"})).unwrap()["marker_id"].as_str().unwrap().to_string() };
+        assert_eq!({ let s = ss.lock().unwrap(); timeline_view_model(&s)["markers"].as_array().unwrap().len() }, 1);
+
+        let body = serde_json::to_vec(&json!({"tool": "remove_marker", "args": {"marker_id": marker_id}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        assert_eq!({ let s = ss.lock().unwrap(); timeline_view_model(&s)["markers"].as_array().unwrap().len() }, 0, "the marker should actually be gone");
+
+        // a stale marker id (double-click after it's already gone) reports a tool error, not a crash
+        let bad = serde_json::to_vec(&json!({"tool": "remove_marker", "args": {"marker_id": marker_id}})).unwrap();
         let r2 = handle_request(&ss, "POST", "/api/call", "", &bad);
         let v2: Value = serde_json::from_slice(&r2.body).unwrap(); assert_eq!(v2["ok"], false);
     }

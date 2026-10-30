@@ -27,6 +27,7 @@
   .clip .trim-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 6px; cursor: ew-resize; background: rgba(255,255,255,.25); }
   #tracks { position: relative; cursor: text; }
   #playhead { position: absolute; top: 0; bottom: 0; width: 1px; background: #f55; z-index: 5; pointer-events: none; }
+  .marker-tick { position: absolute; top: 0; bottom: 0; width: 2px; z-index: 4; cursor: pointer; }
   #inspector .fx { border: 1px solid #333; border-radius: 4px; padding: 6px; margin-bottom: 6px; }
   #inspector .fx-head { display: flex; justify-content: space-between; font-size: 11px; color: #9cf; margin-bottom: 4px; }
   #inspector .param-row { display: flex; justify-content: space-between; align-items: center; font-size: 11px; margin: 2px 0; }
@@ -51,7 +52,7 @@
       <img id="frame" alt="(no frame rendered yet)">
     </section>
     <section id="timeline" style="margin-top:12px">
-      <h2>Timeline <button class="small" style="font-size:11px;padding:2px 6px" onclick="addTrack()">+ Track</button></h2>
+      <h2>Timeline <button class="small" style="font-size:11px;padding:2px 6px" onclick="addTrack()">+ Track</button> <button class="small" style="font-size:11px;padding:2px 6px" onclick="addMarkerAtPlayhead()">+ Marker</button></h2>
       <div id="tracks"></div>
     </section>
     <section id="inspector" style="margin-top:12px">
@@ -129,6 +130,14 @@ async function loadTimeline() {
     row.appendChild(lane);
     el.appendChild(row);
   }
+  for (const m of (tl.markers || [])) {
+    const tick = document.createElement('div'); tick.className = 'marker-tick';
+    tick.style.left = (labelWidth + m.time * pxPerSec) + 'px';
+    tick.style.background = m.color || 'gold';
+    tick.title = (m.name || '(marker)') + ' @ ' + m.time.toFixed(2) + 's -- click to remove';
+    tick.onclick = (ev) => { ev.stopPropagation(); removeMarkerAt(m.id); };
+    el.appendChild(tick);
+  }
   const ph = document.createElement('div'); ph.id = 'playhead'; ph.style.left = (labelWidth + currentT * pxPerSec) + 'px'; ph.style.pointerEvents = 'none';
   el.appendChild(ph);
   loadHistory();
@@ -149,6 +158,18 @@ async function loadHistory() {
   document.getElementById('redo-btn').disabled = h.redo.length === 0;
 }
 async function addTrack() { await callApi('add_track', {}); await loadTimeline(); }
+async function addMarkerAtPlayhead() {
+  const name = (typeof prompt === 'function' ? prompt('Marker name (optional):', '') : '') || '';
+  const v = await callApi('add_marker', { time: currentT, name });
+  if (!v.ok) { alert(typeof v.error === 'string' ? v.error : 'could not add a marker'); return; }
+  await loadTimeline();
+}
+async function removeMarkerAt(markerId) {
+  if (!confirm('Remove this marker?')) return;
+  const v = await callApi('remove_marker', { marker_id: markerId });
+  if (!v.ok) { alert(typeof v.error === 'string' ? v.error : 'could not remove that marker'); return; }
+  await loadTimeline();
+}
 async function removeTrack(trackId) {
   if (!confirm('Remove this track and all its clips?')) return;
   const v = await callApi('delete_track', { track_id: trackId });
