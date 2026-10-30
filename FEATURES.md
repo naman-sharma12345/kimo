@@ -1143,3 +1143,28 @@ new (the v7.2 audit explicitly flagged EDL/OTIO import as a real gap, bigger tha
   `dry_run` verified to create no markers and leave the exported file's mtime untouched; a single
   continuous shot (no detectable cuts) reports `ok:false` plainly rather than erroring. golden_registry.txt
   hand-updated (505 -> 506 tools), toolgroups.rs updated (`output` group, beside `mux_chapters`).
+
+
+## v7.3 feature 3/N: batch_normalize_loudness
+
+- [x] `batch_normalize_loudness`: new tool, the write-side counterpart to `find_by_loudness` (v7.2):
+  `normalize_loudness` (pre-v7.3) only ever took one `clip_id` -- hitting a target LUFS across many/all
+  clips meant calling it once per clip and correlating results by hand, the exact gap `find_by_loudness`
+  closed on the read side ("all clips under -20 LUFS" was the north star's own example; this is "normalize
+  every clip to -16 LUFS"). Normalizes every media clip (or an explicit `clip_ids` list, or one `track_id`)
+  to `target_lufs` (default -14) in one call. `tolerance_db` (default 0.5) leaves a clip already close
+  enough to target untouched (`already_on_target`, no redundant gain change) -- the same "don't pile up
+  no-op writes" instinct `mark_scene_cuts`' `skip_existing` already established. Reuses `measure_loudness`
+  and `normalize_loudness` per clip through `dispatch_nested` (no second gain-staging implementation), so
+  results match calling `normalize_loudness` directly, clip by clip. A clip too short/silent for a reading,
+  or one `normalize_loudness` itself refuses (over 40dB gain, or would clip above -1 dBFS), is reported in
+  `skipped`/`failed` with why and does not stop the rest. `dry_run` reports `measured_lufs`/`would_gain_db`
+  per clip without mutating anything. 6 new TDD tests (tests/batch_normalize_loudness.rs, synthetic tone
+  WAVs, same technique `find_by_loudness.rs` uses): a loud and a quiet clip both land on target, verified
+  by the actual linear gain written onto each clip's `audio.volume` (re-measuring doesn't reflect it --
+  `measure_loudness` reads raw decoded PCM, `normalize_loudness`'s own documented "remeasure timeline"
+  caveat -- so the test checks the real mechanism, not a measurement that can't see it); a clip already
+  within tolerance is left alone and its volume prop verified unchanged; `dry_run` verified to mutate
+  nothing; `clip_ids` scopes to an explicit list and an unknown id errors; a too-short clip is skipped, not
+  a failure; `track_id` scopes the batch. golden_registry.txt hand-updated (506 -> 507 tools), toolgroups.rs
+  updated (`audio` group, beside `normalize_loudness`).
