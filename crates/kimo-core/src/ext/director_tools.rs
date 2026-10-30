@@ -850,11 +850,12 @@ fn review_export(ss: &mut Session, a: &Value) -> Result<Value, String> {
     if !std::path::Path::new(&path).is_file() { return Err(format!("no file at {path}; export first (or give a source clip's path)")); }
     let n = opt_num(a, "n", 8.0).clamp(2.0, 16.0) as usize;
     let mut pr = std::process::Command::new("ffprobe");
-    pr.args(["-v", "error", "-show_entries", "format=duration,size:stream=width,height,codec_type", "-of", "json", &path]);
+    pr.args(["-v", "error", "-show_entries", "format=duration,size:stream=width,height,codec_type,codec_name", "-of", "json", &path]);
     let pj: Value = serde_json::from_slice(&capture(&mut pr, 1 << 20, std::time::Duration::from_secs(30))?).map_err(|e| format!("ffprobe: {e}"))?;
     let dur = pj["format"]["duration"].as_str().and_then(|s| s.parse::<f64>().ok()).ok_or("not a video file (no duration)")?;
     let size = pj["format"]["size"].as_str().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
     let v = pj["streams"].as_array().and_then(|s| s.iter().find(|x| x["codec_type"] == "video")).cloned().unwrap_or(json!({}));
+    let audio_codec = pj["streams"].as_array().and_then(|s| s.iter().find(|x| x["codec_type"] == "audio")).and_then(|x| x["codec_name"].as_str()).map(String::from);
     // the sheet goes to the temp dir by default: the video may sit in a read-only footage folder
     let stem = std::path::Path::new(&path).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "video".into());
     let out = a.get("sheet_path").and_then(|v| v.as_str()).map(String::from)
@@ -873,7 +874,25 @@ fn review_export(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let peak = pcm.iter().fold(0f32, |m, v| m.max(v.abs())) as f64;
     let (sw, sh) = (cols as u32 * 184, rows as u32 * 184 * 16 / 9);
     ss.media.push(crate::commands::Media { path: out.clone(), w: sw, h: sh, mime: "image/png" });
-    Ok(json!({"path": path, "duration": r3(dur), "size_mb": r3(size / 1_048_576.0), "width": v["width"], "height": v["height"], "lufs": lufs.map(r3), "sample_peak_dbfs": if peak > 0.0 { Some(r3(20.0 * peak.log10())) } else { None }, "sheet": out, "frames": n,
+    // v7.2: expect_project (opt-in) compares this file against what the LIVE project should have
+    // produced -- review_export already told you everything ABOUT the file; nothing told you whether
+    // it's the RIGHT file. Same expected-duration technique lint_edit uses (max clip end across every
+    // track); a project with no clips at all reports no expectation rather than a false mismatch.
+    let qc = if a.get("expect_project").and_then(|v| v.as_bool()).unwrap_or(false) {
+        let expected_end = ss.project.tracks.iter().flat_map(|t| t.clips.iter()).map(|c| c.start + c.duration).fold(0.0, f64::max);
+        let (ew, eh) = (ss.project.width, ss.project.height);
+        if expected_end <= 0.0 {
+            json!({"checked": false, "reason": "the live project has no clips, so there is nothing to compare this file against"})
+        } else {
+            const DUR_TOLERANCE_S: f64 = 0.2; // a couple of frames at typical fps, not exact-equality brittle
+            let dur_diff = dur - expected_end;
+            let gw = v["width"].as_u64().map(|x| x as u32); let gh = v["height"].as_u64().map(|x| x as u32);
+            let res_match = gw == Some(ew) && gh == Some(eh);
+            json!({"checked": true, "duration_match": dur_diff.abs() <= DUR_TOLERANCE_S, "duration_diff_s": r3(dur_diff), "expected_duration": r3(expected_end),
+                "resolution_match": res_match, "expected_width": ew, "expected_height": eh, "got_width": gw, "got_height": gh})
+        }
+    } else { json!({"checked": false, "reason": "pass expect_project:true to compare against the live project's own expected duration and resolution"}) };
+    Ok(json!({"path": path, "duration": r3(dur), "size_mb": r3(size / 1_048_576.0), "width": v["width"], "height": v["height"], "video_codec": v["codec_name"], "audio_codec": audio_codec, "lufs": lufs.map(r3), "sample_peak_dbfs": if peak > 0.0 { Some(r3(20.0 * peak.log10())) } else { None }, "sheet": out, "frames": n, "qc": qc,
         "note": "the sheet shows the exported file itself, left to right, top to bottom"}))
 }
 
@@ -911,7 +930,7 @@ pub fn commands() -> Vec<Command> {
             schema: obj(vec![], &[]), run: timeline_summary },
         Command { name: "remove_transition", description: "Remove the transition into a clip (a straight cut again).", mutates: true,
             schema: obj(vec![("clip_id", s("the clip whose incoming transition goes"))], &["clip_id"]), run: remove_transition },
-        Command { name: "review_export", description: "Look at a video file (your export or a source clip): a contact sheet of its frames (inline image) plus duration, size, LUFS, peak.", mutates: false,
-            schema: obj(vec![("path", s("the exported .mp4")), ("n", n("frames, 2..16, default 8")), ("sheet_path", s("where the PNG goes (default: a temp file)"))], &["path"]), run: review_export },
+        Command { name: "review_export", description: "Look at a video file (your export or a source clip): a contact sheet of its frames (inline image) plus duration, size, codecs, LUFS, peak.", mutates: false,
+            schema: obj(vec![("path", s("the exported .mp4")), ("n", n("frames, 2..16, default 8")), ("sheet_path", s("where the PNG goes (default: a temp file)")), ("expect_project", json!({"type":"boolean","description":"also compare duration and resolution against the live project's own expected values (qc.duration_match/resolution_match); false (default) just reports the file's own facts"}))], &["path"]), run: review_export },
     ]
 }

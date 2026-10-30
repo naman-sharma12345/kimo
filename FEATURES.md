@@ -1020,9 +1020,24 @@ Real gaps found (perception/feedback and agent-superiority), built below, cheape
   carries no record of which tool made it or why. -> `explain_cut` (BETA, best-effort: reads nearby
   markers/tags as evidence; explicitly not a real decision ledger -- building one would mean threading
   provenance through every mutating tool, out of scope for this pass).
-- [ ] No post-export QC: nothing inspects an already-rendered deliverable (duration/resolution/codec/
-  loudness) against what the project should have produced -- `mux_chapters` is the only existing tool
-  that touches an exported file, and it doesn't read it back. -> `export_qc`.
+- [x] `review_export` grows QC, corrected scope after checking first: `review_export` already exists
+  and already reports duration/size/width/height/LUFS/peak plus an inline contact sheet of an exported
+  file (a planned new `export_qc` tool would have duplicated nearly all of it). The real gaps: no codec
+  names (added `video_codec`/`audio_codec`, the same ffprobe call, two more fields) and nothing compared
+  the file against what the LIVE PROJECT should have produced -- `review_export` told you everything
+  ABOUT a file, nothing told you whether it was the RIGHT file. New opt-in `expect_project` (default
+  false) computes the project's own expected duration (same max-clip-end technique `lint_edit` uses) and
+  canvas size, returning `qc.duration_match`/`qc.resolution_match` with a small tolerance (0.2s, not
+  exact-equality brittle); an empty project reports `checked: false` rather than a false mismatch.
+  Backward compatible: existing fields and the existing caller (director_small.rs's
+  `review_export_shows_the_exported_file`) are untouched. 7 new TDD tests
+  (tests/review_export_qc_v72.rs): codec names ride along, expect_project off by default, a real
+  export matches its own project, extending the project after export is caught as a duration mismatch,
+  changing canvas size after export is caught as a resolution mismatch (duration unaffected), an empty
+  project reports no expectation rather than a false failure, the existing missing-file error is
+  unchanged. golden_registry.txt hand-updated (review_export's grown hash, still 502 tools). All green
+  including golden_frames_registry_and_projects and the existing director_small.rs (29 tests, including
+  the lint_edit timing test clean this run with no concurrent load).
 
 Not built this pass (noted honestly): a true cut-provenance ledger (every mutating tool tagging its own
 clips with why), and EDL/OTIO import (out-of-kimo edit decision lists) -- both real but bigger lifts than
