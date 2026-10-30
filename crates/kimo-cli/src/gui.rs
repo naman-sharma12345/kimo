@@ -315,6 +315,19 @@ mod tests {
     }
 
     #[test]
+    fn the_index_page_carries_the_scrub_and_play_controls() {
+        // Scrubbing/play is JS driving the existing /preview.png endpoint repeatedly (no new backend route,
+        // same honest shape as the rest of this GUI); what's checkable without a browser is that the markup
+        // and functions it depends on actually shipped in the page this server sends.
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8_lossy(&r.body);
+        for needle in ["id=\"play-btn\"", "function togglePlay", "function scrubTo", "ph.id = 'playhead'"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
     fn the_editable_timeline_moves_and_trims_a_clip_through_the_same_api_call_path() {
         // The drag itself is mouse events in gui_index.html's JS (no DOM here); what's tested is the exact
         // sequence a move-drag and a trim-drag each end in: one /api/call, then a /api/timeline refetch.
