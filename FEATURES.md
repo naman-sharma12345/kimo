@@ -1520,3 +1520,59 @@ byte-identical to disk, the index page wires up the file and its functions by na
 kimo-cli tests stayed green (64 total now). Fixed a filesystem-fixture race along the way: two waveform tests
 (feature 7) shared one PID-keyed temp dir name and could stomp each other's in-flight ffmpeg write when run
 on parallel test threads -- now carries a per-call counter too.
+
+
+## v7.5 additions
+
+Audited the registry (512 tools) and FEATURES.md before adding anything. Already covered by existing tools,
+not duplicated here: ripple_delete + drop_short_segments (single-clip and short-clip gap closing),
+set_caption_style (per-caption styling), auto_rough_cut + transcript_edit (one-call rough cut from
+transcript/markers), project_diff (timeline diff between two project revisions), place_broll (b-roll
+placement on a dialogue track), auto_duck (ducking one music track under one dialogue track). The real
+gaps, candidates for this pass:
+
+- [ ] close_gaps: a general-purpose ripple-close for ANY gap on a track (or every unlocked track at once),
+  independent of why the gap is there -- today only a single just-deleted clip's gap (ripple_delete) or a
+  short-clip removal's gaps (drop_short_segments) ripple-close; nothing closes gaps already scattered on a
+  timeline by manual moves/trims/imports.
+- [ ] duck_timeline: one-call ducking across the WHOLE timeline (every music track under every dialogue
+  track it overlaps) -- auto_duck today takes exactly one `track`/`under` pair per call.
+- [ ] style_captions_batch: apply one style to every caption on a track (or a given list of caption ids) in
+  one call -- set_caption_style today takes exactly one caption_id per call.
+- [ ] import_clips: copy specific clips (with their full effect/keyframe/mask state, since clips serialize
+  everything) from ANOTHER project file into the live project at a chosen track/time -- project_merge
+  reconciles revisions of the same lineage by clip id; nothing today does a direct "grab these clips from
+  that other project" copy/paste.
+- [ ] GUI copy/paste: duplicate the selected clip(s) in place via keyboard (duplicate_clip already does
+  this server-side; the GUI has no shortcut or clipboard state for it).
+- [ ] GUI ripple delete: a second delete shortcut that closes the gap (ripple_delete) instead of leaving one
+  (todays Delete key calls plain delete_clip).
+- [ ] GUI marker/chapter list panel: a sidebar listing list_markers with click-to-seek (markers already
+  render on the timeline ruler; there is no list view).
+- [ ] GUI render queue panel: a panel listing in-flight/finished export jobs (export already reports
+  progress and supports cancel; there is no panel showing the queue).
+- [~] -> [x] sweep: FEATURES.md [~] rows re-checked against the live registry for anything honestly
+  completable on this CPU-only box (no ML runtime, no mic, no GPU); flipped only where a real, tested gap
+  closed this pass (see each feature's own entry below for what moved and why).
+
+## v7.5 feature 1/8+: close_gaps
+
+- [x] A general-purpose ripple-close for any gap on a track, or every unlocked track in the project at
+  once. `ripple_delete` closes the single gap a just-deleted clip leaves; `drop_short_segments` closes gaps
+  left by removing clips under a duration threshold; neither helps a timeline with gaps already scattered
+  by manual deletes, trims, moves, or a clip-by-clip import. `close_gaps` walks each named track's clips in
+  timeline order and snaps every clip to touch the one before it. `track_ids` omitted sweeps every unlocked
+  track in one call ("the whole timeline"); naming a locked track explicitly is an error (nothing silently
+  skipped on an explicit ask), while the default sweep instead skips a locked track and reports it in
+  `tracks_skipped_locked`, so one protected track does not fail a whole-project sweep. Each track's own
+  first clip (by timeline order) is left in place -- a real opening shot, not a stray gap -- unless
+  `include_leading_gap` asks to snap it to 0 too. `min_gap` lets a deliberate small pause survive the sweep.
+  `dry_run` reports `gaps_closed`/`shifted_seconds`/`moved_clip_ids` per track and changes nothing.
+  Deterministic and undoable like any other mutating tool.
+- New MCP tool `close_gaps` (`crates/kimo-core/src/ext/close_gaps.rs`). 11 new TDD tests
+  (`tests/close_gaps.rs`): single-track gap closing, leading-gap default vs `include_leading_gap`,
+  multi-track sweep in one call, locked-track skip-and-report vs locked-track-named-explicitly error,
+  `dry_run`, `min_gap` threshold, undo, a no-op on a gap-free track, and an unknown-track-id error.
+  `golden_registry.txt` hand-updated for the new tool (512 -> 513 tools). Full targeted pass green:
+  `close_gaps`, `golden_frames` (registry+frames+projects, confirms no golden frame/project moved),
+  `description_first_sentence`, `external_refs`, `registry_lint`, `registry_unique`.

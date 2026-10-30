@@ -105,6 +105,7 @@ clear_essential_properties b39aebdb8a78d6ab
 clear_expression_script 5eab667b02c3b065
 clear_path_keys f99ff5da3693043a
 clear_source_marks 6d6920f190cf86fe
+close_gaps 58442d9f3b71d85e
 collect_project 91bcadd45280c914
 compare_aces2_reference 59ec416ff6c4de21
 compare_linear_exposure afcdd34f6dab8f45
