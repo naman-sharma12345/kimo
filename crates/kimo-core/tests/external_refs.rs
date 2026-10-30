@@ -187,6 +187,7 @@ fn open_sites_are_classified() {
         ("ext/preview_range.rs", 2, "no project path: an ffmpeg stdin pipe (-i -) fed with rendered frames, and a size read of the output file this tool just wrote (caller output path)"),
         ("ext/project_diff.rs", 1, "caller path (file:<path.kimo> revision argument), not stored in the project"),
         ("ext/export_manifest.rs", 1, "caller path (previous manifest .json), resolved through deps::resolve_str; asset hashing goes through deps::hash_file"),
+        ("ext/export_variants.rs", 1, "caller path: a size read of each variant's output file it just wrote (bytes in the per-variant result), same shape as commands/tools_4.rs's export; not stored in the project"),
         ("ext/audio_samples.rs", 3, "caller raw path resolved with project.resolve; engine-owned hash asset verification and output"),
         ("ext/pixel_tools.rs", 3, "caller input path or private hash-addressed asset verification"),
         ("framecache.rs", 1, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),
