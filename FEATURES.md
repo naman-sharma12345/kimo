@@ -1634,3 +1634,21 @@ gaps, candidates for this pass:
   byte-identical to disk, the index page wires up the panel and its function by name, and
   `timeline_view_model` (through `/api/call` + `/api/timeline`) feeds the panel real, sorted markers. All 69
   pre-existing kimo-cli tests stayed green (72 total now).
+
+## v7.5 feature 5/8+: kimo gui render queue panel
+
+- [x] `kimo gui`: the Export section already polls ONE job's progress inline; this adds a panel listing
+  every render job started this session -- path, live state, percent, and a short eta/error note -- so a
+  finished job's result stays visible instead of being overwritten the moment a second export starts. Each
+  queued/running/cancelling job is polled independently (`job_status`, same tool the single-export bar
+  already calls); a finished row (done/failed/cancelled) gets a dismiss `x` to clear it from the list. No new
+  engine calls -- this only reshapes `job_status`'s own responses into display rows and tracks them as a
+  list instead of one variable.
+- `gui_renderqueue.js`: pure JS, no DOM -- `addJob(jobs, id, path)`, `updateJob(jobs, id, status)` (reshapes
+  one `job_status` result into `{state, pct, note}`, same chunks/frames-fallback math the single-export bar
+  already uses), `removeJob`, `activeJobIds` (still-unfinished jobs to keep polling), `isFinished`. Served at
+  `GET /gui_renderqueue.js`, same bytes the browser and the Node test run.
+- 15 new headless Node tests (`tests/js/renderqueue_test.js`) plus 3 new Rust tests: the JS file served
+  byte-identical to disk, the index page wires up the panel and its functions by name, and
+  `export_job_start`/`job_status` through `/api/call` prove the exact shape the panel polls. All 72
+  pre-existing kimo-cli tests stayed green (75 total now).

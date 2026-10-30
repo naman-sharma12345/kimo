@@ -62,6 +62,14 @@
   #marker-list .marker-time { color: #9ab; margin-left: 6px; flex: none; }
   #marker-list .marker-remove { color: #f77; cursor: pointer; margin-left: 6px; flex: none; }
   #marker-list .marker-empty { padding: 6px; color: #667; }
+  #render-queue-list .rq-row { display: flex; justify-content: space-between; align-items: center; padding: 3px 4px; font-size: 11px; }
+  #render-queue-list .rq-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; }
+  #render-queue-list .rq-state { color: #9ab; margin-left: 6px; flex: none; }
+  #render-queue-list .rq-state.rq-running, #render-queue-list .rq-state.rq-queued, #render-queue-list .rq-state.rq-cancelling { color: #fd6; }
+  #render-queue-list .rq-state.rq-done { color: #6a9; }
+  #render-queue-list .rq-state.rq-failed { color: #f77; }
+  #render-queue-list .rq-clear { color: #778; cursor: pointer; margin-left: 6px; flex: none; }
+  #render-queue-list .rq-empty { padding: 6px; color: #667; }
 </style>
 </head>
 <body>
@@ -113,6 +121,10 @@
       <div id="export-bar-outer" style="display:none;margin-top:6px;background:#111;border-radius:4px;height:10px;overflow:hidden"><div id="export-bar-inner" style="background:#5a8;height:100%;width:0%"></div></div>
       <div id="export-status" style="font-size:11px;color:#9ab;margin-top:4px"></div>
     </section>
+    <section id="render-queue" style="margin-top:12px">
+      <h2>Render queue</h2>
+      <div id="render-queue-list"></div>
+    </section>
   </div>
   <section>
     <h2>Tools</h2>
@@ -135,6 +147,7 @@
 <script src="/gui_fxbrowser.js"></script>
 <script src="/gui_clipboard.js"></script>
 <script src="/gui_markerpanel.js"></script>
+<script src="/gui_renderqueue.js"></script>
 <script>
 let registry = [];
 let projectFps = 30; // set from /api/timeline; used by J/K/L's frame step
@@ -302,8 +315,12 @@ async function startExport() {
   if (!r.ok) { document.getElementById('export-status').textContent = 'could not start: ' + (typeof r.error === 'string' ? r.error : JSON.stringify(r.error)); return; }
   exportJobId = r.result.job_id;
   renderExportStatus({ state: 'queued', chunks: { done: 0, total: 0 } });
+  renderQueueJobs = kimoRenderQueue.addJob(renderQueueJobs, exportJobId, path);
+  renderQueuePanel();
   if (exportPollTimer) clearInterval(exportPollTimer);
   exportPollTimer = setInterval(pollExportJob, 500);
+  if (renderQueuePollTimer) clearInterval(renderQueuePollTimer);
+  renderQueuePollTimer = setInterval(pollRenderQueue, 500);
   await pollExportJob();
 }
 async function pollExportJob() {
@@ -312,6 +329,38 @@ async function pollExportJob() {
   if (!r.ok) { clearInterval(exportPollTimer); exportPollTimer = null; return; }
   renderExportStatus(r.result);
   if (['done', 'failed', 'cancelled'].includes(r.result.state)) { clearInterval(exportPollTimer); exportPollTimer = null; }
+}
+
+// v7.5: render queue panel -- every export job started this session, each polled independently, so a
+// finished job's result is still visible after a new export starts rather than being overwritten by it.
+let renderQueueJobs = [];
+let renderQueuePollTimer = null;
+function renderQueuePanel() {
+  const el = document.getElementById('render-queue-list'); if (!el) return;
+  el.innerHTML = '';
+  if (!renderQueueJobs.length) { const empty = document.createElement('div'); empty.className = 'rq-empty'; empty.textContent = 'no renders started yet'; el.appendChild(empty); return; }
+  for (const j of renderQueueJobs) {
+    const row = document.createElement('div'); row.className = 'rq-row';
+    const path = document.createElement('span'); path.className = 'rq-path'; path.textContent = j.path; path.title = j.path;
+    const state = document.createElement('span'); state.className = 'rq-state rq-' + j.state;
+    state.textContent = j.state + (j.pct ? ' ' + j.pct + '%' : '') + (j.note ? ' \u00b7 ' + j.note : '');
+    row.appendChild(path); row.appendChild(state);
+    if (kimoRenderQueue.isFinished(j)) {
+      const clear = document.createElement('span'); clear.className = 'rq-clear'; clear.textContent = '\u00d7'; clear.title = 'remove from this list';
+      clear.onclick = () => { renderQueueJobs = kimoRenderQueue.removeJob(renderQueueJobs, j.id); renderQueuePanel(); };
+      row.appendChild(clear);
+    }
+    el.appendChild(row);
+  }
+}
+async function pollRenderQueue() {
+  const active = kimoRenderQueue.activeJobIds(renderQueueJobs);
+  if (!active.length) { if (renderQueuePollTimer) { clearInterval(renderQueuePollTimer); renderQueuePollTimer = null; } return; }
+  for (const id of active) {
+    const r = await callApi('job_status', { job_id: id });
+    if (r.ok) renderQueueJobs = kimoRenderQueue.updateJob(renderQueueJobs, id, r.result);
+  }
+  renderQueuePanel();
 }
 async function cancelExport() {
   if (!exportJobId) return;
@@ -659,7 +708,7 @@ async function callTool() {
   document.getElementById('result').textContent = JSON.stringify(v, null, 2);
   loadTimeline();
 }
-loadTimeline(); loadRegistry();
+loadTimeline(); loadRegistry(); renderQueuePanel();
 </script>
 </body>
 </html>

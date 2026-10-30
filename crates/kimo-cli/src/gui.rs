@@ -100,6 +100,10 @@ const CLIPBOARD_JS: &str = include_str!("gui_clipboard.js");
 /// timeline_view_model's own markers array), served the same way for the same reason -- gui_index.html's
 /// marker panel and tests/js/markerpanel_test.js (Node) run the exact same bytes.
 const MARKERPANEL_JS: &str = include_str!("gui_markerpanel.js");
+/// v7.5: the render queue panel's view model (job list state, reshaping job_status responses into display
+/// rows), served the same way for the same reason -- gui_index.html's render queue panel and
+/// tests/js/renderqueue_test.js (Node) run the exact same bytes.
+const RENDERQUEUE_JS: &str = include_str!("gui_renderqueue.js");
 
 /// Parses `?t=1.5` (or any single-key query) out of a raw query string; used for /preview.png's `t`.
 fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
@@ -121,6 +125,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
         ("GET", "/gui_fxbrowser.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: FXBROWSER_JS.as_bytes().to_vec() },
         ("GET", "/gui_clipboard.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: CLIPBOARD_JS.as_bytes().to_vec() },
         ("GET", "/gui_markerpanel.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: MARKERPANEL_JS.as_bytes().to_vec() },
+        ("GET", "/gui_renderqueue.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: RENDERQUEUE_JS.as_bytes().to_vec() },
         ("GET", "/api/timeline") => { let ss = ss.lock().unwrap(); json_response(200, timeline_view_model(&ss)) }
         ("GET", "/api/registry") => json_response(200, registry_summary()),
         ("GET", "/api/clip") => { // ?id=<clip_id>
@@ -157,7 +162,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
                 Err(e) => json_response(200, json!({"ok": false, "error": e})),
             }
         }
-        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/gui_zoom.js") | (_, "/gui_trackstate.js") | (_, "/gui_multiselect.js") | (_, "/gui_waveform.js") | (_, "/gui_fxbrowser.js") | (_, "/gui_clipboard.js") | (_, "/gui_markerpanel.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
+        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/gui_zoom.js") | (_, "/gui_trackstate.js") | (_, "/gui_multiselect.js") | (_, "/gui_waveform.js") | (_, "/gui_fxbrowser.js") | (_, "/gui_clipboard.js") | (_, "/gui_markerpanel.js") | (_, "/gui_renderqueue.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
         _ => err_response(404, format!("no route for {path}")),
     }
 }
@@ -1217,6 +1222,44 @@ mod tests {
         // sorted by time -- the panel relies on timeline_view_model's own ordering, same as the ruler ticks
         assert_eq!(markers[0]["time"], 0.5, "{markers:?}");
         assert_eq!(markers[1]["name"], "Intro", "{markers:?}");
+    }
+
+
+    // ---- v7.5: render queue panel ----
+
+    #[test]
+    fn served_renderqueue_js_matches_the_file_on_disk() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_renderqueue.js", "", &[]);
+        assert_eq!(r.status, 200); assert_eq!(r.content_type, "application/javascript; charset=utf-8");
+        assert_eq!(r.body, include_bytes!("gui_renderqueue.js").to_vec());
+    }
+
+    #[test]
+    fn the_index_page_wires_up_the_render_queue_panel() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["gui_renderqueue.js", "kimoRenderQueue.addJob", "kimoRenderQueue.updateJob", "kimoRenderQueue.activeJobIds", "function renderQueuePanel", "function pollRenderQueue", "render-queue-list"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn export_job_start_feeds_job_status_the_same_way_the_render_queue_panel_will_poll_it() {
+        let ss = fixture();
+        let dir = std::env::temp_dir().join(format!("kimo_gui_renderqueue_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir); std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("out.mp4");
+        let body = serde_json::to_vec(&json!({"tool": "export_job_start", "args": {"path": out.to_str().unwrap(), "wait": false}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let job_id = v["result"]["job_id"].as_str().expect("export_job_start should return a job_id the queue panel can poll").to_string();
+        // the panel polls job_status in a loop until a terminal state; here one call is enough to prove the shape it reads exists
+        let sbody = serde_json::to_vec(&json!({"tool": "job_status", "args": {"job_id": job_id}})).unwrap();
+        let sr = handle_request(&ss, "POST", "/api/call", "", &sbody);
+        let sv: Value = serde_json::from_slice(&sr.body).unwrap(); assert_eq!(sv["ok"], true, "{sv}");
+        assert!(sv["result"].get("state").is_some(), "job_status result should carry a state field: {sv}");
     }
 
 }
