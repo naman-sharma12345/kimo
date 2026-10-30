@@ -52,7 +52,7 @@
       <img id="frame" alt="(no frame rendered yet)">
     </section>
     <section id="timeline" style="margin-top:12px">
-      <h2>Timeline <button class="small" style="font-size:11px;padding:2px 6px" onclick="addTrack()">+ Track</button> <button class="small" style="font-size:11px;padding:2px 6px" onclick="addMarkerAtPlayhead()">+ Marker</button> <label style="font-size:11px;font-weight:normal;text-transform:none;letter-spacing:normal;color:#9ab"><input type="checkbox" id="snap-enabled" checked style="vertical-align:middle"> snap</label></h2>
+      <h2>Timeline <button class="small" style="font-size:11px;padding:2px 6px" onclick="addTrack()">+ Track</button> <button class="small" style="font-size:11px;padding:2px 6px" onclick="addMarkerAtPlayhead()">+ Marker</button> <label style="font-size:11px;font-weight:normal;text-transform:none;letter-spacing:normal;color:#9ab"><input type="checkbox" id="snap-enabled" checked style="vertical-align:middle"> snap</label> <button class="small" style="font-size:11px;padding:2px 6px" onclick="zoomBy(0.5)">−</button> <span id="zoom-label" style="font-size:11px;color:#9ab">40px/s</span> <button class="small" style="font-size:11px;padding:2px 6px" onclick="zoomBy(2)">+</button> <button class="small" style="font-size:11px;padding:2px 6px" onclick="zoomReset()">reset</button></h2>
       <div id="tracks"></div>
     </section>
     <section id="inspector" style="margin-top:12px">
@@ -88,12 +88,13 @@
 </main>
 <script src="/gui_keymap.js"></script>
 <script src="/gui_snap.js"></script>
+<script src="/gui_zoom.js"></script>
 <script>
 let registry = [];
 let projectFps = 30; // set from /api/timeline; used by J/K/L's frame step
 let effectCatalog = [];
 let selectedClipId = null;
-const pxPerSec = 40;
+let pxPerSec = (window.kimoZoom ? window.kimoZoom.DEFAULT_PX_PER_SEC : 40); // v7.3: mutable for zoom in/out (bounds live in gui_zoom.js)
 const labelWidth = 70; // matches .track-label's CSS width
 let projectDuration = 0;
 let currentT = 0;
@@ -158,6 +159,16 @@ async function loadHistory() {
   if (h.undo.length === 0 && h.redo.length === 0) el.innerHTML = '<div style="color:#667">(nothing yet)</div>';
   document.getElementById('undo-btn').disabled = h.undo.length === 0;
   document.getElementById('redo-btn').disabled = h.redo.length === 0;
+}
+async function zoomBy(factor) {
+  pxPerSec = window.kimoZoom.zoomBy(pxPerSec, factor);
+  const lbl = document.getElementById('zoom-label'); if (lbl) lbl.textContent = pxPerSec + 'px/s';
+  await loadTimeline();
+}
+async function zoomReset() {
+  pxPerSec = window.kimoZoom.DEFAULT_PX_PER_SEC;
+  const lbl = document.getElementById('zoom-label'); if (lbl) lbl.textContent = pxPerSec + 'px/s';
+  await loadTimeline();
 }
 async function addTrack() { await callApi('add_track', {}); await loadTimeline(); }
 async function addMarkerAtPlayhead() {

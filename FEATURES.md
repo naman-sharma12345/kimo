@@ -1252,3 +1252,19 @@ new (the v7.2 audit explicitly flagged EDL/OTIO import as a real gap, bigger tha
   name; and the actual payoff -- a clip moved with an already-snapped value lands its edge EXACTLY flush
   against its neighbour (not a near-miss), confirmed through the real `move_clip` call and a re-read of the
   timeline. All 31 pre-existing kimo-cli tests stayed green (36 total now).
+
+
+## v7.3 feature 8/N: kimo gui timeline zoom
+
+- [x] `kimo gui`: timeline zoom in/out/reset, bounds-clamped 4-400px/sec (default 40). The clamp and step
+  math is a pure function, `gui_zoom.js` (`clampZoom(v)`, `zoomBy(current, factor)` -- 2x for "+", 0.5x for
+  "−", rounded to a whole pixel and bounded), served as a real static file at `GET /gui_zoom.js` so the
+  browser and a headless Node test run the exact same bytes; `pxPerSec` (previously a hardcoded const used
+  everywhere clip bars, marker ticks, the playhead and the scrub-to-pixel conversion are positioned) is now
+  a mutable module variable driven entirely by this helper, so zooming re-renders the whole timeline at the
+  new scale with no special-casing anywhere else. "−" / a live "NNpx/s" label / "+" / "reset" sit beside
+  the snap checkbox. 10 new headless Node tests (tests/js/zoom_test.js): default value, doubling/halving,
+  clamping at both ends, clamped-and-stays-clamped under repeated zoom, and rounding -- plus 3 new Rust
+  tests (crates/kimo-cli/src/gui.rs): the JS file is served correctly (405 on non-GET) and the index page is
+  checked to wire up all four controls and the shared helper by name. All 36 pre-existing kimo-cli tests
+  stayed green (39 total now).

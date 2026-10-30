@@ -70,6 +70,9 @@ const KEYMAP_JS: &str = include_str!("gui_keymap.js");
 /// way and for the same reason -- gui_index.html's drag handlers and tests/js/snap_test.js (Node) run the
 /// exact same bytes.
 const SNAP_JS: &str = include_str!("gui_snap.js");
+/// v7.3: the timeline-zoom helper (bounds-clamped px/sec), served the same way for the same reason --
+/// gui_index.html's zoomBy()/zoomReset() and tests/js/zoom_test.js (Node) run the exact same bytes.
+const ZOOM_JS: &str = include_str!("gui_zoom.js");
 
 /// Parses `?t=1.5` (or any single-key query) out of a raw query string; used for /preview.png's `t`.
 fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
@@ -84,6 +87,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
         ("GET", "/") => Response { status: 200, content_type: "text/html; charset=utf-8", body: INDEX_HTML.as_bytes().to_vec() },
         ("GET", "/gui_keymap.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: KEYMAP_JS.as_bytes().to_vec() },
         ("GET", "/gui_snap.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: SNAP_JS.as_bytes().to_vec() },
+        ("GET", "/gui_zoom.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: ZOOM_JS.as_bytes().to_vec() },
         ("GET", "/api/timeline") => { let ss = ss.lock().unwrap(); json_response(200, timeline_view_model(&ss)) }
         ("GET", "/api/registry") => json_response(200, registry_summary()),
         ("GET", "/api/clip") => { // ?id=<clip_id>
@@ -120,7 +124,7 @@ pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query:
                 Err(e) => json_response(200, json!({"ok": false, "error": e})),
             }
         }
-        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
+        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/gui_zoom.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
         _ => err_response(404, format!("no route for {path}")),
     }
 }
@@ -691,5 +695,34 @@ mod tests {
         let tl = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
         let clips = tl["tracks"][0]["clips"].as_array().unwrap();
         assert_eq!(clips[0]["end"], 2.0); assert_eq!(clips[1]["start"], 2.0, "snapped clips must be exactly flush, not a near-miss: {tl}");
+    }
+
+    // ---- v7.3: timeline zoom ----
+
+    #[test]
+    fn gui_zoom_js_is_served_as_a_real_static_file() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_zoom.js", "", &[]);
+        assert_eq!(r.status, 200);
+        assert!(r.content_type.contains("javascript"), "{}", r.content_type);
+        let body = String::from_utf8(r.body).unwrap();
+        assert!(body.contains("clampZoom") && body.contains("zoomBy") && body.contains("module.exports"), "{body}");
+    }
+
+    #[test]
+    fn gui_zoom_js_rejects_non_get() {
+        let ss = fixture();
+        let r = handle_request(&ss, "POST", "/gui_zoom.js", "", &[]);
+        assert_eq!(r.status, 405);
+    }
+
+    #[test]
+    fn the_index_page_wires_up_zoom_controls() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["/gui_zoom.js", "zoom-label", "onclick=\"zoomBy(0.5)\"", "onclick=\"zoomBy(2)\"", "onclick=\"zoomReset()\"", "window.kimoZoom.zoomBy", "window.kimoZoom.DEFAULT_PX_PER_SEC"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
     }
 }
