@@ -1058,3 +1058,27 @@ Real gaps found (perception/feedback and agent-superiority), built below, cheape
 Not built this pass (noted honestly): a true cut-provenance ledger (every mutating tool tagging its own
 clips with why), and EDL/OTIO import (out-of-kimo edit decision lists) -- both real but bigger lifts than
 the time box here; `project_merge`/`batch`/`project_diff` already cover kimo's own interchange needs.
+
+
+## v7.2 feature 8/8: check_color_consistency
+
+- [x] `check_color_consistency`: new tool, the read-only diagnosis `match_color` (one clip) and
+  `match_shots` (every clip, mutating, uniform) have no counterpart for -- which clips in a group
+  actually disagree in brightness/color BEFORE an agent reaches for either fix, and whether a fix
+  afterward actually closed the gap (re-run the same call). No new pixel analysis: samples each clip's
+  own midpoint timeline time through the existing `get_scopes` (`dispatch_nested`) and compares
+  `luma_mean`/`avg_rgb` against either a named `ref_clip_id` (the hero shot `match_shots` targets) or,
+  by default, the checked group's own median -- so a single genuinely odd clip gets flagged without
+  needing a hero named first. `clip_ids` (optional) scopes the check to an explicit list of any clip
+  type; the default set is every `Source::Media` clip on the timeline (a solid/title card isn't a "shot"
+  with continuity to check). `luma_tolerance` (default 0.08) / `rgb_tolerance` (default 0.06, max per
+  channel) are adjustable. An empty check reports `ok: true, checked: 0` rather than erroring; an unknown
+  `ref_clip_id` errors plainly. Read-only (`get_scopes` is read-only; this adds no mutation). 9 new TDD
+  tests (tests/check_color_consistency.rs): no clips is ok-empty not an error, three matching clips
+  agree by default, one odd clip out of four is flagged and the other three are not, `ref_clip_id`
+  compares everyone against the named hero shot, an unknown ref_clip_id errors plainly, explicit
+  `clip_ids` scopes the check, solid-color generator clips are excluded from the default set, both
+  tolerances are adjustable (loose finds nothing, tight finds the real gap), read-only. golden_registry.txt
+  hand-updated (504 tools), toolgroups.rs updated (`color_grade`, beside `match_shots`). Full `--lib`
+  suite green (372 passed, 12 ignored, pre-existing) plus the targeted suite (golden_frames_registry_and_
+  projects, description_first_sentence, external_refs) all green.
