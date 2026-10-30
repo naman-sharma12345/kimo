@@ -116,6 +116,32 @@ fn proj() -> Session { let mut ss = Session::new(); call(&mut ss, "project_set",
     assert!(!music_report.is_empty(), "finish_audio should have found the music clip as music: {r}");
 }
 
+/// Beyond finish_audio's static level-match, the music bed also gets a real duck_timeline envelope on top --
+/// a SEPARATE multiplier (duck_gain) from the volume finish_audio set, so the two stages can't fight. This is
+/// what gives the mix its give-and-take instead of one flat level for the whole edit.
+#[test] fn music_bed_also_gets_a_duck_timeline_envelope_on_top_of_finish_audios_level() {
+    let mut ss = proj();
+    let a = sid(&call(&mut ss, "import_media", json!({"path": talk("duck_th.mp4", &[(0.0, 4.0)], 0.0)})), "asset_id");
+    let m = sid(&call(&mut ss, "import_media", json!({"path": music("duck_bed.wav", 4.0)})), "asset_id");
+    let r = call(&mut ss, "auto_edit", json!({"talking_head_asset_ids": [a], "music_asset_id": m, "captions": false, "grade": false, "punch_ins": false}));
+    assert!(r["ok"] == json!(true), "{r}");
+    let duck = &r["stages"]["duck"]; assert!(!duck.is_null(), "a duck stage should run whenever there's a music track: {r}");
+    assert_eq!(duck["music_tracks_ducked"], json!(1), "{duck}");
+    assert_eq!(duck["dialogue_tracks_used"], json!(1), "{duck}");
+    // duck_timeline writes duck_gain, a field kept separate from audio.volume precisely so finish_audio's own
+    // level-setting (which writes a flat volume Prop) and this dynamic envelope never overwrite each other.
+    assert!(!r["stages"]["audio"]["music"].as_array().unwrap().is_empty(), "finish_audio's own level-setting should be untouched by the later duck stage: {r}");
+}
+
+/// No music_asset_id at all: no duck stage should even attempt to run (nothing to duck).
+#[test] fn no_music_means_no_duck_stage() {
+    let mut ss = proj();
+    let a = sid(&call(&mut ss, "import_media", json!({"path": talk("noduck.mp4", &[(0.0, 2.0)], 0.0)})), "asset_id");
+    let r = call(&mut ss, "auto_edit", json!({"talking_head_asset_ids": [a], "captions": false, "grade": false, "punch_ins": false}));
+    assert!(r["ok"] == json!(true), "{r}");
+    assert!(r["stages"]["duck"].is_null(), "{r}");
+}
+
 /// No talking_head_asset_ids at all is a clear argument error, not a panic or a confusing nested one.
 #[test] fn requires_talking_head_asset_ids() {
     let mut ss = proj();

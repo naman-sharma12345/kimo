@@ -99,8 +99,11 @@ fn auto_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
         warnings.push("no hook_text given: the edit opens on the raw first clip with no hook title (pass hook_text for a cold-open line)".into());
     }
 
-    // 6. Music bed, ducked under speech in the audio-finish stage below (finish_audio classifies any
-    // audio-only asset as music on its own).
+    // 6. Music bed. finish_audio (next) sets its overall level against the dialogue; duck_timeline (after
+    // that) layers a dynamic envelope on top through duck_gain, a SEPARATE multiplier from volume -- the two
+    // never fight. Without this the bed sits at one flat level the whole edit: no swell in the gaps, no real
+    // give-and-take with the voice, the "lifeless" mix a static level-match alone produces.
+    let mut music_track_id: Option<String> = None;
     if let Some(mid) = &music_id {
         let mdur = ss.project.assets.get(mid).map(|x| x.duration).unwrap_or(0.0);
         if mdur <= 0.0 { warnings.push(format!("music_asset_id '{mid}' has no measurable duration; music bed skipped")); }
@@ -108,6 +111,7 @@ fn auto_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
             let mt = new_track(ss)?;
             let clip = call(ss, "add_clip", &json!({"track_id": mt, "source_type": "media", "asset_id": mid, "start": 0.0, "duration": edit_duration.min(mdur)}))?;
             stages.insert("music".into(), clip);
+            music_track_id = Some(mt);
         }
     }
 
@@ -120,6 +124,15 @@ fn auto_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
     // 8. Final mix: clean dialogue, b-roll sound off, music under speech, mix to the loudness target.
     let audio = call(ss, "finish_audio", &json!({"target_lufs": target_lufs}))?;
     stages.insert("audio".into(), audio.clone());
+
+    // 8b. Dynamic ducking on top of finish_audio's static levels: the music bed actually swells in the gaps
+    // and comes back down under speech, instead of sitting at one flat level for the whole edit.
+    if let Some(mt) = &music_track_id {
+        match call(ss, "duck_timeline", &json!({"dialogue_tracks": [track_id.clone()], "music_tracks": [mt]})) {
+            Ok(duck) => { stages.insert("duck".into(), duck); }
+            Err(e) => warnings.push(format!("music ducking skipped: {e}")),
+        }
+    }
 
     // 9. Let the edit catch its own remaining mistakes: lint_edit's own checks, auto-applying whatever has
     // a concrete fix (no guessing at anything that needs a human call). apply_review_fixes re-checks with a
