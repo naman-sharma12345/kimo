@@ -73,7 +73,7 @@ fn auto_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
     if punch_on {
         let visible: Vec<String> = dialogue_clips.iter().filter(|(_, s, e)| covered_fraction(*s, *e, &broll_ranges) < 0.5).map(|(id, _, _)| id.clone()).collect();
         if visible.len() >= 2 {
-            let pin = call(ss, "add_punch_ins", &json!({"clip_ids": visible, "scale": punch_scale, "pattern": "alternate", "ease": 0.2}))?;
+            let pin = call(ss, "add_punch_ins", &json!({"clip_ids": visible, "scale": punch_scale, "pattern": "alternate", "ease": 0.2, "variety": true}))?;
             stages.insert("punch_ins".into(), pin);
         } else {
             warnings.push(format!("punch-ins skipped: only {} dialogue clip(s) stay on screen past the b-roll coverage, not enough for wide/tight variation", visible.len()));

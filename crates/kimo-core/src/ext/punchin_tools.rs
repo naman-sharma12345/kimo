@@ -5,10 +5,13 @@
 //! as tagged expression ops ("punch") after the clip's own keys and expressions. A second call replaces the punch rather than
 //! stacking it, and remove takes it off (the clip's own animation is left exactly as it was).
 //! ease > 0 makes each punch a quick push-in from wide over that many seconds instead of a hard punch on the cut.
+//! variety (default off) cycles each punched clip's own zoom amount through a fixed, deterministic sequence around
+//! `scale` (never random -- reproducible renders), scaled by variety_amount, so a run of jump-cuts doesn't punch in
+//! by the exact same amount every single time; the focus point still never moves, at any zoom level.
 use super::kit::*;
 use crate::keyframe::{Op, Prop};
 
-const ARGS: &[&str] = &["track_id", "clip_ids", "scale", "pattern", "start", "focus", "base_scale", "ease", "remove"];
+const ARGS: &[&str] = &["track_id", "clip_ids", "scale", "pattern", "start", "focus", "base_scale", "ease", "remove", "variety", "variety_amount"];
 fn num(a: &Value, k: &str, d: f64, lo: f64, hi: f64) -> Result<f64, String> { match a.get(k) { None => Ok(d), Some(v) => { let x = v.as_f64().filter(|x| x.is_finite()).ok_or_else(|| format!("{k} must be a number"))?; if x < lo || x > hi { Err(format!("{k} must be within {lo}..{hi}, got {x}")) } else { Ok(x) } } } }
 fn word(a: &Value, k: &str, d: &str, ok: &[&str]) -> Result<String, String> { let v = match a.get(k) { None => d.to_string(), Some(v) => v.as_str().ok_or_else(|| format!("{k} must be a string"))?.to_string() }; if ok.contains(&v.as_str()) { Ok(v) } else { Err(format!("{k} must be one of {}, got '{v}'", ok.join(", "))) } }
 
@@ -36,7 +39,9 @@ pub fn commands() -> Vec<Command> { vec![
             ("focus", json!({"type":"array","items":{"type":"number"},"description":"[x, y] 0..1 of the canvas that stays put when punching (e.g. the face), default [0.5, 0.5]"})),
             ("base_scale", n("the wide clips' scale, 1..3, default 1")),
             ("ease", n("seconds each punch takes as a quick push-in from wide, 0 (default) = hard punch on the cut, max 2")),
-            ("remove", json!({"type":"boolean","description":"true sets the clips back to wide (base_scale; with base_scale 1 each clip's own scale/x/y exactly as before)"}))], &[]),
+            ("remove", json!({"type":"boolean","description":"true sets the clips back to wide (base_scale; with base_scale 1 each clip's own scale/x/y exactly as before)"})),
+            ("variety", json!({"type":"boolean","description":"vary each punch's zoom around scale (fixed cycle, not random), default false"})),
+            ("variety_amount", n("0..1 swing from scale when variety is on, default 0.3"))], &[]),
         run: |ss, a| { let o = a.as_object().ok_or("add_punch_ins: arguments must be an object")?;
             for k in o.keys() { if !ARGS.contains(&k.as_str()) { return Err(format!("add_punch_ins: unknown argument '{k}' (valid: {})", ARGS.join(", "))); } }
             let ids: Vec<String> = match (a.get("track_id"), a.get("clip_ids")) {
@@ -51,14 +56,25 @@ pub fn commands() -> Vec<Command> { vec![
             let k = num(a, "scale", 1.15, 1.01, 3.0)?; let base = num(a, "base_scale", 1.0, 1.0, 3.0)?; let ease = num(a, "ease", 0.0, 0.0, 2.0)?;
             let pattern = word(a, "pattern", "alternate", &["alternate", "all"])?; let start = word(a, "start", "wide", &["wide", "tight"])?;
             let remove = match a.get("remove") { None => false, Some(v) => v.as_bool().ok_or("remove must be true or false")? };
+            let variety = match a.get("variety") { None => false, Some(v) => v.as_bool().ok_or("variety must be true or false")? };
+            let variety_amount = num(a, "variety_amount", 0.3, 0.0, 1.0)?;
+            // A fixed, deterministic cycle of multipliers on the punch's OWN extra zoom (k - 1), not on k itself:
+            // every multiplier stays positive, so a "varied" punch always still reads as punched in, never flattens
+            // to ~wide by chance the way scaling k itself (which can swing below 1) would. Cycle length 4 so a
+            // 2-clip alternate pattern (every punch at the same phase) still sees different amounts punch to punch
+            // across a longer edit, not just a repeating A/B.
+            const VARIETY_CYCLE: [f64; 4] = [0.6, 1.3, 0.85, 1.55];
             let (fx, fy) = match a.get("focus") { None => (0.5, 0.5), Some(v) => { let arr = v.as_array().filter(|x| x.len() == 2).ok_or("focus must be [x, y] in 0..1")?;
                 let (x, y) = (arr[0].as_f64().ok_or("focus must be numbers")?, arr[1].as_f64().ok_or("focus must be numbers")?); if !(0.0..=1.0).contains(&x) || !(0.0..=1.0).contains(&y) { return Err(format!("focus must be [x, y] within 0..1, got [{x}, {y}]")); } (x, y) } };
-            let (w, h) = (ss.project.width as f64, ss.project.height as f64); let (ox, oy) = focus_offset(fx * w, fy * h, w / 2.0, h / 2.0, k);
+            let (w, h) = (ss.project.width as f64, ss.project.height as f64);
             let mut out = vec![]; let mut punched = 0;
             for (i, id) in ids.iter().enumerate() {
                 let tight = !remove && (pattern == "all" || (i % 2 == 1) == (start == "wide"));
+                let mult = 1.0 + variety_amount * (VARIETY_CYCLE[punched % VARIETY_CYCLE.len()] - 1.0);
+                let kv = if tight && variety { (1.0 + (k - 1.0) * mult).clamp(1.01, 3.0) } else { k };
+                let (ox, oy) = focus_offset(fx * w, fy * h, w / 2.0, h / 2.0, kv);
                 let c = ss.project.find_clip_mut(id).unwrap(); let e = if tight { ease.min(c.duration / 2.0) } else { 0.0 };
-                let (sv, xv, yv) = if tight { (base * k, ox, oy) } else { (base, 0.0, 0.0) }; let mut animated = false;
+                let (sv, xv, yv) = if tight { (base * kv, ox, oy) } else { (base, 0.0, 0.0) }; let mut animated = false;
                 for (key, rest, off) in [("scale", 1.0, None), ("x", 0.0, Some(xv)), ("y", 0.0, Some(yv))] {
                     let Some(q0) = c.props.get(key).map(own) else { if (sv - 1.0).abs() < 1e-12 && off.map_or(true, |o| o == 0.0) { continue; } else { let mut q = Prop::new(rest); push(&mut q, base, sv, off, e); c.props.insert(key.into(), q); continue; } }; // xform-lint: ok (the clip's own property is kept and layered on, not read for drawing)
                     animated |= !q0.keys.is_empty() || !q0.expr.is_empty(); let mut q = q0; push(&mut q, base, sv, off, e); c.props.insert(key.into(), q); }

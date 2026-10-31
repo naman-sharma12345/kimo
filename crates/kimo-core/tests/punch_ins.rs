@@ -110,3 +110,26 @@ fn bad_input_is_refused_without_changing_the_project() {
         (json!({"clip_ids": [cl[0]], "zoom": 2}), "unknown argument"),
     ] { let e = dispatch(&mut s, "add_punch_ins", &args).expect_err(&format!("{args} must be refused")); assert!(e.contains(want), "{args}: {e}"); assert_eq!(pj(&s), before, "{args} changed the project"); }
 }
+
+/// RV-28 follow-up: every alternate-pattern punch previously landed at the exact same zoom, cut after cut -- visibly
+/// mechanical on a longer edit. variety cycles the punched clips' own zoom amount around `scale` deterministically
+/// (no randomness -- same input, same output, same as everything else here), never dropping a punch down near 1.0
+/// (it would stop reading as "punched in" at all), and never moving the focus point regardless of the zoom it lands at.
+#[test]
+fn variety_makes_consecutive_punches_land_at_different_zooms_without_losing_the_focus_point() {
+    let (mut s, t, _cl) = scene();
+    let r = c(&mut s, "add_punch_ins", json!({"track_id": t, "scale": 1.3, "pattern": "all", "variety": true, "focus": [0.25, 0.5]}));
+    let scales: Vec<f64> = r["clips"].as_array().unwrap().iter().map(|c| c["scale"].as_f64().unwrap()).collect();
+    assert_eq!(scales.len(), 3, "{r}");
+    assert!(scales.iter().all(|&s| s > 1.05), "every punch should still clearly read as punched in: {scales:?}");
+    assert!(scales[0] != scales[1] || scales[1] != scales[2], "consecutive punches should not all land at the identical zoom: {scales:?}");
+    // deterministic: the same call again gives exactly the same zooms, not a fresh roll
+    let mut s2 = scene().0;
+    let r2 = c(&mut s2, "add_punch_ins", json!({"track_id": &t, "scale": 1.3, "pattern": "all", "variety": true, "focus": [0.25, 0.5]}));
+    let scales2: Vec<f64> = r2["clips"].as_array().unwrap().iter().map(|c| c["scale"].as_f64().unwrap()).collect();
+    assert_eq!(scales, scales2, "variety must be deterministic, not random");
+    // the focus point still never moves, whatever zoom a given clip lands at (focus at the left quarter: column 40)
+    for (tm, what) in [(0.5, "clip 1"), (1.5, "clip 2"), (2.5, "clip 3")] {
+        near(col(&frame(&s, tm), 40, 45), 40.0, &format!("{what}: focus column unchanged by variety"));
+    }
+}
