@@ -4,6 +4,54 @@
 
 ## Unreleased
 
+## v7.6.0 (2026-10-31)
+
+V7.6-Q2 quality pass on `real_v1.mp4` (a real CC0 interview auto-edit), continued from a prior
+worker's mid-task exit. No new tools this round -- every change below improves what `auto_edit` and
+`add_punch_ins`/`add_keyword_pops` actually deliver on real footage, verified by rendering real_v1's
+own clips through the fix each time, not just synthetic fixtures. Tools: 520 -> 520 (two new optional
+args on two existing tools, no new tool names).
+
+- **Caption pill hugs the text, not the wrap width**: a boxed caption's background box was sized to
+  the full available wrap width regardless of how short the actual line was -- a one-word caption got
+  a bar spanning nearly the whole frame. `coverage()` now computes the tight ink extent of the line's
+  own glyphs for the bg-box path. Verified: the pill width for a short caption dropped from 1048px to
+  under 500px on real footage; golden frames unaffected (only the bg-box path reads the new bounds).
+- **New `examples/auto_edit_benchmark.py`**: a reproducible one-command pipeline (clips folder ->
+  finished mp4, with a JSON summary of duration/LUFS/lint/clip counts) reconstructed from the actual
+  real_v1 render after no script or shell history survived the worker that first produced it.
+  Auto-discovers talking-head/b-roll/music clips by filename; `--level-strength`, `--no-level-dynamics`
+  flags added in the same pass as the LRA fix below.
+- **`finish_audio`'s loudness range actually narrows now**: the per-clip highpass+compressor only
+  ever matched each dialogue clip's AVERAGE loudness to the loudest one -- whatever swing already
+  lived within a clip rode straight through. A gentle master-bus speech leveler (ffmpeg `speechnorm`)
+  now runs once over the whole mixed timeline, loudness-neutral (so it doesn't fight `finish_audio`'s
+  own gain-convergence loop -- the first per-clip attempt at this made LRA worse, not better, for
+  exactly that reason). `level_dynamics`/`level_strength` on `finish_audio`/`auto_edit`, default on.
+  Measured on real_v1: LRA 11.1 -> 6.8 LU (target 6-8), -14.55 LUFS (closer to -14 than the unleveled
+  -14.87), -3.94 dBTP (more headroom, not less).
+- **Punch-in zoom variety**: `add_punch_ins` alternated wide/punched but every punched clip zoomed by
+  the exact same amount -- mechanical on a longer edit. New opt-in `variety`/`variety_amount` (default
+  off, so direct calls and existing tests are unchanged) cycles each punched clip's own zoom through a
+  fixed, deterministic sequence (never random, never drops near 1.0 so a punch always still reads as
+  punched in; the focus point is recomputed per clip so it never drifts). `auto_edit` turns it on by
+  default. Verified on real_v1: its two punch-ins landed at 1.132x and 1.1635x off a 1.15x base --
+  genuinely different amounts.
+- **`add_keyword_pops`'s `sfx:true` plays a real sound now**: previously a complete no-op with a
+  warning (the prior research pass marked pop sound effects unverified for lack of a bundled asset,
+  and media is never committed to this repo). Now synthesizes a short procedural "pop" blip at call
+  time (ffmpeg lavfi tone, not a sampled/downloaded file) and places it on its own audio track, one
+  per pop. Verified the mix is actually audible at each pop, not silently placed.
+
+Full gate suite: unchanged pre-existing failures only (confirmed against the pre-session commit in a
+throwaway git worktree for each one before touching anything) -- a `director_small` text-crowding
+test, a `search_tools` ranking tie unaffected by any of this session's added schema text, one unmarked
+`xform_lint` read, and a stray doctest in `robust_est.rs`; two more (`lint_edit` timing, `pick_thumbnail`
+/ `push_wipe` temp-file setup) only fail under full `-j2` parallel load and pass clean alone. Goldens
+(`golden_frames`, `recipes`) unchanged throughout -- every schema change that grew a tool's registry
+hash was hand-verified and hand-updated in `golden_registry.txt`, `KIMO_UPDATE_GOLDEN` was never used.
+`kimo-core` lib warnings: 34 (unchanged).
+
 ## v7.5.0 (2026-10-30)
 
 Naman's standing instruction continued: "keep working, and keep sending updates." Picked up straight

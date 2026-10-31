@@ -1,5 +1,7 @@
 # kimo features
 
+New in v7.6.0: a quality pass on `auto_edit`'s real-footage output, not new tools -- a boxed caption's background pill now hugs the actual text width instead of the wrap width; `finish_audio`'s loudness range narrows for real now (a loudness-neutral master-bus speech leveler, opt-out via `level_dynamics`); `add_punch_ins` gained opt-in `variety` so consecutive punch-in zooms don't all land at the exact same amount; `add_keyword_pops`'s `sfx:true` plays a real synthesized pop instead of its old no-op. See CHANGELOG.md for the measured before/after on real footage.
+
 New in v7.5.0: `close_gaps` (general ripple-close for any/all gaps in one call), `duck_timeline` (ducks every music track under every dialogue track's speech in one call), `import_clips` (copy specific clips, with their own effects/keyframes/grade, from another project file into the live one), `style_captions_batch` (one call restyles every caption group, or a named list), plus `kimo gui` copy/paste + ripple-delete, a marker/chapter panel, a render queue panel, and a keyframe lane. See the "v7.5 additions" section below and CHANGELOG.md for the full list.
 
 New in v7.1.0: `kimo gui` is now an actually-editable local editor (clip/effect-params panel, drag-to-move/trim, scrub+play, undo/redo), plus 3 new tools (`project_merge`, `mark_scene_cuts`, `export_variants`) and a `has_effect` filter on `find`. See the "v7 additions" section below and CHANGELOG.md for the full list.
@@ -166,6 +168,7 @@ Native AP1 to ACEScct to AP1 sandwich with per-channel primaries and an inverse,
 
 #### Audio
 - [x] per-clip volume + keyframes, fades, mute, pitch, high/low pass, compressor, echo, denoise flags, reverse, beat detection, export_audio
+- [x new in v7.6] `finish_audio`'s dialogue mix gets a gentle master-bus speech leveler (`level_dynamics`, default on): per-clip average-matching alone left a real speaker's own within-clip loudness swing untouched (measured 11.1 LU loudness range on a real interview edit, against an EBU target band of 6-8); one loudness-neutral `speechnorm` pass over the whole mix narrows it (measured 6.8 LU on the same footage) without fighting `finish_audio`'s own convergence loop or moving the mix's overall level
 
 ### Parameters and controls
 
