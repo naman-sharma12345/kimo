@@ -117,6 +117,15 @@ fn coverage(cw: usize, ch: usize, text: &str, f: &FontVec, size: f32, spacing: f
     let (glyphs, bw, bh, nl, nwords, _) = layout(text, f, size, spacing, align, cw as f32, fx); let sf = f.as_scaled(PxScale::from(size));
     let nchar = glyphs.len(); let shown = (reveal.clamp(0.0, 1.0) * nchar as f64).ceil() as usize;
     let (bx, by) = block_origin(cw as f32, ch as f32, bw, bh); let mut cov = vec![0f32; cw * ch];
+    // The returned bounds feed the background-box style (render_text's "bg"): with a wrap width set (box_width,
+    // for a caption/title that might run long), bw above is the WRAP LIMIT, not how wide this particular bit
+    // of text actually is -- a two-word caption pill was drawing at the full configured wrap width every time,
+    // regardless of how short the words were. ink_x0/ink_x1 is the tight horizontal extent of the glyphs as
+    // laid out (pre-animation: a per-word pop/karaoke offset shouldn't make the box itself jitter), so the
+    // background this function reports can hug the real content instead of the wrap box.
+    let (mut ink_x0, mut ink_x1) = (f32::MAX, f32::MIN);
+    for g in &glyphs { let (x0, x1) = (bx + g.x, bx + g.x + g.adv); ink_x0 = ink_x0.min(x0); ink_x1 = ink_x1.max(x1); }
+    let (ink_bx, ink_bw) = if ink_x1 > ink_x0 { (ink_x0, ink_x1 - ink_x0) } else { (bx, bw) };
     let empty: Vec<TextAnimator> = vec![]; let an = fx.map(|x| &x.animators).unwrap_or(&empty);
     // per-pixel fill pair (ft.r, ft.g, ft.b, fs); allocated only when some animator has a Fill Color, identity elsewhere
     let mut tint: Option<Vec<[f32; 4]>> = if an.iter().any(|a| a.fill.is_some()) { Some(vec![[0.0, 0.0, 0.0, 1.0]; cw * ch]) } else { None };
@@ -161,7 +170,7 @@ fn coverage(cw: usize, ch: usize, text: &str, f: &FontVec, size: f32, spacing: f
     }
     let blur_any = glyphs.iter().enumerate().take(shown).map(|(ci, g)| animate(an, t, g, nchar, nwords, nl, ci).blur).fold(0.0, f32::max);
     if blur_any > 0.5 { let mut m = Frame { w: cw, h: ch, d: vec![1.0; cw * ch * 4] }; for i in 0..cw * ch { m.d[i * 4] = cov[i]; } box_blur3(&mut m, (blur_any * 2.0) as usize); for i in 0..cw * ch { cov[i] = cov[i] * (1.0 - (blur_any / (blur_any + 4.0))) + m.d[i * 4] * (blur_any / (blur_any + 4.0)); } }
-    (cov, [bx, by, bw, bh], tint)
+    (cov, [ink_bx, by, ink_bw, bh], tint)
 }
 
 pub fn render_text(fr: &mut Frame, text: &str, fontpath: &str, size: f64, col: [f64; 3], spacing: f64, stroke_w: f64, stroke_col: [f64; 3], shadow: f64, align: &str, reveal: f64, fx: Option<&TextFx>, t: f64) -> Result<(), String> {

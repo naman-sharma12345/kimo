@@ -22,3 +22,19 @@ const STRINGS: [&str; 4] = ["Hello", "Quick brown fox", "two\nlines here", "Wrap
     assert_eq!(m.lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join(" "), "Wrap this long sentence at a narrow box width please");
     assert!(!m.substituted); assert!(measure_text("x", "NoSuchFamilyZZ", 20.0, 0.0, 0.0, "left", 100.0, 0.0, None).unwrap().substituted);
 }
+
+#[test] fn boxed_caption_pill_hugs_the_text_not_the_wrap_width() {
+    // RV-28 WIP: a background-box caption (set_caption_style "boxed", text_over_subject's own fix path) used to
+    // draw its pill at the full configured wrap width (box_width) even for one or two short words, leaving a big
+    // empty strip beside the text. The pill should hug the actual glyphs instead.
+    let (w, h) = (1280usize, 720usize);
+    let fam = ["Montserrat", "DejaVu Sans", "Liberation Sans", "Arial"].into_iter().find(|f| !measure_text("x", f, 20.0, 0.0, 0.0, "left", 100.0, 0.0, None).unwrap().substituted).expect("one of the common families is installed");
+    let fx = TextFx { box_width: 1000.0, bg: Some([0.0, 0.0, 0.0, 1.0]), bg_pad: 24.0, ..Default::default() };
+    let mut fr = Frame::new(w, h);
+    render_text(&mut fr, "Hey there", fam, 48.0, [1.0; 3], 0.0, 0.0, [0.0; 3], 0.0, "center", 1.0, Some(&fx), 0.0).unwrap();
+    let b = alpha_bbox(&fr).expect("pill should render visible pixels");
+    let pill_w = (b[2] - b[0]) as f64;
+    // the wrap width is a limit the layout could use for multi-line long captions; a 2-word caption's real pill
+    // must be nowhere near it -- comfortably under half, where the pre-fix bug drew it at ~the full box_width.
+    assert!(pill_w < 500.0, "pill width {pill_w} should hug \"Hey there\", not the {}px wrap width", fx.box_width);
+}
