@@ -89,12 +89,25 @@ pub fn add_title(ss: &mut Session, a: &Value) -> Result<Value, String> {
             let mut c = clip(ss, txt(&text, font_o.unwrap_or("Anton"), 84.0 * k, color, 0.0, "center"), start, dur); c.text_fx = Some(TextFx { uppercase: true, ..Default::default() }); pop(&mut c); fade(&mut c, 0.15, 0.4); clips.push(c);
         }
         "subscribe_pop" => {
-            // pill, then dot (drawn over the pill's left edge), then text; scale 0 hides each at both ends, so opacity stays 1
+            // V7.7Q: the pill used to be a fixed 230px, tuned for the one word "SUBSCRIBE" -- any longer label
+            // (e.g. "SUBSCRIBE FOR MORE", auto_edit's own end-screen default) ran past both of its rounded
+            // ends, and the dot sat at a fixed offset that landed on top of the first letter once a longer
+            // label pushed the text wider than the gap it was drawn for. Same tight-ink-extent approach as
+            // 65809ee's caption pill fix: measure the actual drawn (uppercase, bold) text and size the pill
+            // to it, with real side padding; the dot moves OUTSIDE the pill, beside it like a small bell badge,
+            // not a fixed px offset that only happened to clear a short word.
+            let font_name = font_o.unwrap_or("Montserrat");
+            let text_size = 30.0 * k;
+            let upper = text.to_uppercase();
+            let (text_w, _) = crate::text::measure(&upper, font_name, text_size, 0.0, 700.0, "center", wpx).unwrap_or((180.0 * k, 0.0));
+            let side_pad = 56.0 * k; // room on both sides so the pill visibly hugs, not clips, the text
+            let pill_w = (text_w + side_pad).max(190.0 * k); // a one-word label still reads as a normal pill, not a hugged sliver
+            let pill_h = 66.0 * k; let dot_w = 24.0 * k;
             let y = 260.0 * k;
             let pop = |c: &mut Clip, sh: f64| { let sc = c.props.get_mut("scale").unwrap(); sc.base = 0.0; sc.set_key(0.0, 0.0, Ease::Out); sc.set_key((0.12 - sh).max(0.0), 1.0, Ease::OutBack); sc.set_key((dur - 0.35 - sh).max(0.13), 1.0, Ease::In); sc.set_key((dur - 0.05 - sh).max(0.14), 0.0, Ease::In); c.props.get_mut("opacity").unwrap().base = 1.0; c.props.get_mut("y").unwrap().base = y; };
-            let mut p = clip(ss, Source::Shape { shape: "rect".into(), width: 230.0 * k, height: 66.0 * k, fill: accent, stroke_width: 0.0, stroke_color: [0.0; 3], sides: 4, corner_radius: 33.0 * k }, start, dur); pop(&mut p, 0.0); clips.push(p);
-            let mut d = clip(ss, Source::Shape { shape: "ellipse".into(), width: 28.0 * k, height: 28.0 * k, fill: [1.0, 1.0, 1.0], stroke_width: 0.0, stroke_color: [0.0; 3], sides: 4, corner_radius: 0.0 }, start, dur); pop(&mut d, 0.04); d.props.get_mut("x").unwrap().base = -88.0 * k; clips.push(d);
-            let mut c = clip(ss, txt(&text, font_o.unwrap_or("Montserrat"), 30.0 * k, [1.0, 1.0, 1.0], 0.0, "center"), start, dur); c.text_fx = Some(TextFx { weight: 700.0, uppercase: true, ..Default::default() }); pop(&mut c, 0.0); clips.push(c);
+            let mut p = clip(ss, Source::Shape { shape: "rect".into(), width: pill_w, height: pill_h, fill: accent, stroke_width: 0.0, stroke_color: [0.0; 3], sides: 4, corner_radius: 33.0 * k }, start, dur); pop(&mut p, 0.0); clips.push(p);
+            let mut d = clip(ss, Source::Shape { shape: "ellipse".into(), width: dot_w, height: dot_w, fill: [1.0, 1.0, 1.0], stroke_width: 0.0, stroke_color: [0.0; 3], sides: 4, corner_radius: 0.0 }, start, dur); pop(&mut d, 0.04); d.props.get_mut("x").unwrap().base = -(pill_w / 2.0 + dot_w / 2.0 + 14.0 * k); clips.push(d);
+            let mut c = clip(ss, txt(&text, font_name, text_size, [1.0, 1.0, 1.0], 0.0, "center"), start, dur); c.text_fx = Some(TextFx { weight: 700.0, uppercase: true, ..Default::default() }); pop(&mut c, 0.0); clips.push(c);
         }
         o => return Err(format!("unknown style {o}; styles: {:?}", STYLES)),
     }

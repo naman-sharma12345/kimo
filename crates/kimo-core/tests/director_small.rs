@@ -878,3 +878,27 @@ fn pillarboxed_landscape(name: &str, dur: f64, canvas_w: u32, canvas_h: u32, ban
     let r2 = call(&mut ss, "lint_edit", json!({"platform": "none"}));
     assert!(!r2["problems"].as_array().unwrap().iter().any(|p| p["code"] == json!("text_over_subject")), "page two should be clear after its own fix: {r2}");
 }
+
+/// V7.7Q: broll_over_silence used to flag ANY media clip on a track after the dialogue track that didn't
+/// overlap speech, including a clip placed deliberately AFTER all speech has ended for good (an end screen,
+/// an outro, an epilogue shot) -- and "fixed" it by yanking it back onto the nearest speech window, which is
+/// exactly wrong for that clip. A mid-edit gap (b-roll laid over a pause between two phrases) is still
+/// correctly flagged; only a clip that starts once the dialogue track has no more speech left at all is exempt.
+#[test] fn broll_over_silence_does_not_flag_a_clip_placed_after_all_speech_has_ended() {
+    let mut ss = Session::new(); call(&mut ss, "project_set", json!({"width": 720, "height": 1280, "fps": 30}));
+    let t = sid(&call(&mut ss, "add_track", json!({})), "track_id");
+    let a = sid(&call(&mut ss, "import_media", json!({"path": talk("broll_epilogue.mp4", 4.0, &[(0.3, 1.0), (1.8, 2.5)], 1.0)})), "asset_id");
+    call(&mut ss, "add_clip", json!({"track_id": t, "source_type": "media", "asset_id": a, "start": 0, "duration": 4, "fit": "cover"}));
+    let bt = sid(&call(&mut ss, "add_track", json!({})), "track_id");
+    let b = sid(&call(&mut ss, "import_media", json!({"path": broll("broll_epilogue_b.mp4", 4.0, "")})), "asset_id");
+    // one b-roll clip over the MID-EDIT pause (1.0..1.8): still a real misplacement, should still be flagged.
+    let over_gap = sid(&call(&mut ss, "add_clip", json!({"track_id": bt, "source_type": "media", "asset_id": b.clone(), "start": 1.1, "duration": 0.6, "fit": "cover"})), "clip_id");
+    // one clip starting at 3.0, well after the LAST speech ends at 2.5: an end-screen / epilogue shot, not
+    // misplaced b-roll -- should NOT be flagged, and should NOT be moved back onto the dialogue.
+    let epilogue = sid(&call(&mut ss, "add_clip", json!({"track_id": bt, "source_type": "media", "asset_id": b, "start": 3.0, "duration": 1.0, "fit": "cover"})), "clip_id");
+    let r = call(&mut ss, "lint_edit", json!({"platform": "none"}));
+    let probs = r["problems"].as_array().unwrap();
+    let flagged: Vec<&str> = probs.iter().filter(|p| p["code"] == "broll_over_silence").filter_map(|p| p["clip_id"].as_str()).collect();
+    assert!(flagged.contains(&over_gap.as_str()), "the mid-edit gap should still be flagged: {probs:?}");
+    assert!(!flagged.contains(&epilogue.as_str()), "a clip placed after all speech has ended should not be flagged as misplaced b-roll: {probs:?}");
+}

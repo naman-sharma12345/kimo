@@ -978,8 +978,16 @@ fn lint_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
     if let Some((dtid, sp)) = &dia {
         let di = track_index(ss, dtid)?;
         let dil: Vec<(f64, f64)> = sp.iter().map(|(s, e)| (s - 0.2, e + 0.2)).collect();
+        // V7.7Q: a clip that starts only after ALL speech on the dialogue track has ended is epilogue
+        // territory (an end screen / outro card), not b-roll placed over a gap mid-interview -- there is no
+        // "speech it should have overlapped" once the person is done talking for good, so flagging it here
+        // and auto-"fixing" it by yanking it back onto the nearest speech window (auto_edit's own end-screen
+        // background got dragged back into the middle of the dialogue and trimmed to a sliver this way,
+        // emptying the end screen it was supposed to sit behind) is simply the wrong call for this clip.
+        let speech_end = sp.iter().map(|(_, e)| *e).fold(0.0_f64, f64::max);
         for tr in ss.project.tracks.iter().skip(di + 1) { for c in &tr.clips {
             let Source::Media { asset } = &c.source else { continue }; if ss.project.assets.get(asset).map(|x| x.width == 0).unwrap_or(true) { continue; }
+            if c.start + 1e-6 >= speech_end { continue; }
             let (s, e) = (c.start, c.start + c.duration); let ov: f64 = dil.iter().map(|(a, b)| (e.min(*b) - s.max(*a)).max(0.0)).sum();
             if ov / (e - s).max(1e-6) < 0.9 {
                 let best = sp.iter().filter(|(a, b)| b - a >= 0.6).min_by(|x, y| ((x.0 + x.1) / 2.0 - (s + e) / 2.0).abs().partial_cmp(&((y.0 + y.1) / 2.0 - (s + e) / 2.0).abs()).unwrap()).copied();

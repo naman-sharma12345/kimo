@@ -1,6 +1,7 @@
 //! auto_edit (v7.6Q): raw clips -> one call -> a finished edit. Each test here is a real editorial outcome
 //! the chain must get right, not just "it returns ok".
 use kimo_core::commands::{dispatch, Session};
+use kimo_core::model::Source;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -208,4 +209,23 @@ fn proj() -> Session { let mut ss = Session::new(); call(&mut ss, "project_set",
     let a3 = sid(&call(&mut ss3, "import_media", json!({"path": talk("es3.mp4", &[(0.0, 2.0)], 0.3)})), "asset_id");
     let r3 = call(&mut ss3, "auto_edit", json!({"talking_head_asset_ids": [a3], "captions": false, "grade": false, "punch_ins": false, "end_screen": false}));
     assert!(!r3["stages"]["end_screen"].is_object(), "{r3}");
+}
+
+/// V7.7Q: the end screen's background (a blurred freeze of the video's own last frame, so the card isn't on
+/// flat black) is a real media clip placed well after all speech has ended -- which, before the
+/// broll_over_silence exemption for post-speech clips, made lint_edit's own review pass "fix" it by yanking
+/// it back onto the nearest speech window and trimming it to a sliver, leaving the actual end screen with
+/// nothing behind it. Proves the background clip is still there, still covering the whole card, after
+/// auto_edit's own built-in review stage has run.
+#[test] fn end_screen_background_survives_auto_edits_own_review_pass() {
+    let mut ss = proj();
+    let a = sid(&call(&mut ss, "import_media", json!({"path": talk("esbg.mp4", &[(0.0, 2.0)], 0.3)})), "asset_id");
+    let r = call(&mut ss, "auto_edit", json!({"talking_head_asset_ids": [a], "captions": false, "grade": false, "punch_ins": false}));
+    assert!(r["warnings"].as_array().unwrap().iter().all(|w| !w.as_str().unwrap_or("").contains("introduced")), "the review pass should not have had to introduce-and-report a new problem here: {r}");
+    let dur = r["duration"].as_f64().unwrap();
+    let total = r["total_duration"].as_f64().unwrap();
+    let covers_end_screen = ss.project.tracks.iter().flat_map(|t| t.clips.iter()).any(|c| {
+        matches!(c.source, Source::Media { .. }) && c.start <= dur + 0.05 && c.start + c.duration >= total - 0.05
+    });
+    assert!(covers_end_screen, "expected a media (the frozen/blurred last-frame background) clip spanning the whole end-screen card, found none after review");
 }

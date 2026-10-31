@@ -10,6 +10,7 @@
 //! the whole edit); nothing here duplicates another tool's logic.
 use super::kit::*;
 use crate::commands::dispatch_nested as call;
+use crate::model::Source;
 
 fn atomic(ss: &mut Session, a: &Value, f: fn(&mut Session, &Value) -> Result<Value, String>) -> Result<Value, String> {
     let before = ss.project.clone();
@@ -185,6 +186,29 @@ fn auto_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
     // it) reports the real export length once this card is added.
     let mut total_duration = edit_duration;
     if end_screen_on {
+        // Background: a blurred, darkened freeze of the video's own last frame, not flat black -- the card
+        // reads as the edit's own outro, not a slide bolted on after it. Reuses freeze_frame (whole-clip
+        // freeze on the frame shown at a given time) and add_effect's existing blur, on a brand new clip on
+        // its own track so the real last dialogue clip is never touched.
+        if let Some((last_asset, last_in, last_dur)) = ss.project.tracks.iter().find(|t| t.id == track_id)
+            .and_then(|t| t.clips.last())
+            .and_then(|c| if let Source::Media { asset } = &c.source { Some((asset.clone(), c.in_point, c.duration)) } else { None }) {
+            let bg_tt = new_track(ss)?;
+            let proj_fps = if ss.project.fps > 0.0 { ss.project.fps } else { 30.0 };
+            let last_source_t = (last_in + last_dur - 1.0 / proj_fps).max(last_in);
+            let bg = call(ss, "add_clip", &json!({"track_id": bg_tt, "source_type": "media", "asset_id": last_asset, "start": edit_duration, "duration": end_screen_duration, "in_point": last_source_t, "fit": "cover"}))?;
+            if let Some(bg_cid) = bg["clip_id"].as_str() {
+                call(ss, "freeze_frame", &json!({"clip_id": bg_cid, "at": edit_duration}))?;
+                call(ss, "set_audio", &json!({"clip_id": bg_cid, "mute": true}))?;
+                call(ss, "add_effect", &json!({"clip_id": bg_cid, "kind": "blur", "params": {"radius": 18.0}}))?;
+                // a dark scrim over the blurred freeze so white pill/text/dot stay legible against whatever
+                // was on screen (a bright shirt, a window) rather than fighting it for contrast.
+                let scrim = call(ss, "add_shape", &json!({"track_id": bg_tt, "shape": "rect", "start": edit_duration, "duration": end_screen_duration, "width": ss.project.width as f64 * 1.2, "height": ss.project.height as f64 * 1.2, "fill": [0.0, 0.0, 0.0]}))?;
+                if let Some(scrim_cid) = scrim["clip_id"].as_str() { call(ss, "set_property", &json!({"clip_id": scrim_cid, "property": "opacity", "value": 0.45}))?; }
+            }
+        } else {
+            warnings.push("end screen: could not read the last dialogue frame for its background, falling back to plain black".into());
+        }
         let tt = new_track(ss)?;
         let title = call(ss, "add_title", &json!({"track_id": tt, "style": "subscribe_pop", "text": end_screen_text, "start": edit_duration, "duration": end_screen_duration}))?;
         if let Some(ws) = title["warnings"].as_array() { for w in ws { if let Some(s) = w.as_str() { warnings.push(s.to_string()); } } }
