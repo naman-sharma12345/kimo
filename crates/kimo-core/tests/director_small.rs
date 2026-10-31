@@ -820,3 +820,49 @@ fn pillarboxed_landscape(name: &str, dur: f64, canvas_w: u32, canvas_h: u32, ban
     let clips = r["clips"].as_array().unwrap();
     assert_eq!(clips[0]["asset_id"].as_str().unwrap(), y.as_str(), "the explicitly gym-tagged clip should land on the gym-talk slot, not the untagged one: {r}");
 }
+
+/// RV-34: text_over_subject fixes each caption PAGE independently, not the whole group by one page's nudge.
+/// Two pages of the same caption group share a position; a bright "face" sits under the caption band only
+/// during page two's own time window. Only page two should be flagged, and its fix (set_property on that one
+/// clip) must leave page one's y untouched -- the old behaviour moved the entire group (set_caption_style)
+/// by whatever page triggered it first, nudging pages that were already fine.
+#[test] fn text_over_subject_fixes_each_caption_page_on_its_own() {
+    fn bg_with_box(name: &str, w: usize, h: usize, dur: f64, box_rect: (i32, i32, i32, i32), on: (f64, f64)) -> String {
+        let p = dir().join(name); if p.exists() { return p.to_string_lossy().into_owned(); }
+        let (bx, by, bw, bh) = box_rect;
+        let st = Command::new("ffmpeg").args(["-v", "error", "-y",
+            "-f", "lavfi", "-i", &format!("color=c=0x808080:s={w}x{h}:d={dur}:r=30,noise=alls=12:allf=t"),
+            "-vf", &format!("drawbox=x={bx}:y={by}:w={bw}:h={bh}:color=white:t=fill:enable='between(t,{},{})'", on.0, on.1),
+            "-pix_fmt", "yuv420p", "-an", p.to_str().unwrap()]).status().expect("ffmpeg");
+        assert!(st.success()); p.to_string_lossy().into_owned()
+    }
+    let mut ss = Session::new(); call(&mut ss, "project_set", json!({"width": 1280, "height": 720, "fps": 30}));
+    let tt = sid(&call(&mut ss, "add_track", json!({})), "track_id");
+    let added = call(&mut ss, "add_caption_cues", json!({"track_id": tt, "cues": [{"start": 0.0, "end": 1.0, "text": "PAGE ONE"}, {"start": 1.5, "end": 2.5, "text": "PAGE TWO"}], "style": "boxed"}));
+    let ids: Vec<String> = added["clip_ids"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
+    let (p1, p2) = (ids[0].clone(), ids[1].clone());
+    // both pages' boxes sit around x 534-538, y 592, w ~210, h 32 (same style/size): a wide bright box
+    // covering that band, visible only during page two's 1.5-2.5s window.
+    let path = bg_with_box("rv34_subject_v2.mp4", 1280, 720, 3.2, (480, 600, 320, 100), (1.5, 2.5));
+    let mt = sid(&call(&mut ss, "add_track", json!({})), "track_id");
+    let a = sid(&call(&mut ss, "import_media", json!({"path": path})), "asset_id");
+    call(&mut ss, "add_clip", json!({"track_id": mt, "source_type": "media", "asset_id": a, "start": 0.0, "duration": 3.2, "fit": "cover"}));
+
+    let r = call(&mut ss, "lint_edit", json!({"platform": "none"}));
+    let hits: Vec<&Value> = r["problems"].as_array().unwrap().iter().filter(|p| p["code"] == json!("text_over_subject")).collect();
+    assert_eq!(hits.len(), 1, "only page two sits over the bright subject, page one should not be flagged: {r}");
+    assert_eq!(hits[0]["clip_id"], json!(p2), "{:?}", hits[0]);
+    assert_eq!(hits[0]["fix"]["tool"], json!("set_property"), "a per-page fix moves one clip, not the whole caption group via set_caption_style: {:?}", hits[0]);
+    assert_eq!(hits[0]["fix"]["args"]["clip_id"], json!(p2), "{:?}", hits[0]);
+
+    let y1_before = ss.project.find_clip(&p1).unwrap().props.get("y").unwrap().base;
+    let fix = hits[0]["fix"].clone();
+    call(&mut ss, fix["tool"].as_str().unwrap(), fix["args"].clone());
+    let y1_after = ss.project.find_clip(&p1).unwrap().props.get("y").unwrap().base;
+    let y2_after = ss.project.find_clip(&p2).unwrap().props.get("y").unwrap().base;
+    assert_eq!(y1_before, y1_after, "page one's y must not move when only page two's fix is applied");
+    assert_ne!(y1_after, y2_after, "page two should have moved clear of page one now");
+
+    let r2 = call(&mut ss, "lint_edit", json!({"platform": "none"}));
+    assert!(!r2["problems"].as_array().unwrap().iter().any(|p| p["code"] == json!("text_over_subject")), "page two should be clear after its own fix: {r2}");
+}

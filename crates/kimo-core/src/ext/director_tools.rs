@@ -889,13 +889,19 @@ fn lint_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
     // saliency machinery (ext/saliency_map.rs: spectral residual, Hou & Zhang 2007) at a small, cheap proxy
     // size (work_px 32, a fraction of the default 64), sampled only at a few instants inside each text
     // clip's own span - additive, non-mutating, same pattern as aspect_mismatch above.
+    //
+    // V7.7Q (RV-34): PER-PAGE, not per-group. A caption group's pages are on screen while the speaker moves,
+    // so the one spot that clears their face at 0:01 is not where their face is at 0:04. The old version
+    // flagged only the FIRST colliding page of a group and moved the WHOLE group by that one page's dy --
+    // fixing page 1 and relocating every other page (including ones that were already fine, or needed a
+    // different nudge) by the same amount. Now every page is evaluated and fixed independently, each against
+    // its OWN sampled subject position, with its own set_property (the same per-clip "y" prop style() already
+    // writes at creation -- a per-page override is just that prop set again for one clip, not a new mechanism).
     {
         let mut media_proj = ss.project.clone();
         for tr in media_proj.tracks.iter_mut() { tr.clips.retain(|c| !matches!(c.source, Source::Text { .. })); }
-        let mut flagged_subject = std::collections::HashSet::new();
         for (id, s0, d) in &texts {
             if *d <= 0.0 { continue; }
-            if let Some(c) = caption_of(ss, id) { if flagged_subject.contains(&c) { continue; } }
             let mut hit: Option<(f64, [f64; 4], f64)> = None;
             for frac in [0.25, 0.5, 0.75] {
                 let off = (d * frac).clamp(0.0, (d - 0.01).max(0.0));
@@ -915,7 +921,6 @@ fn lint_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
             }
             let Some((t_abs, r, peak_y)) = hit else { continue };
             let cap = caption_of(ss, id);
-            if let Some(c) = &cap { flagged_subject.insert(c.clone()); }
             let cur_y = ss.project.tracks.iter().flat_map(|t| t.clips.iter()).find(|c| &c.id == id).and_then(|c| c.props.get("y").map(|p| p.base)).unwrap_or(0.0); // xform-lint: ok (the stored base, to set a new base with set_property)
             let top_lim = safe[1].max(140.0); let bottom_lim = safe[1] + safe[3] - r[3] - 16.0;
             // Clearing the subject needs to get the box off the salient peak, not relocate it across the
@@ -942,39 +947,23 @@ fn lint_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
             // nudge above still put a caption on top of a cold-open hook title, which apply_review_fixes'
             // re-check caught as an introduced text_overlap -- but the honest fix here is to not create that
             // collision in the first place, not to let a later pass delete the hook title to silence it.
-            // Check the shifted rect against every OTHER text clip on screen during this clip's own span
-            // (same geometry text_overlap/text_crowded already use); a fix that would trade one problem for
-            // another is simply not applied (dy stays 0), left to show up as this same text_over_subject
-            // warning on the re-check rather than a new, worse collision.
-            // The fix moves the whole CAPTION GROUP by dy (set_caption_style's y applies to every page), not
-            // just the one clip that happened to sample over the subject -- so every page in the group needs
-            // checking against other on-screen text at its own (shifted) span, not only this one clip's span.
-            let group_members: Vec<(String, f64, f64)> = match &cap {
-                Some(c) => texts.iter().filter(|(id2, _, _)| caption_of(ss, id2).as_deref() == Some(c.as_str())).cloned().collect(),
-                None => vec![(id.clone(), *s0, *d)],
-            };
-            let collides_other_text = group_members.iter().any(|(gid, gs0, gd)| {
-                let (gs0, gd) = (*gs0, *gd);
-                if gd <= 0.0 { return false; }
-                let goff = (gd / 2.0).clamp(0.0, (gd - 0.01).max(0.0));
-                let Some((gr, _)) = text_rect(ss, gid, goff) else { return false };
-                let shifted = [gr[0], gr[1] + dy, gr[2], gr[3]];
+            // Checked against every OTHER text clip on screen during THIS PAGE's own span only now (not the
+            // whole group's spans) since the fix only ever moves this one page.
+            let collides_other_text = {
+                let shifted = [r[0], r[1] + dy, r[2], r[3]];
                 texts.iter().any(|(id2, s2, d2)| {
                     let (s2, d2) = (*s2, *d2);
-                    if id2 == gid || d2 <= 0.0 { return false; }
-                    if caption_of(ss, id2) == cap { return false; }
-                    let (ws, we) = (gs0.max(s2), (gs0 + gd).min(s2 + d2)); if we <= ws { return false; }
+                    if id2 == id || d2 <= 0.0 { return false; }
+                    if caption_of(ss, id2) == cap { return false; } // another page of the same group (or, same as before, another plain non-caption text): not a collision with itself
+                    let ws = s0.max(s2); let we = (s0 + d).min(s2 + d2); if we <= ws { return false; }
                     let off2 = ((ws + we) / 2.0 - s2).clamp(0.0, (d2 - 0.01).max(0.0));
                     let Some((r2, _)) = text_rect(ss, id2, off2) else { return false };
                     let (ix, iy) = ((shifted[0] + shifted[2]).min(r2[0] + r2[2]) - shifted[0].max(r2[0]), (shifted[1] + shifted[3]).min(r2[1] + r2[3]) - shifted[1].max(r2[1]));
                     ix > 0.0 && iy > 0.0
                 })
-            });
-            if collides_other_text { dy = 0.0; }
-            let fix = match &cap {
-                Some(c) => json!({"tool": "set_caption_style", "args": {"caption_id": c, "style": "boxed", "y": r3(cur_y + dy)}}),
-                None => json!({"tool": "set_property", "args": {"clip_id": id, "property": "y", "value": r3(cur_y + dy)}}),
             };
+            if collides_other_text { dy = 0.0; }
+            let fix = json!({"tool": "set_property", "args": {"clip_id": id, "property": "y", "value": r3(cur_y + dy)}});
             probs.push(json!({"code": "text_over_subject", "severity": "warning", "clip_id": id, "caption_id": cap, "at": t_abs,
                 "rect": [r[0].round(), r[1].round(), r[2].round(), r[3].round()],
                 "message": format!("text box {:?} sits over the subject at {t_abs:.2} s", [r[0].round(), r[1].round(), r[2].round(), r[3].round()]),
