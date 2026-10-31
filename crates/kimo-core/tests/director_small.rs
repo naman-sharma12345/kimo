@@ -5,7 +5,19 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-fn dir() -> PathBuf { let d = std::env::temp_dir().join(format!("kimo_director_small_{}", std::process::id())); std::fs::create_dir_all(&d).unwrap(); d }
+// V7.7Q: this dir is reused (by path, not by a fresh guard) across every test in this binary so fixture
+// media built by an earlier test is found, not re-encoded, by a later one -- real measured leak: 83 of these
+// left behind on one box (40-75 MB each, ~3 GB) because nothing ever removed it. atexit (the C runtime's own
+// exit hook, no new crate) runs even through the test harness's std::process::exit, so this cleans up once,
+// after every test in the binary has had its chance to use the dir, rather than per-test (which would defeat
+// the reuse) or never (the bug being fixed).
+extern "C" { fn atexit(cb: extern "C" fn()) -> i32; }
+extern "C" fn cleanup_dir_at_exit() { let _ = std::fs::remove_dir_all(std::env::temp_dir().join(format!("kimo_director_small_{}", std::process::id()))); }
+fn dir() -> PathBuf {
+    static REGISTERED: std::sync::Once = std::sync::Once::new();
+    REGISTERED.call_once(|| { unsafe { atexit(cleanup_dir_at_exit); } });
+    let d = std::env::temp_dir().join(format!("kimo_director_small_{}", std::process::id())); std::fs::create_dir_all(&d).unwrap(); d
+}
 fn ffmpeg(args: &[&str]) { let st = Command::new("ffmpeg").args(["-v", "error", "-y"]).args(args).stdin(Stdio::null()).status().expect("ffmpeg"); assert!(st.success(), "ffmpeg {args:?}"); }
 fn call(ss: &mut Session, name: &str, a: Value) -> Value { dispatch(ss, name, &a).unwrap_or_else(|e| panic!("{name} {a}: {e}")) }
 fn sid(v: &Value, k: &str) -> String { v[k].as_str().unwrap_or_else(|| panic!("no {k} in {v}")).to_string() }
