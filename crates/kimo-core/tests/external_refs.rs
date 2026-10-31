@@ -167,6 +167,7 @@ fn open_sites_are_classified() {
         ("deps.rs", 3, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),
         ("editorial.rs", 1, "caller path (tool argument / output / temp file / test), not stored in the project"),
         ("ext/auto_captions.rs", 3, "2 PROJECT-DERIVED: a clip's media for its audio and sample frames, resolved through deps (Project::resolve); 1 temp: the recognizer's JSON output"),
+        ("ext/add_keyword_pops.rs", 1, "no project path: synth_pop_sfx's own fixed temp WAV path for the synthesized pop sound (same bytes every call, reused, never stored in the project -- media is never committed, and this is not read from a file that was)"),
         ("ext/cdl_files.rs", 1, "caller path (tool argument / output / temp file / test), not stored in the project"),
         ("ext/data_driven_v7.rs", 2, "caller path (csv_path / json_path arguments of animate_from_data), not stored in the project"),
         ("ext/delivery.rs", 5, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),

@@ -64,6 +64,7 @@ use super::kit::*;
 use crate::commands::dispatch_nested as call;
 use crate::speech_words;
 use std::collections::HashMap;
+use std::process::Stdio;
 
 const STYLES: [&str; 3] = ["bold_caps", "boxed", "typewriter"];
 const POSITIONS: [&str; 3] = ["center", "upper_third", "lower_third"];
@@ -256,6 +257,23 @@ fn place_one(ss: &mut Session, track_id: &str, p: &Pop, style: &str, animate_in:
     Ok(vec![id])
 }
 
+/// KR2 marked pop sound effects unverified for lack of any bundled/approved sound asset -- nothing was ever
+/// shipped in the repo to play (and nothing should be: media is never committed here). This synthesizes one
+/// instead, at call time, into the OS temp dir -- a short, purely procedural "pop" blip (a quick sine chirp
+/// with a fast attack/decay envelope, no sampled or downloaded sound), the same bytes every time (deterministic,
+/// same as everything else in this tool), reused across every pop in one call rather than re-run per pop.
+/// Graceful fail-open: if ffmpeg can't be run for some reason, returns None and sfx is skipped with a warning
+/// rather than failing the whole placement (the pops themselves must never depend on this succeeding).
+fn synth_pop_sfx() -> Option<String> {
+    let path = std::env::temp_dir().join("kimo-keyword-pop-sfx-v1.wav");
+    if path.exists() { return Some(path.to_str()?.to_string()); }
+    let af = "afade=t=in:d=0.004,afade=t=out:st=0.055:d=0.065,volume=0.55";
+    let ok = std::process::Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=1100:duration=0.12", "-af", af, path.to_str()?])
+        .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
+    if ok { Some(path.to_str()?.to_string()) } else { None }
+}
+
 fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let style = enum_arg(a, "style", "bold_caps", &STYLES)?;
     let position = enum_arg(a, "position", "upper_third", &POSITIONS)?;
@@ -296,14 +314,29 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
         placed.push(json!({"text": p.text, "at_s": p.at_s, "duration_s": p.duration_s, "clip_ids": ids}));
     }
     let mut r = json!({"dry_run": false, "track_id": track_id, "style": style, "position": position, "pops": placed});
-    if sfx { r["warnings"] = json!(["sfx:true was requested, but no pop sound effect is bundled/verified yet (KR2 marked SFX unverified); pops were placed silently."]); }
+    if sfx {
+        match synth_pop_sfx() {
+            Some(path) => {
+                let asset_id = call(ss, "import_media", &json!({"path": path}))?["asset_id"].as_str().ok_or("import_media returned no asset_id")?.to_string();
+                let sfx_track = call(ss, "add_track", &json!({}))?["track_id"].as_str().ok_or("add_track returned no track_id")?.to_string();
+                let mut sfx_clip_ids = vec![];
+                for p in &pops {
+                    let dur = 0.12_f64.min(p.duration_s.max(0.04));
+                    let c = call(ss, "add_audio_clip", &json!({"asset_id": asset_id, "track_id": sfx_track, "start": p.at_s, "duration": dur, "volume": 0.8}))?;
+                    if let Some(cid) = c["clip_id"].as_str() { sfx_clip_ids.push(cid.to_string()); }
+                }
+                r["sfx_track_id"] = json!(sfx_track); r["sfx_clip_ids"] = json!(sfx_clip_ids);
+            }
+            None => { r["warnings"] = json!(["sfx:true was requested but the sound could not be synthesized here (ffmpeg unavailable or failed); pops were placed silently."]); }
+        }
+    }
     Ok(r)
 }
 
 pub fn commands() -> Vec<Command> {
     vec![Command {
         name: "add_keyword_pops",
-        description: "Pops one big emphasised word or phrase onto the screen the instant it's spoken, then clears. The #1 on-screen graphic among top creators (KR2: 6 of 8 sampled use it) -- heavy-weight caps (the bundled Anton black display font) sized to span about 60% of frame width, a thick dark outline and drop shadow or a rounded box hugging the text, with a quick scale-overshoot pop-in (clip-local 0.0 -> 0.3s, Ease::OutBack) and a short fade -- built on add_shape+add_text for style \"boxed\" and add_text + set_keyframe/add_text_animator for \"bold_caps\"/\"typewriter\", sized with the renderer's own crate::text::measure rather than reimplementing text metrics. words=[{text, at_s, duration_s?}] places exact pops; auto:true instead ranks the loaded transcript's words by speech_words::keywords() (the existing caption-keyword emphasis scorer; NOT add_smart_punch, which is a purely visual camera punch-in with no word signal) and keeps up to max_per_minute (default 4, per KR2's measured cadence) per 60s bucket at least min_gap_s (default 3) apart -- and if no transcript is loaded it errors by name, telling you to run transcribe or transcript_import first, rather than silently doing nothing. position defaults to upper_third so the text clears a selfie-framed face; accent_color, when given, colours style boxed's box or bold_caps/typewriter's own text fill (default off: omitting it keeps the plain white-on-dark look); color sets the fill otherwise (white default). sfx (default false, KR2 marked pop sound effects unverified) is accepted but currently a no-op with a warning: no verified sound asset is bundled. track_id defaults to a freshly created track. dry_run reports the pops that would be placed without changing anything. Deterministic (same transcript/args, same pops) and undoable with undo like any other mutating tool.",
+        description: "Pops one big emphasised word or phrase onto the screen the instant it's spoken, then clears. The #1 on-screen graphic among top creators (KR2: 6 of 8 sampled use it) -- heavy-weight caps (the bundled Anton black display font) sized to span about 60% of frame width, a thick dark outline and drop shadow or a rounded box hugging the text, with a quick scale-overshoot pop-in (clip-local 0.0 -> 0.3s, Ease::OutBack) and a short fade -- built on add_shape+add_text for style \"boxed\" and add_text + set_keyframe/add_text_animator for \"bold_caps\"/\"typewriter\", sized with the renderer's own crate::text::measure rather than reimplementing text metrics. words=[{text, at_s, duration_s?}] places exact pops; auto:true instead ranks the loaded transcript's words by speech_words::keywords() (the existing caption-keyword emphasis scorer; NOT add_smart_punch, which is a purely visual camera punch-in with no word signal) and keeps up to max_per_minute (default 4, per KR2's measured cadence) per 60s bucket at least min_gap_s (default 3) apart -- and if no transcript is loaded it errors by name, telling you to run transcribe or transcript_import first, rather than silently doing nothing. position defaults to upper_third so the text clears a selfie-framed face; accent_color, when given, colours style boxed's box or bold_caps/typewriter's own text fill (default off: omitting it keeps the plain white-on-dark look); color sets the fill otherwise (white default). sfx (default false) plays a short synthesized pop/blip at each placed word, on its own new audio track (sfx_track_id/sfx_clip_ids on the result) -- a purely procedural sound generated at call time, not a bundled sample; falls back to a warning (no sound placed) if it can't be synthesized on this machine. track_id defaults to a freshly created track. dry_run reports the pops that would be placed without changing anything. Deterministic (same transcript/args, same pops) and undoable with undo like any other mutating tool.",
         mutates: true,
         schema: obj(vec![
             ("words", json!({"type":"array","description":"explicit mode: [{text, at_s, duration_s?}], at least one entry","items":{"type":"object","properties":{"text":{"type":"string"},"at_s":{"type":"number"},"duration_s":{"type":"number","description":"default 1.3s"}},"required":["text","at_s"]}})),
@@ -315,7 +348,7 @@ pub fn commands() -> Vec<Command> {
             ("color", json!({"type":"array","description":"text fill [r,g,b] 0..1, default white","items":{"type":"number"}})),
             ("accent_color", json!({"type":"array","description":"optional accent colour [r,g,b] 0..1: style boxed's box fill, or bold_caps/typewriter's own text fill. Default off (omitted = plain white-on-dark look, byte-identical to not passing it).","items":{"type":"number"}})),
             ("animate_in", json!({"type":"string","enum":ANIMATE_INS,"description":"pop (default): scale-overshoot pop-in. fade: opacity only. typewriter: character reveal. style boxed always uses the same pop-and-fade regardless of this."})),
-            ("sfx", json!({"type":"boolean","description":"default false (KR2 marked pop sound effects unverified); currently a no-op with a warning when true, no sound is actually added"})),
+            ("sfx", json!({"type":"boolean","description":"default false; true plays a short synthesized pop at each word on its own new audio track"})),
             ("track_id", s("track to place pops on; default: a freshly created track")),
             ("dry_run", json!({"type":"boolean","description":"report the pops that would be placed, change nothing. Default false."})),
         ], &[]),

@@ -157,3 +157,26 @@ fn bright_any(ss: &Session, t: f64) -> bool {
     assert!(box_w <= text_w + 400.0, "box width {box_w} should be within generous padding of the text width {text_w}, not a near-frame-width bar");
     assert!(box_w < 720.0 * 0.5, "box width {box_w} should not span half the 720px frame for one short word (old bug: a fixed 0.86*frame-width bar)");
 }
+
+/// RV-28 follow-up: sfx:true was previously a no-op with a warning (KR2 marked pop sound effects
+/// unverified -- nothing was ever bundled to play, and media is never committed to this repo). It now
+/// synthesizes a short procedural "pop" blip at call time (not a sampled/downloaded asset) and places
+/// it on its own audio track, one per pop.
+#[test] fn sfx_true_places_a_real_synthesized_sound_at_each_pop() {
+    let mut ss = setup();
+    let r = call(&mut ss, "add_keyword_pops", json!({"words": [{"text": "WOW", "at_s": 1.0, "duration_s": 1.0}, {"text": "HUGE", "at_s": 4.0, "duration_s": 1.0}], "sfx": true}));
+    assert!(r.get("warnings").is_none(), "sfx should not warn when it actually places sound: {r}");
+    let sfx_track = r["sfx_track_id"].as_str().unwrap_or_else(|| panic!("no sfx_track_id: {r}")).to_string();
+    let sfx_clips = r["sfx_clip_ids"].as_array().unwrap_or_else(|| panic!("no sfx_clip_ids: {r}"));
+    assert_eq!(sfx_clips.len(), 2, "{r}");
+    let track = ss.project.tracks.iter().find(|t| t.id == sfx_track).unwrap_or_else(|| panic!("no track {sfx_track}"));
+    assert_eq!(track.clips.len(), 2, "one sfx clip per pop");
+    let starts: Vec<f64> = track.clips.iter().map(|c| c.start).collect();
+    assert_eq!(starts, vec![1.0, 4.0], "sfx lands exactly at each pop's own at_s");
+    // the mix is actually audible right at the first pop, not silent
+    let pcm = kimo_core::audio::mix_strict(&ss.project).unwrap();
+    let sr = kimo_core::audio::SR;
+    let i0 = (1.0 * sr as f64) as usize * 2;
+    let window = &pcm[i0..(i0 + sr / 10 * 2).min(pcm.len())];
+    assert!(window.iter().any(|v| v.abs() > 0.01), "expected an audible sfx blip right at the first pop, got silence");
+}

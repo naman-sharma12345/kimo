@@ -21,7 +21,7 @@ add_emitter 163900fc22436efa
 add_glitch_confetti ea3c9845ccf22d20
 add_glow_text 11957bdb81e0bc57
 add_hud_frame 3dbd990dc13820bb
-add_keyword_pops c446531935ac998b
+add_keyword_pops d4ad5f6b0aff25bc
 add_lens_blur 465cef3d1ba4c9ca
 add_managed_linear_effect 15e7663749141579
 add_marker 13b9c5a2e2022d94
