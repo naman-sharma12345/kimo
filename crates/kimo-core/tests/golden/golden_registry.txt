@@ -292,7 +292,7 @@ pick_thumbnail a48ee1f3ca782e9e
 pick_white_balance 4e36686f25fac6d1
 pin_layer 141a292e07c94a12
 place_at_track e69bc7f50736dc25
-place_broll 56030e7ccb281a98
+place_broll a864d0e0263a3d39
 preview_material f0654be5429689e8
 preview_range 27365e61d374a963
 preview_subject_match 8fbee66dc3095cb4

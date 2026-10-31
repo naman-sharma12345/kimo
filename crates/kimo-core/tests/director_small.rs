@@ -134,7 +134,7 @@ fn silent_no_audio_track(name: &str, dur: f64) -> String {
         assert!(names.contains(&want), "director profile lacks {want}: {names:?}");
     }
     assert!(names.len() <= 36, "{} tools: {names:?}", names.len()); // KF2: 29 + 4 highlight/reframe tools + 2 meta tools = 35
-    let bytes = serde_json::to_string(&list).unwrap().len(); assert!(bytes < 29_000, "director list is {bytes} bytes"); // KF2: +4 tools (their real schemas) pushed this from ~21k; 29k keeps headroom while still well under the 150k flat-list cost
+    let bytes = serde_json::to_string(&list).unwrap().len(); assert!(bytes < 29_300, "director list is {bytes} bytes"); // KF2: +4 tools pushed this from ~21k; V7.7Q: place_broll's words/asset_tags relevance params pushed it to ~29.1k; 29.3k keeps real headroom under the 150k flat-list cost
     for t in &list { let d = t["description"].as_str().unwrap(); assert!(d.len() <= 150, "{}: {} chars", t["name"], d.len()); }
     // every listed tool is a real one with its real schema
     for t in list.iter().filter(|t| !["search_tools", "kimo_describe"].contains(&t["name"].as_str().unwrap())) {
@@ -766,4 +766,57 @@ fn pillarboxed_landscape(name: &str, dur: f64, canvas_w: u32, canvas_h: u32, ban
     let after = call(&mut ss, "get_scopes", json!({"time": 1.0}));
     let la = after["luma_mean"].as_f64().unwrap();
     assert!(la < 0.75, "auto_grade blew out a clip that was already well exposed on screen: luma {lb:.3} -> {la:.3} ({r}) -- it measured the unfit source (mostly black pillarbox), not what \"cover\" fit actually shows");
+}
+
+/// RV-33: place_broll matches each cutaway to the b-roll clip whose name/tags fit what's being said right then,
+/// instead of handing clips out in the order they were given. Given 3 untagged clips named for what they show
+/// (coffee.mp4, typing.mp4, city.mp4) and a transcript mentioning "typing"/"computer" during the first slot,
+/// "coffee" during the second and "city"/"street" during the third, the assignment should be the opposite of
+/// the input order (coffee, typing, city) on every slot -- proof it is reading the words, not just re-shuffling.
+#[test] fn place_broll_matches_the_clip_to_the_words_being_said() {
+    let mut ss = portrait();
+    let a = sid(&call(&mut ss, "import_media", json!({"path": talk("relpb.mp4", 10.0, &[(0.4, 9.6)], 1.0)})), "asset_id");
+    let t = sid(&call(&mut ss, "auto_rough_cut", json!({"asset_ids": [a]})), "track_id");
+    let b_coffee = sid(&call(&mut ss, "import_media", json!({"path": broll("coffee.mp4", 4.0, "")})), "asset_id");
+    let b_typing = sid(&call(&mut ss, "import_media", json!({"path": broll("typing.mp4", 4.0, "hue=h=90")})), "asset_id");
+    let b_city = sid(&call(&mut ss, "import_media", json!({"path": broll("city.mp4", 4.0, "hue=h=180")})), "asset_id");
+    // slot times from the fixed audio above: slot0 ~2.87-5.37s, slot1 ~5.37-7.87s, slot2 ~7.87-9.5s
+    let words = json!([
+        {"text": "typing", "start": 3.0, "end": 3.4}, {"text": "on", "start": 3.4, "end": 3.5}, {"text": "the", "start": 3.5, "end": 3.6}, {"text": "computer", "start": 3.6, "end": 4.0},
+        {"text": "grabbed", "start": 6.0, "end": 6.3}, {"text": "coffee", "start": 6.3, "end": 6.7},
+        {"text": "walking", "start": 8.5, "end": 8.8}, {"text": "down", "start": 8.8, "end": 8.9}, {"text": "the", "start": 8.9, "end": 9.0}, {"text": "city", "start": 9.0, "end": 9.3}, {"text": "street", "start": 9.3, "end": 9.5}
+    ]);
+    let r = call(&mut ss, "place_broll", json!({"track_id": t, "asset_ids": [b_coffee.clone(), b_typing.clone(), b_city.clone()], "words": words}));
+    assert_eq!(r["broll_relevance"]["active"], json!(true), "{r}");
+    let notes = r["broll_relevance"]["matches"].as_array().unwrap(); assert!(!notes.is_empty(), "expected at least one relevance match: {r}");
+    let clips = r["clips"].as_array().unwrap(); assert_eq!(clips.len(), 3, "{r}");
+    let got: Vec<&str> = clips.iter().map(|c| c["asset_id"].as_str().unwrap()).collect();
+    assert_eq!(got, vec![b_typing.as_str(), b_coffee.as_str(), b_city.as_str()], "slot0 should get the typing clip (computer/typing spoken then), slot1 the coffee clip, slot2 the city clip -- not the input order: {r}");
+
+    // Without words, nothing to match on: falls back to the given order exactly as before (no regression).
+    let mut ss2 = portrait();
+    let a2 = sid(&call(&mut ss2, "import_media", json!({"path": talk("relpb2.mp4", 10.0, &[(0.4, 9.6)], 1.0)})), "asset_id");
+    let t2 = sid(&call(&mut ss2, "auto_rough_cut", json!({"asset_ids": [a2]})), "track_id");
+    let b_coffee2 = sid(&call(&mut ss2, "import_media", json!({"path": broll("coffee.mp4", 4.0, "")})), "asset_id");
+    let b_typing2 = sid(&call(&mut ss2, "import_media", json!({"path": broll("typing.mp4", 4.0, "hue=h=90")})), "asset_id");
+    let b_city2 = sid(&call(&mut ss2, "import_media", json!({"path": broll("city.mp4", 4.0, "hue=h=180")})), "asset_id");
+    let r2 = call(&mut ss2, "place_broll", json!({"track_id": t2, "asset_ids": [b_coffee2.clone(), b_typing2.clone(), b_city2.clone()]}));
+    assert_eq!(r2["broll_relevance"]["active"], json!(false), "{r2}");
+    let got2: Vec<&str> = r2["clips"].as_array().unwrap().iter().map(|c| c["asset_id"].as_str().unwrap()).collect();
+    assert_eq!(got2, vec![b_coffee2.as_str(), b_typing2.as_str(), b_city2.as_str()], "no words given: unchanged given-order behaviour: {r2}");
+}
+
+/// Explicit asset_tags win over filename guessing, and an asset with no filename signal (a generic name)
+/// still gets matched correctly when tagged by hand.
+#[test] fn place_broll_asset_tags_override_filename_guessing() {
+    let mut ss = portrait();
+    let a = sid(&call(&mut ss, "import_media", json!({"path": talk("relpb3.mp4", 10.0, &[(0.4, 9.6)], 1.0)})), "asset_id");
+    let t = sid(&call(&mut ss, "auto_rough_cut", json!({"asset_ids": [a]})), "track_id");
+    // deliberately generic filenames that give the filename-guesser nothing to go on
+    let x = sid(&call(&mut ss, "import_media", json!({"path": broll("clip_a.mp4", 4.0, "")})), "asset_id");
+    let y = sid(&call(&mut ss, "import_media", json!({"path": broll("clip_b.mp4", 4.0, "hue=h=90")})), "asset_id");
+    let words = json!([{"text": "gym", "start": 3.0, "end": 3.3}, {"text": "workout", "start": 3.3, "end": 3.7}]);
+    let r = call(&mut ss, "place_broll", json!({"track_id": t, "asset_ids": [x.clone(), y.clone()], "words": words, "asset_tags": {y.clone(): ["gym"]}}));
+    let clips = r["clips"].as_array().unwrap();
+    assert_eq!(clips[0]["asset_id"].as_str().unwrap(), y.as_str(), "the explicitly gym-tagged clip should land on the gym-talk slot, not the untagged one: {r}");
 }

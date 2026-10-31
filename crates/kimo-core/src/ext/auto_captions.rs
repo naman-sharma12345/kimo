@@ -115,7 +115,7 @@ fn run_whisper(bin: &std::path::Path, model: &std::path::Path, wav: &std::path::
 }
 
 /// One stretch of speech to recognize: a media clip's audio, mapped to the timeline by `start + t / speed`.
-pub(crate) struct Src { clip_id: String, asset_id: String, path: String, in_point: f64, dur_src: f64, start: f64, speed: f64 }
+pub(crate) struct Src { clip_id: String, asset_id: String, path: String, in_point: f64, dur_src: f64, pub(crate) start: f64, pub(crate) speed: f64 }
 
 pub(crate) fn sources(ss: &Session, a: &Value, warnings: &mut Vec<String>) -> Result<Vec<Src>, String> {
     let want: Option<Vec<String>> = match a.get("clip_ids") { None | Some(Value::Null) => None, Some(v) => Some(v.as_array().ok_or("clip_ids must be an array of clip ids")?.iter().map(|x| x.as_str().map(String::from).ok_or("clip_ids must be strings".to_string())).collect::<Result<_, _>>()?) };

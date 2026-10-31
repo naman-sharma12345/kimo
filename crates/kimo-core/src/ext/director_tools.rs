@@ -171,6 +171,42 @@ fn rough_cut(ss: &mut Session, a: &Value) -> Result<Value, String> {
 }
 
 // ---------------------------------------------------------------- place_broll
+// A small, honest, curated concept table -- no ML: a b-roll concept maps to the words that, spoken
+/// in the dialogue right then, suggest that cutaway fits ("work"/"computer" -> a typing shot). Deliberately
+/// narrow and plain-English; it is a keyword/synonym match, not a classifier.
+const BROLL_SYNONYMS: &[(&str, &[&str])] = &[
+    ("typing", &["typing", "type", "types", "typed", "keyboard", "computer", "laptop", "code", "coding", "coder", "work", "working", "email", "emails", "screen", "desk"]),
+    ("computer", &["typing", "type", "keyboard", "laptop", "code", "coding", "screen", "work", "working", "desk", "email"]),
+    ("city", &["city", "street", "streets", "outside", "outdoors", "urban", "traffic", "walking", "walk", "sidewalk", "downtown", "town", "building", "buildings"]),
+    ("street", &["city", "street", "streets", "outside", "traffic", "walking", "walk", "sidewalk", "downtown", "car", "cars"]),
+    ("coffee", &["coffee", "cafe", "drink", "drinking", "tea", "cup", "morning", "brew", "espresso"]),
+    ("cafe", &["coffee", "cafe", "drink", "drinking", "tea", "cup", "morning", "brew"]),
+    ("food", &["food", "eating", "eat", "meal", "lunch", "dinner", "breakfast", "cooking", "kitchen"]),
+    ("nature", &["nature", "outside", "outdoors", "trees", "tree", "park", "walk", "walking", "green", "forest"]),
+    ("phone", &["phone", "call", "calling", "texting", "text", "mobile", "message", "messages"]),
+    ("travel", &["travel", "traveling", "trip", "flight", "airport", "plane", "journey"]),
+    ("meeting", &["meeting", "team", "office", "discussion", "talk", "talking", "presentation"]),
+    ("gym", &["gym", "workout", "exercise", "fitness", "training", "run", "running"]),
+    ("music", &["music", "song", "listening", "headphones", "playing", "instrument"]),
+];
+const BROLL_STOPWORDS: &[&str] = &["real", "final", "clip", "clips", "video", "footage", "asset", "assets", "media", "file", "files", "the", "and", "for", "cam", "camera", "shot", "take"];
+fn norm_tok(w: &str) -> String { w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase() }
+/// Honest fallback metadata when no explicit tag was given: whatever the person who shot it called the file.
+fn filename_keywords(path: &str) -> Vec<String> {
+    let stem = std::path::Path::new(path).file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    stem.split(|c: char| !c.is_alphanumeric()).map(|s| s.to_lowercase())
+        .filter(|s| s.chars().count() > 2 && !s.chars().all(|c| c.is_ascii_digit()) && !BROLL_STOPWORDS.contains(&s.as_str()))
+        .collect()
+}
+fn expand_keywords(tags: &[String]) -> std::collections::HashSet<String> {
+    let mut out: std::collections::HashSet<String> = tags.iter().map(|t| norm_tok(t)).collect();
+    for t in tags { let nt = norm_tok(t); for (concept, syns) in BROLL_SYNONYMS {
+        if *concept == nt || syns.contains(&nt.as_str()) { out.insert((*concept).to_string()); for s in *syns { out.insert((*s).to_string()); } }
+    } }
+    out
+}
+
+// ---------------------------------------------------------------- place_broll
 fn place_broll(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let tid = str_arg(a, "track_id")?.to_string(); track_index(ss, &tid)?;
     let ids = str_list(a, "asset_ids")?;
@@ -198,12 +234,58 @@ fn place_broll(ss: &mut Session, a: &Value) -> Result<Value, String> {
         }
     }
     if slots.is_empty() { return Err(format!("no speech of {min_shot} s or more on track '{tid}' between {w0:.2} s and {w1:.2} s; lower min_shot or widen start/end")); }
+
+    // B-roll relevance (RV-33): pick the clip whose name/tags best fit the words spoken right around the
+    // cutaway, instead of handing them out in the order they were given. words is the transcript in TIMELINE
+    // seconds (auto_edit supplies its own transcript here); asset_tags is explicit honest metadata per asset,
+    // falling back to whatever the clip's own filename says. A pure keyword/synonym match -- no ML, and when
+    // there is nothing to match on (no words given, or only one asset) it behaves exactly as before: given order.
+    let words: Vec<(f64, f64, String)> = match a.get("words") {
+        None | Some(Value::Null) => vec![],
+        Some(v) => v.as_array().ok_or("words must be an array of {text, start, end} (timeline seconds)")?
+            .iter().filter_map(|x| Some((x.get("start")?.as_f64()?, x.get("end")?.as_f64()?, x.get("text")?.as_str()?.to_string()))).collect(),
+    };
+    let explicit_tags: std::collections::HashMap<String, Vec<String>> = match a.get("asset_tags") {
+        None | Some(Value::Null) => Default::default(),
+        Some(v) => v.as_object().ok_or("asset_tags must be an object of {asset_id: [tag, ...]}")?
+            .iter().filter_map(|(k, v)| Some((k.clone(), v.as_array()?.iter().filter_map(|t| t.as_str().map(String::from)).collect()))).collect(),
+    };
+    let n_pick = slots.len().min(ids.len());
+    let mut assignment: Vec<usize> = (0..n_pick).collect(); // default: given order (unchanged behaviour)
+    let mut relevance_notes: Vec<String> = vec![];
+    let relevance_reason = if words.is_empty() { Some("no words given (timeline-second transcript); placed in the given order".to_string()) }
+        else if ids.len() < 2 { Some("only one b-roll asset; nothing to choose between".to_string()) } else { None };
+    if relevance_reason.is_none() {
+        let asset_keywords: Vec<std::collections::HashSet<String>> = ids.iter().map(|id| {
+            let tags = explicit_tags.get(id).cloned().unwrap_or_else(|| { let (path, _) = asset(ss, id).unwrap_or_default(); filename_keywords(&path) });
+            expand_keywords(&tags)
+        }).collect();
+        const PAD: f64 = 0.4;
+        let slot_words: Vec<Vec<String>> = slots.iter().take(n_pick).map(|(s, e)| {
+            words.iter().filter(|(ws, we, _)| *we >= s - PAD && *ws <= e + PAD).map(|(_, _, t)| norm_tok(t)).filter(|t| !t.is_empty()).collect()
+        }).collect();
+        let mut scored: Vec<(usize, usize, usize)> = vec![]; // (score, slot_idx, asset_idx)
+        for (si, sw) in slot_words.iter().enumerate() { for (ai, kw) in asset_keywords.iter().enumerate() {
+            let sc = sw.iter().filter(|w| kw.contains(*w)).count(); if sc > 0 { scored.push((sc, si, ai)); }
+        } }
+        scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2))); // best score first, stable otherwise
+        let mut assign = vec![usize::MAX; n_pick]; let mut used_asset = vec![false; ids.len()];
+        for (sc, si, ai) in scored {
+            if assign[si] != usize::MAX || used_asset[ai] { continue; }
+            assign[si] = ai; used_asset[ai] = true;
+            relevance_notes.push(format!("slot {:.1}-{:.1}s matched '{}' (score {sc})", slots[si].0, slots[si].1, ids[ai]));
+        }
+        let mut leftovers = (0..ids.len()).filter(|ai| !used_asset[*ai]);
+        for slot in assign.iter_mut() { if *slot == usize::MAX { *slot = leftovers.next().unwrap_or(0); } }
+        assignment = assign;
+    }
+
     let bt = new_track(ss)?;
     let vol = opt_num(a, "volume", 0.0).clamp(0.0, 1.0);
-    let mut clips = vec![]; let mut used = 0usize;
+    let mut clips = vec![]; let mut used_idx: std::collections::HashSet<usize> = Default::default();
     for (k, (s, e)) in slots.iter().enumerate() {
-        if k >= ids.len() { break; }
-        let id = &ids[k]; let (_, adur) = asset(ss, id)?;
+        if k >= assignment.len() { break; }
+        let ai = assignment[k]; let id = &ids[ai]; let (_, adur) = asset(ss, id)?;
         let mut d = e - s;
         let ip_given = a.get("in_points").and_then(|m| m.get(id.as_str())).and_then(|v| v.as_f64());
         let mut ip = ip_given.unwrap_or(((adur - d) / 2.0).max(0.0)).max(0.0);
@@ -211,11 +293,15 @@ fn place_broll(ss: &mut Session, a: &Value) -> Result<Value, String> {
         let (ip, d) = (snap(ip, fps), snap(d, fps)); if d < 2.0 / fps { continue; }
         let cid = call(ss, "add_clip", &json!({"track_id": bt, "source_type": "media", "asset_id": id, "start": r3(*s), "duration": d, "in_point": ip, "fit": "cover"}))?["clip_id"].as_str().unwrap_or("").to_string();
         if vol <= 0.0 { call(ss, "set_audio", &json!({"clip_id": cid, "mute": true}))?; } else { call(ss, "set_audio", &json!({"clip_id": cid, "volume": vol}))?; }
-        clips.push(json!({"clip_id": cid, "asset_id": id, "start": r3(*s), "end": r3(s + d), "in_point": ip})); used += 1;
+        clips.push(json!({"clip_id": cid, "asset_id": id, "start": r3(*s), "end": r3(s + d), "in_point": ip})); used_idx.insert(ai);
     }
-    Ok(json!({"track_id": bt, "clips": clips, "speech": pairs(&phrases), "unused_assets": ids[used.min(ids.len())..].to_vec(), "audio": if vol <= 0.0 { "b-roll muted, dialogue runs underneath" } else { "b-roll at the given volume" }}))
+    let unused_assets: Vec<&String> = ids.iter().enumerate().filter(|(i, _)| !used_idx.contains(i)).map(|(_, id)| id).collect();
+    Ok(json!({"track_id": bt, "clips": clips, "speech": pairs(&phrases), "unused_assets": unused_assets,
+        "audio": if vol <= 0.0 { "b-roll muted, dialogue runs underneath" } else { "b-roll at the given volume" },
+        "broll_relevance": relevance_reason.map(|r| json!({"active": false, "reason": r})).unwrap_or_else(|| json!({"active": true, "matches": relevance_notes}))}))
 }
 
+// -
 // ---------------------------------------------------------------- caption_from_words
 /// Balanced lines: fewest-slack breaks (dynamic programming over word breaks), a lone word only when the text is one word,
 /// a comma a preferred break; greedy filling left cues like "leaks." on their own.
@@ -1001,7 +1087,9 @@ pub fn commands() -> Vec<Command> {
                 ("max_pause", n("keep pauses shorter than this inside a segment, default 0.35 s")), ("pad", n("seconds kept around speech, default 0.06")), ("soft", s("\"trim\" (default): cut blurry or whip-pan edges, drop a mostly blurry segment; \"flag\": report only")), ("dedupe", json!({"type": "boolean", "description": "drop a segment that looks like one already kept from another clip (default false; segments report similar_to)"}))], &["asset_ids"]), run: |ss, a| atomic(ss, a, rough_cut) },
         Command { name: "place_broll", description: "Lay b-roll over a dialogue track only while someone speaks, cut on pauses, b-roll muted. Returns clip ids and times.", mutates: true,
             schema: obj(vec![("track_id", s("the dialogue track")), ("asset_ids", ids("b-roll assets, in order")), ("start", n("window start, timeline s (default: after the first phrase)")), ("end", n("window end, timeline s")),
-                ("min_shot", n("shortest shot, default 1.0 s")), ("max_shot", n("longest shot, default 2.5 s")), ("in_points", json!({"type": "object", "description": "optional {asset_id: source seconds}"})), ("volume", n("b-roll sound 0..1, default 0 (muted)"))], &["track_id", "asset_ids"]), run: |ss, a| atomic(ss, a, place_broll) },
+                ("min_shot", n("shortest shot, default 1.0 s")), ("max_shot", n("longest shot, default 2.5 s")), ("in_points", json!({"type": "object", "description": "optional {asset_id: source seconds}"})), ("volume", n("b-roll sound 0..1, default 0 (muted)")),
+                ("words", json!({"type": "array", "description": "optional [{text,start,end}]"})),
+                ("asset_tags", json!({"type": "object", "description": "optional {asset_id:[tag]}"}))], &["track_id", "asset_ids"]), run: |ss, a| atomic(ss, a, place_broll) },
         Command { name: "caption_from_words", description: "Captions from words you give (per source clip or whole track), timed to the detected speech, clear of the platform UI. Best-effort checks each cue's words against what kimo's own recognizer actually hears on that audio and flags any it genuinely can't make out (low_confidence_cues, and lint_edit's caption_low_confidence) - check those before export rather than guess. Returns cues.", mutates: true,
             schema: obj(vec![("track_id", s("the dialogue track")), ("text", s("the words spoken on the whole track, in order")), ("by_asset", json!({"type": "object", "description": "better: {asset_id: words spoken in that clip}; each clip's words stay on its own shots"})), ("style", s("boxed (default)|subtitle|yellow")), ("platform", s("tiktok (default)|reels|shorts|none")),
                 ("max_chars", n("characters per line, default 22")), ("lines", n("lines per cue, default 2")), ("size", n("pixel size; default fits the safe width")),

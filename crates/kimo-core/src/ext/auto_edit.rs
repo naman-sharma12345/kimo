@@ -57,11 +57,39 @@ fn auto_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let edit_duration = rc["duration"].as_f64().unwrap_or(0.0);
     stages.insert("rough_cut".into(), json!({"track_id": track_id, "clip_ids": dialogue_clips.iter().map(|(id,_,_)| id).collect::<Vec<_>>(), "duration": edit_duration}));
 
+    // 1b. Transcribe the dialogue ONCE, here, in timeline seconds -- reused by both b-roll relevance (next)
+    // and captions (stage 4), instead of each stage running the recognizer separately. When captions are on,
+    // a transcription failure (no speech model installed) is the same honest hard stop auto_captions always
+    // gave, just raised earlier so nothing gets built on top of an edit that can't get its captions; when
+    // captions are off this degrades quietly and b-roll falls back to its given order (RV-33 honesty rule).
+    let mut transcript_words: Vec<Value> = vec![];
+    if captions_on || !broll_ids.is_empty() {
+        let clip_ids: Vec<&String> = dialogue_clips.iter().map(|(id, _, _)| id).collect();
+        let transcribe = || -> Result<Vec<Value>, String> {
+            let mut src_warnings = vec![];
+            let srcs = super::auto_captions::sources(ss, &json!({"clip_ids": clip_ids}), &mut src_warnings)?;
+            let mut mode = String::new(); let mut lang_seen: Option<String> = None; let mut out = vec![];
+            for src in &srcs {
+                let (ws, _) = super::auto_captions::recognize(src, &json!({}), &mut mode, &mut lang_seen)?;
+                for w in ws { out.push(json!({"text": w.text, "start": src.start + w.start / src.speed, "end": src.start + w.end / src.speed})); }
+            }
+            Ok(out)
+        };
+        match transcribe() {
+            Ok(ws) => transcript_words = ws,
+            Err(e) => { if captions_on { return Err(e); } warnings.push(format!("b-roll relevance matching skipped: {e}")); }
+        }
+    }
+
     // 2. B-roll over the dialogue, before punch-ins: place_broll decides which stretches get covered, and
     // the punch-in step right after reads those stretches back so it never zooms a clip the viewer can't see.
+    // With the transcript above, each cutaway is matched to the clip whose name/tags fit what's said right
+    // then (RV-33); without it (no speech recognized, or recognition skipped), it falls back to given order.
     let mut broll_ranges: Vec<(f64, f64)> = vec![];
     if !broll_ids.is_empty() {
-        let br = call(ss, "place_broll", &json!({"track_id": track_id, "asset_ids": broll_ids}))?;
+        let mut broll_args = json!({"track_id": track_id, "asset_ids": broll_ids});
+        if !transcript_words.is_empty() { broll_args["words"] = json!(transcript_words); }
+        let br = call(ss, "place_broll", &broll_args)?;
         if let Some(arr) = br["clips"].as_array() { for c in arr { if let (Some(s), Some(e)) = (c["start"].as_f64(), c["end"].as_f64()) { broll_ranges.push((s, e)); } } }
         stages.insert("broll".into(), br);
     } else {
@@ -80,10 +108,13 @@ fn auto_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
         }
     }
 
-    // 4. Captions: word-synced, from Kimo's own local speech recognition (no transcript needed).
+    // 4. Captions: word-synced, from the transcript taken in step 1b (same words b-roll relevance used --
+    // one recognizer pass for the whole edit, not two).
     if captions_on {
-        let clip_ids: Vec<&String> = dialogue_clips.iter().map(|(id, _, _)| id).collect();
-        let cap = call(ss, "auto_captions", &json!({"clip_ids": clip_ids, "style": caption_style, "position": "bottom"}))?;
+        let mut cap_args = json!({"style": caption_style, "position": "bottom"});
+        if !transcript_words.is_empty() { cap_args["words"] = json!(transcript_words); }
+        else { cap_args["clip_ids"] = json!(dialogue_clips.iter().map(|(id, _, _)| id).collect::<Vec<_>>()); }
+        let cap = call(ss, "auto_captions", &cap_args)?;
         if let Some(ws) = cap["warnings"].as_array() { for w in ws { if let Some(s) = w.as_str() { warnings.push(s.to_string()); } } }
         stages.insert("captions".into(), cap);
     }
