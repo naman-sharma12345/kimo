@@ -4,6 +4,55 @@
 
 ## Unreleased
 
+## v7.7.0 (2026-10-31)
+
+V7.7-Q quality pass: finished-video editing quality on real footage (`examples/auto_edit_benchmark.py`
+over a real CC0 interview), prioritized by what actually moves a finished video rather than feature
+count. Tools: 520 -> 520 (new optional args on two existing tools, no new tool names).
+
+- **B-roll placed by what's actually being said, not just given order**: `place_broll` now takes
+  optional `words` (a timeline-second transcript) and `asset_tags`; a curated keyword/synonym table
+  (deliberately plain-English, not a classifier) and a filename-keyword fallback score each b-roll
+  asset against each speech slot and assign greedily, so "...when I was learning to type..." pulls the
+  typing clip instead of whichever b-roll happened to be listed first. Falls back to the old given-order
+  behavior byte-for-byte when no words/only one asset. `auto_edit` transcribes dialogue once, right
+  after the rough cut, and feeds that same transcript to both b-roll placement and captions (no second
+  transcription pass). Verified honest: on the real benchmark interview, which never mentions any of its
+  three b-roll concepts (typing/city/coffee), the matcher correctly found nothing and fell back to given
+  order -- proven separately on footage with real spoken-concept matches via dedicated TDD.
+- **Per-page caption y-nudge, not whole-group**: `lint_edit`'s `text_over_subject` fix used to flag only
+  the first colliding page of a multi-page caption, then move the WHOLE group by that one page's offset
+  -- the flagged page landed right, every other page (including already-fine ones) shifted by the same
+  amount for no reason. Every page is now evaluated against its own sampled saliency peak and fixed with
+  its own `set_property` (single clip's y), not a shared `set_caption_style` across the group. Verified
+  on real footage: 5 of 31 caption pages got distinct per-page y values instead of one shared default.
+  Honest limitation found and kept, not hidden: the saliency detector is a spectral-residual heuristic,
+  not real face detection, so on one busy-background frame (patterned shirt, ornate mirrored room) it
+  still reads background clutter as salient as the face and leaves a partial overlap -- a pre-existing
+  DSP-heuristic ceiling, not something this pass caused or can fully close without real face detection.
+- **Subscribe-style end screen**: `auto_edit` gets a new stage after the final mix -- a short (2-4s,
+  default 3s) outro card using the existing `subscribe_pop` title preset, defaulting on for a
+  landscape/youtube-style edit (`platform` none) and off for a vertical short (a subscribe pill fights
+  the platform's own UI there), always overridable (`end_screen`/`end_screen_text`/`end_screen_duration`).
+  New `total_duration` on the result reports the real export length; `duration` stays the talking-head-
+  only number existing callers already read.
+  - Caught on the real render, not a synthetic fixture, and fixed before this landed: the `subscribe_pop`
+    pill was a fixed 230px tuned for the single word "SUBSCRIBE" -- the end screen's own default text,
+    "SUBSCRIBE FOR MORE", ran past both of the pill's rounded ends, and its accent dot (a fixed offset
+    that only happened to clear "SUBSCRIBE"'s first letter) landed on top of the "S" with the wider
+    label. The pill now sizes itself to the real text (`crate::text::measure`, same tight-ink-extent
+    approach as the caption-pill fix below it in this changelog's prior release), the dot moved outside
+    the pill beside it, and the card now sits over a blurred, darkened freeze of the video's own last
+    frame instead of flat black. That freeze is a real media clip placed after all speech ends, which
+    tripped an unrelated existing check (`broll_over_silence`) into "fixing" it back onto the dialogue
+    and trimming it to nothing -- that check now exempts a clip placed after all speech has ended (an
+    epilogue/end-screen shot) while still correctly flagging b-roll laid over a genuine mid-edit pause.
+- **Disk-leak fix (not a feature, worth noting)**: `director_small`'s shared fixture temp dir (reused by
+  path across the whole test binary, so fixture media an earlier test builds is found, not re-encoded,
+  by a later one) was never removed -- 83 of them, ~3 GB, found on one box. It now registers a libc
+  `atexit` hook (no new dependency) the first time it runs, removing the dir once the whole binary is
+  done with it.
+
 ## v7.6.0 (2026-10-31)
 
 V7.6-Q2 quality pass on `real_v1.mp4` (a real CC0 interview auto-edit), continued from a prior
