@@ -169,5 +169,43 @@ fn proj() -> Session { let mut ss = Session::new(); call(&mut ss, "project_set",
     let out = dir().join("auto_edit_export.mp4");
     let ex = call(&mut ss, "export", json!({"path": out, "crf": 30}));
     assert!(std::fs::metadata(&out).map(|m| m.len() > 1000).unwrap_or(false), "{ex}");
-    assert!((ex["duration"].as_f64().unwrap() - r["duration"].as_f64().unwrap()).abs() < 0.2, "export duration should match the reported edit duration: {ex} vs {r}");
+    // V7.7Q: a subscribe-style end screen is on by default (platform none), so the real export now runs
+    // past the talking-head-only "duration" -- total_duration is the field that tracks the real export length.
+    assert!((ex["duration"].as_f64().unwrap() - r["total_duration"].as_f64().unwrap()).abs() < 0.2, "export duration should match total_duration (talking head + end screen): {ex} vs {r}");
+    assert!(r["total_duration"].as_f64().unwrap() > r["duration"].as_f64().unwrap(), "the default-on end screen should make total_duration longer than the talking-head duration: {r}");
+}
+
+/// V7.7Q: end screen. Default on for the landscape/youtube-style edit (platform none) -- a subscribe-style
+/// card after the dialogue, long enough to read, that fades out instead of just cutting away. Off by
+/// default for a vertical short (shorts/reels/tiktok) since a subscribe pill competes with the platform's
+/// own UI there; end_screen:false (or true) always overrides either default.
+#[test] fn end_screen_is_on_by_default_for_platform_none_and_fades_out() {
+    let mut ss = proj();
+    let a = sid(&call(&mut ss, "import_media", json!({"path": talk("es1.mp4", &[(0.0, 2.0)], 0.3)})), "asset_id");
+    let r = call(&mut ss, "auto_edit", json!({"talking_head_asset_ids": [a], "captions": false, "grade": false, "punch_ins": false}));
+    let es = r["stages"]["end_screen"].clone();
+    assert!(es.is_object(), "end screen should be on by default when platform is none: {r}");
+    let cid = es["clip_ids"][0].as_str().unwrap_or_else(|| panic!("no clip id in end screen stage: {es}"));
+    let c = ss.project.find_clip(cid).unwrap();
+    assert!((2.0..=4.0).contains(&c.duration), "end card duration {} should be clamped 2..4 s", c.duration);
+    assert!((c.start - r["duration"].as_f64().unwrap()).abs() < 0.05, "end card should start right where the talking head ends: card at {}, dialogue ends at {}", c.start, r["duration"]);
+    assert!((r["total_duration"].as_f64().unwrap() - (r["duration"].as_f64().unwrap() + c.duration)).abs() < 0.05, "{r}");
+    // it actually fades: opacity keyframed down to 0 by the card's own end.
+    let keys = ss.project.find_clip(cid).unwrap().props.get("opacity").map(|p| p.keys.clone()).unwrap_or_default();
+    assert!(keys.len() >= 2, "expected an opacity fade keyframed on the end card, got {} key(s)", keys.len());
+    let last_val = keys.last().unwrap().v;
+    assert!(last_val < 0.05, "the card should fade to ~0 opacity by its own end, got {last_val}");
+
+    // a vertical short defaults the card OFF.
+    let mut ss2 = proj();
+    let a2 = sid(&call(&mut ss2, "import_media", json!({"path": talk("es2.mp4", &[(0.0, 2.0)], 0.3)})), "asset_id");
+    let r2 = call(&mut ss2, "auto_edit", json!({"talking_head_asset_ids": [a2], "captions": false, "grade": false, "punch_ins": false, "platform": "shorts"}));
+    assert!(!r2["stages"]["end_screen"].is_object(), "a vertical short should default the end screen off: {r2}");
+    assert_eq!(r2["total_duration"], r2["duration"], "{r2}");
+
+    // explicit false turns it off even on platform none; explicit true turns it on even on a short.
+    let mut ss3 = proj();
+    let a3 = sid(&call(&mut ss3, "import_media", json!({"path": talk("es3.mp4", &[(0.0, 2.0)], 0.3)})), "asset_id");
+    let r3 = call(&mut ss3, "auto_edit", json!({"talking_head_asset_ids": [a3], "captions": false, "grade": false, "punch_ins": false, "end_screen": false}));
+    assert!(!r3["stages"]["end_screen"].is_object(), "{r3}");
 }

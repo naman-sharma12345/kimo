@@ -1,8 +1,9 @@
 //! `auto_edit`: one call, raw clips -> a finished, polished edit, chaining Kimo's own existing tools with
-//! sensible defaults -- rough cut (dead air out) -> b-roll placement -> jump-cut punch-ins (only on the
-//! segments that stay on screen, so the zoom is never hidden under b-roll) -> word-synced captions -> an
-//! optional cold-open hook title -> an optional music bed -> auto color -> a final audio mix to a YouTube
-//! loudness target -> lint_edit's own review, auto-applying whatever it can fix by itself. Built because an
+//! sensible defaults -- rough cut (dead air out) -> b-roll placement (RV-33: matched to the words spoken,
+//! given a transcript) -> jump-cut punch-ins (only on the segments that stay on screen, so the zoom is never
+//! hidden under b-roll) -> word-synced captions -> an optional cold-open hook title -> an optional music bed
+//! -> auto color -> a final audio mix to a YouTube loudness target -> a subscribe-style end screen -> lint_edit's
+//! own review, auto-applying whatever it can fix by itself. Built because an
 //! agent handed a folder of raw clips had no single call for "edit this well"; it had to compose eight-plus
 //! tool calls in the right order to get a result that didn't look assembled by hand. Every stage below is an
 //! ordinary existing tool, called through dispatch_nested (same validation, same locks, one undo step for
@@ -44,6 +45,11 @@ fn auto_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let punch_on = a.get("punch_ins").and_then(|v| v.as_bool()).unwrap_or(true);
     let grade_on = a.get("grade").and_then(|v| v.as_bool()).unwrap_or(true);
     let platform = a.get("platform").and_then(|v| v.as_str()).unwrap_or("none").to_string();
+    // default on for the landscape/youtube-style edit (platform none); a vertical short usually ends on
+    // whatever the platform's own UI shows next, so it defaults off there unless explicitly asked for.
+    let end_screen_on = a.get("end_screen").and_then(|v| v.as_bool()).unwrap_or(platform == "none");
+    let end_screen_text = a.get("end_screen_text").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).unwrap_or("SUBSCRIBE FOR MORE").to_string();
+    let end_screen_duration = opt_num(a, "end_screen_duration", 3.0).clamp(2.0, 4.0);
 
     let mut stages = serde_json::Map::new();
     let mut warnings: Vec<String> = vec![];
@@ -170,6 +176,27 @@ fn auto_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
         }
     }
 
+    // 8c. End screen: a short, tasteful outro card after the edit itself -- the subscribe/next-video beat a
+    // top editor never skips and an agent handed raw clips usually forgets entirely. Uses add_title's own
+    // subscribe_pop preset (a pill badge with a dot and text that pops in with a bounce, already built and
+    // tested elsewhere -- nothing new to draw here) placed right after the dialogue ends, then a plain
+    // opacity keyframe fades the whole card out in its last half second so the edit doesn't just cut away
+    // from it. total_duration (not duration, which stays the talking-head length for anyone already reading
+    // it) reports the real export length once this card is added.
+    let mut total_duration = edit_duration;
+    if end_screen_on {
+        let tt = new_track(ss)?;
+        let title = call(ss, "add_title", &json!({"track_id": tt, "style": "subscribe_pop", "text": end_screen_text, "start": edit_duration, "duration": end_screen_duration}))?;
+        if let Some(ws) = title["warnings"].as_array() { for w in ws { if let Some(s) = w.as_str() { warnings.push(s.to_string()); } } }
+        if let Some(cid) = title["clip_ids"].as_array().and_then(|a| a.first()).and_then(|v| v.as_str()) {
+            let fade_start = (end_screen_duration - 0.5).max(0.0);
+            call(ss, "set_keyframe", &json!({"clip_id": cid, "property": "opacity", "time": fade_start, "value": 1.0}))?;
+            call(ss, "set_keyframe", &json!({"clip_id": cid, "property": "opacity", "time": end_screen_duration, "value": 0.0}))?;
+        }
+        total_duration = edit_duration + end_screen_duration;
+        stages.insert("end_screen".into(), title);
+    }
+
     // 9. Let the edit catch its own remaining mistakes: lint_edit's own checks, auto-applying whatever has
     // a concrete fix (no guessing at anything that needs a human call). apply_review_fixes re-checks with a
     // fresh lint_edit pass after applying anything, so a fix that solves one problem and creates a new one
@@ -188,7 +215,7 @@ fn auto_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
     stages.insert("review".into(), fixes);
 
     Ok(json!({
-        "ok": true, "track_id": track_id, "duration": edit_duration, "mix_lufs": audio["mix_lufs"],
+        "ok": true, "track_id": track_id, "duration": edit_duration, "total_duration": total_duration, "mix_lufs": audio["mix_lufs"],
         "stages": stages, "warnings": warnings, "lint_clean": lint_ok, "remaining_problems": remaining,
         "next": "export when ready; self_review or review_export to look at it first",
     }))
@@ -213,6 +240,9 @@ pub fn commands() -> Vec<Command> {
                 ("platform", s("passed to lint_edit/apply_review_fixes: tiktok|reels|shorts|none (default none)")),
                 ("level_dynamics", json!({"type": "boolean", "description": "passed to finish_audio: gentle speech leveling, default true"})),
                 ("level_strength", n("passed to finish_audio: leveling factor 1..4, default 2.5")),
+                ("end_screen", json!({"type": "boolean", "description": "a short subscribe-style outro card after the edit; default true when platform is none"})),
+                ("end_screen_text", s("outro card text, default SUBSCRIBE FOR MORE")),
+                ("end_screen_duration", n("outro card seconds, default 3.0, clamped 2..4")),
             ], &["talking_head_asset_ids"]), run: |ss, a| atomic(ss, a, auto_edit) },
     ]
 }
