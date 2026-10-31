@@ -142,7 +142,7 @@ fn open_sites_are_classified() {
     const SITES: &[(&str, usize, &str)] = &[
         ("proxy.rs", 3, "PROJECT-DERIVED: original and proxy paths resolved by Project::resolve before fingerprint/probe/transcode; output path resolved against project base"),
         ("analysis_proxy.rs", 3, "PROJECT-DERIVED: the source asset path resolved by Project::resolve before ffprobe keyframe-gap check / ffmpeg transcode / cache-sidecar read; output proxy path is cache-local, never stored in the project"),
-        ("audio.rs", 7, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),
+        ("audio.rs", 9, "7 PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site; 2 temp: level_master's own round-trip of the mixed PCM through ffmpeg speechnorm (temp in/out wav, not stored in the project)"),
         ("codeclip.rs", 7, "3 PROJECT-DERIVED, under resolve_dir (Source::Code.dir resolved through deps): kimo.json, the folder walk and hash; 4 temp: the frame cache, the renderer's output frames and logs"),
         ("color/adjust_v2_proof.rs", 2, "caller path (tool argument / output / temp file / test), not stored in the project"),
         ("color/bake.rs", 2, "caller path (tool argument / output / temp file / test), not stored in the project"),

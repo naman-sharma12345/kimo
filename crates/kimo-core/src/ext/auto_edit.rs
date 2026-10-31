@@ -38,6 +38,8 @@ fn auto_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let caption_style = a.get("caption_style").and_then(|v| v.as_str()).unwrap_or("pop").to_string();
     let captions_on = a.get("captions").and_then(|v| v.as_bool()).unwrap_or(true);
     let target_lufs = opt_num(a, "target_lufs", -14.0);
+    let level_dynamics = a.get("level_dynamics").and_then(|v| v.as_bool());
+    let level_strength = a.get("level_strength").and_then(|v| v.as_f64());
     let punch_scale = opt_num(a, "punch_scale", 1.15).clamp(1.01, 3.0);
     let punch_on = a.get("punch_ins").and_then(|v| v.as_bool()).unwrap_or(true);
     let grade_on = a.get("grade").and_then(|v| v.as_bool()).unwrap_or(true);
@@ -122,7 +124,10 @@ fn auto_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
     }
 
     // 8. Final mix: clean dialogue, b-roll sound off, music under speech, mix to the loudness target.
-    let audio = call(ss, "finish_audio", &json!({"target_lufs": target_lufs}))?;
+    let mut finish_args = json!({"target_lufs": target_lufs});
+    if let Some(v) = level_dynamics { finish_args["level_dynamics"] = json!(v); }
+    if let Some(v) = level_strength { finish_args["level_strength"] = json!(v); }
+    let audio = call(ss, "finish_audio", &finish_args)?;
     stages.insert("audio".into(), audio.clone());
 
     // 8b. Dynamic ducking on top of finish_audio's static levels: the music bed actually swells in the gaps
@@ -175,6 +180,8 @@ pub fn commands() -> Vec<Command> {
                 ("grade", json!({"type": "boolean", "description": "default true: auto_grade every clip"})),
                 ("target_lufs", n("final mix loudness target, default -14 (YouTube)")),
                 ("platform", s("passed to lint_edit/apply_review_fixes: tiktok|reels|shorts|none (default none)")),
+                ("level_dynamics", json!({"type": "boolean", "description": "passed to finish_audio: gentle speech leveling, default true"})),
+                ("level_strength", n("passed to finish_audio: leveling factor 1..4, default 2.5")),
             ], &["talking_head_asset_ids"]), run: |ss, a| atomic(ss, a, auto_edit) },
     ]
 }

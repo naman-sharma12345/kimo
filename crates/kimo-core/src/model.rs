@@ -141,7 +141,14 @@ pub struct Audio {
     /// object once a key is set. Older saved projects wrote this as a bare number -- accepted on load via `de_pan`
     /// (`tests/data/v1_project.kimo`, a pre-migration fixture, proves the bare-number form still loads).
     #[serde(default = "zero_prop", deserialize_with = "de_pan", serialize_with = "ser_pan")] pub pan: Prop,
-    #[serde(default = "unity_prop")] pub duck_gain: Prop, pub mute: bool, pub volume: Prop, pub fade_in: f64, pub fade_out: f64, pub pitch: f64, pub highpass: f64, pub lowpass: f64, pub denoise: f64, pub compress: bool, pub echo: f64, pub reverse: bool }
+    #[serde(default = "unity_prop")] pub duck_gain: Prop, pub mute: bool, pub volume: Prop, pub fade_in: f64, pub fade_out: f64, pub pitch: f64, pub highpass: f64, pub lowpass: f64, pub denoise: f64, pub compress: bool, pub echo: f64, pub reverse: bool,
+    /// Gentle automatic speech leveling (ffmpeg `speechnorm`): continuously raises quiet passages and eases down loud ones over
+    /// time, narrowing loudness swings WITHIN a clip instead of a hard compressor's threshold/ratio knee -- the thing finish_audio's
+    /// per-clip average-matching step never touched (it only matched each clip's average level to the loudest, leaving whatever
+    /// variance already lived inside each clip exactly as it was). 0 = off (default); else the expansion/compression factor passed
+    /// straight to `speechnorm` (e=c=this value), so ~1.5-2 is gentle and higher is stronger. Default-serialized away so every
+    /// existing project/golden byte stays identical until something actually turns this on.
+    #[serde(default, skip_serializing_if = "is_zero_f64")] pub speech_level: f64 }
 fn unity_prop() -> Prop { Prop::new(1.0) }
 fn zero_prop() -> Prop { Prop::new(0.0) }
 /// Accepts either the legacy bare-number `pan` (pre-v7 project format) or a full `Prop` object.
@@ -157,7 +164,7 @@ fn ser_pan<S: serde::Serializer>(p: &Prop, s: S) -> Result<S::Ok, S::Error> {
     if p.keys.is_empty() && p.expr.is_empty() { s.serialize_f64(p.base) } else { p.serialize(s) }
 }
 fn is_zero_f64(v: &f64) -> bool { *v == 0.0 }
-impl Default for Audio { fn default() -> Self { Audio { lead: 0.0, tail: 0.0, effects: vec![], pan: Prop::new(0.0), duck_gain: Prop::new(1.0), mute: false, volume: Prop::new(1.0), fade_in: 0.0, fade_out: 0.0, pitch: 0.0, highpass: 0.0, lowpass: 0.0, denoise: 0.0, compress: false, echo: 0.0, reverse: false } } }
+impl Default for Audio { fn default() -> Self { Audio { lead: 0.0, tail: 0.0, effects: vec![], pan: Prop::new(0.0), duck_gain: Prop::new(1.0), mute: false, volume: Prop::new(1.0), fade_in: 0.0, fade_out: 0.0, pitch: 0.0, highpass: 0.0, lowpass: 0.0, denoise: 0.0, compress: false, echo: 0.0, reverse: false, speech_level: 0.0 } } }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Transition { pub kind: String, pub duration: f64,
@@ -260,11 +267,20 @@ pub struct Project {
     #[serde(default, skip_serializing_if = "Vec::is_empty")] pub templates: Vec<crate::ext::templates::Template>,
     /// Directory of the project file (canonical), set by load_project / save_project / collect. Never serialized. Relative stored paths resolve against it.
     #[serde(skip)] pub base_dir: Option<std::path::PathBuf>,
+    /// RV-28: a gentle master-bus speech leveler (ffmpeg `speechnorm`), applied ONCE to the whole mixed timeline buffer
+    /// in `audio::mix`/`audio::mix_strict` right before each one's own peak limiter -- not per clip. A per-clip version was tried first and made
+    /// loudness range WORSE on real multi-take footage (11.1 -> 13.7 LU): speechnorm is a slow raise/fall leveler, and
+    /// restarting its internal state at every short rough-cut clip boundary introduced a new transient at every cut
+    /// instead of smoothing across them. Running it once over the continuous mixed signal (same shape as finish_audio's
+    /// own final-mix measurement) is what actually narrows loudness range end to end. 0 = off (default, and every
+    /// existing project/golden stays byte-identical and mix()-identical); else the speechnorm expansion/compression
+    /// factor. Set by finish_audio's level_dynamics/level_strength args, never by hand-authored projects.
+    #[serde(default, skip_serializing_if = "is_zero_f64")] pub master_speech_level: f64,
 }
 
 impl Default for Project {
     fn default() -> Self {
-        Project { links: vec![], proxies: Default::default(), grade_scopes: Default::default(), lights: BTreeMap::new(), materials: BTreeMap::new(), editorial: Default::default(), ocio_view_delivery: None, occluders: BTreeMap::new(), color_pipeline: Default::default(), camera: BTreeMap::new(), comp3d: None, hooks: BTreeMap::new(), expr_scripts: vec![], name: "untitled".into(), width: 1280, height: 720, fps: 30.0, assets: BTreeMap::new(), bins: vec![], subclips: BTreeMap::new(), tracks: vec![], next_id: 1, markers: vec![], deps: None, templates: vec![], base_dir: None }
+        Project { links: vec![], proxies: Default::default(), grade_scopes: Default::default(), lights: BTreeMap::new(), materials: BTreeMap::new(), editorial: Default::default(), ocio_view_delivery: None, occluders: BTreeMap::new(), color_pipeline: Default::default(), camera: BTreeMap::new(), comp3d: None, hooks: BTreeMap::new(), expr_scripts: vec![], name: "untitled".into(), width: 1280, height: 720, fps: 30.0, assets: BTreeMap::new(), bins: vec![], subclips: BTreeMap::new(), tracks: vec![], next_id: 1, markers: vec![], deps: None, templates: vec![], base_dir: None, master_speech_level: 0.0 }
     }
 }
 

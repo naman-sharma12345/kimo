@@ -448,6 +448,15 @@ fn finish_audio(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let target = opt_num(a, "target_lufs", -14.0).clamp(-30.0, -8.0);
     let keep_amb = a.get("keep_ambience").and_then(|v| v.as_bool()).unwrap_or(false);
     let bed = opt_num(a, "music_under_speech_db", -14.0).clamp(-40.0, 0.0);
+    // Gentle master-bus speech leveling (speechnorm, a slow raise/fall leveler -- see Project::master_speech_level's
+    // doc for why it runs once over the whole mix rather than per clip) narrows the loudness swing a real speaker's
+    // own voice has WITHIN and across clips; the per-clip average-matching loop right below only ever matched clips'
+    // AVERAGES to each other and left whatever variance already lived inside/between them untouched -- on real
+    // speech that is most of why a finished edit's loudness range came out wider than the raw source (RV-28: 3.4 LU
+    // raw -> 11.1 LU after rough-cut + the old flat per-clip compressor, on real CC0 interview footage). Default on;
+    // level_dynamics:false restores the old compressor-only behaviour exactly (master_speech_level stays 0).
+    let level_on = a.get("level_dynamics").and_then(|v| v.as_bool()).unwrap_or(true);
+    let level_strength = opt_num(a, "level_strength", 2.5).clamp(1.0, 4.0);
     // classify every media clip on an unmuted track: dialogue (speech in it), music (audio-only or named), ambience (the rest)
     let music_ids: Vec<String> = a.get("music_clip_ids").and_then(|v| v.as_array()).map(|v| v.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
     let mut list: Vec<(String, bool)> = vec![];
@@ -464,6 +473,11 @@ fn finish_audio(ss: &mut Session, a: &Value) -> Result<Value, String> {
     for id in &dia {
         call(ss, "set_audio", &json!({"clip_id": id, "highpass": 80, "compress": true}))?;
     }
+    // RV-28: speech leveling runs ONCE over the whole mixed timeline (master_speech_level, read by audio::mix),
+    // not per clip -- a per-clip version was tried first and widened loudness range instead of narrowing it
+    // (restarting speechnorm's state at every short rough-cut boundary is itself a new transient). See the
+    // field's doc on Project for the measured before/after.
+    ss.project.master_speech_level = if level_on { level_strength } else { 0.0 };
     // level the dialogue clips to the loudest one (so a quiet speaker comes up), then trim the whole mix to the target below
     let meas: Vec<(String, Option<f64>)> = dia.iter().map(|id| (id.clone(), clip_lufs(ss, id))).collect();
     let refl = meas.iter().filter_map(|(_, l)| *l).fold(f64::NEG_INFINITY, f64::max);
@@ -491,7 +505,7 @@ fn finish_audio(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let l = m["integrated_lufs"].as_f64().or(mix);
     Ok(json!({"mix_lufs": l.map(r3), "target_lufs": target, "sample_peak_dbfs": m["sample_peak_dbfs"].as_f64().map(r3), "true_peak_dbfs": m["true_peak_dbfs"].as_f64().map(r3),
         "dialogue": report_d, "music": report_m, "ambience_muted": if keep_amb { json!([]) } else { json!(amb) },
-        "note": "dialogue: 80 Hz high-pass + compressor, each clip to the same loudness; export limits peaks at -1.5 dBFS"}))
+        "note": if level_on { "dialogue: 80 Hz high-pass + gentle speech leveling + compressor, each clip to the same loudness; export limits peaks at -1.5 dBFS" } else { "dialogue: 80 Hz high-pass + compressor, each clip to the same loudness; export limits peaks at -1.5 dBFS" }}))
 }
 
 // ---------------------------------------------------------------- auto_grade
@@ -994,9 +1008,11 @@ pub fn commands() -> Vec<Command> {
                 ("check_confidence", json!({"type":"boolean","description":"best-effort: cross-check given words against the recognizer on the same audio and flag cues it can't make out confidently (default true; set false to skip, e.g. no recognizer installed)"})),
                 ("hint", s("vocabulary/topic hint for the confidence check only (names, jargon in the clip) - does not change the caption text")),
                 ("whisper_bin", s("confidence check only: path to whisper-cli")), ("model", s("confidence check only: path to a ggml model"))], &["track_id"]), run: |ss, a| atomic(ss, a, caption_from_words) },
-        Command { name: "finish_audio", description: "Mix for social in one call: dialogue cleaned and levelled per clip, b-roll sound off, music under speech, mix to target LUFS.", mutates: true,
+        Command { name: "finish_audio", description: "Mix for social in one call: dialogue cleaned, gently levelled and compressed per clip, b-roll sound off, music under speech, mix to target LUFS.", mutates: true,
             schema: obj(vec![("target_lufs", n("default -14")), ("keep_ambience", json!({"type": "boolean", "description": "keep b-roll sound (default false: muted)"})), ("music_clip_ids", ids("clips to treat as music (audio-only clips are music already)")),
-                ("music_under_speech_db", n("music level under dialogue, relative, default -14"))], &[]), run: |ss, a| atomic(ss, a, finish_audio) },
+                ("music_under_speech_db", n("music level under dialogue, relative, default -14")),
+                ("level_dynamics", json!({"type": "boolean", "description": "gentle speech leveling (narrows loudness range), default true"})),
+                ("level_strength", n("leveling factor 1..4, default 2.5"))], &[]), run: |ss, a| atomic(ss, a, finish_audio) },
         Command { name: "auto_grade", description: "Fix each clip's exposure and colour cast from a measured frame; gains are clamped so no shot goes black or blown.", mutates: true,
             schema: obj(vec![("clip_ids", ids("default: every media clip")), ("strength", n("0..1, default 0.85")), ("target_luma", n("0.2..0.7, default 0.42"))], &[]), run: |ss, a| atomic(ss, a, auto_grade) },
         Command { name: "cut_to_beat", description: "Music reel in one call: lays the music and cuts the shots exactly on its beats, N beats per shot. Returns clip ids.", mutates: true,

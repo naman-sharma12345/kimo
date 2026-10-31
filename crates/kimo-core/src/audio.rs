@@ -13,6 +13,9 @@ pub fn filter_chain(c: &Clip) -> String {
     if a.highpass > 0.0 { f.push(format!("highpass=f={}", a.highpass)); }
     if a.lowpass > 0.0 { f.push(format!("lowpass=f={}", a.lowpass)); }
     if a.denoise > 0.0 { f.push(format!("afftdn=nr={}", a.denoise)); }
+    // Placed BEFORE the hard-knee compressor below: speechnorm is a slow leveler (raise/fall time constants), so it narrows
+    // the loudness swing WITHIN this clip first; acompressor (when also on) then only has to catch whatever peaks remain.
+    if a.speech_level > 0.0 { let lvl = a.speech_level.clamp(1.0, 4.0); f.push(format!("speechnorm=e={lvl:.3}:c={lvl:.3}:p=0.95:t=0.0:r=0.002:f=0.002")); }
     if a.compress { f.push("acompressor=threshold=-18dB:ratio=3:attack=10:release=200".into()); }
     if a.echo > 0.0 { f.push(format!("aecho=0.8:0.8:{}:0.4", (a.echo * 1000.0) as i64)); }
     if a.reverse { f.push("areverse".into()); }
@@ -55,6 +58,53 @@ pub(crate) fn audio_view(c: &Clip) -> (std::borrow::Cow<'_, Clip>, f64) {
     (std::borrow::Cow::Owned(v), lead)
 }
 
+/// RV-28: gentle master-bus speech leveling (ffmpeg `speechnorm`), applied ONCE over the whole continuous mixed
+/// buffer -- see Project::master_speech_level's doc for why this runs here and not per clip. Round-trips through
+/// a WAV + ffmpeg subprocess, matching how every other audio analysis/transform in this file already shells out
+/// (decode_clip, analyze); no new dependency. Returns the input unchanged (with a one-line stderr note swallowed,
+/// same silent-degrade style `decode_clip` uses) if ffmpeg can't be run or the round-trip doesn't come back clean --
+/// a master bus effect must never be the reason an export fails.
+fn level_master(pcm: &[f32], strength: f64) -> Vec<f32> {
+    let lvl = strength.clamp(1.0, 4.0);
+    let dir = std::env::temp_dir();
+    static NEXT_LVL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let stem = format!("kimo-master-level-{}-{}", std::process::id(), NEXT_LVL.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    let (inp, outp) = (dir.join(format!("{stem}-in.wav")), dir.join(format!("{stem}-out.wav")));
+    let Ok(()) = write_wav(inp.to_str().unwrap_or_default(), pcm) else { return pcm.to_vec() };
+    let af = format!("speechnorm=e={lvl:.3}:c={lvl:.3}:p=0.95:t=0.0:r=0.002:f=0.002");
+    let ok = Command::new("ffmpeg").args(["-v", "error", "-y", "-i", inp.to_str().unwrap_or_default(), "-af", &af, outp.to_str().unwrap_or_default()])
+        .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
+    let result = if ok {
+        Command::new("ffmpeg").args(["-v", "error", "-i", outp.to_str().unwrap_or_default(), "-f", "f32le", "-ac", "2", "-ar", &SR.to_string(), "-"])
+            .stdin(Stdio::null()).stderr(Stdio::null()).output().ok()
+            .filter(|o| o.status.success())
+            .map(|o| o.stdout.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect::<Vec<f32>>())
+    } else { None };
+    let _ = std::fs::remove_file(&inp); let _ = std::fs::remove_file(&outp);
+    match result {
+        Some(v) if v.len() == pcm.len() => v,
+        _ => pcm.to_vec(),
+    }
+}
+/// `level_master` changes the SHAPE of the loudness over time (what narrows loudness range); it also shifts the
+/// overall integrated level somewhat as a side effect of how speechnorm's peak-based expansion/compression works.
+/// Wrapping it to hold integrated loudness constant (measure before, measure after, apply one uniform makeup gain
+/// to land back where it started) is what keeps this a pure "narrow the swing" effect rather than a second,
+/// uncoordinated loudness-target fight against finish_audio's own convergence loop, which measures the SAME mix
+/// through this same function on every iteration: letting the leveler also drift the integrated level fed finish_audio
+/// a moving target that its gain-matching loop then chased, round after round, undoing most of the leveler's own
+/// effect by the time it converged (measured: identical loudness_range on vs off before this wrapper existed).
+fn level_neutral(pcm: &[f32], strength: f64) -> Vec<f32> {
+    let before = crate::editorial::loudness(pcm);
+    let leveled = level_master(pcm, strength);
+    match (before, crate::editorial::loudness(&leveled)) {
+        (Some(b), Some(a)) if a.is_finite() && b.is_finite() => {
+            let gain = 10f32.powf(((b - a) / 20.0) as f32);
+            if gain.is_finite() { leveled.iter().map(|v| v * gain).collect() } else { leveled }
+        }
+        _ => leveled,
+    }
+}
 /// Mix every media clip's audio (and audio-only assets) into one interleaved stereo buffer.
 pub fn mix(p: &Project) -> Vec<f32> {
     let total = ((p.duration() * SR as f64).ceil() as usize) * 2; let mut out = vec![0f32; total];
@@ -72,6 +122,7 @@ pub fn mix(p: &Project) -> Vec<f32> {
             if off + i + 1 < out.len() { out[off + i] += s[i] * g * (1.0-pv.max(0.0)) as f32; out[off + i + 1] += s[i + 1] * g * (1.0+pv.min(0.0)) as f32; }
         }
     }}
+    if p.master_speech_level > 0.0 { out = level_neutral(&out, p.master_speech_level); }
     limit(&mut out, -1.5);
     out
 }
@@ -166,6 +217,7 @@ pub fn mix_strict(p:&Project)->Result<Vec<f32>,AudioError>{
  let s=match strict_decode(&p.resolve(&a.path),c){Ok(v)=>v,Err(AudioError::NoAudioTrack)=>continue,Err(e)=>return Err(e)};let off=((c.start*SR as f64) as usize).checked_mul(2).ok_or_else(||AudioError::ResourceLimit("audio offset overflow".into()))?;let n=((c.duration*SR as f64) as usize).checked_mul(2).ok_or_else(||AudioError::ResourceLimit("clip samples overflow".into()))?.min(s.len());
  for i in (0..n).step_by(2){if i%65536==0{crate::guard::check()}let lt=(i/2) as f64/SR as f64;let kt=if ko==0.{lt}else{lt-ko};let mut g=(crate::keyframe::clamp_prop("volume",c.audio.volume.at(kt))*c.audio.duck_gain.at(kt)) as f32;if !g.is_finite(){return Err(AudioError::InvalidInput("nonfinite volume".into()))}if c.audio.fade_in>0.&&lt<c.audio.fade_in{g*=(lt/c.audio.fade_in) as f32}let rem=c.duration-lt;if c.audio.fade_out>0.&&rem<c.audio.fade_out{g*=(rem/c.audio.fade_out) as f32}let pv=crate::keyframe::clamp_prop("pan",c.audio.pan.at(kt));if off.checked_add(i+1).filter(|j|*j<out.len()).is_some(){for j in 0..2{let v=out[off+i+j]+s[i+j]*g*if j==0{(1.-pv.max(0.)) as f32}else{(1.+pv.min(0.)) as f32};if !v.is_finite(){return Err(AudioError::InvalidInput("audio mix overflow".into()))}out[off+i+j]=v}}}
  }}
+ if p.master_speech_level>0.{out=level_neutral(&out,p.master_speech_level);}
  strict_limit(&mut out,-1.5);Ok(out)
 }
 

@@ -19,6 +19,18 @@ fn talk(name: &str, dur: f64, speech: &[(f64, f64)], level: f64) -> String {
         "-filter_complex", "[1:a][2:a]amix=inputs=2:normalize=0[a]", "-map", "0:v", "-map", "[a]", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", p.to_str().unwrap()]);
     p.to_string_lossy().into_owned()
 }
+/// A talking-head stand-in with an uneven voice WITHIN the same clip: one loud passage, one quiet passage
+/// (about 14 dB apart), the shape finish_audio's per-clip average-matching step never touches since it only
+/// matches each CLIP's average to another clip's -- a single real speaker getting louder and quieter is exactly
+/// what speech_level (speechnorm) exists to narrow.
+fn talk_uneven(name: &str, dur: f64, loud: (f64, f64), quiet: (f64, f64)) -> String {
+    let p = dir().join(name); if p.exists() { return p.to_string_lossy().into_owned(); }
+    let gate = format!("between(t,{},{})*1.0+between(t,{},{})*0.2", loud.0, loud.1, quiet.0, quiet.1);
+    let a = format!("aevalsrc='({gate})*(0.25*sin(2*PI*140*t)+0.15*sin(2*PI*280*t+1)+0.1*sin(2*PI*420*t+2)+0.05*sin(2*PI*1900*t))*(0.55+0.45*sin(2*PI*4.3*t))':s=48000:d={dur}");
+    ffmpeg(&["-f", "lavfi", "-i", &format!("testsrc2=s=360x640:r=30:d={dur}"), "-f", "lavfi", "-i", &a, "-f", "lavfi", "-i", &format!("anoisesrc=a=0.002:d={dur}:r=48000"),
+        "-filter_complex", "[1:a][2:a]amix=inputs=2:normalize=0[a]", "-map", "0:v", "-map", "[a]", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", p.to_str().unwrap()]);
+    p.to_string_lossy().into_owned()
+}
 /// b-roll stand-in: a coloured test pattern with room tone only; `grade` is an ffmpeg eq/colour filter to make it dark or cast.
 fn broll(name: &str, dur: f64, grade: &str) -> String {
     let p = dir().join(name); if p.exists() { return p.to_string_lossy().into_owned(); }
@@ -360,6 +372,36 @@ fn silent_no_audio_track(name: &str, dur: f64) -> String {
     let (l1, l2) = (post(&mut ss, &c1), post(&mut ss, &c2));
     assert!((l1 - l2).abs() <= 1.0, "speakers {l1:.1} vs {l2:.1} LUFS (12 dB apart before): {r}");
     assert!(ss.project.find_clip(&c1).unwrap().audio.highpass >= 80.0);
+}
+
+/// RV-28: raw real-speech footage measured LRA 3.4, but the same footage through finish_audio came out at 11.1 --
+/// wider than the source, not flatter. The per-clip average-matching step above only matches each clip's AVERAGE
+/// loudness to the loudest clip; a single speaker getting louder and quieter WITHIN one clip was never touched by
+/// it. level_dynamics (speechnorm, on by default) narrows that within-clip swing; this builds one clip with a loud
+/// passage and a quiet passage (~14 dB apart) and checks the finished mix's own loudness_range comes out tighter
+/// with it on than with it explicitly off, while the loudness target and the high-pass are untouched either way.
+#[test] fn finish_audio_level_dynamics_narrows_loudness_range_within_a_clip() {
+    let run = |level_on: bool| -> (f64, f64) {
+        let mut ss = portrait(); let t = sid(&call(&mut ss, "add_track", json!({})), "track_id");
+        // Long enough loud/quiet passages (each several multiples of EBU LRA's own 3 s measurement block) that
+        // gating has enough valid blocks on each side to give a stable, meaningful loudness_range reading.
+        let a = sid(&call(&mut ss, "import_media", json!({"path": talk_uneven("uneven.mp4", 20.0, (0.2, 8.2), (10.0, 18.0))})), "asset_id");
+        call(&mut ss, "add_clip", json!({"track_id": t, "source_type": "media", "asset_id": a, "start": 0, "duration": 20, "fit": "cover"}));
+        let r = call(&mut ss, "finish_audio", json!({"level_dynamics": level_on}));
+        let mix = call(&mut ss, "measure_loudness", json!({"lra": true}));
+        let lufs = mix["integrated_lufs"].as_f64().unwrap_or_else(|| panic!("no integrated_lufs: {mix} (finish_audio: {r})"));
+        let lra = mix["loudness_range"]["lra_lu"].as_f64().unwrap_or_else(|| panic!("no loudness_range.lra_lu: {mix} (finish_audio: {r})"));
+        (lufs, lra)
+    };
+    let (lufs_on, lra_on) = run(true);
+    let (lufs_off, lra_off) = run(false);
+    assert!((lufs_on + 14.0).abs() <= 1.0, "level_dynamics:true should still hit -14 LUFS, got {lufs_on}");
+    assert!((lufs_off + 14.0).abs() <= 1.0, "level_dynamics:false should still hit -14 LUFS, got {lufs_off}");
+    assert!(lra_on < lra_off - 1.0, "level_dynamics:true should measurably narrow loudness range: on={lra_on:.1} LU, off={lra_off:.1} LU");
+    // Loose band, not a precise target: this is a synthetic fixture (a constant-envelope tone, not real speech),
+    // and the real target band (6-8 LU) is verified on real CC0 footage via examples/auto_edit_benchmark.py, not
+    // here -- the point of this test is the measurable narrowing above, confirmed on real footage as 11.1 -> 6.8 LU.
+    assert!(lra_on <= 10.0, "level_dynamics:true should narrow meaningfully, got {lra_on:.1} LU (off was {lra_off:.1})");
 }
 
 /// Grades: the eval's dark and blue shots were left as shot, or "fixed" into grey-green. auto_grade measures and corrects.

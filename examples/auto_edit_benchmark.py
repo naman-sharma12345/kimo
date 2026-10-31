@@ -67,6 +67,8 @@ def main():
     ap.add_argument("--caption-style", default="boxed", help="auto_captions style (default boxed, YouTube-norm pill)")
     ap.add_argument("--platform", default="none")
     ap.add_argument("--target-lufs", type=float, default=-14.0)
+    ap.add_argument("--level-strength", type=float, default=None, help="passed to finish_audio: speechnorm expansion/compression factor, 1..4")
+    ap.add_argument("--no-level-dynamics", action="store_true", help="passed to finish_audio: disable gentle speech leveling")
     ap.add_argument("--exe", default=None)
     ap.add_argument("--project", default=None, help="scratch .kimo project path (default: alongside --out)")
     args = ap.parse_args()
@@ -101,6 +103,10 @@ def main():
             auto_edit_args["music_asset_id"] = music_id
         if args.hook:
             auto_edit_args["hook_text"] = args.hook
+        if args.level_strength is not None:
+            auto_edit_args["level_strength"] = args.level_strength
+        if args.no_level_dynamics:
+            auto_edit_args["level_dynamics"] = False
 
         result = k.call("auto_edit", **auto_edit_args)
         k.call("save_project", path=os.path.abspath(project))
