@@ -83,18 +83,9 @@ Free to use, fork and ship. Linux and Windows builds on every release.
 </tr>
 </table>
 
-## ✦ What's new in v6.0.0 "eyes"
+## ✦ What's new in v8.12.1
 
-| | |
-|---|---|
-| 🖼️ **`add_pip`** | One-call picture-in-picture: circle or rounded crop, border ring, shadow, pop-in |
-| 💬 **`add_keyword_pops`** | Emphasised words pop on screen as they're spoken, picked by you or from the transcript |
-| ➡️ **`add_arrow`** | Animated "look here" callouts with an auto start point and optional label |
-| ✂️ **Transcript editing** | `transcript_search` + `transcript_edit_apply`: cut by phrase, atomic ripple deletes, full undo. [Guide](docs/TRANSCRIPT_EDITING.md) |
-| 🎯 **Trackable `vignette`** | Roundness, size, aspect, edge tint, and a centre that follows a tracked point or mask |
-| 🔥 **`film_burn` + new metrics** | A new transition, plus `flash_series`, `audio_spectrum`, loudness curves and PSNR / SSIM / MS-SSIM comparisons |
-
-Full list in [CHANGELOG.md](CHANGELOG.md).
+The v8.12 caption engine composes captions from editable specs for segmentation, timing, layout, contrast and style. In v8.12.1, face-aware placement keeps a clear lower-third in place, moves it only when it would overlap the face, and avoids blind jumps when no safe position is available. See the [full changelog](CHANGELOG.md).
 
 ## ✦ Quickstart
 
@@ -126,26 +117,26 @@ Installers are built by the [release workflow](.github/workflows/release.yml) on
 
 | | Linux x86_64 | Windows x64 |
 |---|---|---|
-| **Engine (CLI + MCP server)** | `kimo-v6.0.0-linux-x86_64-glibc.tar.gz` (glibc 2.35+) | `kimo-6.0.0-windows-x86_64-setup.exe` or `.zip` |
-| **Spectator app** | `Kimo-Spectator_6.0.0_amd64.deb` or `.AppImage` | `Kimo-Spectator_6.0.0_x64_en-US.msi` |
+| **Engine (CLI + MCP server)** | `kimo-v8.12.1-linux-x86_64-glibc.tar.gz` (glibc 2.35+) | `kimo-8.12.1-windows-x86_64-setup.exe` or `kimo-8.12.1-windows-x86_64.zip` |
+| **Spectator app** | `Kimo-Spectator_8.12.1_amd64.deb` or `Kimo-Spectator_8.12.1_amd64.AppImage` | `Kimo-Spectator_8.12.1_x64_en-US.msi` |
 
-Check every download against the release's [`SHA256SUMS`](https://github.com/naman-sharma12345/kimo/releases/tag/v6.0.0):
+Check downloads against the v8.12.1 release's [`SHA256SUMS`](https://github.com/naman-sharma12345/kimo/releases/download/v8.12.1/SHA256SUMS):
 
 ```bash
 sha256sum -c SHA256SUMS --ignore-missing                                   # Linux
-Get-FileHash .\Kimo-Spectator_6.0.0_x64_en-US.msi -Algorithm SHA256        # Windows PowerShell
+Get-FileHash .\Kimo-Spectator_8.12.1_x64_en-US.msi -Algorithm SHA256      # Windows PowerShell
 ```
 
 **Linux**
 
 ```bash
-sudo apt install ./Kimo-Spectator_6.0.0_amd64.deb      # remove with: sudo apt remove kimo-spectator
+sudo apt install ./Kimo-Spectator_8.12.1_amd64.deb      # remove with: sudo apt remove kimo-spectator
 # or, no install:
-chmod +x Kimo-Spectator_6.0.0_amd64.AppImage
-./Kimo-Spectator_6.0.0_amd64.AppImage                  # no FUSE? add --appimage-extract-and-run
+chmod +x Kimo-Spectator_8.12.1_amd64.AppImage
+./Kimo-Spectator_8.12.1_amd64.AppImage                  # no FUSE? add --appimage-extract-and-run
 ```
 
-**Windows.** Run the `.msi`. SmartScreen says "Windows protected your PC": click **More info**, then **Run anyway**. It uses Microsoft Edge WebView2 (already on Windows 11). The engine installer goes per user, no admin, into `%LOCALAPPDATA%\Programs\kimo\bin\kimo-mcp.exe`. See the [Windows guide](packaging/windows/WINDOWS.md).
+**Windows.** Run the `.msi`. SmartScreen says "Windows protected your PC": click **More info**, then **Run anyway**. It uses Microsoft Edge WebView2 (already on Windows 11). The engine installer `kimo-8.12.1-windows-x86_64-setup.exe` goes per user, no admin, into `%LOCALAPPDATA%\Programs\kimo\bin\kimo-mcp.exe`. See the [Windows guide](packaging/windows/WINDOWS.md).
 
 Status: the Linux `.deb` and AppImage were smoke-tested on Debian 12; Windows packages are installed, launched and uninstalled by CI on a GitHub Windows runner but not yet on a real Windows PC.
 
@@ -395,7 +386,7 @@ Put this in `opencode.json` in your project, or in `~/.config/opencode/opencode.
 #### Any other MCP client
 kimo is a standard MCP stdio server (protocol 2024-11-05, `initialize`, `tools/list`, `tools/call`). Any client that can register a stdio server by command works: give it the absolute path to `kimo-mcp` and no arguments. Many clients use the `mcpServers` JSON shape shown for Cursor; some (for example Zed) use a different key, so check your client's MCP docs for the exact file and format. Only the four clients above were checked against their docs.
 
-Windows: use the path to `kimo-mcp.exe` (the Windows engine installer `kimo-6.0.0-windows-x86_64-setup.exe` installs per user, no admin rights, into `%LOCALAPPDATA%\Programs\kimo` by default, so the binary is `%LOCALAPPDATA%\Programs\kimo\bin\kimo-mcp.exe` ([kimo.iss](packaging/windows/kimo.iss)); in JSON write backslashes doubled, see the [Windows guide](packaging/windows/WINDOWS.md)). The configs above are the same except for the path; the Claude Code, Codex, Cursor and OpenCode formats were checked on their docs, not tested on Windows here.
+Windows: use the path to `kimo-mcp.exe` (the Windows engine installer `kimo-8.12.1-windows-x86_64-setup.exe` installs per user, no admin rights, into `%LOCALAPPDATA%\Programs\kimo` by default, so the binary is `%LOCALAPPDATA%\Programs\kimo\bin\kimo-mcp.exe` ([kimo.iss](packaging/windows/kimo.iss)); in JSON write backslashes doubled, see the [Windows guide](packaging/windows/WINDOWS.md)). The configs above are the same except for the path; the Claude Code, Codex, Cursor and OpenCode formats were checked against their docs, not tested on Windows here.
 
 **3. Try it.** Ask your assistant: "Use kimo to import /path/to/clip.mp4, add a title, and render a frame." Or drive it yourself with the Python client in `examples/mcp_client.py`.
 

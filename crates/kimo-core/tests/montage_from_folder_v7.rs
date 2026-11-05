@@ -64,8 +64,26 @@ fn stills_without_clip_duration_is_a_named_error() {
     let d = tmpdir("needdur");
     write_png(&d.join("only.png"), [10, 20, 30]);
     let mut ss = session();
+    let before_project = serde_json::to_value(&ss.project).unwrap();
+    let before_history = call(&mut ss, "history_list", json!({}));
     let e = err(&mut ss, "make_montage_from_folder", json!({"folder": d.to_str().unwrap()}));
     assert!(e.contains("clip_duration"), "error should name the missing clip_duration, got: {e}");
+    assert_eq!(serde_json::to_value(&ss.project).unwrap(), before_project, "a preflight error must not add a track or import the still");
+    assert_eq!(call(&mut ss, "history_list", json!({})), before_history, "a preflight error must not add an undo step");
+}
+
+#[test]
+fn mixed_folder_missing_still_duration_fails_before_importing_earlier_video() {
+    let d = tmpdir("mixed_needdur");
+    write_video(&d.join("a_video.mp4"), [120, 20, 30], 0.5);
+    write_png(&d.join("b_still.png"), [10, 20, 30]);
+    let mut ss = session();
+    let before_project = serde_json::to_value(&ss.project).unwrap();
+    let before_history = call(&mut ss, "history_list", json!({}));
+    let e = err(&mut ss, "make_montage_from_folder", json!({"folder": d.to_str().unwrap()}));
+    assert!(e.contains("b_still.png") && e.contains("clip_duration"), "error should identify the still and missing duration, got: {e}");
+    assert_eq!(serde_json::to_value(&ss.project).unwrap(), before_project, "the earlier video must not be imported or placed before the still is validated");
+    assert_eq!(call(&mut ss, "history_list", json!({})), before_history, "a preflight error must not add an undo step");
 }
 
 #[test]
