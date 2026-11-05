@@ -52,5 +52,17 @@
       .sort((x, y) => x.name.localeCompare(y.name));
   }
 
-  return { basename: basename, formatDuration: formatDuration, matchesQuery: matchesQuery, buildAssetRows: buildAssetRows };
+  // A manual media-bin drop onto an unlocked timeline track uses the imported
+  // asset's full probed duration and never changes fit/edit mode implicitly.
+  // Invalid or stale drag payloads are rejected before reaching the tool API.
+  function buildDropArgs(asset, track, start) {
+    if (!asset || typeof asset.asset_id !== 'string' || !asset.asset_id.trim()) return { ok: false, error: 'That media item is no longer available.' };
+    if (!track || typeof track.id !== 'string' || !track.id.trim()) return { ok: false, error: 'Drop onto a timeline track.' };
+    if (track.locked) return { ok: false, error: 'Unlock this track before adding media.' };
+    if (typeof start !== 'number' || !Number.isFinite(start)) return { ok: false, error: 'Choose a valid timeline position.' };
+    if (typeof asset.duration !== 'number' || !Number.isFinite(asset.duration) || asset.duration <= 0) return { ok: false, error: 'This media item has no usable duration.' };
+    return { ok: true, args: { track_id: track.id, source_type: 'media', asset_id: asset.asset_id, start: Math.max(0, start), duration: asset.duration } };
+  }
+
+  return { basename: basename, formatDuration: formatDuration, matchesQuery: matchesQuery, buildAssetRows: buildAssetRows, buildDropArgs: buildDropArgs };
 });

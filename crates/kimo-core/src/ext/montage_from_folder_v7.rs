@@ -67,6 +67,15 @@ fn run_montage(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let fit = a.get("fit").and_then(|v| v.as_str()).unwrap_or("cover").to_string();
     if !["contain", "cover", "stretch"].contains(&fit.as_str()) { return Err(format!("make_montage_from_folder: bad fit '{fit}'; use contain, cover or stretch")); }
 
+    // Validate still-image duration before creating a track or importing any files, so this
+    // deterministic argument error cannot leave an orphan asset or a partial montage behind.
+    if clip_duration.is_none() {
+        if let Some(path) = files.iter().find(|path| recognized_kind(path) == Some("still")) {
+            let path_str = path.to_str().ok_or_else(|| format!("make_montage_from_folder: non-UTF8 path {path:?}"))?;
+            return Err(format!("make_montage_from_folder: {path_str} is a still image (no native duration) -- clip_duration is required when the folder contains stills"));
+        }
+    }
+
     let track_id = match a.get("track_id").and_then(|v| v.as_str()) {
         Some(t) => t.to_string(),
         None => crate::commands::dispatch_nested(ss, "add_track", &json!({}))?["track_id"].as_str().unwrap().to_string(),

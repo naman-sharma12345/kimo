@@ -1,4 +1,3 @@
-16826
 <!doctype html>
 <html>
 <head>
@@ -80,13 +79,18 @@
   #render-queue-list .rq-empty { padding: 6px; color: #667; }
   #keyframe-lane .kf-key { position: absolute; top: 4px; width: 9px; height: 9px; margin-left: -4px; background: #fd6; border: 1px solid #a80; transform: rotate(45deg); cursor: pointer; }
   #keyframe-lane .kf-key:hover { background: #fff; }
-  #media-bin-list .mb-row { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 3px; }
+  #media-bin-list .mb-row { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 3px; cursor: grab; }
+  #media-bin-list .mb-row:active { cursor: grabbing; }
   #media-bin-list .mb-row:hover { background: #2a2a33; }
   #media-bin-list .mb-thumb { width: 48px; height: 27px; object-fit: cover; background: #111; border: 1px solid #333; border-radius: 2px; flex: none; }
   #media-bin-list .mb-meta { flex: 1 1 auto; overflow: hidden; }
   #media-bin-list .mb-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #media-bin-list .mb-sub { color: #9ab; font-size: 10px; }
   #media-bin-list .mb-empty { padding: 6px; color: #667; }
+  #media-bin-status { min-height: 14px; margin-top: 4px; color: #9ab; font-size: 10px; }
+  .track-lane { position: relative; height: 20px; flex: 1 1 auto; border-radius: 2px; }
+  .track.drop-target .track-lane { outline: 1px dashed #9cf; background: rgba(85, 153, 255, .12); }
+  .track.drop-denied .track-lane { outline: 1px dashed #f88; background: rgba(255, 85, 85, .10); }
 </style>
 </head>
 <body>
@@ -124,6 +128,7 @@
       </div>
       <input id="media-bin-search" placeholder="search media..." oninput="renderMediaBin()" style="width:100%;box-sizing:border-box;margin-bottom:6px">
       <div id="media-bin-list" style="max-height:200px;overflow-y:auto;font-size:11px"></div>
+      <div id="media-bin-status" role="status" aria-live="polite">Drag media onto an unlocked track to place it at that time.</div>
     </section>
     <section id="inspector" style="margin-top:12px">
       <h2>Clip &middot; effect params</h2>
@@ -201,6 +206,7 @@ const labelWidth = 70; // matches .track-label's CSS width
 let projectDuration = 0;
 let currentT = 0;
 let playing = false; let playTimer = null; let playLastWall = 0;
+const MEDIA_DRAG_TYPE = 'application/x-kimo-media-asset';
 
 async function loadTimeline() {
   const r = await fetch('/api/timeline'); const tl = await r.json();
@@ -226,8 +232,31 @@ async function loadTimeline() {
     removeBtn.style.cursor = 'pointer'; removeBtn.style.color = '#f77'; removeBtn.style.padding = '0 4px';
     removeBtn.onclick = (ev) => { ev.stopPropagation(); removeTrack(t.id); };
     btnBar.appendChild(removeBtn); label.appendChild(btnBar); row.appendChild(label);
-    const lane = document.createElement('div'); lane.style.position = 'relative'; lane.style.height = '20px'; lane.style.flex = '1 1 auto';
+    const lane = document.createElement('div'); lane.className = 'track-lane'; lane.dataset.trackId = t.id;
     const interactive = kimoTrackState.clipInteractionAllowed(t);
+    lane.addEventListener('dragenter', (ev) => {
+      if (!hasMediaAssetTransfer(ev.dataTransfer)) return;
+      row.classList.toggle('drop-target', interactive);
+      row.classList.toggle('drop-denied', !interactive);
+      if (!interactive) setMediaBinStatus('Unlock this track before adding media.');
+    });
+    lane.addEventListener('dragover', (ev) => {
+      if (!hasMediaAssetTransfer(ev.dataTransfer)) return;
+      if (!interactive) { ev.dataTransfer.dropEffect = 'none'; return; }
+      ev.preventDefault(); ev.dataTransfer.dropEffect = 'copy';
+    });
+    lane.addEventListener('dragleave', (ev) => {
+      if (!lane.contains(ev.relatedTarget)) row.classList.remove('drop-target', 'drop-denied');
+    });
+    lane.addEventListener('drop', (ev) => {
+      if (!hasMediaAssetTransfer(ev.dataTransfer)) return;
+      ev.preventDefault(); row.classList.remove('drop-target', 'drop-denied');
+      if (!interactive) { setMediaBinStatus('Unlock this track before adding media.'); return; }
+      let payload = null;
+      try { payload = JSON.parse(ev.dataTransfer.getData(MEDIA_DRAG_TYPE)); } catch {}
+      if (!payload || typeof payload.asset_id !== 'string') { setMediaBinStatus('Could not read that media item.'); return; }
+      placeMediaAsset(payload.asset_id, t, ev.clientX, lane);
+    });
     for (const c of t.clips) {
       const bar = document.createElement('div'); bar.className = 'clip' + (kimoMultiselect.isSelected(selectedClipIds, c.id) ? ' selected' : '');
       bar.style.position = 'absolute'; bar.style.left = (c.start * pxPerSec) + 'px';
@@ -644,6 +673,35 @@ function snapProposed(proposed, excludeClipId) {
   const candidates = window.kimoSnap.candidatesFromTimeline(lastTimeline, excludeClipId);
   return window.kimoSnap.snapTime(proposed, candidates, SNAP_PX / pxPerSec);
 }
+function hasMediaAssetTransfer(dataTransfer) {
+  return !!dataTransfer && Array.from(dataTransfer.types || []).includes(MEDIA_DRAG_TYPE);
+}
+function setMediaBinStatus(message) {
+  const el = document.getElementById('media-bin-status');
+  if (el) el.textContent = message;
+}
+async function placeMediaAsset(assetId, track, clientX, lane) {
+  const asset = mediaBinAssets.find((a) => a.asset_id === assetId);
+  const rect = lane.getBoundingClientRect();
+  const proposed = Math.max(0, (clientX - rect.left) / pxPerSec);
+  const start = snapProposed(proposed, null);
+  const placement = kimoMediaBin.buildDropArgs(asset, track, start);
+  if (!placement.ok) { setMediaBinStatus(placement.error); return; }
+  const v = await callApi('add_clip', placement.args);
+  if (!v.ok) {
+    const msg = typeof v.error === 'string' ? v.error : v.error && v.error.message || JSON.stringify(v.error);
+    setMediaBinStatus('Could not place media: ' + msg); return;
+  }
+  selectedClipId = v.result && v.result.clip_id || null;
+  selectedClipIds = selectedClipId ? [selectedClipId] : [];
+  currentT = placement.args.start;
+  document.getElementById('t').value = currentT.toFixed(2);
+  await loadTimeline();
+  if (selectedClipId) await loadInspector();
+  await loadPreview();
+  await loadMediaBin();
+  setMediaBinStatus(`Added ${kimoMediaBin.basename(asset.path)} to ${track.name || track.id} at ${currentT.toFixed(2)}s.`);
+}
 function startDrag(ev, clip, mode) {
   ev.preventDefault(); ev.stopPropagation();
   const startX = ev.clientX; const origStart = clip.start; const origDuration = clip.duration;
@@ -906,6 +964,14 @@ function renderMediaBin() {
   if (rows.length === 0) { listEl.innerHTML = '<div class="mb-empty">no media imported yet</div>'; return; }
   for (const row of rows) {
     const el = document.createElement('div'); el.className = 'mb-row';
+    el.draggable = true; el.tabIndex = 0; el.title = `Drag ${row.name} to an unlocked timeline track to place it.`;
+    el.addEventListener('dragstart', (ev) => {
+      if (!ev.dataTransfer) return;
+      ev.dataTransfer.effectAllowed = 'copy';
+      ev.dataTransfer.setData(MEDIA_DRAG_TYPE, JSON.stringify({ asset_id: row.asset_id }));
+      ev.dataTransfer.setData('text/plain', row.name);
+      setMediaBinStatus(`Placing ${row.name} — drop it on an unlocked track.`);
+    });
     const img = document.createElement('img'); img.className = 'mb-thumb'; img.src = row.thumbUrl; img.alt = '';
     const meta = document.createElement('div'); meta.className = 'mb-meta';
     const name = document.createElement('div'); name.className = 'mb-name'; name.title = row.path; name.textContent = row.name;
@@ -928,4 +994,3 @@ loadTimeline(); loadRegistry(); renderQueuePanel(); loadMediaBin();
 </script>
 </body>
 </html>
-
