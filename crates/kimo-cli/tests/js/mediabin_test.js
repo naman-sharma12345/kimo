@@ -2,7 +2,7 @@
 //     node crates/kimo-cli/tests/js/mediabin_test.js      # exit 1 on failure
 const assert = require('assert');
 const path = require('path');
-const { basename, formatDuration, matchesQuery, buildAssetRows } = require(path.join(__dirname, '..', '..', 'src', 'gui_mediabin.js'));
+const { basename, formatDuration, matchesQuery, buildAssetRows, buildDropArgs } = require(path.join(__dirname, '..', '..', 'src', 'gui_mediabin.js'));
 
 let failures = 0;
 function check(name, actual, expected) {
@@ -45,6 +45,20 @@ check('buildAssetRows formats duration', rows.find((r) => r.asset_id === 'a1').d
 check('buildAssetRows filters by the search query', buildAssetRows(assets, 'b_roll').map((r) => r.asset_id), ['a2']);
 check('buildAssetRows of an empty/undefined list is empty', buildAssetRows([], 'x'), []);
 check('buildAssetRows of undefined list is empty', buildAssetRows(undefined, ''), []);
+
+const video = { asset_id: 'asset-7', duration: 12.5 };
+const unlocked = { id: 'track-2', locked: false };
+check('buildDropArgs places the whole media asset on the chosen track at the dropped time', buildDropArgs(video, unlocked, 3.25), {
+  ok: true, args: { track_id: 'track-2', source_type: 'media', asset_id: 'asset-7', start: 3.25, duration: 12.5 },
+});
+check('buildDropArgs clamps a negative timeline start to zero', buildDropArgs(video, unlocked, -2).args.start, 0);
+check('buildDropArgs refuses a locked track', buildDropArgs(video, { id: 'track-2', locked: true }, 1), {
+  ok: false, error: 'Unlock this track before adding media.',
+});
+check('buildDropArgs refuses a missing asset', buildDropArgs(null, unlocked, 1).ok, false);
+check('buildDropArgs refuses a missing track', buildDropArgs(video, null, 1).ok, false);
+check('buildDropArgs refuses an invalid duration', buildDropArgs({ asset_id: 'a', duration: 0 }, unlocked, 1).ok, false);
+check('buildDropArgs refuses a non-finite drop time', buildDropArgs(video, unlocked, Infinity).ok, false);
 
 if (failures > 0) { console.log(`\n${failures} failure(s)`); process.exit(1); }
 console.log('\nall media bin tests passed');

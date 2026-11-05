@@ -1448,7 +1448,7 @@ mod tests {
         let ss = fixture();
         let r = handle_request(&ss, "GET", "/", "", &[]);
         let body = String::from_utf8(r.body).unwrap();
-        for needle in ["gui_mediabin.js", "kimoMediaBin.buildAssetRows", "function loadMediaBin", "function renderMediaBin", "function importMediaBinAsset", "media-bin-list", "media-bin-search"] {
+        for needle in ["gui_mediabin.js", "kimoMediaBin.buildAssetRows", "kimoMediaBin.buildDropArgs", "function loadMediaBin", "function renderMediaBin", "function importMediaBinAsset", "function placeMediaAsset", "lane.addEventListener('drop'", "media-bin-list", "media-bin-search", "media-bin-status"] {
             assert!(body.contains(needle), "index page should carry {needle:?}");
         }
     }
@@ -1475,6 +1475,32 @@ mod tests {
         let far = handle_request(&ss, "POST", "/api/call", "", &fa);
         let fav: Value = serde_json::from_slice(&far.body).unwrap();
         assert_eq!(fav["result"]["matches"].as_array().unwrap().len(), 1, "{fav}");
+    }
+
+    #[test]
+    fn a_media_bin_placement_adds_the_imported_asset_on_the_requested_track_and_time() {
+        let ss = fixture();
+        let path = test_video("mb_drop.mp4");
+        let import = serde_json::to_vec(&json!({"tool": "import_media", "args": {"path": path}})).unwrap();
+        let imported = handle_request(&ss, "POST", "/api/call", "", &import);
+        let iv: Value = serde_json::from_slice(&imported.body).unwrap();
+        assert_eq!(iv["ok"], true, "{iv}");
+        let asset_id = iv["result"]["asset_id"].as_str().unwrap();
+        let track_id = timeline_view_model(&ss.lock().unwrap())["tracks"][0]["id"].as_str().unwrap().to_string();
+        let place = serde_json::to_vec(&json!({"tool": "add_clip", "args": {
+            "track_id": track_id, "source_type": "media", "asset_id": asset_id,
+            "start": 3.25, "duration": 1.0
+        }})).unwrap();
+        let added = handle_request(&ss, "POST", "/api/call", "", &place);
+        let av: Value = serde_json::from_slice(&added.body).unwrap();
+        assert_eq!(av["ok"], true, "{av}");
+        let tl = handle_request(&ss, "GET", "/api/timeline", "", &[]);
+        let tv: Value = serde_json::from_slice(&tl.body).unwrap();
+        let clips = tv["tracks"][0]["clips"].as_array().unwrap();
+        let placed = clips.iter().find(|c| c["id"] == av["result"]["clip_id"]).unwrap();
+        assert_eq!(placed["start"], 3.25);
+        assert_eq!(placed["duration"], 1.0);
+        assert_eq!(placed["source_kind"], "media");
     }
 
     #[test]
