@@ -50,14 +50,22 @@
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "compression": "lzma",
+        "headerImage": "installer/windows/header.bmp",
+        "sidebarImage": "installer/windows/sidebar.bmp",
+        "installerIcon": "icons/icon.ico",
+        "displayLanguageSelector": false,
+        "languages": [
+          "English"
+        ]
       }
     },
     "macOS": {
       "minimumSystemVersion": "10.15"
-    },
-    "externalBin": [
-      "binaries/kimo-mcp"
-    ]
+    }
   },
   "mainBinaryName": "kimo-gui"
 }
