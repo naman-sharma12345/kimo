@@ -75,7 +75,7 @@
         <button class="btn sm" id="live-graph">Open live graph window</button>
       </div>
       <div class="livewrap">
-        <div class="feed"><table><thead><tr><th style="width:74px">Time</th><th style="width:150px">Who</th><th>Action</th><th style="width:84px">Status</th><th>What changed</th></tr></thead><tbody id="live-rows"></tbody></table><div class="empty" id="live-empty">No agent actions yet. Every tool call from kimo chat, and from Claude Code or Codex when MCP is on, appears here the moment it starts.</div></div>
+        <div class="feed"><table><thead><tr><th style="width:74px">Time</th><th style="width:150px">Who</th><th>Action</th><th style="width:84px">Status</th><th style="width:220px">What changed</th></tr></thead><tbody id="live-rows"></tbody></table><div class="empty" id="live-empty">No agent actions yet. Every tool call from kimo chat, and from Claude Code or Codex when MCP is on, appears here the moment it starts.</div></div>
         <div class="grid" style="align-content:start">
           <div class="card"><div class="k">Just changed</div><div id="live-last" class="note muted">—</div></div>
           <div class="card"><div class="k">Engine preview</div><div class="preview" id="live-preview">no frame yet</div></div>
@@ -119,7 +119,7 @@
 <div class="overlay" id="setup">
   <div class="modal">
     <div class="row"><div class="mark" style="width:34px;height:34px;border-radius:10px;background:var(--ink);color:var(--cream);display:grid;place-items:center;font-weight:700">k</div><span class="muted note">First start</span></div>
-    <h1 class="serif" style="font-size:40px;margin-top:14px">One download and <em>kimo</em> is ready.</h1>
+    <h1 class="serif" style="font-size:40px;margin-top:14px">A few downloads and <em>kimo</em> is ready.</h1>
     <p class="sub" style="margin-bottom:6px">The installer stays small; the video tools and the speech model come from kimo's release page now, once. Each file is checked against its SHA-512 fingerprint before kimo uses it. A dropped connection resumes where it stopped.</p>
     <div id="parts"></div>
     <div class="part" style="background:transparent;border:0;padding:12px 2px 0"><div class="top"><span class="nm">Total</span><span class="sz" id="tot-t"></span></div><div class="bar totalbar"><i id="tot-bar"></i></div></div>

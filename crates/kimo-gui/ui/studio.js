@@ -147,7 +147,7 @@ function fillProvider() {
   const st = $('#key-state'); st.className = 'chip ' + (k?.set ? 'ok' : ''); st.textContent = k?.set ? (k.remembered ? 'saved in keychain' : 'set for this session') : 'no key';
   const cur = a.keys.find(x => x.provider === a.settings.provider);
   const curP = a.providers.find(x => x.id === a.settings.provider);
-  $('#pill-ai').className = 'pill ' + (cur?.set ? 'ok' : ''); $('#pill-ai-t').textContent = cur?.set ? curP.name : 'no key';
+  $('#pill-ai').className = 'pill ' + (cur?.set ? 'ok' : ''); $('#pill-ai-t').textContent = cur?.set ? curP.name.split(' (')[0] : 'no key';
   $('#h-ai').textContent = cur?.set ? curP.name : 'No key yet'; $('#h-ai-m').textContent = cur?.set ? (a.settings.models[curP.id] || curP.default_model) : 'Add one in Connections';
   $('#chat-model').textContent = cur?.set ? `${curP.name} · ${a.settings.models[curP.id] || curP.default_model}` : 'no key: add one in Connections'; $('#chat-model').className = 'chip ' + (cur?.set ? 'ok' : '');
 }
@@ -248,6 +248,8 @@ function onLive(m) {
   if (ev.type === 'frame_rendered' && (ev.png_b64 || ev.jpg_b64)) { $('#live-preview').innerHTML = `<img alt="engine preview" src="data:image/${ev.png_b64 ? 'png' : 'jpeg'};base64,${ev.png_b64 || ev.jpg_b64}">`; return; }
   let name = ev.tool_name || ev.name, id = ev.call_id || ev.id, phase = ev.phase || (ev.type === 'tool_start' ? 'start' : ev.type === 'tool_end' ? (ev.status === 'error' ? 'error' : 'complete') : null);
   if (!name && !phase) return;
+  // the chat agent reads the engine's undo history around every call to know what changed; that bookkeeping is not an edit
+  if (name === 'history_list' && src.kind === 'gui') return;
   const key = `${src.kind}:${src.conn || 0}:${id ?? name}`;
   let r = S.rows.get(key);
   if (!r) { r = { key, src, name, t: m.t || Date.now(), args: ev.payload?.args || ev.args, status: 'running' }; S.rows.set(key, r); S.order.unshift(key); S.liveTotal++; r.isNew = true; }
