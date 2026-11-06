@@ -62,3 +62,6 @@ pub fn serve<F>(handler: F) -> Fixture where F: Fn(&Req) -> Resp + Send + Sync +
     });
     Fixture { base, log }
 }
+
+/// Tests that bind the public spectator ports 7421-7430 take this, so engines never greet another test's listener.
+pub static PORTS: Mutex<()> = Mutex::new(());

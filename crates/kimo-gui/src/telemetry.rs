@@ -88,6 +88,7 @@ mod tests {
     use std::time::Duration;
     #[test]
     fn private_and_external_are_tagged() {
+        let _ports = crate::testutil::PORTS.lock().unwrap_or_else(|e| e.into_inner());
         let got: Arc<Mutex<Vec<(Source, Value)>>> = Arc::new(Mutex::new(vec![]));
         let g2 = got.clone();
         let sink: Sink = Arc::new(move |s, v| g2.lock().unwrap().push((s, v)));
@@ -117,6 +118,7 @@ mod tests {
     }
     #[test]
     fn binds_loopback_only() {
+        let _ports = crate::testutil::PORTS.lock().unwrap_or_else(|e| e.into_inner());
         let ext = listen_external(Arc::new(|_, _| {}), Arc::new(|_| {})).unwrap();
         assert!(GUI_PORTS.contains(&ext.port));
         // nothing listens on the wildcard address for that port from this listener
