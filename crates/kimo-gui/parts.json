@@ -84,7 +84,7 @@
       "id": "model",
       "os": "",
       "name": "Speech model (whisper small, multilingual)",
-      "note": "190 MB, runs on this computer",
+      "note": "captions offline, on this computer",
       "urls": [
         "https://downloads.getkimo.tech/parts/ggml-small-q5_1.bin",
         "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin"
