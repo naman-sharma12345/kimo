@@ -106,7 +106,7 @@ async function detectAgents() {
       <div class="note">${g.blurb}${a.linked && a.linked_command ? `<br>Existing entry runs <span class="mono">${esc(a.linked_command)}</span>` : ''}</div>
       <pre class="codebox mono" style="font-size:12px">${esc(cmd || '—')}</pre>
       <div class="row"><button class="btn sm" data-copy="${a.id}">Copy command</button><button class="btn sm pri" data-add="${a.id}" ${on && (a.id === 'codex' || a.cli) && !a.linked ? '' : 'disabled'}>Add for me</button>
-      <a class="note" style="margin-left:auto" target="_blank" href="${esc(sn[g.doc] || '#')}">syntax checked against the official docs ↗</a></div></div>`;
+      <a class="note" style="margin-left:auto" target="_blank" href="${esc(sn[g.doc] || '#')}">Syntax per official docs ↗</a></div></div>`;
   }).join('');
   $$('[data-copy]').forEach(b => b.onclick = () => copy(b.dataset.copy === 'claude' ? sn.claude_add : sn.codex_add));
   $$('[data-add]').forEach(b => b.onclick = () => confirmAdd(b.dataset.add));
@@ -278,6 +278,15 @@ function renderLive() {
   $('#home-feed').innerHTML = S.order.slice(0, 5).map(k => S.rows.get(k)).map(r => `<div class="ev"><span class="mono muted">${clock(r.t)}</span>${who(r.src)}<span class="mono">${esc(r.name)}</span><span style="margin-left:auto">${r.status === 'ok' ? '<span class="st-ok">✓</span>' : r.status === 'error' ? '<span class="st-err">✕</span>' : '<span class="spin"></span>'}</span></div>`).join('') || $('#home-feed').innerHTML;
 }
 $$('#live-filter button').forEach(b => b.onclick = () => { S.filter = b.dataset.f; $$('#live-filter button').forEach(x => x.classList.toggle('on', x === b)); renderLive(); });
+// ---------- about ----------
+$('#brand').onclick = () => {
+  const a = S.app || {}, e = a.engine || {};
+  $('#ab-ver').textContent = a.version ? 'v' + a.version : '—';
+  $('#ab-eng').textContent = e.version ? `v${e.version} · ${e.tools} tools / ${e.actions} actions` : (e.state || '—');
+  $('#about').classList.add('on');
+};
+$('#ab-close').onclick = () => $('#about').classList.remove('on');
+$('#about').onclick = ev => { if (ev.target.id === 'about') $('#about').classList.remove('on'); };
 $('#live-graph').onclick = () => B.invoke('open_spectator').catch(e => toast(String(e)));
 
 // ---------- project ----------
