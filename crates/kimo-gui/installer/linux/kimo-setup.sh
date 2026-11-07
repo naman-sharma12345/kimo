@@ -15,6 +15,23 @@ CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/kimo-setup"
 
 say() { printf '%s\n' "kimo: $*"; }
 die() { printf '%s\n' "kimo: $*" >&2; exit 1; }
+banner() {  # the kimo mark (9 bars + ember playhead) in the terminal; only on a tty, plain when NO_COLOR is set
+  [ -t 1 ] || return 0
+  if [ -z "${NO_COLOR:-}" ]; then C=$(printf '\033[38;2;243;239;231m'); E=$(printf '\033[38;2;255;90;35m'); R=$(printf '\033[0m'); else C=; E=; R=; fi
+  cat <<EOF
+
+          $E▼$R
+  $C█$R $C█$R     $E│$R     $C█$R $C█$R
+  $C█$R $C█$R $C█$R   $E│$R   $C█$R $C█$R $C█$R
+  $C█$R $C█$R $C█$R $C█$R $E│$R $C█$R $C█$R $C█$R $C█$R
+  $C█$R $C█$R $C█$R $C█$R $C█$R $C█$R $C█$R $C█$R $C█$R
+  $C█$R $C█$R $C█$R $C█$R $C█$R $C█$R $C█$R $C█$R $C█$R
+  $C█$R $C█$R $C█$R $C█$R $C█$R $C█$R $C█$R $C█$R $C█$R
+          $E╵$R
+  ${C}kimo${R}  online setup
+
+EOF
+}
 
 if [ "${1:-}" = "--uninstall" ]; then
   rm -f "$BIN_DIR/kimo" "$APPS_DIR/kimo.desktop"
@@ -31,6 +48,7 @@ if ! ldconfig -p 2>/dev/null | grep -q 'libwebkit2gtk-4.1'; then
   say "note: the window needs WebKitGTK 4.1 (Debian/Ubuntu: sudo apt install libwebkit2gtk-4.1-0; Fedora: sudo dnf install webkit2gtk4.1)"
 fi
 
+banner
 mkdir -p "$CACHE"
 say "checking the release"
 curl -fsSL --retry 3 "$BASE/$PKG.sha512" -o "$CACHE/$PKG.sha512" || die "could not reach $BASE (offline?)"
