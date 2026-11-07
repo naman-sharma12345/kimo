@@ -17,6 +17,8 @@ def serve():
 async def shot(pg, name):
     if SHOTS:
         os.makedirs(SHOTS, exist_ok=True)
+        await pg.evaluate('document.getAnimations().forEach(a => { try { a.finish() } catch (e) {} })')
+        await pg.wait_for_timeout(60)
         await pg.screenshot(path=os.path.join(SHOTS, name))
 
 async def main():
@@ -50,7 +52,7 @@ async def main():
         await pg.click('#cfg-seg button[data-c=codex_toml]')
         check('[mcp_servers.kimo]' in await pg.inner_text('#cfg-box'), 'mcp: Codex TOML shown')
         await pg.click('#cfg-seg button[data-c=claude_add]')
-        await pg.evaluate('document.querySelector("#mcp-card").scrollIntoView()')
+        await pg.evaluate('document.querySelector("main").scrollTop = 0')
         await shot(pg, 'mcp_panel.png')
         await pg.wait_for_selector('#agent-claude')
         check('not found on PATH' in await pg.inner_text('#agent-codex'), 'agents: Codex not on PATH says so')
