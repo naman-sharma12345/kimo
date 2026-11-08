@@ -15,11 +15,18 @@ window.__kimoBridge = B;
 const S = { app: null, tab: 'home', rows: new Map(), order: [], filter: 'all', liveTotal: 0, cards: [], cfg: 'claude_add', setup: {}, busy: false };
 
 function toast(t) { const el = $('#toast'); el.textContent = t; el.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('on'), 1800); }
-async function copy(text) {
+async function copy(text, btn) {
   try { await navigator.clipboard.writeText(text); }
   catch { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
   toast('Copied');
+  if (btn) { // the button itself confirms: "Copied ✓" for a moment, then back
+    btn.dataset.label ??= btn.textContent; btn.textContent = 'Copied ✓'; btn.classList.add('done');
+    clearTimeout(btn._t); btn._t = setTimeout(() => { btn.textContent = btn.dataset.label; btn.classList.remove('done'); }, 1400);
+  }
 }
+const ICON = name => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
+const ICONS = {"term": "<rect x=\"3.5\" y=\"5\" width=\"17\" height=\"14\" rx=\"2.5\"/><path d=\"m7.5 10 2.5 2-2.5 2M12.5 14.5h4\"/>", "film": "<rect x=\"3.5\" y=\"4.5\" width=\"17\" height=\"15\" rx=\"2\"/><path d=\"M7.5 4.5v15M16.5 4.5v15M3.5 9h4M3.5 15h4M16.5 9h4M16.5 15h4\"/>", "wave": "<path d=\"M4 12h1.5M7 8v8M10 5v14M13 9v6M16 7v10M19 11v2\"/>", "cpu": "<rect x=\"6\" y=\"6\" width=\"12\" height=\"12\" rx=\"2\"/><path d=\"M9.5 9.5h5v5h-5zM9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3\"/>", "sparkle": "<path d=\"M12 4v4M12 16v4M4 12h4M16 12h4M6.6 6.6l2.2 2.2M15.2 15.2l2.2 2.2M6.6 17.4l2.2-2.2M15.2 8.8l2.2-2.2\"/>", "folder": "<path d=\"M3.5 7.5A1.5 1.5 0 0 1 5 6h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z\"/>"};
+const TITLES = { home: 'Home', chat: 'Chat', live: 'Live', connections: 'Connections' };
 const fmtMB = b => b >= 1e9 ? (b / 1e9).toFixed(2) + ' GB' : (b / 1e6).toFixed(b >= 1e7 ? 0 : 1) + ' MB';
 const fmtTime = s => s == null || !isFinite(s) ? '—' : s < 60 ? Math.ceil(s) + ' s' : Math.floor(s / 60) + ' min ' + Math.ceil(s % 60) + ' s';
 const clock = t => new Date(t).toLocaleTimeString([], { hour12: false });
@@ -27,6 +34,7 @@ const clock = t => new Date(t).toLocaleTimeString([], { hour12: false });
 // ---------- tabs ----------
 function show(tab) {
   S.tab = tab;
+  $('#tb-title').textContent = TITLES[tab] || tab;
   $$('#nav a').forEach(a => a.classList.toggle('on', a.dataset.tab === tab));
   $$('.tab').forEach(s => s.classList.toggle('on', s.id === 'tab-' + tab));
   if (tab === 'live') $('#nav-live').hidden = true;
@@ -72,7 +80,7 @@ function renderCfg() {
   const sn = S.app?.snippets; if (!sn) { $('#cfg-box').textContent = 'engine not found'; return; }
   $$('#cfg-seg button').forEach(b => b.classList.toggle('on', b.dataset.c === S.cfg));
   $('#cfg-box').innerHTML = `<button class="btn sm copy">Copy</button>${esc(sn[S.cfg])}`;
-  $('#cfg-box .copy').onclick = () => copy(sn[S.cfg]);
+  $('#cfg-box .copy').onclick = e => copy(sn[S.cfg], e.currentTarget);
 }
 $$('#cfg-seg button').forEach(b => b.onclick = () => { S.cfg = b.dataset.c; renderCfg(); });
 $('#mcp-switch').onclick = async () => {
@@ -90,8 +98,8 @@ $('#mcp-switch').onclick = async () => {
 
 // ---------- coding agents ----------
 const AG = {
-  claude: { color: '#D97757', letter: 'C', blurb: 'Adds kimo to Claude Code for your user (all projects).', snip: 'claude_add', doc: 'claude_doc' },
-  codex: { color: '#141210', letter: 'X', blurb: 'Adds a [mcp_servers.kimo] table to ~/.codex/config.toml.', snip: 'codex_toml', doc: 'codex_doc' },
+  claude: { color: 'linear-gradient(180deg,#E08A6C,#D2704F)', blurb: 'Adds kimo to Claude Code for your user (all projects).', snip: 'claude_add', doc: 'claude_doc' },
+  codex: { color: 'linear-gradient(180deg,#2B2723,#141210)', blurb: 'Adds a [mcp_servers.kimo] table to ~/.codex/config.toml.', snip: 'codex_toml', doc: 'codex_doc' },
 };
 async function detectAgents() {
   let list = [];
@@ -102,13 +110,13 @@ async function detectAgents() {
     const status = a.linked ? `<span class="chip ok">kimo linked</span>` : a.cli ? `<span class="chip">found, not linked</span>` : `<span class="chip">not found on PATH</span>`;
     const cmd = a.id === 'claude' ? sn.claude_add : sn.codex_add;
     return `<div class="card agent" id="agent-${a.id}">
-      <div class="hd"><div class="logo" style="background:${g.color}">${g.letter}</div><div><h2 style="margin:0">${esc(a.name)}</h2><div class="note mono muted">${esc(a.cli || 'command not on PATH')}</div></div><div style="margin-left:auto">${status}</div></div>
+      <div class="hd"><div class="logo" style="background:${g.color}">${ICON('term')}</div><div><h2 style="margin:0">${esc(a.name)}</h2><div class="note mono muted">${esc(a.cli || 'command not on PATH')}</div></div><div style="margin-left:auto">${status}</div></div>
       <div class="note">${g.blurb}${a.linked && a.linked_command ? `<br>Existing entry runs <span class="mono">${esc(a.linked_command)}</span>` : ''}</div>
       <pre class="codebox mono" style="font-size:12px">${esc(cmd || '—')}</pre>
       <div class="row"><button class="btn sm" data-copy="${a.id}">Copy command</button><button class="btn sm pri" data-add="${a.id}" ${on && (a.id === 'codex' || a.cli) && !a.linked ? '' : 'disabled'}>Add for me</button>
       <a class="note" style="margin-left:auto" target="_blank" href="${esc(sn[g.doc] || '#')}">Syntax per official docs ↗</a></div></div>`;
   }).join('');
-  $$('[data-copy]').forEach(b => b.onclick = () => copy(b.dataset.copy === 'claude' ? sn.claude_add : sn.codex_add));
+  $$('[data-copy]').forEach(b => b.onclick = () => copy(b.dataset.copy === 'claude' ? sn.claude_add : sn.codex_add, b));
   $$('[data-add]').forEach(b => b.onclick = () => confirmAdd(b.dataset.add));
 }
 function confirmAdd(id) {
@@ -267,6 +275,9 @@ function renderLive() {
   $('#live-count').textContent = S.liveTotal ? `${S.liveTotal} action${S.liveTotal > 1 ? 's' : ''} this session` : '';
   const running = rows.some(r => r.status === 'running');
   $('#live-state').textContent = running ? 'agent working' : S.liveTotal ? 'idle' : 'waiting'; $('#live-state').className = 'chip ' + (running ? 'acc' : '');
+  const anyRun = [...S.rows.values()].some(r => r.status === 'running');
+  $('#tb-live').className = 'tb-live' + (anyRun ? ' busy' : S.liveTotal ? ' seen' : '');
+  $('#tb-live-t').textContent = anyRun ? 'Agent working' : S.liveTotal ? `${S.liveTotal} action${S.liveTotal > 1 ? 's' : ''} · idle` : 'Idle';
   $('#live-rows').innerHTML = rows.slice(0, 200).map(r => {
     const st = r.status === 'running' ? `<span class="st-run"><span class="spin"></span> ${r.pct != null ? r.pct + '%' : ''}</span>` : r.status === 'ok' ? `<span class="st-ok">✓ ${r.dur != null ? r.dur + ' ms' : ''}</span>` : `<span class="st-err">✕</span>`;
     const tgt = r.target && (r.target.clip_id || r.target.track_id) ? `<div class="note muted mono">${esc([r.target.track_id, r.target.clip_id].filter(Boolean).join(' / '))}</div>` : '';
@@ -293,7 +304,7 @@ $('#live-graph').onclick = () => B.invoke('open_spectator').catch(e => toast(Str
 $('#proj-open').onclick = async () => {
   const p = $('#proj-path').value.trim(); if (!p) return;
   $('#proj-msg').textContent = 'Opening…';
-  try { await B.invoke('project_open', { path: p }); $('#proj-msg').textContent = 'Opened. Chat edits now apply to this project.'; } catch (e) { $('#proj-msg').textContent = String(e); }
+  try { await B.invoke('project_open', { path: p }); $('#proj-msg').textContent = 'Opened. Chat edits now apply to this project.'; $('#tb-proj-t').textContent = p.split(/[\\/]/).pop(); } catch (e) { $('#proj-msg').textContent = String(e); }
 };
 
 // ---------- first-run setup ----------
@@ -303,7 +314,8 @@ async function setupStatus() {
   const need = s.parts.filter(p => !p.installed && !p.optional), ready = need.length === 0;
   $('#h-parts').textContent = ready ? 'Ready' : `${need.length} to download`;
   $('#h-parts-m').textContent = s.parts.map(p => `${p.name.split(' (')[0]} ${p.installed ? '✓' : '·'}`).join('  ');
-  $('#parts').innerHTML = s.parts.map(p => `<div class="part${p.installed ? ' done' : ''}" id="part-${p.id}">
+  const PIC = { ffmpeg: 'film', ffprobe: 'cpu', whisper: 'term', model: 'wave' };
+  $('#parts').innerHTML = s.parts.map(p => `<div class="part${p.installed ? ' done' : ''}" id="part-${p.id}"><span class="pic">${ICON(PIC[p.id] || 'folder')}</span>
     <div class="top"><span class="nm">${esc(p.name)}</span><span class="note muted">${esc(p.note)}${p.optional ? ' · optional' : ''}</span><span class="sz">${p.size ? fmtMB(p.size) : 'size set at release'}</span></div>
     <div class="bar"><i style="width:${p.installed ? 100 : 0}%"></i></div>
     <div class="meta"><span class="st">${p.installed ? 'installed, SHA-512 verified' : p.pinned ? 'waiting' : 'not published yet'}</span><span class="spd"></span><span class="eta"></span></div></div>`).join('');

@@ -3,8 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>kimo</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/InstrumentSans-Variable.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="studio.css">
 </head>
 <body>
@@ -17,11 +19,12 @@
 <div id="shell">
   <aside id="side">
     <button class="brand" id="brand" title="About kimo"><svg class="km mark" viewBox="0 0 1024 1024" role="img" aria-label="kimo"><use href="#km-sm"/></svg><span class="word">kimo</span><span class="ver mono" id="ver"></span></button>
+    <div class="side-h">Workspace</div>
     <nav id="nav">
-      <a data-tab="home" class="on"><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.4 12 4l8 6.4V19a1.5 1.5 0 0 1-1.5 1.5H15v-5.5H9v5.5H5.5A1.5 1.5 0 0 1 4 19z"/></svg></span>Home</a>
-      <a data-tab="chat"><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 4.5h13A1.5 1.5 0 0 1 20 6v9a1.5 1.5 0 0 1-1.5 1.5H10L6 20v-3.5h-.5A1.5 1.5 0 0 1 4 15V6a1.5 1.5 0 0 1 1.5-1.5z"/><path d="M8 9h8M8 12h5"/></svg></span>Chat<span class="badge" id="nav-changes" hidden></span></a>
-      <a data-tab="live"><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2.2"/><path d="M8.1 8.1a5.5 5.5 0 0 0 0 7.8M15.9 8.1a5.5 5.5 0 0 1 0 7.8M5.2 5.2a9.6 9.6 0 0 0 0 13.6M18.8 5.2a9.6 9.6 0 0 1 0 13.6"/></svg></span>Live<span class="dot" id="nav-live" hidden></span></a>
-      <a data-tab="connections"><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.2 13.8a3.8 3.8 0 0 0 5.4 0l3.1-3.1a3.8 3.8 0 0 0-5.4-5.4l-1 1M13.8 10.2a3.8 3.8 0 0 0-5.4 0l-3.1 3.1a3.8 3.8 0 0 0 5.4 5.4l1-1"/></svg></span>Connections</a>
+      <a data-tab="home" class="on"><span class="ic"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V19a1.5 1.5 0 0 1-1.5 1.5H15v-5h-6v5H5.5A1.5 1.5 0 0 1 4 19z"/></svg></span>Home</a>
+      <a data-tab="chat"><span class="ic"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 4.5h13A1.5 1.5 0 0 1 20 6v9a1.5 1.5 0 0 1-1.5 1.5H10L6 20v-3.5h-.5A1.5 1.5 0 0 1 4 15V6a1.5 1.5 0 0 1 1.5-1.5z"/><path d="M8.5 9h7M8.5 12h4.5"/></svg></span>Chat<span class="badge" id="nav-changes" hidden></span></a>
+      <a data-tab="live"><span class="ic"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M8.2 8.2a5.4 5.4 0 0 0 0 7.6M15.8 8.2a5.4 5.4 0 0 1 0 7.6M5.4 5.4a9.3 9.3 0 0 0 0 13.2M18.6 5.4a9.3 9.3 0 0 1 0 13.2"/></svg></span>Live<span class="dot" id="nav-live" hidden></span></a>
+      <a data-tab="connections"><span class="ic"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.2 13.8a3.8 3.8 0 0 0 5.4 0l3.1-3.1a3.8 3.8 0 0 0-5.4-5.4l-1 1M13.8 10.2a3.8 3.8 0 0 0-5.4 0l-3.1 3.1a3.8 3.8 0 0 0 5.4 5.4l1-1"/></svg></span>Connections</a>
     </nav>
     <div class="side-foot"><div class="foot-h">This computer</div>
       <div class="pill" id="pill-engine"><span class="d"></span><b>Engine</b><span id="pill-engine-t">starting…</span></div>
@@ -30,27 +33,40 @@
     </div>
   </aside>
   <main>
+    <header id="topbar">
+      <div class="crumb"><span class="muted">kimo</span><span class="sep">/</span><span id="tb-title">Home</span></div>
+      <span class="tb-proj" id="tb-proj"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/></svg><span id="tb-proj-t">Empty project</span></span>
+      <button class="tb-live" id="tb-live" data-go="live"><span class="d"></span><span id="tb-live-t">Idle</span></button>
+    </header>
+    <div class="page">
     <!-- HOME -->
     <section class="tab on" id="tab-home">
-      <h1 class="serif">Make it with <em>kimo</em>.</h1>
-      <p class="sub">kimo runs the editing engine on this computer. Tell it what you want in Chat with your own AI key, or connect Claude Code or Codex and create from there. Every action any agent takes shows up live.</p>
-      <div class="grid g4">
-        <div class="card"><div class="k">Engine</div><div class="v" id="h-engine">…</div><div class="m" id="h-engine-m"></div></div>
-        <div class="card"><div class="k">MCP for coding agents</div><div class="v" id="h-mcp">Off</div><div class="m" id="h-mcp-m">Off by default, local only</div></div>
-        <div class="card"><div class="k">Your AI</div><div class="v" id="h-ai">No key yet</div><div class="m" id="h-ai-m">Add one in Connections</div></div>
-        <div class="card"><div class="k">Video tools</div><div class="v" id="h-parts">…</div><div class="m" id="h-parts-m"></div></div>
+      <div class="hero">
+        <div class="hero-copy">
+          <div class="eyebrow">AI video editor · runs on this computer</div>
+          <h1 class="serif">Make it with <em>kimo</em>.</h1>
+          <p class="sub">Tell kimo what you want in Chat with your own AI key, or connect Claude Code or Codex and create from there. Every action any agent takes shows up live.</p>
+          <div class="row cta"><button class="btn acc lg" data-go="chat"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 4.5h13A1.5 1.5 0 0 1 20 6v9a1.5 1.5 0 0 1-1.5 1.5H10L6 20v-3.5h-.5A1.5 1.5 0 0 1 4 15V6a1.5 1.5 0 0 1 1.5-1.5z"/><path d="M8.5 9h7M8.5 12h4.5"/></svg>Start in Chat</button><button class="btn lg" data-go="connections"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="m7.5 10 2.5 2-2.5 2M12.5 14.5h4"/></svg>Connect a coding agent</button></div>
+        </div>
+        <div class="hero-art" aria-hidden="true"><div class="glow"></div><div class="ring r1"></div><div class="ring r2"></div><svg class="km hero-km" viewBox="0 0 1024 1024"><use href="#km"/></svg></div>
+      </div>
+      <div class="stats">
+        <div class="stat"><div class="k"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9.5 9.5h5v5h-5zM9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3"/></svg>Engine</div><div class="v" id="h-engine">…</div><div class="m" id="h-engine-m"></div></div>
+        <div class="stat"><div class="k"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0zM12 16v5"/></svg>MCP for coding agents</div><div class="v" id="h-mcp">Off</div><div class="m" id="h-mcp-m">Off by default, local only</div></div>
+        <div class="stat"><div class="k"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="m11 12 8.5-8.5M16 7l2.5 2.5M14 9l2 2"/></svg>Your AI</div><div class="v" id="h-ai">No key yet</div><div class="m" id="h-ai-m">Add one in Connections</div></div>
+        <div class="stat"><div class="k"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M7.5 4.5v15M16.5 4.5v15M3.5 9h4M3.5 15h4M16.5 9h4M16.5 15h4"/></svg>Video tools</div><div class="v" id="h-parts">…</div><div class="m" id="h-parts-m"></div></div>
       </div>
       <div class="sec"><h2>Start creating</h2></div>
       <div class="grid g3 ways">
-        <div class="card" data-go="chat"><div class="n">Chat<span class="go" aria-hidden="true">→</span></div><div class="m">Describe the edit. kimo's agent uses your API key and the engine's tools, and every change gets its own Undo.</div></div>
-        <div class="card" data-go="connections" data-focus="claude"><div class="n">Claude Code<span class="go" aria-hidden="true">→</span></div><div class="m">Turn on MCP and add kimo to Claude Code with one command. Its edits appear in Live.</div></div>
-        <div class="card" data-go="connections" data-focus="codex"><div class="n">Codex<span class="go" aria-hidden="true">→</span></div><div class="m">Same engine, from Codex: one command or a config.toml entry.</div></div>
+        <div class="card way" data-go="chat"><div class="wi acc"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 4.5h13A1.5 1.5 0 0 1 20 6v9a1.5 1.5 0 0 1-1.5 1.5H10L6 20v-3.5h-.5A1.5 1.5 0 0 1 4 15V6a1.5 1.5 0 0 1 1.5-1.5z"/><path d="M8.5 9h7M8.5 12h4.5"/></svg></div><div class="n">Chat<span class="go"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span></div><div class="m">Describe the edit. kimo's agent uses your API key and the engine's tools, and every change gets its own Undo.</div></div>
+        <div class="card way" data-go="connections" data-focus="claude"><div class="wi clay"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="m7.5 10 2.5 2-2.5 2M12.5 14.5h4"/></svg></div><div class="n">Claude Code<span class="go"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span></div><div class="m">Turn on MCP and add kimo to Claude Code with one command. Its edits appear in Live.</div></div>
+        <div class="card way" data-go="connections" data-focus="codex"><div class="wi inkt"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="m7.5 10 2.5 2-2.5 2M12.5 14.5h4"/></svg></div><div class="n">Codex<span class="go"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span></div><div class="m">Same engine, from Codex: one command or a config.toml entry.</div></div>
       </div>
-      <div class="grid g2 sec">
-        <div class="card"><h2>Open a project</h2><p class="note muted" style="margin:2px 0 10px">A .kimo project file on this computer. The engine starts with an empty project.</p>
-          <div class="row"><input type="text" id="proj-path" placeholder="/path/to/project.kimo"><button class="btn pri" id="proj-open">Open</button></div>
+      <div class="grid g2 sec lower">
+        <div class="card"><div class="ch"><h2>Open a project</h2></div><p class="note muted" style="margin:0 0 12px">A .kimo project file on this computer. The engine starts with an empty project.</p>
+          <div class="row"><input type="text" id="proj-path" placeholder="/path/to/project.kimo" spellcheck="false"><button class="btn pri" id="proj-open">Open</button></div>
           <div class="note" id="proj-msg" style="margin-top:8px"></div></div>
-        <div class="card feed-mini"><div class="row" style="margin-bottom:4px"><h2>Latest agent actions</h2><a class="note" style="margin-left:auto;cursor:pointer" data-go="live">Open Live →</a></div><div id="home-feed"><div class="empty sm"><svg class="km e" viewBox="0 0 1024 1024" aria-hidden="true"><use href="#km-sm"/></svg><div class="et">No actions yet</div><div class="ed">Actions from kimo chat and connected agents appear here as they happen.</div></div></div></div>
+        <div class="card feed-mini"><div class="ch"><h2>Latest agent actions</h2><a class="lnk" data-go="live">Open Live <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a></div><div id="home-feed"><div class="empty sm"><svg class="km e" viewBox="0 0 1024 1024" aria-hidden="true"><use href="#km-sm"/></svg><div class="et">No actions yet</div><div class="ed">Actions from kimo chat and connected agents appear here as they happen.</div></div></div></div>
       </div>
     </section>
 
@@ -58,35 +74,36 @@
     <section class="tab" id="tab-chat">
       <div class="chatwrap">
         <div class="convo">
-          <div class="row" style="padding:14px 18px;border-bottom:1px solid var(--line)"><h2 style="margin:0">Chat with kimo</h2><span class="chip" id="chat-model">no key</span><button class="btn sm" style="margin-left:auto" id="chat-reset">New chat</button></div>
+          <div class="convo-hd"><h2>Chat with kimo</h2><span class="chip" id="chat-model">no key</span><button class="btn sm ghost" style="margin-left:auto" id="chat-reset">New chat</button></div>
           <div class="msgs" id="msgs"><div class="msg agent" id="chat-hello">Tell me what to change, like “make the captions bigger” or “cut the pause at 0:12”. I make the edit with the engine's tools; each change shows on the right with its own Undo.</div></div>
           <div class="composer">
             <div class="sugg"><button>Make the captions bigger</button><button>Cut the pause at 0:12</button><button>Warmer colour</button><button>Add a title at the start</button></div>
-            <div class="in"><textarea id="chat-in" placeholder="Tell kimo what to change…"></textarea><button class="btn acc" id="chat-send">Send</button></div>
+            <div class="in"><textarea id="chat-in" placeholder="Tell kimo what to change…" rows="1"></textarea><button class="btn acc" id="chat-send" aria-label="Send"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg><span>Send</span></button></div>
+            <div class="hint">Enter to send · Shift+Enter for a new line</div>
           </div>
         </div>
-        <div style="display:flex;flex-direction:column;min-height:0">
-          <div class="row" style="margin:4px 0 10px"><h2 style="margin:0">Changes</h2><span class="chip" id="chg-count">0</span></div>
+        <aside class="chgcol">
+          <div class="col-hd"><h2>Changes</h2><span class="chip" id="chg-count">0</span></div>
           <div class="changes" id="changes"><div class="empty sm card-ish" id="chg-empty"><svg class="km e" viewBox="0 0 1024 1024" aria-hidden="true"><use href="#km-sm"/></svg><div class="et">No changes yet</div><div class="ed">Changes the agent makes land here. Undo uses the engine's own history: undoing one change also undoes the changes made after it.</div></div></div>
-        </div>
+        </aside>
       </div>
     </section>
 
     <!-- LIVE -->
     <section class="tab" id="tab-live">
       <div class="live-top">
-        <h1 class="serif title" style="margin:0">Live</h1>
+        <h1 class="serif title">Live</h1>
         <span class="chip acc" id="live-state">waiting</span>
-        <div class="seg" id="live-filter" style="margin-left:12px"><button data-f="all" class="on">All</button><button data-f="gui">kimo chat</button><button data-f="external">External agents</button></div>
+        <div class="seg" id="live-filter"><button data-f="all" class="on">All</button><button data-f="gui">kimo chat</button><button data-f="external">External agents</button></div>
         <span class="note muted" id="live-count" style="margin-left:auto"></span>
-        <button class="btn sm" id="live-graph">Open live graph window</button>
+        <button class="btn sm" id="live-graph"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19h16M7 16V9M12 16V5M17 16v-4"/></svg>Live graph window</button>
       </div>
       <div class="livewrap">
-        <div class="feed"><table><thead><tr><th style="width:74px">Time</th><th style="width:150px">Who</th><th>Action</th><th style="width:84px">Status</th><th style="width:220px">What changed</th></tr></thead><tbody id="live-rows"></tbody></table><div class="empty" id="live-empty"><svg class="km e" viewBox="0 0 1024 1024" aria-hidden="true"><use href="#km-sm"/></svg><div class="et">Waiting for the first action</div><div class="ed">Every tool call from kimo chat, and from Claude Code or Codex when MCP is on, appears here the moment it starts.</div></div></div>
-        <div class="grid" style="align-content:start">
+        <div class="feed"><table><thead><tr><th style="width:84px">Time</th><th style="width:118px">Who</th><th>Action</th><th style="width:92px">Status</th><th style="width:176px">What changed</th></tr></thead><tbody id="live-rows"></tbody></table><div class="empty" id="live-empty"><svg class="km e" viewBox="0 0 1024 1024" aria-hidden="true"><use href="#km-sm"/></svg><div class="et">Waiting for the first action</div><div class="ed">Every tool call from kimo chat, and from Claude Code or Codex when MCP is on, appears here the moment it starts.</div></div></div>
+        <div class="side-cards">
           <div class="card"><div class="k">Just changed</div><div id="live-last" class="note muted">—</div></div>
-          <div class="card"><div class="k">Engine preview</div><div class="preview" id="live-preview">no frame yet</div></div>
-          <div class="card note" id="live-honest">Who: <b>kimo chat</b> = this app's agent. <b>External</b> = a coding agent's own kimo engine, which reports to this window over 127.0.0.1 while MCP is on. kimo cannot tell Claude Code from Codex; each engine gets a number.</div>
+          <div class="card"><div class="k">Engine preview</div><div class="preview" id="live-preview"><span><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M7.5 4.5v15M16.5 4.5v15M3.5 9h4M3.5 15h4M16.5 9h4M16.5 15h4"/></svg>no frame yet</span></div></div>
+          <div class="card note quiet" id="live-honest"><svg class="i info" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8h.01"/></svg><div>Who: <b>kimo chat</b> = this app's agent. <b>External</b> = a coding agent's own kimo engine, which reports to this window over 127.0.0.1 while MCP is on. kimo cannot tell Claude Code from Codex; each engine gets a number.</div></div>
         </div>
       </div>
     </section>
@@ -95,52 +112,57 @@
     <section class="tab" id="tab-connections">
       <h1 class="serif title">Connections</h1>
       <p class="sub">Use kimo from coding agents through MCP, or bring your own AI key and edit right here.</p>
-      <div class="card" id="mcp-card">
-        <div class="row"><div><h2>MCP server for other AI apps</h2><div class="note">Off by default. Local only: nothing listens beyond this computer.</div></div><button class="switch" id="mcp-switch" aria-label="MCP server"></button></div>
-        <div class="note" id="mcp-explain" style="margin-top:10px">MCP apps such as Claude Code and Codex start their own kimo engine (stdio). Turning this on checks that the engine answers the way they will see it (initialize + tools/list), shows the exact setup to copy, and listens on 127.0.0.1 so their actions appear in Live.</div>
-        <div id="mcp-on" hidden style="margin-top:14px">
+      <div class="card feature" id="mcp-card">
+        <div class="row top"><div class="wi big"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0zM12 16v5"/></svg></div><div><h2>MCP server for other AI apps</h2><div class="note">Off by default. Local only: nothing listens beyond this computer.</div></div><button class="switch" id="mcp-switch" aria-label="MCP server" role="switch"></button></div>
+        <div class="note" id="mcp-explain">MCP apps such as Claude Code and Codex start their own kimo engine (stdio). Turning this on checks that the engine answers the way they will see it (initialize + tools/list), shows the exact setup to copy, and listens on 127.0.0.1 so their actions appear in Live.</div>
+        <div id="mcp-on" hidden>
           <div class="row"><span class="chip ok" id="mcp-verified"></span><span class="note muted" id="mcp-port"></span></div>
-          <div class="row" style="margin:14px 0 8px"><div class="seg" id="cfg-seg"><button data-c="claude_add" class="on">Claude Code</button><button data-c="codex_toml">Codex config.toml</button><button data-c="codex_add">Codex command</button><button data-c="json">JSON (any app)</button></div></div>
+          <div class="row" style="margin:14px 0 10px"><div class="seg" id="cfg-seg"><button data-c="claude_add" class="on">Claude Code</button><button data-c="codex_toml">Codex config.toml</button><button data-c="codex_add">Codex command</button><button data-c="json">JSON (any app)</button></div></div>
           <pre class="codebox mono" id="cfg-box"></pre>
         </div>
-        <div class="note" id="mcp-err" style="color:var(--bad);margin-top:8px"></div>
+        <div class="note" id="mcp-err" style="color:var(--bad)"></div>
       </div>
       <div class="grid g2 sec" id="agent-cards"></div>
       <div class="card sec" id="key-card">
-        <div class="row"><div><h2>Your AI key</h2><div class="note">Used only by kimo chat, sent only to the provider you pick. Kept in memory unless you tick “remember”.</div></div><span class="chip" id="key-state" style="margin-left:auto">no key</span></div>
-        <div class="grid g2" style="margin-top:6px">
+        <div class="row top"><div class="wi big"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="m11 12 8.5-8.5M16 7l2.5 2.5M14 9l2 2"/></svg></div><div><h2>Your AI key</h2><div class="note">Used only by kimo chat, sent only to the provider you pick. Kept in memory unless you tick “remember”.</div></div><span class="chip" id="key-state" style="margin-left:auto">no key</span></div>
+        <div class="grid g2 fields">
           <div><label class="f">Provider</label><select id="key-provider"></select></div>
-          <div><label class="f">Model <span class="muted" id="key-model-hint"></span></label><input type="text" id="key-model"></div>
+          <div><label class="f">Model <span class="muted" id="key-model-hint"></span></label><input type="text" id="key-model" spellcheck="false"></div>
         </div>
         <label class="f">API key</label>
-        <div class="row"><input type="password" id="key-input" placeholder="Paste your key" autocomplete="off" spellcheck="false"><a class="note" id="key-page" target="_blank" style="white-space:nowrap">Get a key ↗</a></div>
-        <details style="margin-top:8px"><summary class="note" style="cursor:pointer">Advanced: base URL</summary><input type="text" id="key-base" style="margin-top:6px"></details>
-        <label class="row note" style="margin-top:12px;gap:8px;cursor:pointer"><input type="checkbox" id="key-remember"><span>Remember on this computer (<span id="key-store">OS keychain</span>)</span></label>
-        <div class="row" style="margin-top:14px"><button class="btn pri" id="key-save">Save</button><button class="btn" id="key-test">Test connection</button><button class="btn" id="key-clear">Forget key</button><span class="note" id="key-msg"></span></div>
+        <div class="row"><input type="password" id="key-input" placeholder="Paste your key" autocomplete="off" spellcheck="false"><a class="lnk" id="key-page" target="_blank" style="white-space:nowrap">Get a key ↗</a></div>
+        <details class="adv"><summary class="note">Advanced: base URL</summary><input type="text" id="key-base" spellcheck="false"></details>
+        <label class="check note"><input type="checkbox" id="key-remember"><span>Remember on this computer (<span id="key-store">OS keychain</span>)</span></label>
+        <div class="row actions"><button class="btn pri" id="key-save">Save</button><button class="btn" id="key-test">Test connection</button><button class="btn ghost" id="key-clear">Forget key</button><span class="note" id="key-msg"></span></div>
       </div>
     </section>
+    </div>
   </main>
 </div>
 
 <!-- first-run window -->
 <div class="overlay" id="setup">
-  <div class="modal">
-    <div class="hero-mark"><svg class="km xl" viewBox="0 0 1024 1024" role="img" aria-label="kimo"><use href="#km-sm"/></svg><div><div class="word lg">kimo</div><div class="eyebrow">First start · one time</div></div></div>
-    <h1 class="serif title" style="margin-top:16px">A few downloads and <em>kimo</em> is ready.</h1>
-    <p class="sub" style="margin-bottom:6px">The installer stays small; the video tools and the speech model come from kimo's release page now, once. Each file is checked against its SHA-512 fingerprint before kimo uses it. A dropped connection resumes where it stopped.</p>
-    <div id="parts"></div>
-    <div class="part" style="background:transparent;border:0;padding:12px 2px 0"><div class="top"><span class="nm">Total</span><span class="sz" id="tot-t"></span></div><div class="bar totalbar"><i id="tot-bar"></i></div></div>
-    <div class="note" id="setup-err" style="color:var(--bad);margin-top:10px"></div>
-    <div class="row" style="margin-top:18px"><label class="row note" style="gap:8px"><input type="checkbox" id="skip-opt"> Skip the speech model for now (no automatic captions)</label>
-      <button class="btn" id="setup-later" style="margin-left:auto">Later</button><button class="btn" id="setup-pause" hidden>Pause</button><button class="btn acc" id="setup-go">Download</button></div>
+  <div class="modal setup">
+    <div class="setup-hero">
+      <div class="hero-mark"><svg class="km xl" viewBox="0 0 1024 1024" role="img" aria-label="kimo"><use href="#km"/></svg><div><div class="word lg">kimo</div><div class="eyebrow">First start · one time</div></div></div>
+      <h1 class="serif title">A few downloads and <em>kimo</em> is ready.</h1>
+      <p class="sub">The installer stays small; the video tools and the speech model come from kimo's release page now, once. Each file is checked against its SHA-512 fingerprint before kimo uses it. A dropped connection resumes where it stopped.</p>
+    </div>
+    <div class="setup-body">
+      <div id="parts"></div>
+      <div class="total"><div class="top"><span class="nm">Total</span><span class="sz" id="tot-t"></span></div><div class="bar totalbar"><i id="tot-bar"></i></div></div>
+      <div class="note" id="setup-err" style="color:var(--bad);margin-top:10px"></div>
+      <div class="row setup-actions"><label class="check note"><input type="checkbox" id="skip-opt"><span>Skip the speech model for now (no automatic captions)</span></label>
+        <button class="btn ghost" id="setup-later" style="margin-left:auto">Later</button><button class="btn" id="setup-pause" hidden>Pause</button><button class="btn acc" id="setup-go">Download</button></div>
+    </div>
   </div>
 </div>
-<div class="overlay" id="confirm"><div class="modal small"><h2 id="cf-title"></h2><p class="note" id="cf-body"></p><pre class="codebox mono" id="cf-code" style="font-size:12px"></pre><div class="row" style="margin-top:16px;justify-content:flex-end"><button class="btn" id="cf-no">Cancel</button><button class="btn pri" id="cf-yes">Run it</button></div></div></div>
+<div class="overlay" id="confirm"><div class="modal small"><h2 id="cf-title"></h2><p class="note" id="cf-body"></p><pre class="codebox mono" id="cf-code"></pre><div class="row" style="margin-top:18px;justify-content:flex-end"><button class="btn ghost" id="cf-no">Cancel</button><button class="btn pri" id="cf-yes">Run it</button></div></div></div>
 <div class="overlay" id="about"><div class="modal small about">
   <svg class="km xxl" viewBox="0 0 1024 1024" role="img" aria-label="kimo"><use href="#km"/></svg>
   <div class="word xl">kimo</div>
-  <p class="note" style="margin:4px 0 16px">AI video editor. The engine runs on this computer; any agent's actions show up live.</p>
-  <div class="kv"><span>App</span><b class="mono" id="ab-ver">—</b><span>Engine</span><b class="mono" id="ab-eng">—</b><span>License</span><b>MIT</b><span>Fonts</span><b>Geist, Geist Mono, Instrument Serif (OFL)</b></div>
+  <p class="note" style="margin:6px 0 18px">AI video editor. The engine runs on this computer; any agent's actions show up live.</p>
+  <div class="kv"><span>App</span><b class="mono" id="ab-ver">—</b><span>Engine</span><b class="mono" id="ab-eng">—</b><span>License</span><b>MIT</b><span>Fonts</span><b>Instrument Sans, Instrument Serif, Geist Mono (OFL)</b></div>
   <div class="row" style="margin-top:20px;justify-content:flex-end"><button class="btn" id="ab-close">Close</button></div>
 </div></div>
 <div class="toast" id="toast"></div>
