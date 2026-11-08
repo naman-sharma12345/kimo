@@ -1,11 +1,12 @@
 """kimo main window (ui/studio.html) in headless Chromium against the dev mock bridge, served from 127.0.0.1 only.
 Checks every panel's behaviour; with KIMO_SHOTS=<dir> it also writes the 1280x800 screenshots.
-Run: python3 crates/kimo-gui/tests/studio_ui_test.py"""
+Run: python3 crates/kimo-gui/tests/studio_ui_test.py   (KIMO_SCHEME=dark for the dark theme)"""
 import asyncio, functools, http.server, os, sys, threading
 from playwright.async_api import async_playwright
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHOTS = os.environ.get('KIMO_SHOTS')
+SCHEME = os.environ.get('KIMO_SCHEME', 'light')  # 'dark' renders the dark theme; screenshots get a _dark suffix
 
 def serve():
     h = functools.partial(http.server.SimpleHTTPRequestHandler, directory=ROOT)
@@ -19,7 +20,7 @@ async def shot(pg, name):
         os.makedirs(SHOTS, exist_ok=True)
         await pg.evaluate('document.getAnimations().forEach(a => { try { a.finish() } catch (e) {} })')
         await pg.wait_for_timeout(60)
-        await pg.screenshot(path=os.path.join(SHOTS, name))
+        await pg.screenshot(path=os.path.join(SHOTS, name if SCHEME == 'light' else name.replace('.png', '_dark.png')))
 
 async def main():
     srv = serve(); base = f'http://127.0.0.1:{srv.server_address[1]}/ui/studio.html'
@@ -29,7 +30,7 @@ async def main():
         if not cond: fails.append(what)
     async with async_playwright() as p:
         b = await p.chromium.launch()
-        ctx = await b.new_context(viewport={'width': 1280, 'height': 800}, device_scale_factor=1)
+        ctx = await b.new_context(viewport={'width': 1280, 'height': 800}, device_scale_factor=1, color_scheme=SCHEME)
         pg = await ctx.new_page()
         pg.on('pageerror', lambda e: errors.append(str(e)))
         await pg.route('**/*', lambda r: r.continue_() if r.request.url.startswith('http://127.0.0.1') else r.abort())
