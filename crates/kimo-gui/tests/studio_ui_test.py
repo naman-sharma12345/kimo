@@ -18,6 +18,8 @@ def serve():
 async def shot(pg, name):
     if SHOTS:
         os.makedirs(SHOTS, exist_ok=True)
+        await pg.mouse.move(1279, 799)  # no stray hover state in the picture
+        await pg.evaluate("document.getElementById('toast')?.classList.remove('on')")
         await pg.evaluate('document.getAnimations().forEach(a => { try { a.finish() } catch (e) {} })')
         await pg.wait_for_timeout(60)
         await pg.screenshot(path=os.path.join(SHOTS, name if SCHEME == 'light' else name.replace('.png', '_dark.png')))

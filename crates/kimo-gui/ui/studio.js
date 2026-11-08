@@ -279,7 +279,7 @@ function renderLive() {
   $('#tb-live').className = 'tb-live' + (anyRun ? ' busy' : S.liveTotal ? ' seen' : '');
   $('#tb-live-t').textContent = anyRun ? 'Agent working' : S.liveTotal ? `${S.liveTotal} action${S.liveTotal > 1 ? 's' : ''} · idle` : 'Idle';
   $('#live-rows').innerHTML = rows.slice(0, 200).map(r => {
-    const st = r.status === 'running' ? `<span class="st-run"><span class="spin"></span> ${r.pct != null ? r.pct + '%' : ''}</span>` : r.status === 'ok' ? `<span class="st-ok">✓ ${r.dur != null ? r.dur + ' ms' : ''}</span>` : `<span class="st-err">✕</span>`;
+    const st = r.status === 'running' ? `<span class="st-run"><span class="spin"></span>${r.pct != null ? r.pct + '%' : 'running'}</span>` : r.status === 'ok' ? `<span class="st-ok">✓ ${r.dur != null ? r.dur + ' ms' : ''}</span>` : `<span class="st-err">✕</span>`;
     const tgt = r.target && (r.target.clip_id || r.target.track_id) ? `<div class="note muted mono">${esc([r.target.track_id, r.target.clip_id].filter(Boolean).join(' / '))}</div>` : '';
     return `<tr class="${r.isNew ? 'new ' : ''}${r.status === 'running' ? 'running' : ''}"><td class="mono">${clock(r.t)}</td><td>${who(r.src)}</td><td><div class="tool mono">${esc(r.name)}</div><div class="args mono note">${esc(argSummary(r.args))}</div></td><td>${st}</td><td class="chg">${r.change || ''}${tgt}</td></tr>`;
   }).join('');
@@ -313,7 +313,8 @@ async function setupStatus() {
   S.parts = s.parts;
   const need = s.parts.filter(p => !p.installed && !p.optional), ready = need.length === 0;
   $('#h-parts').textContent = ready ? 'Ready' : `${need.length} to download`;
-  $('#h-parts-m').textContent = s.parts.map(p => `${p.name.split(' (')[0]} ${p.installed ? '✓' : '·'}`).join('  ');
+  const inst = s.parts.filter(p => p.installed), opt = s.parts.filter(p => !p.installed && p.optional);
+  $('#h-parts-m').textContent = `${inst.length} of ${s.parts.length} installed, SHA-512 checked` + (opt.length ? ` · ${opt.map(p => p.name.split(' (')[0]).join(', ')} optional` : '');
   const PIC = { ffmpeg: 'film', ffprobe: 'cpu', whisper: 'term', model: 'wave' };
   $('#parts').innerHTML = s.parts.map(p => `<div class="part${p.installed ? ' done' : ''}" id="part-${p.id}"><span class="pic">${ICON(PIC[p.id] || 'folder')}</span>
     <div class="top"><span class="nm">${esc(p.name)}</span><span class="note muted">${esc(p.note)}${p.optional ? ' · optional' : ''}</span><span class="sz">${p.size ? fmtMB(p.size) : 'size set at release'}</span></div>
