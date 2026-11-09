@@ -340,7 +340,7 @@ fn main() {
             // the viewer's own frame/draft cache: a fresh one each launch (only this directory, only our files)
             let vdir = data_dir.join("viewer-cache");
             let _ = std::fs::remove_dir_all(&vdir);
-            let viewer = Arc::new(Viewer::new(vdir));
+            let viewer = Arc::new(Viewer::new(vdir).with_ffmpeg(viewer::find_ffmpeg(&data_dir)));
             app.manage(AppState {
                 sup: sup.clone(), keys: keyring, settings: Mutex::new(settings), settings_path,
                 chat: Mutex::new(Chat::default()), external: Mutex::new(None), data_dir, fonts, parts,

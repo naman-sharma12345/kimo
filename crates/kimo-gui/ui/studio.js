@@ -363,7 +363,7 @@ $('#setup-later').onclick = () => { B.invoke('setup_skip'); $('#setup').classLis
 // ---------- viewer: the engine's frame at the playhead, a draft clip for Play, before/after ----------
 // Frames and drafts come from the engine through the app (viewer_frame / viewer_draft), cached per project revision.
 // Scrub ticks never ask the engine: they seek the loaded draft or show a frame already rendered; a release renders one.
-const V = { t: 0, dur: 0, fps: 30, rev: null, before: null, draft: null, frames: new Map(), seq: 0, timer: null };
+const V = { t: 0, dur: 0, fps: 30, rev: null, before: null, draft: null, frames: new Map(), seq: 0, timer: null, raf: 0 };
 const vw = $('#viewer'), scrub = $('#vw-scrub'), video = $('#vw-video');
 const tc = s => { s = Math.max(0, s || 0); const m = Math.floor(s / 60); return `${m}:${(s - m * 60).toFixed(1).padStart(4, '0')}`; };
 const fidx = t => Math.round(Math.max(0, t) * V.fps);
@@ -378,12 +378,12 @@ function vTime() {
   scrub.style.setProperty('--p', V.dur ? `${(100 * V.t / V.dur).toFixed(2)}%` : '0%');
 }
 function inDraft(t) { const d = V.draft; return d && d.rev === V.rev && t >= d.start && t <= d.end - 1 / V.fps; }
-function dropDraft() { V.draft = null; video.pause(); video.removeAttribute('src'); video.load(); vw.dataset.playing = '0'; vMedia('image'); }
+function dropDraft() { stopPlay(); V.draft = null; video.removeAttribute('src'); video.load(); vw.dataset.playing = '0'; vMedia('image'); }
 function setView(v) {
   if (v === 'before' && !V.before) v = 'after';
   vw.dataset.view = v;
   $$('#vw-ab button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
-  if (v === 'before') { video.pause(); vw.dataset.playing = '0'; $('#vw-before').src = V.before.url; $('#vw-before').dataset.rev = V.before.rev; }
+  if (v === 'before') { stopPlay(); $('#vw-before').src = V.before.url; $('#vw-before').dataset.rev = V.before.rev; }
   $('#vw-before').hidden = v !== 'before';
   const tag = $('#vw-tag');
   tag.hidden = v !== 'before';
@@ -408,7 +408,7 @@ function applyShown(s) {
   V.frames.set(`${f.rev}:${f.index}`, f);
   if (V.frames.size > 200) V.frames.delete(V.frames.keys().next().value);
   $('#vw-img').src = f.url; $('#vw-img').dataset.rev = f.rev;
-  vMedia(inDraft(V.t) ? 'video' : 'image');
+  vMedia(inDraft(V.t) && !V.draft.frame_urls?.length ? 'video' : 'image');
   $('#vw-rev').textContent = `rev ${s.rev.slice(0, 6)}`;
   $('#vw-msg').textContent = (f.cached ? 'Frame from cache' : `Engine frame in ${f.ms} ms`) + ` · ${f.width}×${f.height}` + (s.changed ? ' · new after an edit' : '');
   if (s.changed && vw.dataset.view === 'before') setView('after'); else setView(vw.dataset.view);
@@ -428,32 +428,53 @@ function viewerSoon() { clearTimeout(V.timer); V.timer = setTimeout(viewerRefres
 scrub.oninput = () => {
   V.t = +scrub.value; vTime();
   if (vw.dataset.view === 'before') setView('after');
-  if (inDraft(V.t)) { if (!video.paused) video.pause(); vw.dataset.playing = '0'; video.currentTime = V.t - V.draft.start; vMedia('video'); return; }
+  if (inDraft(V.t)) {
+    stopPlay();
+    if (V.draft.frame_urls?.length) { $('#vw-img').src = seqFrame(V.t); vMedia('image'); } else { video.currentTime = V.t - V.draft.start; vMedia('video'); }
+    return;
+  }
   const hit = V.frames.get(`${V.rev}:${fidx(V.t)}`);
   if (hit) { $('#vw-img').src = hit.url; vMedia('image'); }
 };
 scrub.onchange = () => { V.t = +scrub.value; vTime(); if (!inDraft(V.t) && !V.frames.has(`${V.rev}:${fidx(V.t)}`)) viewerRefresh(); };
+// Play: the draft's own frames as an image sequence (no codec needed: same on every OS); <video> only when the
+// draft came without frames
+function seqFrame(t) { const d = V.draft; return d.frame_urls[Math.min(d.frame_urls.length - 1, Math.max(0, Math.round((t - d.start) * (d.fps || V.fps))))]; }
+function stopPlay() { cancelAnimationFrame(V.raf); V.raf = 0; if (!video.paused) video.pause(); vw.dataset.playing = '0'; }
+function playSeq() {
+  const d = V.draft, t0 = performance.now(), from = V.t;
+  vw.dataset.playing = '1'; vMedia('image');
+  const tick = now => {
+    const t = from + (now - t0) / 1000;
+    if (t >= d.end - 1 / V.fps || !V.draft) { V.t = Math.min(V.dur, d.end - 1 / V.fps); scrub.value = String(V.t); vTime(); return stopPlay(); }
+    V.t = t; scrub.value = String(t); vTime();
+    $('#vw-img').src = seqFrame(t);
+    V.raf = requestAnimationFrame(tick);
+  };
+  V.raf = requestAnimationFrame(tick);
+}
 $('#vw-play').onclick = async () => {
-  if (vw.dataset.playing === '1') { video.pause(); vw.dataset.playing = '0'; return; }
+  if (vw.dataset.playing === '1') return stopPlay();
   if (V.t >= V.dur - 1 / V.fps) V.t = 0;
   setView('after');
   if (!inDraft(V.t)) {
     const my = ++V.seq;
     vState('rendering', 'Rendering a draft clip…');
     try {
-      const d = await B.invoke('viewer_draft', { start: V.t, seconds: 4 });
+      const d = await B.invoke('viewer_draft', { start: V.t, seconds: 3 });
       if (my !== V.seq) return;
-      V.draft = d; video.src = d.url;
-      $('#vw-msg').textContent = d.cached ? 'Draft from cache' : `Draft ${tc(d.end - d.start)} at ${d.width}×${d.height} in ${(d.ms / 1000).toFixed(1)} s`;
+      V.draft = d;
+      if (d.frame_urls?.length) await Promise.all(d.frame_urls.map(u => { const i = new Image(); i.src = u; return i.decode().catch(() => {}); }));
+      else video.src = d.url;
+      $('#vw-msg').textContent = d.cached ? 'Draft from cache' : `Draft ${tc(d.end - d.start)} at ${d.width}×${d.height}, rendered in ${(d.ms / 1000).toFixed(1)} s`;
     } catch (e) { if (my === V.seq) { $('#vw-err').textContent = String(e); vState('error'); } return; }
   }
-  vState('ready'); vMedia('video');
+  vState('ready');
+  if (V.draft.frame_urls?.length) return playSeq();
+  vMedia('video');
   try { video.currentTime = V.t - V.draft.start; await video.play(); vw.dataset.playing = '1'; }
   catch (e) { vw.dataset.playing = '0'; $('#vw-msg').textContent = "This computer can't play the draft here (" + (e.name || e) + '). Frames still work.'; vMedia('image'); }
 };
-video.ontimeupdate = () => { if (!V.draft) return; V.t = Math.min(V.dur, V.draft.start + video.currentTime); scrub.value = String(V.t); vTime(); };
-video.onended = () => { vw.dataset.playing = '0'; };
-video.onerror = () => { if (!V.draft) return; vw.dataset.playing = '0'; $('#vw-msg').textContent = "This computer can't play the draft clip (video codec missing). Frames still work."; vMedia('image'); };
 $$('#vw-ab button').forEach(b => b.onclick = () => setView(b.dataset.v));
 $('#vw-retry').onclick = () => viewerRefresh();
 // the viewer's own reads and renders are bookkeeping, not edits: kept out of the Live feed and never a refresh trigger

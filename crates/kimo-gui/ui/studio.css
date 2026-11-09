@@ -420,7 +420,7 @@ label.check{display:flex;align-items:center;gap:9px;cursor:pointer}
 #vw-scrub::-webkit-slider-runnable-track{height:4px;border-radius:99px;background:linear-gradient(90deg,var(--accent) 0 var(--p,0%),var(--line3) var(--p,0%) 100%)}
 #vw-scrub::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;margin-top:-5px;background:var(--card);box-shadow:0 0 0 2px var(--accent),0 1px 3px rgba(20,18,16,.3)}
 #vw-scrub:disabled{opacity:.4;cursor:default}
-#vw-scrub:focus-visible{outline:none}
+#vw-scrub:focus,#vw-scrub:focus-visible{outline:none}
 #vw-scrub:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 2px var(--accent),0 0 0 6px var(--ring)}
 .vw-msg{margin:6px 2px 0;font-size:11.5px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (prefers-reduced-motion: reduce){.viewer[data-state=rendering] .vw-screen>img{transition:none}}

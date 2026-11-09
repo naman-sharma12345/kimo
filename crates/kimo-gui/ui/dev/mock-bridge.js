@@ -28,7 +28,7 @@ const M = {
   mcp: false, port: null, keys: {}, settings: { mcp_enabled: false, provider: 'openai', models: {}, base_urls: {}, remembered: [], setup_done: params.get('setup') !== 'show' },
   undo: [], cards: 0, snaps: [],
   edit: { caption: 54, warm: 0, cut: false, title: false, sat: 1 }, empty: params.get('project') === 'empty',
-  viewerCalls: { frame: 0, draft: 0 }, viewerDelay: 280, failViewer: null,
+  viewerCalls: { frame: 0, draft: 0 }, viewerDelay: 280, failViewer: null, draftNoFrames: false,
   parts: [
     { id: 'ffmpeg', name: 'FFmpeg', note: 'decodes, cuts and encodes video', size: 79_000_000, optional: false, pinned: true, installed: params.get('setup') !== 'show' },
     { id: 'ffprobe', name: 'FFprobe', note: 'reads media details', size: 3_100_000, optional: false, pinned: true, installed: params.get('setup') !== 'show' },
@@ -91,15 +91,22 @@ async function mockFrame({ time }) {
 async function mockDraft({ start, seconds }) {
   M.viewerCalls.draft++;
   if (M.empty) throw 'out_of_range: the timeline is empty';
-  const rev = revOf(), e = { ...M.edit }, len = Math.min(1.2, seconds), c = document.createElement('canvas'); c.width = 640; c.height = 360;
-  const rec = new MediaRecorder(c.captureStream(30), { mimeType: 'video/webm' }), chunks = [];
+  await sleep(M.viewerDelay);
+  const rev = revOf(), e = { ...M.edit }, c = document.createElement('canvas'); c.width = 640; c.height = 360;
+  if (!M.draftNoFrames) {
+    const end = Math.min(DUR, start + seconds), n = Math.round((end - start) * FPS), frame_urls = [];
+    for (let i = 0; i < n; i++) { paint(c, e, start + i / FPS); frame_urls.push(c.toDataURL('image/jpeg', .7)); }
+    return { rev, start, end, fps: FPS, frames: n, width: 640, height: 360, url: '', frame_urls, ms: 6900, first_frame_ms: 1000, extract_ms: 180, cached: false };
+  }
+  // a draft with no frames (no ffmpeg next to the app): the viewer falls back to <video>
+  const len = Math.min(1.2, seconds), rec = new MediaRecorder(c.captureStream(30), { mimeType: 'video/webm' }), chunks = [];
   rec.ondataavailable = x => chunks.push(x.data);
   const t0 = performance.now(); let raf;
   const tick = () => { paint(c, e, start + (performance.now() - t0) / 1000); raf = requestAnimationFrame(tick); };
   tick(); rec.start();
   await sleep(len * 1000); rec.stop(); cancelAnimationFrame(raf);
   await new Promise(r => rec.onstop = r);
-  return { rev, start, end: Math.min(DUR, start + len), fps: FPS, frames: Math.round(len * FPS), width: 640, height: 360, url: URL.createObjectURL(new Blob(chunks, { type: 'video/webm' })), ms: 2400, first_frame_ms: 300, cached: false };
+  return { rev, start, end: Math.min(DUR, start + len), fps: FPS, frames: Math.round(len * FPS), width: 640, height: 360, url: URL.createObjectURL(new Blob(chunks, { type: 'video/webm' })), frame_urls: [], ms: 2400, first_frame_ms: 300, extract_ms: 0, cached: false };
 }
 let callN = 0;
 async function engineCall(src, name, action, args, change, ms = 260) {

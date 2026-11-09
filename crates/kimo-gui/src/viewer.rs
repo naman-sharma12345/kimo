@@ -26,7 +26,9 @@ pub struct Frame { pub rev: String, pub index: i64, pub time: f64, pub url: Stri
 #[derive(Clone, Debug, Serialize)]
 pub struct Shown { pub empty: bool, pub rev: String, pub duration: f64, pub fps: f64, pub width: u32, pub height: u32, pub frame: Option<Frame>, pub before: Option<Frame>, pub changed: bool }
 #[derive(Clone, Debug, Serialize)]
-pub struct Draft { pub rev: String, pub start: f64, pub end: f64, pub fps: f64, pub frames: u64, pub width: u32, pub height: u32, pub url: String, #[serde(skip)] pub file: PathBuf, pub ms: u128, pub first_frame_ms: u128, pub cached: bool }
+pub struct Draft { pub rev: String, pub start: f64, pub end: f64, pub fps: f64, pub frames: u64, pub width: u32, pub height: u32, pub url: String, #[serde(skip)] pub file: PathBuf, pub ms: u128, pub first_frame_ms: u128, pub cached: bool,
+    /// The draft's frames as JPEGs, one per frame: scrubbing inside the draft, and Play where the webview has no H.264 decoder.
+    pub frame_urls: Vec<String>, #[serde(skip)] pub frame_files: Vec<PathBuf>, pub extract_ms: u128 }
 
 /// The whole frame at or nearest to `t` seconds.
 pub fn frame_index(t: f64, fps: f64) -> i64 { if !(t > 0.0) || !(fps > 0.0) { 0 } else { (t * fps).round() as i64 } }
@@ -35,12 +37,12 @@ pub fn frame_time(i: i64, fps: f64) -> f64 { if fps > 0.0 { i as f64 / fps } els
 /// The URL the webview loads a cache file from (Tauri serves custom schemes as http://<scheme>.localhost on Windows).
 pub fn cache_url(name: &str) -> String { if cfg!(windows) { format!("http://kimo.localhost/{name}") } else { format!("kimo://localhost/{name}") } }
 
-/// Map a kimo:// request path to a file in the cache: only the lower-case hex names this module writes, .png or .mp4.
+/// Map a kimo:// request path to a file in the cache: only the lower-case hex names this module writes, .png, .jpg or .mp4.
 pub fn cache_file(dir: &Path, uri_path: &str) -> Option<(PathBuf, &'static str)> {
     let name = uri_path.split(['?', '#']).next()?.trim_start_matches('/');
     let (stem, ext) = name.rsplit_once('.')?;
     if stem.is_empty() || !stem.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) { return None; }
-    let mime = match ext { "png" => "image/png", "mp4" => "video/mp4", _ => return None };
+    let mime = match ext { "png" => "image/png", "jpg" => "image/jpeg", "mp4" => "video/mp4", _ => return None };
     let p = dir.join(name);
     p.is_file().then_some((p, mime))
 }
@@ -81,6 +83,26 @@ pub fn respond(dir: &Path, uri_path: &str, range: Option<&str>) -> (u16, Vec<(&'
     }
 }
 
+/// Split a draft mp4 into one JPEG per frame (`<stem>f00000.jpg` …), named so the protocol serves them. Empty on failure:
+/// the draft still plays as video where the webview can decode it.
+pub fn split_frames(ffmpeg: &Path, mp4: &Path, dir: &Path, stem: &str) -> Vec<PathBuf> {
+    let pattern = dir.join(format!("{stem}f%05d.jpg"));
+    let mut c = std::process::Command::new(ffmpeg);
+    c.args(["-v", "error", "-y", "-i"]).arg(mp4).args(["-start_number", "0", "-q:v", "4"]).arg(&pattern)
+        .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    { use std::os::windows::process::CommandExt; c.creation_flags(0x0800_0000); }
+    if !c.status().map(|s| s.success()).unwrap_or(false) { return vec![]; }
+    (0..).map(|i| dir.join(format!("{stem}f{i:05}.jpg"))).take_while(|p| p.is_file()).collect()
+}
+
+/// ffmpeg for draft frames: the first-run tools dir, else PATH.
+pub fn find_ffmpeg(data_dir: &Path) -> Option<PathBuf> {
+    let name = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+    let p = data_dir.join("tools").join(name);
+    if p.is_file() { Some(p) } else { crate::agents::which("ffmpeg") }
+}
+
 /// Least-recently-used frames by (revision, frame index); evicting one deletes its file unless it is pinned.
 pub struct FrameCache { cap: usize, items: Vec<Frame> }
 impl FrameCache {
@@ -107,7 +129,7 @@ impl FrameCache {
 #[derive(Default)]
 struct State { last_rev: Option<String>, last_frame: Option<Frame>, before_rev: Option<String>, before_fallback: Option<Frame>, drafts: Vec<Draft> }
 
-pub struct Viewer { dir: PathBuf, cache: Mutex<FrameCache>, st: Mutex<State>, render: Mutex<()>, latest: AtomicU64 }
+pub struct Viewer { dir: PathBuf, cache: Mutex<FrameCache>, st: Mutex<State>, render: Mutex<()>, latest: AtomicU64, ffmpeg: Option<PathBuf> }
 
 struct Info { rev: String, duration: f64, fps: f64, width: u32, height: u32 }
 
@@ -122,8 +144,10 @@ impl Viewer {
     /// `dir` is the viewer's own cache directory (created if missing).
     pub fn new(dir: PathBuf) -> Viewer {
         let _ = std::fs::create_dir_all(&dir);
-        Viewer { dir, cache: Mutex::new(FrameCache::new(FRAME_CAP)), st: Mutex::new(State::default()), render: Mutex::new(()), latest: AtomicU64::new(0) }
+        Viewer { dir, cache: Mutex::new(FrameCache::new(FRAME_CAP)), st: Mutex::new(State::default()), render: Mutex::new(()), latest: AtomicU64::new(0), ffmpeg: None }
     }
+    /// The ffmpeg that splits drafts into frames (the same one the engine uses: downloaded tools dir, else PATH).
+    pub fn with_ffmpeg(mut self, ffmpeg: Option<PathBuf>) -> Viewer { self.ffmpeg = ffmpeg; self }
     pub fn dir(&self) -> &Path { &self.dir }
 
     /// The project's revision and timeline facts: two read-only engine calls, no render.
@@ -214,11 +238,19 @@ impl Viewer {
         let v: Value = serde_json::from_str(&result_text(&r)).map_err(|e| format!("preview_range: {e}"))?;
         if !file.is_file() { return Err("the engine reported a draft but wrote no file".into()); }
         let timing = v.get("timing_ms").cloned().unwrap_or(Value::Null);
+        let stem = name.trim_end_matches(".mp4").to_string();
+        let t1 = Instant::now();
+        let frame_files = self.ffmpeg.as_deref().map(|ff| split_frames(ff, &file, &self.dir, &stem)).unwrap_or_default();
         let d = Draft { rev: info.rev, start: num(&v, "start"), end: num(&v, "end"), fps: num(&v, "fps"), frames: v.get("frames").and_then(|f| f.as_u64()).unwrap_or(0),
-            width: num(&v, "width") as u32, height: num(&v, "height") as u32, url: cache_url(&name), file, ms, first_frame_ms: num(&timing, "first_frame") as u128, cached: false };
+            width: num(&v, "width") as u32, height: num(&v, "height") as u32, url: cache_url(&name), file, ms, first_frame_ms: num(&timing, "first_frame") as u128, cached: false,
+            frame_urls: frame_files.iter().filter_map(|f| f.file_name()).map(|n| cache_url(&n.to_string_lossy())).collect(), frame_files, extract_ms: t1.elapsed().as_millis() };
         let mut st = self.st.lock().unwrap();
         st.drafts.push(d.clone());
-        while st.drafts.len() > DRAFT_CAP { let old = st.drafts.remove(0); let _ = std::fs::remove_file(&old.file); }
+        while st.drafts.len() > DRAFT_CAP {
+            let old = st.drafts.remove(0);
+            let _ = std::fs::remove_file(&old.file);
+            for f in &old.frame_files { let _ = std::fs::remove_file(f); }
+        }
         Ok(d)
     }
 }
@@ -249,7 +281,7 @@ mod tests {
         assert!(cache_file(&dir, "/ab12cd.png/../../x").is_none());
         assert!(cache_file(&dir, "/AB12CD.png").is_none(), "names are lower-case hex we wrote ourselves");
         assert!(cache_file(&dir, "/ffff.png").is_none(), "missing file");
-        assert!(cache_file(&dir, "/ab12cd.sh").is_none(), "only png and mp4");
+        assert!(cache_file(&dir, "/ab12cd.sh").is_none(), "only png, jpg and mp4");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -408,20 +440,26 @@ mod tests {
         let Some(sup) = engine() else { eprintln!("KIMO_MCP_BIN unset: skipped"); return };
         gradient(&sup, 0.0, 3.0, "#ff5a24", "#141210");
         let dir = tmpdir("draft");
-        let v = Viewer::new(dir.clone());
+        let v = Viewer::new(dir.clone()).with_ffmpeg(find_ffmpeg(&dir));
         let t = Counting { sup: &sup, renders: AtomicUsize::new(0), previews: AtomicUsize::new(0) };
         let d = v.draft(&t, 0.5, 2.0).unwrap();
         assert!((d.start - 0.5).abs() < 1e-6 && (d.end - 2.5).abs() < 1e-6, "{d:?}");
         assert_eq!((d.frames, d.width, d.height), (60, 640, 360), "half-res, every frame");
         let bytes = std::fs::read(&d.file).unwrap();
         assert!(d.file.starts_with(&dir) && bytes.len() > 1000 && &bytes[4..8] == b"ftyp", "an mp4 in the cache");
+        // and its frames as JPEGs, one per frame, for scrubbing and for webviews without an H.264 decoder
+        assert!(find_ffmpeg(&dir).is_some(), "ffmpeg on PATH for this test");
+        assert_eq!(d.frame_urls.len(), 60, "{} frames split", d.frame_urls.len());
+        assert!(std::fs::read(&d.frame_files[59]).unwrap().starts_with(&[0xFF, 0xD8]));
+        let first = d.frame_files[0].file_name().unwrap().to_string_lossy().to_string();
+        assert_eq!(cache_file(&dir, &format!("/{first}")).map(|(_, m)| m), Some("image/jpeg"), "the protocol serves draft frames");
         // past the end is clamped by the engine to the timeline
         let tail = v.draft(&t, 2.0, 4.0).unwrap();
         assert!((tail.end - 3.0).abs() < 1e-6, "{tail:?}");
         let n = t.previews.load(Ordering::SeqCst);
         let again = v.draft(&t, 0.5, 2.0).unwrap();
         assert!(again.cached && again.file == d.file && t.previews.load(Ordering::SeqCst) == n, "same revision + range: no new render");
-        eprintln!("viewer: 2 s half-res draft in {} ms (first frame {} ms)", d.ms, d.first_frame_ms);
+        eprintln!("viewer: 2 s half-res draft in {} ms (first frame {} ms), split into frames in {} ms", d.ms, d.first_frame_ms, d.extract_ms);
         sup.stop(); let _ = std::fs::remove_dir_all(&dir);
     }
 }
