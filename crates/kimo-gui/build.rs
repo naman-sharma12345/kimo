@@ -4,6 +4,7 @@ const COMMANDS: &[&str] = &[
     "app_state", "engine_restart", "mcp_set", "mcp_probe", "agents_detect", "agent_add",
     "key_set", "key_clear", "key_test", "settings_set", "chat_send", "chat_undo", "chat_reset",
     "project_open", "open_spectator", "setup_status", "setup_start", "setup_pause", "setup_skip",
+    "viewer_frame", "viewer_draft",
 ];
 
 fn main() {

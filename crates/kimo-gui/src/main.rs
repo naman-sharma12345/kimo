@@ -11,6 +11,7 @@ use kimo_gui::keys::{self, KeyRing, Secret};
 use kimo_gui::mcp_config::{self, Launch};
 use kimo_gui::settings::Settings;
 use kimo_gui::telemetry::{self, External, Source};
+use kimo_gui::viewer::{self, Viewer};
 use kimo_gui::{agents, engine_env, PARTS_JSON};
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -29,6 +30,7 @@ struct AppState {
     fonts: Option<PathBuf>,
     parts: Vec<Part>,
     cancel_dl: Arc<AtomicBool>,
+    viewer: Arc<Viewer>,
 }
 
 impl AppState {
@@ -212,6 +214,24 @@ async fn chat_undo(app: tauri::AppHandle, card: usize) -> Result<Value, String> 
     }).await.map_err(|e| e.to_string())?
 }
 
+/// The viewer: the engine's frame at the playhead (cached per project revision) and the frame before the last change.
+#[tauri::command]
+async fn viewer_frame(app: tauri::AppHandle, time: f64) -> Result<viewer::Shown, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = app.state::<AppState>();
+        st.viewer.frame(st.sup.as_ref(), time)
+    }).await.map_err(|e| e.to_string())?
+}
+
+/// A short half-resolution draft clip from `start` for the Play button.
+#[tauri::command]
+async fn viewer_draft(app: tauri::AppHandle, start: f64, seconds: f64) -> Result<viewer::Draft, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = app.state::<AppState>();
+        st.viewer.draft(st.sup.as_ref(), start, seconds)
+    }).await.map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn chat_reset(st: State<'_, AppState>) { *st.chat.lock().unwrap() = Chat::default(); }
 
@@ -317,20 +337,34 @@ fn main() {
             let keyring = KeyRing::new(Box::new(keys::OsKeychain));
             for p in &settings.remembered { let _ = keyring.restore(p); }
             let mcp_on = settings.mcp_enabled;
+            // the viewer's own frame/draft cache: a fresh one each launch (only this directory, only our files)
+            let vdir = data_dir.join("viewer-cache");
+            let _ = std::fs::remove_dir_all(&vdir);
+            let viewer = Arc::new(Viewer::new(vdir));
             app.manage(AppState {
                 sup: sup.clone(), keys: keyring, settings: Mutex::new(settings), settings_path,
                 chat: Mutex::new(Chat::default()), external: Mutex::new(None), data_dir, fonts, parts,
-                cancel_dl: Arc::new(AtomicBool::new(false)),
+                cancel_dl: Arc::new(AtomicBool::new(false)), viewer,
             });
             if mcp_on { if let Err(e) = start_external(&handle) { eprintln!("kimo: {e}"); } }
             let h3 = handle.clone();
             std::thread::spawn(move || { let s = sup.start(); let _ = h3.emit("engine-status", &s); });
             Ok(())
         })
+        // kimo://localhost/<hex>.png|mp4 (http://kimo.localhost on Windows): the viewer cache, nothing else
+        .register_uri_scheme_protocol("kimo", |ctx, req| {
+            let dir = ctx.app_handle().state::<AppState>().viewer.dir().to_path_buf();
+            let range = req.headers().get("range").and_then(|v| v.to_str().ok()).map(str::to_string);
+            let (status, headers, body) = viewer::respond(&dir, req.uri().path(), range.as_deref());
+            let mut b = tauri::http::Response::builder().status(status);
+            for (k, v) in headers { b = b.header(k, v); }
+            b.body(body).unwrap_or_else(|_| tauri::http::Response::new(Vec::new()))
+        })
         .invoke_handler(tauri::generate_handler![
             app_state, engine_restart, mcp_set, mcp_probe, agents_detect, agent_add,
             key_set, key_clear, key_test, settings_set, chat_send, chat_undo, chat_reset,
-            project_open, open_spectator, setup_status, setup_start, setup_pause, setup_skip
+            project_open, open_spectator, setup_status, setup_start, setup_pause, setup_skip,
+            viewer_frame, viewer_draft
         ])
         .build(tauri::generate_context!())
         .expect("kimo failed to start")

@@ -28,6 +28,8 @@
     "allow-setup-status",
     "allow-setup-start",
     "allow-setup-pause",
-    "allow-setup-skip"
+    "allow-setup-skip",
+    "allow-viewer-frame",
+    "allow-viewer-draft"
   ]
 }

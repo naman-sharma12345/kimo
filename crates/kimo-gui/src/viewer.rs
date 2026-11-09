@@ -64,6 +64,23 @@ pub fn byte_range(h: Option<&str>, len: u64) -> Result<Option<(u64, u64)>, ()> {
     Ok(Some((s, e)))
 }
 
+/// The kimo:// answer for one request: status, headers, body. Only cache files are served; a Range gets a 206.
+pub fn respond(dir: &Path, uri_path: &str, range: Option<&str>) -> (u16, Vec<(&'static str, String)>, Vec<u8>) {
+    let Some((file, mime)) = cache_file(dir, uri_path) else { return (404, vec![("Content-Type", "text/plain".into())], b"not in the viewer cache".to_vec()) };
+    let Ok(bytes) = std::fs::read(&file) else { return (404, vec![("Content-Type", "text/plain".into())], b"gone".to_vec()) };
+    let len = bytes.len() as u64;
+    let mut h = vec![("Content-Type", mime.to_string()), ("Accept-Ranges", "bytes".to_string()), ("Cache-Control", "no-store".to_string())];
+    match byte_range(range, len) {
+        Ok(None) => { h.push(("Content-Length", len.to_string())); (200, h, bytes) }
+        Ok(Some((s, e))) => {
+            h.push(("Content-Range", format!("bytes {s}-{e}/{len}")));
+            h.push(("Content-Length", (e - s + 1).to_string()));
+            (206, h, bytes[s as usize..=e as usize].to_vec())
+        }
+        Err(()) => { h.push(("Content-Range", format!("bytes */{len}"))); (416, h, vec![]) }
+    }
+}
+
 /// Least-recently-used frames by (revision, frame index); evicting one deletes its file unless it is pinned.
 pub struct FrameCache { cap: usize, items: Vec<Frame> }
 impl FrameCache {
@@ -263,6 +280,23 @@ mod tests {
         let e = mk(4);
         c.put(e, &[a.file.clone(), d.file.clone()]);
         assert!(a.file.exists() && d.file.exists(), "a pinned frame (shown / before) keeps its file");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+
+    #[test]
+    fn the_protocol_serves_cache_files_whole_or_by_range() {
+        let dir = std::env::temp_dir().join(format!("kimo-vw-resp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("0a.mp4"), b"0123456789").unwrap();
+        let (s, h, b) = respond(&dir, "/0a.mp4", None);
+        assert_eq!((s, b.as_slice()), (200, &b"0123456789"[..]));
+        assert!(h.contains(&("Content-Type", "video/mp4".into())) && h.contains(&("Accept-Ranges", "bytes".into())));
+        let (s, h, b) = respond(&dir, "/0a.mp4", Some("bytes=2-4"));
+        assert_eq!((s, b.as_slice()), (206, &b"234"[..]));
+        assert!(h.contains(&("Content-Range", "bytes 2-4/10".into())));
+        assert_eq!(respond(&dir, "/0a.mp4", Some("bytes=50-")).0, 416);
+        assert_eq!(respond(&dir, "/../0a.mp4", None).0, 404);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
