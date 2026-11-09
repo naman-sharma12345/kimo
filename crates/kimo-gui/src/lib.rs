@@ -7,6 +7,7 @@ pub mod keys;
 pub mod mcp_config;
 pub mod settings;
 pub mod telemetry;
+pub mod viewer;
 #[cfg(test)]
 mod testutil;
 
