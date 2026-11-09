@@ -190,7 +190,7 @@ function onChat(ev) {
   if (ev.kind === 'tool_end') {
     const el = steps.get(ev.call); if (el) el.querySelector('.s').innerHTML = ev.ok ? '<span class="st-ok">✓</span>' : '<span class="st-err">✕</span>';
     if (!ev.ok && el) el.title = ev.result;
-    if (ev.card) addCard(ev.card);
+    if (ev.card) { addCard(ev.card); viewerSoon(); }
   }
   if (ev.kind === 'reply') addMsg('msg agent', esc(ev.text));
   if (ev.kind === 'error') addMsg('msg err', esc(ev.message));
@@ -215,7 +215,7 @@ function renderCards(flashId) {
   }
   $$('[data-undo]').forEach(b => b.onclick = async () => {
     b.disabled = true;
-    try { const r = await B.invoke('chat_undo', { card: +b.dataset.undo }); for (const c of S.cards) if (r.undone.includes(c.id)) c.undone = true; renderCards(); toast(`Undid ${r.steps} step${r.steps > 1 ? 's' : ''}`); }
+    try { const r = await B.invoke('chat_undo', { card: +b.dataset.undo }); for (const c of S.cards) if (r.undone.includes(c.id)) c.undone = true; renderCards(); viewerSoon(); toast(`Undid ${r.steps} step${r.steps > 1 ? 's' : ''}`); }
     catch (e) { toast(String(e)); b.disabled = false; }
   });
 }
@@ -258,6 +258,9 @@ function onLive(m) {
   if (!name && !phase) return;
   // the chat agent reads the engine's undo history around every call to know what changed; that bookkeeping is not an edit
   if (name === 'history_list' && src.kind === 'gui') return;
+  if (src.kind === 'gui' && VIEWER_OWN.has(name)) return;
+  // an outside agent's call finished: whatever it changed, the viewer shows it (an unchanged project is a cache hit)
+  if (src.kind !== 'gui' && (phase === 'complete' || phase === 'error')) viewerSoon();
   const key = `${src.kind}:${src.conn || 0}:${id ?? name}`;
   let r = S.rows.get(key);
   if (!r) { r = { key, src, name, t: m.t || Date.now(), args: ev.payload?.args || ev.args, status: 'running' }; S.rows.set(key, r); S.order.unshift(key); S.liveTotal++; r.isNew = true; }
@@ -304,7 +307,7 @@ $('#live-graph').onclick = () => B.invoke('open_spectator').catch(e => toast(Str
 $('#proj-open').onclick = async () => {
   const p = $('#proj-path').value.trim(); if (!p) return;
   $('#proj-msg').textContent = 'Opening…';
-  try { await B.invoke('project_open', { path: p }); $('#proj-msg').textContent = 'Opened. Chat edits now apply to this project.'; $('#tb-proj-t').textContent = p.split(/[\\/]/).pop(); } catch (e) { $('#proj-msg').textContent = String(e); }
+  try { await B.invoke('project_open', { path: p }); $('#proj-msg').textContent = 'Opened. Chat edits now apply to this project.'; $('#tb-proj-t').textContent = p.split(/[\\/]/).pop(); viewerSoon(); } catch (e) { $('#proj-msg').textContent = String(e); }
 };
 
 // ---------- first-run setup ----------
@@ -357,13 +360,113 @@ $('#setup-go').onclick = async () => {
 $('#setup-pause').onclick = () => { B.invoke('setup_pause'); $('#setup-go').textContent = 'Resume'; };
 $('#setup-later').onclick = () => { B.invoke('setup_skip'); $('#setup').classList.remove('on'); };
 
+// ---------- viewer: the engine's frame at the playhead, a draft clip for Play, before/after ----------
+// Frames and drafts come from the engine through the app (viewer_frame / viewer_draft), cached per project revision.
+// Scrub ticks never ask the engine: they seek the loaded draft or show a frame already rendered; a release renders one.
+const V = { t: 0, dur: 0, fps: 30, rev: null, before: null, draft: null, frames: new Map(), seq: 0, timer: null };
+const vw = $('#viewer'), scrub = $('#vw-scrub'), video = $('#vw-video');
+const tc = s => { s = Math.max(0, s || 0); const m = Math.floor(s / 60); return `${m}:${(s - m * 60).toFixed(1).padStart(4, '0')}`; };
+const fidx = t => Math.round(Math.max(0, t) * V.fps);
+function vState(s, busy) { vw.dataset.state = s; if (busy) $('#vw-busy-t').textContent = busy; }
+function vMedia(m) {
+  vw.dataset.media = m;
+  $('#vw-img').hidden = m !== 'image' || vw.dataset.view === 'before' || !$('#vw-img').getAttribute('src');
+  video.hidden = m !== 'video' || vw.dataset.view === 'before';
+}
+function vTime() {
+  $('#vw-time').textContent = V.dur ? `${tc(V.t)} / ${tc(V.dur)}` : tc(V.t);
+  scrub.style.setProperty('--p', V.dur ? `${(100 * V.t / V.dur).toFixed(2)}%` : '0%');
+}
+function inDraft(t) { const d = V.draft; return d && d.rev === V.rev && t >= d.start && t <= d.end - 1 / V.fps; }
+function dropDraft() { V.draft = null; video.pause(); video.removeAttribute('src'); video.load(); vw.dataset.playing = '0'; vMedia('image'); }
+function setView(v) {
+  if (v === 'before' && !V.before) v = 'after';
+  vw.dataset.view = v;
+  $$('#vw-ab button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+  if (v === 'before') { video.pause(); vw.dataset.playing = '0'; $('#vw-before').src = V.before.url; $('#vw-before').dataset.rev = V.before.rev; }
+  $('#vw-before').hidden = v !== 'before';
+  const tag = $('#vw-tag');
+  tag.hidden = v !== 'before';
+  if (v === 'before') tag.textContent = `Before · ${tc(V.before.time)}`;
+  vMedia(vw.dataset.media);
+}
+function applyShown(s) {
+  V.dur = s.duration; V.fps = s.fps || 30; V.rev = s.rev;
+  vw.dataset.rev = s.rev;
+  scrub.max = String(Math.max(0, s.duration)); scrub.step = String(1 / V.fps);
+  scrub.disabled = $('#vw-play').disabled = s.empty;
+  V.before = s.before || null;
+  $('#vw-ab button[data-v=before]').disabled = !V.before;
+  if (V.draft && V.draft.rev !== s.rev) dropDraft();
+  if (s.empty) {
+    $('#vw-img').removeAttribute('src');
+    V.t = 0; scrub.value = '0'; vTime(); dropDraft(); setView('after'); $('#vw-rev').textContent = 'empty';
+    $('#vw-msg').textContent = 'The project has no clips yet.';
+    return vState('empty');
+  }
+  const f = s.frame;
+  V.frames.set(`${f.rev}:${f.index}`, f);
+  if (V.frames.size > 200) V.frames.delete(V.frames.keys().next().value);
+  $('#vw-img').src = f.url; $('#vw-img').dataset.rev = f.rev;
+  vMedia(inDraft(V.t) ? 'video' : 'image');
+  $('#vw-rev').textContent = `rev ${s.rev.slice(0, 6)}`;
+  $('#vw-msg').textContent = (f.cached ? 'Frame from cache' : `Engine frame in ${f.ms} ms`) + ` · ${f.width}×${f.height}` + (s.changed ? ' · new after an edit' : '');
+  if (s.changed && vw.dataset.view === 'before') setView('after'); else setView(vw.dataset.view);
+  vState('ready');
+}
+async function viewerRefresh() {
+  const my = ++V.seq;
+  vState('rendering', 'Rendering frame…');
+  try { const s = await B.invoke('viewer_frame', { time: V.t }); if (my === V.seq) applyShown(s); }
+  catch (e) {
+    if (my !== V.seq || String(e) === 'superseded') return;
+    $('#vw-err').textContent = String(e); vState('error');
+  }
+}
+// after an edit by anyone: one refresh for a burst of changes
+function viewerSoon() { clearTimeout(V.timer); V.timer = setTimeout(viewerRefresh, 350); }
+scrub.oninput = () => {
+  V.t = +scrub.value; vTime();
+  if (vw.dataset.view === 'before') setView('after');
+  if (inDraft(V.t)) { if (!video.paused) video.pause(); vw.dataset.playing = '0'; video.currentTime = V.t - V.draft.start; vMedia('video'); return; }
+  const hit = V.frames.get(`${V.rev}:${fidx(V.t)}`);
+  if (hit) { $('#vw-img').src = hit.url; vMedia('image'); }
+};
+scrub.onchange = () => { V.t = +scrub.value; vTime(); if (!inDraft(V.t) && !V.frames.has(`${V.rev}:${fidx(V.t)}`)) viewerRefresh(); };
+$('#vw-play').onclick = async () => {
+  if (vw.dataset.playing === '1') { video.pause(); vw.dataset.playing = '0'; return; }
+  if (V.t >= V.dur - 1 / V.fps) V.t = 0;
+  setView('after');
+  if (!inDraft(V.t)) {
+    const my = ++V.seq;
+    vState('rendering', 'Rendering a draft clip…');
+    try {
+      const d = await B.invoke('viewer_draft', { start: V.t, seconds: 4 });
+      if (my !== V.seq) return;
+      V.draft = d; video.src = d.url;
+      $('#vw-msg').textContent = d.cached ? 'Draft from cache' : `Draft ${tc(d.end - d.start)} at ${d.width}×${d.height} in ${(d.ms / 1000).toFixed(1)} s`;
+    } catch (e) { if (my === V.seq) { $('#vw-err').textContent = String(e); vState('error'); } return; }
+  }
+  vState('ready'); vMedia('video');
+  try { video.currentTime = V.t - V.draft.start; await video.play(); vw.dataset.playing = '1'; }
+  catch (e) { vw.dataset.playing = '0'; $('#vw-msg').textContent = "This computer can't play the draft here (" + (e.name || e) + '). Frames still work.'; vMedia('image'); }
+};
+video.ontimeupdate = () => { if (!V.draft) return; V.t = Math.min(V.dur, V.draft.start + video.currentTime); scrub.value = String(V.t); vTime(); };
+video.onended = () => { vw.dataset.playing = '0'; };
+video.onerror = () => { if (!V.draft) return; vw.dataset.playing = '0'; $('#vw-msg').textContent = "This computer can't play the draft clip (video codec missing). Frames still work."; vMedia('image'); };
+$$('#vw-ab button').forEach(b => b.onclick = () => setView(b.dataset.v));
+$('#vw-retry').onclick = () => viewerRefresh();
+// the viewer's own reads and renders are bookkeeping, not edits: kept out of the Live feed and never a refresh trigger
+const VIEWER_OWN = new Set(['get_project', 'timeline_summary', 'render_frame', 'preview_range']);
+
 // ---------- wiring ----------
 B.listen('chat-event', onChat);
 B.listen('live-event', onLive);
 B.listen('setup-progress', onProgress);
-B.listen('engine-status', () => refresh());
+B.listen('engine-status', s => { refresh(); if (s?.state === 'running') viewerSoon(); });
 await refresh();
 await setupStatus();
+if (S.app?.engine?.state === 'running') viewerRefresh();
 setInterval(() => { if (S.app?.engine?.state !== 'running') refresh(); }, 2000);
-window.__kimo = { S, show, onLive, refresh, setupStatus };
+window.__kimo = { S, show, onLive, refresh, setupStatus, viewerRefresh, V };
 document.body.dataset.ready = '1';

@@ -251,7 +251,7 @@ label.check{display:flex;align-items:center;gap:9px;cursor:pointer}
 /* ---------- chat ---------- */
 #tab-chat{height:calc(100vh - 52px - 28px - 24px)}
 .page:has(#tab-chat.on){padding-top:28px;padding-bottom:24px}
-.chatwrap{display:grid;grid-template-columns:1fr 330px;gap:var(--s5);height:100%}
+.chatwrap{display:grid;grid-template-columns:1fr 400px;gap:var(--s5);height:100%}
 .convo{display:flex;flex-direction:column;background:var(--card);border-radius:var(--r-lg);box-shadow:var(--sh-2),var(--hi);min-height:0;overflow:hidden}
 .convo-hd{display:flex;align-items:center;gap:10px;padding:13px 18px;border-bottom:1px solid var(--line2)}
 .convo-hd h2{margin:0}
@@ -386,3 +386,41 @@ label.check{display:flex;align-items:center;gap:9px;cursor:pointer}
 
 /* mono runs keep their own spacing */
 .part .sz,.part .meta,.total .sz,.ccard .t,.step,.codebox,.feed td.mono,.kv b.mono,.brand .ver{word-spacing:0}
+
+/* ---------- viewer (program monitor, top of the chat tab's right column) ---------- */
+.viewer{background:var(--card);border-radius:var(--r-lg);box-shadow:var(--sh-2),var(--hi);padding:12px 12px 10px;margin-bottom:var(--s5);flex:none}
+.vw-hd{display:flex;align-items:center;gap:8px;margin:0 2px 10px}
+.vw-hd h2{margin:0;font-size:var(--t-h3)}
+.vw-ab{margin-left:auto;padding:2px}
+.vw-ab button{height:24px;padding:0 10px;font-size:12px}
+.vw-ab button:disabled{opacity:.45;cursor:default}
+.vw-screen{position:relative;aspect-ratio:16/9;border-radius:var(--r);overflow:hidden;background:var(--tile);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06),0 1px 2px rgba(0,0,0,.2)}
+.vw-screen>img,.vw-screen>video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;background:var(--tile)}
+.vw-screen>[hidden]{display:none}
+.vw-empty,.vw-busy,.vw-err{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:16px;color:#C9C2B4}
+.vw-empty .km.e{width:30px;height:30px;margin-bottom:10px}
+.vw-empty .et,.vw-err .et{font-family:var(--f-serif);font-size:19px;color:#F4F0E8;line-height:1.15}
+.vw-empty .ed{font-size:12px;max-width:280px;margin-top:6px;line-height:1.5;color:#A69F92}
+.vw-err .mono{font-size:11.5px;color:#FFB59A;margin:8px 0 12px;max-width:330px;overflow-wrap:anywhere}
+.viewer[data-state=empty] .vw-empty{display:flex}
+.viewer[data-state=error] .vw-err{display:flex;background:rgba(13,13,16,.88)}
+.viewer[data-state=rendering] .vw-busy{display:flex;flex-direction:row;gap:8px;inset:auto 10px 10px auto;padding:6px 10px;border-radius:99px;background:rgba(13,13,16,.72);backdrop-filter:blur(6px);font-size:12px;color:#F4F0E8}
+.viewer[data-state=rendering] .vw-screen>img{filter:saturate(.85) brightness(.9);transition:filter var(--t-fast)}
+.vw-busy .spin{border-color:rgba(255,255,255,.2);border-top-color:var(--accent)}
+.vw-tag{position:absolute;left:10px;top:10px;padding:3px 9px;border-radius:99px;background:rgba(13,13,16,.72);backdrop-filter:blur(6px);color:#F4F0E8;font-size:11.5px;font-weight:600}
+.viewer[data-view=before] .vw-tag{background:var(--accent);color:#141210}
+.vw-ctl{display:flex;align-items:center;gap:10px;margin:10px 2px 0}
+.vw-play{width:30px;padding:0;flex:none}
+.vw-play .ipa,.viewer[data-playing="1"] .vw-play .ip{display:none}
+.viewer[data-playing="1"] .vw-play .ipa{display:block}
+.vw-play svg.i path{fill:currentColor}
+.vw-play .ipa path{fill:none;stroke-width:2.6;stroke-linecap:round}
+.vw-time{flex:none;min-width:94px;text-align:right;color:var(--ink2);font-size:12px}
+#vw-scrub{flex:1;min-width:0;height:18px;margin:0;accent-color:var(--accent);background:none;cursor:pointer;-webkit-appearance:none;appearance:none}
+#vw-scrub::-webkit-slider-runnable-track{height:4px;border-radius:99px;background:linear-gradient(90deg,var(--accent) 0 var(--p,0%),var(--line3) var(--p,0%) 100%)}
+#vw-scrub::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;margin-top:-5px;background:var(--card);box-shadow:0 0 0 2px var(--accent),0 1px 3px rgba(20,18,16,.3)}
+#vw-scrub:disabled{opacity:.4;cursor:default}
+#vw-scrub:focus-visible{outline:none}
+#vw-scrub:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 2px var(--accent),0 0 0 6px var(--ring)}
+.vw-msg{margin:6px 2px 0;font-size:11.5px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (prefers-reduced-motion: reduce){.viewer[data-state=rendering] .vw-screen>img{transition:none}}

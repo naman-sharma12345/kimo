@@ -83,6 +83,25 @@
           </div>
         </div>
         <aside class="chgcol">
+          <div class="viewer" id="viewer" data-state="empty" data-view="after" data-media="image" data-playing="0">
+            <div class="vw-hd"><h2>Viewer</h2><span class="chip" id="vw-rev" title="Project revision">no frame</span>
+              <div class="seg vw-ab" id="vw-ab" role="group" aria-label="Compare with the frame before the last change"><button data-v="before" disabled>Before</button><button data-v="after" class="on">After</button></div></div>
+            <div class="vw-screen">
+              <img id="vw-img" alt="The engine's frame at the playhead" hidden>
+              <img id="vw-before" alt="The frame before the last change" hidden>
+              <video id="vw-video" muted playsinline preload="auto" hidden></video>
+              <div class="vw-empty" id="vw-empty"><svg class="km e" viewBox="0 0 1024 1024" aria-hidden="true"><use href="#km-sm"/></svg><div class="et">Nothing to show yet</div><div class="ed">Add a clip in Chat or open a project. The engine's frame appears here after every edit.</div></div>
+              <div class="vw-busy" id="vw-busy"><span class="spin"></span><span id="vw-busy-t">Rendering frame…</span></div>
+              <div class="vw-err" id="vw-err-box"><div class="et">The engine couldn't render this frame</div><div class="mono" id="vw-err"></div><button class="btn sm" id="vw-retry">Try again</button></div>
+              <span class="vw-tag" id="vw-tag" hidden></span>
+            </div>
+            <div class="vw-ctl">
+              <button class="btn sm vw-play" id="vw-play" aria-label="Play a draft from the playhead" disabled><svg class="i ip" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg><svg class="i ipa" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13M16 5.5v13"/></svg></button>
+              <input type="range" id="vw-scrub" min="0" max="0" step="0.0333" value="0" aria-label="Playhead" disabled>
+              <span class="mono vw-time" id="vw-time">0:00.0</span>
+            </div>
+            <div class="note vw-msg" id="vw-msg">Frames come from the engine; scrubbing uses frames already rendered.</div>
+          </div>
           <div class="col-hd"><h2>Changes</h2><span class="chip" id="chg-count">0</span></div>
           <div class="changes" id="changes"><div class="empty sm card-ish" id="chg-empty"><svg class="km e" viewBox="0 0 1024 1024" aria-hidden="true"><use href="#km-sm"/></svg><div class="et">No changes yet</div><div class="ed">Changes the agent makes land here. Undo uses the engine's own history: undoing one change also undoes the changes made after it.</div></div></div>
         </aside>

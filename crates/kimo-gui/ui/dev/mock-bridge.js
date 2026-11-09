@@ -26,7 +26,9 @@ const providers = [
 const params = new URLSearchParams(location.search);
 const M = {
   mcp: false, port: null, keys: {}, settings: { mcp_enabled: false, provider: 'openai', models: {}, base_urls: {}, remembered: [], setup_done: params.get('setup') !== 'show' },
-  undo: [], cards: 0,
+  undo: [], cards: 0, snaps: [],
+  edit: { caption: 54, warm: 0, cut: false, title: false, sat: 1 }, empty: params.get('project') === 'empty',
+  viewerCalls: { frame: 0, draft: 0 }, viewerDelay: 280, failViewer: null,
   parts: [
     { id: 'ffmpeg', name: 'FFmpeg', note: 'decodes, cuts and encodes video', size: 79_000_000, optional: false, pinned: true, installed: params.get('setup') !== 'show' },
     { id: 'ffprobe', name: 'FFprobe', note: 'reads media details', size: 3_100_000, optional: false, pinned: true, installed: params.get('setup') !== 'show' },
@@ -38,6 +40,67 @@ const M = {
     { id: 'codex', name: 'Codex', cli: null, config_path: '/home/naman/.codex/config.toml', linked: false, linked_command: null },
   ],
 };
+// ---- viewer stand-in: frames painted on a canvas from the mock edit state (the app gets real engine frames) ----
+const DUR = 18, FPS = 30;
+const revOf = () => { const s = JSON.stringify(M.edit); let h = 2166136261; for (const c of s) h = Math.imul(h ^ c.charCodeAt(0), 16777619) >>> 0; return h.toString(16).padStart(8, '0') + '00000000'; };
+function paint(cv, e, t) {
+  const W = cv.width, H = cv.height, g = cv.getContext('2d');
+  const warm = e.warm || 0, sat = e.sat || 1;
+  const sky = g.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, `hsl(${24 - warm * 60} ${Math.min(90, 46 * sat)}% ${18 + warm * 20}%)`);
+  sky.addColorStop(.62, `hsl(${18 - warm * 40} ${Math.min(95, 68 * sat)}% ${48 + warm * 18}%)`);
+  sky.addColorStop(1, `hsl(${30} ${Math.min(80, 40 * sat)}% ${14}%)`);
+  g.fillStyle = sky; g.fillRect(0, 0, W, H);
+  const sx = W * (.52 + .1 * Math.sin(t / 3)), sy = H * .58;
+  const sun = g.createRadialGradient(sx, sy, 0, sx, sy, H * .5);
+  sun.addColorStop(0, `rgba(255,${200 + warm * 40},150,.95)`); sun.addColorStop(.18, 'rgba(255,170,110,.55)'); sun.addColorStop(1, 'rgba(255,120,60,0)');
+  g.fillStyle = sun; g.fillRect(0, 0, W, H);
+  g.fillStyle = 'rgba(20,14,12,.92)';
+  g.beginPath(); g.moveTo(0, H * .72);
+  for (let x = 0; x <= W; x += W / 12) g.lineTo(x, H * (.70 + .06 * Math.sin(x / W * 7 + 1.3)));
+  g.lineTo(W, H); g.lineTo(0, H); g.fill();
+  g.beginPath(); g.ellipse(W * .3, H * .66, W * .045, H * .11, 0, 0, 7); g.fill();
+  g.beginPath(); g.arc(W * .3, H * .5, H * .055, 0, 7); g.fill();
+  if (e.title) { g.fillStyle = '#F4F0E8'; g.font = `italic ${Math.round(H * .11)}px serif`; g.textAlign = 'center'; g.fillText('Golden hour', W / 2, H * .2); }
+  const fs = Math.round(H * (e.caption || 54) / 720 * 1.0);
+  g.font = `600 ${fs}px sans-serif`; g.textAlign = 'center';
+  const cap = t < 6 ? 'Welcome back to the studio' : t < 12 ? 'This light only lasts a minute' : 'So we shoot fast';
+  const tw = g.measureText(cap).width;
+  g.fillStyle = 'rgba(13,13,16,.62)'; g.beginPath(); g.roundRect(W / 2 - tw / 2 - fs * .4, H * .86 - fs, tw + fs * .8, fs * 1.4, fs * .3); g.fill();
+  g.fillStyle = '#F4F0E8'; g.fillText(cap, W / 2, H * .86 + fs * .1);
+}
+const frameUrl = (e, t) => { const c = document.createElement('canvas'); c.width = 1280; c.height = 720; paint(c, e, t); return c.toDataURL('image/jpeg', .86); };
+const VC = { frames: new Map(), lastRev: null, lastFrame: null, beforeRev: null, beforeFallback: null };
+async function mockFrame({ time }) {
+  M.viewerCalls.frame++;
+  await sleep(M.viewerDelay);
+  if (M.failViewer) throw M.failViewer;
+  const rev = revOf(), empty = M.empty, base = { empty, rev, duration: empty ? 0 : DUR, fps: FPS, width: 1280, height: 720, before: null, changed: false };
+  let frame = null;
+  if (!empty) {
+    const idx = Math.min(Math.round(Math.max(0, time) * FPS), DUR * FPS - 1), key = rev + ':' + idx;
+    frame = VC.frames.get(key);
+    if (frame) frame = { ...frame, cached: true };
+    else { frame = { rev, index: idx, time: idx / FPS, url: frameUrl(M.edit, idx / FPS), sha256: key, width: 1280, height: 720, ms: 640 + (idx % 7) * 90, cached: false }; VC.frames.set(key, frame); }
+  }
+  if (VC.lastRev && VC.lastRev !== rev) { VC.beforeFallback = VC.lastFrame; VC.beforeRev = VC.lastRev; base.changed = true; }
+  if (frame) { base.before = (VC.beforeRev && VC.frames.get(VC.beforeRev + ':' + frame.index)) || VC.beforeFallback; VC.lastFrame = frame; }
+  VC.lastRev = rev;
+  return { ...base, frame };
+}
+async function mockDraft({ start, seconds }) {
+  M.viewerCalls.draft++;
+  if (M.empty) throw 'out_of_range: the timeline is empty';
+  const rev = revOf(), e = { ...M.edit }, len = Math.min(1.2, seconds), c = document.createElement('canvas'); c.width = 640; c.height = 360;
+  const rec = new MediaRecorder(c.captureStream(30), { mimeType: 'video/webm' }), chunks = [];
+  rec.ondataavailable = x => chunks.push(x.data);
+  const t0 = performance.now(); let raf;
+  const tick = () => { paint(c, e, start + (performance.now() - t0) / 1000); raf = requestAnimationFrame(tick); };
+  tick(); rec.start();
+  await sleep(len * 1000); rec.stop(); cancelAnimationFrame(raf);
+  await new Promise(r => rec.onstop = r);
+  return { rev, start, end: Math.min(DUR, start + len), fps: FPS, frames: Math.round(len * FPS), width: 640, height: 360, url: URL.createObjectURL(new Blob(chunks, { type: 'video/webm' })), ms: 2400, first_frame_ms: 300, cached: false };
+}
 let callN = 0;
 async function engineCall(src, name, action, args, change, ms = 260) {
   const id = 'c' + (++callN), t = Date.now();
@@ -45,7 +108,9 @@ async function engineCall(src, name, action, args, change, ms = 260) {
   await sleep(ms);
   emit('live-event', { source: src, t: Date.now(), ev: { tool_name: action || name, call_id: id, phase: 'complete', target: change?.target || {}, payload: { dur_ms: ms - 40, ...(change?.payload || {}) } } });
 }
+const applyEdit = a => { const e = M.edit; if (a === 'set_caption_style') e.caption = 72; else if (a === 'ripple_delete') e.cut = true; else if (a === 'set_temperature') e.warm = .12; else e.title = true; };
 const handlers = {
+  viewer_frame: mockFrame, viewer_draft: mockDraft,
   app_state: () => ({
     version: '9.0.0', engine: { state: 'running', pid: 48213, version: '8.12.1', tools: 17, actions: 540, bin: BIN },
     mcp_enabled: M.mcp, external_port: M.port, snippets, settings: M.settings, providers,
@@ -76,7 +141,8 @@ const handlers = {
       emit('chat-event', { kind: 'tool_start', call, tool, args: { action, args }, summary });
       await engineCall(gui, tool, action, args, change);
       let card = null;
-      if (label) { M.undo.push(label); card = { id: ++M.cards, depth: M.undo.length, label, tool, summary, undone: false }; }
+      if (label) { M.snaps.push(JSON.stringify(M.edit)); applyEdit(action);
+        M.undo.push(label); card = { id: ++M.cards, depth: M.undo.length, label, tool, summary, undone: false }; }
       emit('chat-event', { kind: 'tool_end', call, tool, ok: true, result: 'ok', card });
     }
     emit('chat-event', { kind: 'thinking', step: 1 }); await sleep(300);
@@ -87,6 +153,7 @@ const handlers = {
   chat_undo: async ({ card }) => {
     await engineCall({ kind: 'gui' }, 'project', 'undo', {}, { payload: {} }, 120);
     const depth = card; const steps = M.undo.length - depth + 1; M.undo.length = depth - 1;
+    M.edit = JSON.parse(M.snaps[depth - 1]); M.snaps.length = depth - 1;
     return { steps, undone: Array.from({ length: steps }, (_, i) => depth + i) };
   },
   chat_reset: () => { M.undo = []; M.cards = 0; },
