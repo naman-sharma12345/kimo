@@ -134,10 +134,13 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-  # Kimo Spectator desktop app (crates/kimo-gui). It is its own Cargo workspace,
-  # not a member of the root one, so tauri-action is pointed at it with projectPath.
+  # THE kimo app (crates/kimo-gui): what people download from GitHub releases and getkimo.tech. One installer with the
+  # engine (kimo-mcp) inside as a Tauri sidecar and the bundled fonts as resources. It is its own Cargo workspace, so
+  # the engine is built from the root workspace first and staged as binaries/kimo-mcp-<target-triple>.
+  # Stable file names for the website's download buttons:
+  #   kimo-setup-windows-x64.exe   kimo-linux-x86_64.AppImage   kimo-linux-amd64.deb
   gui:
-    name: spectator (${{ matrix.label }})
+    name: kimo app (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -145,12 +148,12 @@ jobs:
         include:
           - os: ubuntu-22.04
             label: linux-x86_64
-            rust_targets: ""
-            args: "--bundles deb,appimage"
+            triple: x86_64-unknown-linux-gnu
+            bundles: "deb,appimage"
           - os: windows-latest
             label: windows-x86_64
-            rust_targets: ""
-            args: "--bundles msi"
+            triple: x86_64-pc-windows-msvc
+            bundles: "nsis"
           # macOS: no build for this release (owner decision 2026-10-17); coming later.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -160,15 +163,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential libssl-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev \
-            libayatana-appindicator3-dev librsvg2-dev patchelf file
+            build-essential cmake libssl-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf file ffmpeg
 
       - name: Install Rust toolchain
         shell: bash
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
-          for t in ${{ matrix.rust_targets }}; do rustup target add "$t"; done
           rustc -V
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -176,16 +178,29 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+            target
             crates/kimo-gui/target
-          key: gui-${{ matrix.label }}-${{ hashFiles('crates/kimo-gui/Cargo.toml') }}
-          restore-keys: gui-${{ matrix.label }}-
+          key: app-${{ matrix.label }}-${{ hashFiles('Cargo.lock', 'crates/kimo-gui/Cargo.toml') }}
+          restore-keys: app-${{ matrix.label }}-
 
-      # The cache restores crates/kimo-gui/target, including bundles from older versions (a 0.1.0 .msi/.deb
-      # was shipped beside 5.0.0 in dry run 39026491864). Drop them so only this build's installers are collected.
       - name: Clear stale installer bundles from the cache
         shell: bash
+        run: find crates/kimo-gui/target -type d -path '*/release/bundle' -prune -print -exec rm -rf {} + || true
+
+      - name: Engine (kimo-mcp) as the app's sidecar
+        shell: bash
         run: |
-          find crates/kimo-gui/target -type d -path '*/release/bundle' -prune -print -exec rm -rf {} + || true
+          cargo build --release -p kimo-mcp --bin kimo-mcp
+          ext=""; [ "$RUNNER_OS" = Windows ] && ext=".exe"
+          mkdir -p crates/kimo-gui/binaries
+          cp "target/release/kimo-mcp$ext" "crates/kimo-gui/binaries/kimo-mcp-${{ matrix.triple }}$ext"
+          ls -l crates/kimo-gui/binaries
+
+      - name: Fonts (SIL OFL), shipped as resources/fonts
+        shell: bash
+        run: |
+          bash fonts/fetch.sh
+          test "$(find fonts -maxdepth 1 -name '*.ttf' -size +10k | wc -l)" -ge 70
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -197,124 +212,93 @@ jobs:
           npm install -g "@tauri-apps/cli@${TAURI_CLI_VERSION}"
           tauri --version
 
-      - name: App version from the tag (v1.2.3 -> 1.2.3; other runs keep tauri.conf.json)
-        id: ver
+      - name: Bundle config (version from the tag, engine sidecar, fonts)
         shell: bash
         run: |
           v="${GITHUB_REF_NAME#v}"
-          if [ "${GITHUB_REF_TYPE}" = tag ] && [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            printf '{"version":"%s"}\n' "$v" > crates/kimo-gui/tauri.release-version.json
-            echo "extra=--config tauri.release-version.json" >> "$GITHUB_OUTPUT"
-          else
-            echo "extra=" >> "$GITHUB_OUTPUT"
-          fi
+          if [ "${GITHUB_REF_TYPE}" = tag ] && [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then ver=",\"version\":\"$v\""; else ver=""; fi
+          printf '{"bundle":{"externalBin":["binaries/kimo-mcp"],"resources":{"../../fonts/":"fonts/"}}%s}\n' "$ver" > crates/kimo-gui/tauri.release.json
+          cat crates/kimo-gui/tauri.release.json
 
-      - name: Build with tauri-action
-        id: tauri
-        continue-on-error: ${{ runner.os == 'Windows' }}
-        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
-        with:
-          projectPath: crates/kimo-gui
-          tauriScript: tauri
-          args: ${{ matrix.args }} ${{ steps.ver.outputs.extra }}
+      - name: Build the installers
+        working-directory: crates/kimo-gui
+        shell: bash
+        run: tauri build --bundles ${{ matrix.bundles }} --config tauri.release.json
 
-      # Windows: the .msi needs WiX. If that bundle fails, fall back to the NSIS setup .exe.
-      - name: Windows fallback, NSIS installer
-        if: runner.os == 'Windows' && steps.tauri.outcome == 'failure'
-        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
-        with:
-          projectPath: crates/kimo-gui
-          tauriScript: tauri
-          args: --bundles nsis ${{ steps.ver.outputs.extra }}
-
-      - name: Collect installers
+      - name: Collect installers under stable names
         shell: bash
         run: |
           mkdir -p dist
-          find crates/kimo-gui/target -path '*/release/bundle/*' -type f \
-            \( -name '*.deb' -o -name '*.AppImage' -o -name '*.msi' -o -name '*-setup.exe' \) \
-            -print0 | while IFS= read -r -d '' f; do
-              b="$(basename "$f")"; cp "$f" "dist/${b// /-}"
-            done
-          ls -l dist
+          b=crates/kimo-gui/target/release/bundle
           case "$RUNNER_OS" in
-            Linux)   ls dist/*.deb >/dev/null && ls dist/*.AppImage >/dev/null ;;
-            Windows) ls dist/*.msi >/dev/null 2>&1 || ls dist/*-setup.exe >/dev/null ;;
+            Windows) cp "$(ls $b/nsis/*-setup.exe | head -1)" dist/kimo-setup-windows-x64.exe ;;
+            Linux)   cp "$(ls $b/appimage/*.AppImage | head -1)" dist/kimo-linux-x86_64.AppImage
+                     cp "$(ls $b/deb/*.deb | head -1)" dist/kimo-linux-amd64.deb ;;
           esac
+          ls -l dist
 
-      - name: Windows smoke test (msi install, launch + loopback listener, uninstall)
+      - name: Agent attach check script
+        shell: bash
+        run: |
+          cat > attach_check.py <<'PY'
+          import json, subprocess, sys
+          p = subprocess.Popen([sys.argv[1], "mcp", "--client", "ci"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+          def rq(i, m, params):
+              p.stdin.write(json.dumps({"jsonrpc": "2.0", "id": i, "method": m, "params": params}) + "\n"); p.stdin.flush()
+              while True:
+                  v = json.loads(p.stdout.readline())
+                  if v.get("id") == i: return v
+          init = rq(1, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "ci", "version": "1"}})
+          assert "open on this computer" in init["result"]["instructions"], "attached to a standalone engine, not the app"
+          r = rq(2, "tools/call", {"name": "timeline", "arguments": {"action": "add_track", "args": {}}})
+          assert "track" in r["result"]["content"][0]["text"], r
+          print("an agent attached to the running app:", init["result"]["serverInfo"], r["result"]["content"][0]["text"])
+          p.stdin.close()
+          PY
+
+      - name: Windows smoke test (silent install, engine starts, an agent attaches, uninstall)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $msi = Get-ChildItem dist -Filter *.msi | Select-Object -First 1
-          if (-not $msi) { throw "no .msi in dist (NSIS fallback was used); the msi smoke cannot run" }
-          $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$($msi.FullName)`"", '/qn', '/norestart', '/l*v', 'msi-install.log' -Wait -PassThru
-          if ($p.ExitCode -ne 0) { Get-Content msi-install.log -Tail 40; throw "msi install failed: $($p.ExitCode)" }
-          Write-Output "msi install exit code: $($p.ExitCode)"
-          $exe = Get-ChildItem -Path "$env:ProgramFiles\Kimo Spectator", "$env:LOCALAPPDATA\Programs\Kimo Spectator" -Filter *.exe -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -notmatch 'uninstall' } | Select-Object -First 1
-          if (-not $exe) { throw "installed spectator exe not found" }
-          Write-Output "installed spectator exe: $($exe.FullName)"
+          $p = Start-Process dist\kimo-setup-windows-x64.exe -ArgumentList '/S' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "install failed: $($p.ExitCode)" }
+          $exe = Get-ChildItem "$env:LOCALAPPDATA\kimo", "$env:LOCALAPPDATA\Programs\kimo" -Filter kimo-gui.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { throw "installed kimo-gui.exe not found" }
+          if (-not (Test-Path (Join-Path $exe.DirectoryName 'kimo-mcp.exe'))) { throw "engine sidecar kimo-mcp.exe not installed next to the app" }
+          Write-Output "installed: $($exe.FullName)"
           $app = Start-Process $exe.FullName -PassThru
-          $ok = 0
-          for ($i = 0; $i -lt 40 -and -not $ok; $i++) {
-            Start-Sleep -Milliseconds 500
-            if ($app.HasExited) { break }
-            foreach ($port in 7421..7430) {
-              try { $c = New-Object Net.Sockets.TcpClient; $c.Connect('127.0.0.1', $port); $c.Close(); $ok = $port; break } catch { }
-            }
-          }
-          $alive = -not $app.HasExited
-          Write-Output "spectator process alive: $alive; listening on 127.0.0.1 port: $ok"
-          if ($alive) { Stop-Process -Id $app.Id -Force; $null = $app.WaitForExit(10000) }
-          Write-Output "spectator stopped: $($app.HasExited)"
-          # Pass 2: occupy 7421 with a dummy listener; the spectator must take the next free port (7422).
-          $dummy = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 7421); $dummy.Start()
-          $app2 = Start-Process $exe.FullName -PassThru
-          $ok2 = 0
-          for ($i = 0; $i -lt 40 -and -not $ok2; $i++) {
-            Start-Sleep -Milliseconds 500
-            if ($app2.HasExited) { break }
-            foreach ($port in 7422..7430) {
-              try { $c = New-Object Net.Sockets.TcpClient; $c.Connect('127.0.0.1', $port); $c.Close(); $ok2 = $port; break } catch { }
-            }
-          }
-          $alive2 = -not $app2.HasExited
-          Write-Output "pass 2 (7421 occupied by a dummy): spectator process alive: $alive2; listening on 127.0.0.1 port: $ok2"
-          if ($alive2) { Stop-Process -Id $app2.Id -Force; $null = $app2.WaitForExit(10000) }
-          $dummy.Stop()
-          Write-Output "pass 2 spectator stopped: $($app2.HasExited)"
-          $u = Start-Process msiexec.exe -ArgumentList '/x', "`"$($msi.FullName)`"", '/qn', '/norestart' -Wait -PassThru
-          Write-Output "msi uninstall exit code: $($u.ExitCode)"
-          if (-not $alive -or -not $ok) { throw "spectator did not start and listen on 127.0.0.1:7421-7430" }
-          if (-not $alive2 -or $ok2 -ne 7422) { throw "pass 2: expected the spectator on 127.0.0.1:7422 with 7421 occupied, got '$ok2'" }
-          if ($u.ExitCode -ne 0) { throw "msi uninstall failed: $($u.ExitCode)" }
+          $bridge = "$env:APPDATA\dev.kimo.app\bridge.json"
+          for ($i = 0; $i -lt 60 -and -not (Test-Path $bridge); $i++) { Start-Sleep -Milliseconds 500 }
+          if (-not (Test-Path $bridge)) { throw "the app did not open its bridge" }
+          Start-Sleep -Seconds 4
+          if (-not (Get-Process kimo-mcp -ErrorAction SilentlyContinue)) { throw "the engine sidecar did not start" }
+          python attach_check.py $exe.FullName
+          if ($LASTEXITCODE -ne 0) { throw "an agent could not attach to the running app" }
+          Stop-Process -Id $app.Id -Force
+          Get-Process kimo-mcp -ErrorAction SilentlyContinue | Stop-Process -Force
+          $un = Get-ChildItem $exe.DirectoryName -Filter 'uninstall*.exe' | Select-Object -First 1
+          if ($un) { Start-Process $un.FullName -ArgumentList '/S' -Wait }
 
-      - name: Linux smoke test (dpkg metadata, install, headless launch + loopback listener, uninstall)
+      - name: Linux smoke test (deb install, headless launch, engine starts, an agent attaches, uninstall)
         if: runner.os == 'Linux'
         run: |
-          deb=$(find dist -maxdepth 1 -name '*.deb' | head -1)
-          dpkg-deb --info "$deb"
-          sudo apt-get install -y --no-install-recommends xvfb "./$deb"
-          pkg=$(dpkg-deb --field "$deb" Package)
-          bin=$(dpkg -L "$pkg" | grep -m1 '^/usr/bin/')
-          xvfb-run -a "$bin" > gui.log 2>&1 &
-          ok=0
-          for _ in $(seq 1 20); do
-            sleep 0.5
-            if python3 -c 'import socket; socket.create_connection(("127.0.0.1", 7421), 1).close()'; then ok=1; break; fi
-          done
+          sudo apt-get install -y --no-install-recommends xvfb ./dist/kimo-linux-amd64.deb
+          pkg=$(dpkg-deb --field dist/kimo-linux-amd64.deb Package)
+          bin=$(dpkg -L "$pkg" | grep -m1 '/usr/bin/kimo-gui$')
+          test -x /usr/bin/kimo-mcp
+          xvfb-run -a "$bin" > app.log 2>&1 &
+          bridge="$HOME/.local/share/dev.kimo.app/bridge.json"
+          for _ in $(seq 1 60); do [ -f "$bridge" ] && break; sleep 0.5; done
+          test -f "$bridge" || { cat app.log; exit 1; }
+          sleep 4
+          pgrep -f kimo-mcp
+          python3 attach_check.py "$bin"
           pkill -f "$bin" || true
-          cat gui.log
-          echo "spectator listening on 127.0.0.1:7421: $ok"
-          test "$ok" = 1
           sudo dpkg -r "$pkg"
-          test -z "$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep ' installed$' || true)"
-          test ! -e "$bin"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: kimo-spectator-${{ matrix.label }}
+          name: kimo-app-${{ matrix.label }}
           path: dist/*
           if-no-files-found: error
 
@@ -368,9 +352,19 @@ jobs:
           tag="$GITHUB_REF_NAME"
           ls -l artifacts
           cat > notes.md <<'NOTES'
-          DRAFT. Unsigned builds for Linux and Windows. macOS is coming later.
-          Windows installer: unsigned draft, built on a GitHub-hosted runner, not tested on a real PC.
-          Windows: SmartScreen > More info > Run anyway. Verify downloads against SHA256SUMS.
+          ## Download kimo
+
+          | System | File |
+          |---|---|
+          | Windows 10/11 (64-bit) | **kimo-setup-windows-x64.exe** |
+          | Linux (x86_64) | **kimo-linux-x86_64.AppImage** or **kimo-linux-amd64.deb** |
+
+          kimo is the desktop app: a video editor with the kimo engine inside. Use it with Claude Code, Codex or
+          Antigravity on the plan you already have (no API key needed), and watch every edit land on the timeline live.
+          The other files are the engine on its own, for people who only want the MCP server.
+
+          DRAFT. Unsigned builds; macOS is coming later. Windows: SmartScreen > More info > Run anyway.
+          Verify downloads against SHA256SUMS.
           NOTES
           if draft=$(gh release view "$tag" --json isDraft -q .isDraft 2>/dev/null); then
             if [ "$draft" != "true" ]; then

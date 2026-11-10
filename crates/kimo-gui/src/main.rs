@@ -664,7 +664,18 @@ fn main() {
             }
             if mcp_on { if let Err(e) = start_external(&handle) { eprintln!("kimo: {e}"); } }
             let h5 = handle.clone();
-            std::thread::spawn(move || { let s = sup.start(); let _ = h5.emit("engine-status", &s); });
+            // started by double-clicking a .kimo file: open it once the engine is up
+            let open_file = std::env::args().skip(1).find(|a| a.to_ascii_lowercase().ends_with(".kimo") && Path::new(a).is_file());
+            std::thread::spawn(move || {
+                let s = sup.start();
+                if let (Some(f), Status::Running { .. }) = (&open_file, &s) {
+                    let st = h5.state::<AppState>();
+                    if let Ok(r) = st.ledger.call("you", "project", &json!({"action": "load_project", "args": {"path": f}})) {
+                        if !engine::is_error(&r) { st.ledger.reset(); st.remember_project(f); }
+                    }
+                }
+                let _ = h5.emit("engine-status", &s);
+            });
             Ok(())
         })
         // kimo://localhost/<hex>.png|mp4 (http://kimo.localhost on Windows): the viewer cache, nothing else

@@ -65,7 +65,18 @@
     },
     "macOS": {
       "minimumSystemVersion": "10.15"
-    }
+    },
+    "fileAssociations": [
+      {
+        "ext": [
+          "kimo"
+        ],
+        "name": "kimo project",
+        "description": "kimo video project",
+        "role": "Editor",
+        "mimeType": "application/x-kimo-project"
+      }
+    ]
   },
   "mainBinaryName": "kimo-gui"
 }
