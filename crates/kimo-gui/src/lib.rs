@@ -1,9 +1,12 @@
 //! kimo GUI library: everything testable without a window. `main.rs` is the Tauri glue.
 pub mod agent;
 pub mod agents;
+pub mod bridge;
+pub mod cli_agents;
 pub mod download;
 pub mod engine;
 pub mod keys;
+pub mod ledger;
 pub mod mcp_config;
 pub mod settings;
 pub mod telemetry;
@@ -14,6 +17,23 @@ mod testutil;
 impl agent::Tools for engine::Supervisor {
     fn list(&self) -> Vec<serde_json::Value> { self.tools() }
     fn call(&self, name: &str, args: &serde_json::Value) -> Result<serde_json::Value, String> { engine::Supervisor::call(self, name, args) }
+}
+
+/// A required part is satisfied when kimo downloaded it, or when this computer already has it (ffmpeg/ffprobe on PATH).
+pub fn part_satisfied(data_dir: &std::path::Path, p: &download::Part) -> Option<&'static str> {
+    if download::installed(data_dir, p) { return Some("downloaded"); }
+    if matches!(p.id.as_str(), "ffmpeg" | "ffprobe") && agents::which(&p.id).is_some() { return Some("system"); }
+    None
+}
+
+/// Fonts shipped next to the app (installer resources, a source checkout's fonts/, or KIMO_FONTS).
+pub fn find_fonts(exe_dir: Option<&std::path::Path>, res_dir: Option<&std::path::Path>, engine: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+    if let Some(f) = std::env::var_os("KIMO_FONTS").map(std::path::PathBuf::from) { return Some(f); }
+    let mut c = vec![];
+    if let Some(d) = exe_dir { c.push(d.join("fonts")); for up in d.ancestors().take(6) { c.push(up.join("fonts")); } }
+    if let Some(d) = res_dir { c.push(d.join("fonts")); }
+    if let Some(b) = engine.and_then(|b| b.parent()) { c.push(b.join("..").join("fonts")); }
+    c.into_iter().find(|d| d.is_dir() && std::fs::read_dir(d).map(|r| r.flatten().any(|e| e.path().extension().map(|x| x == "ttf" || x == "otf").unwrap_or(false))).unwrap_or(false))
 }
 
 /// The parts the first-run window offers (REFERENCE ONLY pins; the release workflow rewrites them).

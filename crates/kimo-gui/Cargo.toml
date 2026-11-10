@@ -3,7 +3,7 @@ name = "kimo-gui"
 version = "9.0.0"
 edition = "2021"
 license = "MIT"
-description = "kimo desktop app: the main kimo window (engine sidecar, MCP switch, agent linking, bring-your-own-key chat, live agent view)"
+description = "kimo desktop app: video editor with the kimo engine, Claude Code / Codex / Antigravity on your own subscription, and a live view of every agent edit"
 
 # Deliberately its own workspace: keeps the Tauri dependency tree out of the
 # root workspace (core gate, integration suites, and the 38-warning baseline
@@ -24,6 +24,10 @@ custom-protocol = ["tauri/custom-protocol"]
 
 [dependencies]
 tauri = { version = "2", features = [] }
+# native Open / Save dialogs (import media, open/save project, export path), called from Rust only
+tauri-plugin-dialog = "2"
+# one kimo per user: a second launch focuses the open window (one engine, one project, one bridge)
+tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # provider calls (BYO key) and first-run downloads: blocking, rustls, no OpenSSL

@@ -21,6 +21,12 @@ pub fn find_engine(exe_dir: Option<&Path>, resource_dir: Option<&Path>) -> Optio
     let mut cands = Vec::new();
     if let Some(d) = exe_dir { cands.extend([d.join(name), d.join("bin").join(name), d.join("..").join("lib").join("kimo").join(name)]); }
     if let Some(d) = resource_dir { cands.extend([d.join(name), d.join("bin").join(name)]); }
+    // a source checkout: crates/kimo-gui/target/<profile>/kimo-gui next to the workspace's target/<profile>/kimo-mcp
+    if let Some(d) = exe_dir {
+        for up in d.ancestors().take(6) {
+            for prof in ["release", "dist", "debug"] { cands.push(up.join("target").join(prof).join(name)); }
+        }
+    }
     cands.into_iter().find(|p| p.is_file()).or_else(|| crate::agents::which("kimo-mcp"))
 }
 
