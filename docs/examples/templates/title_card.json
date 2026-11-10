@@ -1,0 +1,129 @@
+{
+ "templates": [
+  {
+   "name": "title_card",
+   "params": [
+    {
+     "name": "title",
+     "type": "string"
+    },
+    {
+     "name": "start",
+     "type": "number",
+     "default": 0
+    },
+    {
+     "name": "duration",
+     "type": "number",
+     "default": 3
+    },
+    {
+     "name": "fade",
+     "type": "number",
+     "default": 0.4
+    },
+    {
+     "name": "title_size",
+     "type": "number",
+     "default": 96
+    },
+    {
+     "name": "color",
+     "type": "array",
+     "default": [
+      1,
+      1,
+      1
+     ]
+    },
+    {
+     "name": "bg_color",
+     "type": "array",
+     "default": [
+      0.05,
+      0.06,
+      0.09
+     ]
+    }
+   ],
+   "ops": [
+    {
+     "id": "trk",
+     "tool": "add_track",
+     "args": {}
+    },
+    {
+     "id": "bg",
+     "tool": "add_shape",
+     "args": {
+      "track_id": "$trk.track_id",
+      "shape": "rect",
+      "width": 1280.0,
+      "height": 720.0,
+      "fill": "{{bg_color}}",
+      "start": "{{start}}",
+      "duration": "{{duration}}"
+     }
+    },
+    {
+     "id": "title",
+     "tool": "add_text",
+     "args": {
+      "track_id": "$trk.track_id",
+      "text": "{{title}}",
+      "size": "{{title_size}}",
+      "color": "{{color}}",
+      "start": "{{start}}",
+      "duration": "{{duration}}"
+     }
+    },
+    {
+     "id": "title_o0",
+     "tool": "set_keyframe",
+     "args": {
+      "clip_id": "$title.clip_id",
+      "property": "opacity",
+      "time": 0.0,
+      "value": 0.0,
+      "ease": "linear"
+     }
+    },
+    {
+     "id": "title_o1",
+     "tool": "set_keyframe",
+     "args": {
+      "clip_id": "$title.clip_id",
+      "property": "opacity",
+      "time": "{{fade}}",
+      "value": 1.0,
+      "ease": "out"
+     }
+    },
+    {
+     "id": "title_o2",
+     "tool": "set_keyframe",
+     "args": {
+      "clip_id": "$title.clip_id",
+      "property": "opacity",
+      "time": {
+       "$calc": "duration-fade"
+      },
+      "value": 1.0,
+      "ease": "linear"
+     }
+    },
+    {
+     "id": "title_o3",
+     "tool": "set_keyframe",
+     "args": {
+      "clip_id": "$title.clip_id",
+      "property": "opacity",
+      "time": "{{duration}}",
+      "value": 0.0,
+      "ease": "in"
+     }
+    }
+   ]
+  }
+ ]
+}

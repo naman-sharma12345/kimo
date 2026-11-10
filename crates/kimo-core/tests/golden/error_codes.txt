@@ -1,0 +1,97 @@
+00 no_such_tool	unknown_tool	param=tool	hint=nearest tools: <3 registry-dependent names>
+01 set_propertyy	unknown_tool	param=tool	hint=nearest tools: <3 registry-dependent names>
+02 delete_clip	missing_arg	param=clip_id	hint=required arguments: clip_id
+03 delete_clip	bad_arg_type	param=clip_id	hint=
+04 delete_clip	not_found	param=clip_id	hint=valid clip ids (up to 10): clip3
+05 move_clip	missing_arg	param=start	hint=required arguments: clip_id, start
+06 move_clip	bad_arg_type	param=start	hint=
+07 move_clip	not_found	param=clip_id	hint=valid clip ids (up to 10): clip3
+08 trim_clip	out_of_range	param=	hint=
+09 set_speed	out_of_range	param=	hint=
+10 set_speed	out_of_range	param=	hint=
+11 set_property	invalid_value	param=property	hint=valid values: opacity, x, y, scale, rotation, rot_x, rot_y, pos_z, backface, fill_alpha, stroke_alpha. For crop use add_effect/crop tools; for effect params use set_effect_param
+12 set_property	missing_arg	param=value	hint=required arguments: clip_id, property, value
+13 split_clip	out_of_range	param=	hint=
+14 split_clip	missing_arg	param=at	hint=required arguments: clip_id, at
+15 freeze_frame	out_of_range	param=	hint=
+16 freeze_frame	out_of_range	param=	hint=
+17 insert_gap	out_of_range	param=	hint=
+18 insert_gap	out_of_range	param=	hint=
+19 insert_gap	not_found	param=track_id	hint=valid track ids (up to 10): track1, track2
+20 add_track	OK
+21 add_shape	missing_arg	param=shape	hint=required arguments: track_id, shape, start, duration
+22 add_shape	not_found	param=track_id	hint=valid track ids (up to 10): track1, track2
+23 add_shape	invalid_value	param=shape	hint=valid values: rect, ellipse, polygon, line
+24 add_effect	invalid_value	param=kind	hint=nearest effect kinds: cc_burn_film, log_wheels, offset. list_effects returns all 185 kinds
+25 add_effect	not_found	param=clip_id	hint=valid clip ids (up to 10): clip3
+26 set_keyframe	missing_arg	param=value	hint=required arguments: clip_id, property, time, value
+27 set_keyframe	invalid_value	param=property	hint=valid values: opacity, x, y, scale, rotation, rot_x, rot_y, pos_z, backface, fill_alpha, stroke_alpha. To keyframe an effect param pass effect_id
+28 set_camera	out_of_range	param=	hint=
+29 set_camera	bad_arg_type	param=cam_x	hint=
+30 set_track	not_found	param=track_id	hint=valid track ids (up to 10): track1, track2
+31 remove_silence_cuts	not_found	param=track_id	hint=valid track ids (up to 10): track1, track2
+32 loop_clip	out_of_range	param=	hint=
+33 loop_clip	out_of_range	param=	hint=
+34 swap_clips	invalid_state	param=	hint=
+35 distribute_clips	out_of_range	param=	hint=
+36 get_scopes	missing_arg	param=time	hint=required arguments: time
+37 render_frame	missing_arg	param=path	hint=required arguments: time, path
+38 bind_shared_grade_graphs	not_found	param=	hint=
+39 save_project	missing_arg	param=path	hint=required arguments: path
+40 load_project	io_error	param=	hint=
+41 set_property	invalid_argument_combo	param=time	hint=
+42 delete_clip	missing_arg	param=clip_id	hint=required arguments: clip_id; did you mean 'clip_id' instead of 'clipid'?
+43 cache_set_budget	missing_arg	param=megabytes	hint=required arguments: megabytes
+44 cache_set_budget	out_of_range	param=	hint=
+45 collect_project	missing_arg	param=dest_dir	hint=required arguments: dest_dir
+46 collect_project	dest_exists	param=dest_dir	hint=
+47 collect_project	invalid_value	param=copy	hint=valid values for 'copy' (2): copy, link
+48 relink_media	invalid_value	param=match	hint=valid values for 'match' (3): name_size_hash, name, hash
+49 transcript_import	missing_arg	param=path	hint=required arguments: path
+50 transcript_import	io_error	param=	hint=
+51 transcript_get	not_found	param=	hint=
+52 transcript_coverage	not_found	param=	hint=
+53 transcript_to_captions	not_found	param=	hint=
+54 validate_captions	other	param=	hint=
+55 transcript_edit_preview	not_found	param=	hint=
+56 batch	forbidden_in_batch	param=ops[0]	hint=
+57 batch	invalid_reference	param=ops[0]	hint=
+58 batch	batch_failed	param=ops[1]	hint=
+59 batch	project_drift	param=	hint=
+60 audio_speech_intervals	other	param=mode	hint=valid values for 'mode' (2): vad, silence
+61 audio_speech_intervals	out_of_range	param=	hint=
+62 audio_speech_intervals	not_found	param=	hint=valid clip ids (up to 10): clip3
+63 set_keyframes	other	param=	hint=
+64 set_keyframes	other	param=	hint=
+65 set_keyframes	invalid_value	param=property	hint=valid values: opacity, x, y, scale, rotation, rot_x, rot_y, pos_z, backface, fill_alpha, stroke_alpha, gradient_angle, flow_blur, flow_quality, pin_gain, reveal, path. To keyframe an effect param pass effect_id
+66 sample_property	other	param=	hint=
+67 sample_property	other	param=	hint=
+68 sample_property	other	param=space	hint=valid values for 'space' (2): timeline, clip
+69 bake_property	other	param=	hint=
+70 bake_property	other	param=	hint=
+71 bake_property	other	param=	hint=
+72 bake_property	invalid_state	param=	hint=
+73 set_expression	other	param=	hint=
+74 set_expression	other	param=	hint=
+75 set_expression	other	param=	hint=
+76 set_expression	other	param=	hint=
+77 set_parent	other	param=	hint=
+78 set_parent	not_found	param=	hint=valid clip ids (up to 10): clip3
+79 set_parent	other	param=mode	hint=valid values for 'mode' (2): keep_world, keep_local
+80 set_parent	other	param=	hint=
+81 get_transform	other	param=space	hint=valid values for 'space' (3): local, world, canvas_px
+82 get_transform	not_found	param=clip_id	hint=valid clip ids (up to 10): clip3
+83 add_null	not_found	param=track_id	hint=valid track ids (up to 10): track1, track2
+84 set_meta	invalid_name	param=	hint=
+85 set_meta	name_not_found	param=	hint=
+86 set_meta	other	param=target	hint=valid values for 'target' (2): clip, track
+87 set_meta	invalid_name	param=	hint=
+88 set_meta	other	param=	hint=
+89 find	out_of_range	param=	hint=
+90 find	other	param=kind	hint=valid values for 'kind' (2): clip, track
+91 find	out_of_range	param=	hint=
+92 find	name_not_found	param=	hint=
+93 project_diff	other	param=	hint=
+94 project_diff	other	param=	hint=
+95 project_diff	other	param=	hint=
+96 project_diff	other	param=	hint=

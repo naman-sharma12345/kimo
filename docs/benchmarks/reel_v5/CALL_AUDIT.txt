@@ -1,0 +1,68 @@
+KIMO v5 TEASER: CALL AUDIT (recorded take, Oct 16 2026, 12:52 to 13:10 UTC)
+Engine: kimo 3.0.0, commit 27e92ac89ea9 (prebuilt k5 binary), fresh process, empty project.
+The registry lists 378 tools. This run is NOT full coverage.
+
+1. CALLS SENT BY build.py
+- build.py sent 492 calls. The driver then sent 1 export call. Total: 493.
+- Retries: 0. The driver has no retry path; each call was sent once.
+- JSON-RPC ids were not logged per call by the driver. The join below matches the driver's send order to the engine's telemetry order, by sequence and tool name. Result: 493 of 493 positions match, 0 mismatches.
+- Distinct tool names exercised: 35 of 378 registered.
+  add_adjustment_layer x1, add_audio_clip x1, add_audio_effect x2, add_camera_shake x1, add_clip x7, add_effect x21, add_node x1, add_particles x2, add_shape x24, add_text x15, add_text_animator x9, add_track x9, add_transition x5, export x1, get_scopes x1, import_media x1, measure_loudness x2, move_clip x1, normalize_loudness x1, project_set x1, render_scope x1, set_animator_keyframe x18, set_audio x1, set_audio_pan x1, set_audio_volume_key x3, set_blend x11, set_color_curve x1, set_grade_output x1, set_keyframe x272, set_motion_blur x13, set_property x44, set_text_style x7, set_text_weight x12, split_clip x1, trim_clip x1
+
+2. ENGINE RESPONSES
+- OK: 493. Errors: 0. The driver's failure list is empty.
+- Mutating: 486. Non-mutating: 7 (measure_loudness x2, get_scopes, render_scope, import_media, export, and one set_blend).
+  The set_blend (engine call k3554fe-461, mode "add" on clip72, the sparks layer) came back ok with mutated=false. The engine treated it as a no-op.
+- project_changed events: 486, revs 1 to 486. There are no gaps and no duplicates, which matches the 486 mutating calls.
+
+3. TELEMETRY THE RELAY FORWARDED (independent SSE tap on the same relay)
+- The tap connected during the export. The relay's ring holds 2000 events and the total stayed under that, so the replay started at the session's first event. Nothing was trimmed.
+- 1687 events: 1 session, 493 start, 493 complete (terminal), 0 error (terminal), 48 progress (all export, counted separately), 486 project_changed, 166 frame_rendered (165 auto preview + 1 render_scope image).
+- Engine call ids: k3554fe-1 to k3554fe-493. Contiguous, with no missing ids and no duplicates.
+- Every id has exactly one start followed by one complete. Progress events sit only between export's start and complete.
+- Order: call ids are non-decreasing in stream order, and engine timestamps (ts_ms) are monotonic. Out-of-order events: 0. Desyncs: 0.
+- Dropped SSE frames: none detected. Every id has both phases, and the rev sequence is complete.
+
+4. EVENTS THE GUI RECEIVED / RAIL ROWS
+- The recorded page was NOT instrumented page-side, so its own receive counter was not captured.
+- What it did show: 0 page errors over the whole take. The recording shows rail rows landing call by call and mode switches (edit, effects, graph, captions, grading, color, mixing, export). The final frame reads "frame 750 / 750 · 100% · done in 13:13".
+- Replay check: I fed the exact tapped stream into a fresh GUI instance (same UI build, ?feed=off, window.__kimo.apply).
+  - callCount: 493 (rail entries created).
+  - Calls kept in state: 400. The GUI caps state at 400, so the oldest 93 are evicted by design.
+  - Unique call ids among the kept: 400. Status: 400 ok.
+  - Mounted DOM rows: 17. The rail is virtualized.
+  - Page errors: 0.
+  - This is a replay of the same events, not the recorded page itself.
+
+5. LIVE PREVIEW (viewer) UNDER LOAD
+- The viewer showed REAL engine frames: frame_rendered PNGs from the engine's own preview thread, rendered at 1920x1080 and scaled to 640 wide. It was not a placeholder.
+- Auto frames: 165 for 486 revisions. Latest-wins coalescing means most revs never got their own frame.
+- Preview render time: p50 1169 ms, p90 1988 ms, max 3285 ms. Gap between frames: p50 1.8 s, p90 2.8 s, max 6.7 s.
+- Rev lag of a shown frame behind the newest rev: p50 2, p90 3, max 5. Only 42 of 165 frames were current when they arrived.
+  So for most of the take the viewer carried the "out of date · rev N" badge, about 2 revs behind. The last frame reached rev 486, the final rev.
+- During the export, the viewer held the last preview frame (19.80 s). It did not show the frames being exported; the export panel's progress counter advanced.
+- GUI frame times (main-thread rAF) were NOT measured in the recorded page.
+
+6. RECORDING
+- Capture: CDP screencast of the headless page, 1376x768, DPR 1. Written as constant 15 fps; the last frame is repeated when the page is idle.
+- Started before the first call. Stopped 6 s after the export completed, in one continuous take with no off-camera calls.
+- Original capture: /tmp/reel/gui_raw.mp4, 1105.4 s, 16581 frames, 35.4 MB. Byte-untouched. sha256 530b850044673088281e217677accfc41ec9b372e8f20f901fe1f284c965176a
+- Timeline: recording start; first call at +4.6 s; build done at +304.7 s; export start at +306.7 s; export done at +1099.4 s (13 min 12 s, about 1 fps); stop at +1105.4 s.
+
+7. TEASER (/home/user/tab/files/kimo_reel_final.mp4)
+- Rendered and exported by the engine's export call (crf 21). Afterwards there was only a lossless faststart remux (-c copy).
+- 1920x1080, 30 fps, 750 frames, 25.000 s, H.264 yuv420p.
+- Audio: AAC 48 kHz stereo, 25.003 s. Audio minus video: +0.003 s.
+- Full decode (ffmpeg -v error -f null): 0 errors.
+- Storyboard: 6 shots over 25.0 s (NOTES.md planned 25 s, not 24). 750 / 30 = 25.0 s, and they agree.
+- Audio sync: the first impact cue was placed at 4.00 s (the shot 1 to 2 cut). The measured onset is 3.996 s and the peak 4.004 s, so it is in sync within about 5 ms.
+- Loudness: -17.2 LUFS integrated, -1.5 dBFS sample peak.
+- Audio source: a bed synthesized on this box with numpy (pad chords, sub booms, noise risers, ticks). It is NOT engine-generated (the engine has no tone/synth tool) and not downloaded. It was imported with import_media, then mixed by engine calls: set_audio (fades, HPF), eq, compressor, pan, 3 volume keys, measure_loudness x2, normalize_loudness to -17. No human has listened to it.
+
+8. OTHER DELIVERABLES
+- kimo_reel_raw_take.mp4: the full unedited take, re-encoded from gui_raw.mp4 at CRF 31, 1376x768, 30 fps, 1105.4 s, silent. Decodes clean.
+- kimo_reel_process.mp4: the making-of, derived from gui_raw.mp4.
+  - Structure: title card 3.2 s (made with ffmpeg), then the GUI recording speed-ramped to 136.1 s, then the teaser 25.0 s. Total 164.3 s, 1920x1080, 30 fps, AAC (the GUI part is silent).
+  - Ramp: 1x for the empty project, the timeline cuts (trim/split/move), the grade pass, and the scopes and audio mix; 4x for the bulk build; 56x for the 13 min export; 1x for the export finish.
+  - No call is cut. Every call stays visible for at least about 4 output frames at 4x. The export call spans its whole 56x stretch.
+  - The teaser inside it is a second-generation re-encode (crf 21) so the clips could be concatenated. The standalone kimo_reel_final.mp4 is the engine original.

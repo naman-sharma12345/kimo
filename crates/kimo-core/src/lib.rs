@@ -1,0 +1,110 @@
+//! kimo-core: project model, keyframes, command registry, CPU renderer.
+//! Every user-visible operation is a registered Command; the MCP server
+//! is generated from the registry, so nothing can exist without a tool.
+pub mod ext;
+#[cfg(feature = "libav")]
+pub mod libav_decode;
+pub mod deps;
+pub mod proxy;
+pub mod migrations;
+pub mod analysis_proxy;
+pub mod transcript;
+pub mod transcript_parse;
+pub mod caption_validate;
+pub mod transcript_captions;
+pub mod speech_words;
+pub mod transcript_coverage;
+pub mod errors;
+pub mod codeclip;
+pub mod reframe;
+pub mod lens;
+pub mod telemetry;
+pub mod toolgroups;
+pub mod trackmath;
+pub mod shapemods;
+pub mod pathops;
+pub mod pushwipe;
+pub mod audiokeys;
+pub mod layerfx;
+pub mod paths;
+pub mod layerstyles;
+pub mod lighting;
+pub mod sfm;
+pub mod matting;
+pub mod matte;
+pub mod keyframe;
+pub mod hud;
+pub mod flow;
+pub mod planar;
+pub mod motion;
+pub mod masks;
+pub mod shutter;
+pub mod confetti;
+pub mod shards;
+pub mod shard_look;
+pub mod scene3d;
+pub mod physics;
+pub mod presets;
+pub mod three_d;
+pub mod comp3d;
+pub mod glass;
+pub mod model;
+pub mod commands;
+pub mod render;
+pub mod framecache;
+pub mod buildinfo;
+pub mod effects;
+pub mod text;
+pub mod recipes;
+pub mod particles;
+pub mod gpu2d;
+pub mod titles;
+pub mod transitions;
+pub mod audio;
+pub mod perception;
+pub mod assets;
+pub mod pixels;
+pub mod pixel_expr;
+pub mod shader_ops;
+pub mod resource_limits;
+pub mod tracking; pub mod roto; pub mod robust_est; pub mod mask_track;
+pub mod stabilize;
+pub mod noise_est;
+pub mod edit;
+pub mod effects2;
+pub mod vfx_graph;
+pub mod vfx_look_library;
+pub mod color;
+pub mod keying;
+pub mod colortools;
+pub mod subject_preview;
+
+pub mod guard;
+pub mod speedlines;
+pub mod par;
+pub mod fracture;
+pub mod frosted;
+pub mod lightwrap;
+pub mod glow;
+pub mod flare;
+pub mod vignette;
+pub mod castshadow;
+
+pub mod long_gap;
+
+pub mod editorial;
+
+pub mod timecode;
+
+
+pub mod noise;
+pub mod noise_fields;
+pub mod camera_projection;
+pub mod uv_math;
+pub mod transition_raw;
+pub mod particle_fields;
+pub mod particle_advect;
+pub mod particle_flow;
+pub mod particles3d;
+pub mod threed;
+pub mod vr;

@@ -1,0 +1,4 @@
+use super::kit::*;
+pub fn commands() -> Vec<Command> {
+    vec![Command{name:"effect_describe",mutates:false,description:"Describe an effect's formula and every animatable parameter/default. For pixel_expr: vec4 or channel expressions over x,y,u,v,w,h,t,src,p0..p7 with pure sin/pow/mix/smoothstep/clamp/fract/floor/noise/min/max/atan2/sqrt/sample/aux1. No I/O or loops. Set resource budgets through set_limits.",schema:obj(vec![("kind",s("effect name"))],&["kind"]),run:|_,a|{let name=str_arg(a,"kind")?;let e=crate::effects::CATALOG.iter().find(|e|e.0==name).ok_or_else(||format!("no such effect '{name}'"))?;Ok(json!({"kind":e.0,"formula":e.1,"params":e.2.iter().map(|(name,default,description)|json!({"name":name,"default":default,"description":description,"animatable":true})).collect::<Vec<_>>()}))}}]
+}

@@ -1,0 +1,12 @@
+[package]
+name = "kimo-mcp"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "kimo-mcp"
+path = "src/main.rs"
+
+[dependencies]
+kimo-core = { path = "../kimo-core" }
+serde_json = "1"

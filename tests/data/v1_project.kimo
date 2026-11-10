@@ -1,0 +1,742 @@
+{
+  "grade_scopes": {
+    "graphs": {},
+    "clip_bindings": {},
+    "groups": [],
+    "timeline": []
+  },
+  "editorial": {
+    "captions": {},
+    "multicams": {}
+  },
+  "lights": {},
+  "materials": {},
+  "occluders": {},
+  "ocio_view_delivery": null,
+  "color_pipeline": {
+    "linear_resample": false,
+    "mastering": null,
+    "enabled": false,
+    "working_gamut": 3,
+    "input_gamut": 0,
+    "input_transfer": 1,
+    "output_gamut": 0,
+    "output_transfer": 1,
+    "reference_white": 100.0,
+    "tone_map": false,
+    "gamut_compress": false
+  },
+  "camera": {},
+  "name": "untitled",
+  "width": 320,
+  "height": 180,
+  "fps": 25.0,
+  "assets": {},
+  "tracks": [
+    {
+      "id": "track1",
+      "clips": [],
+      "locked": false,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "id": "track2",
+      "clips": [
+        {
+          "id": "clip5",
+          "source": {
+            "type": "text",
+            "text": "KIMO",
+            "font": "Montserrat",
+            "size": 60.0,
+            "color": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "letter_spacing": 0.0,
+            "stroke_width": 0.0,
+            "stroke_color": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "shadow": 0.0,
+            "align": "center"
+          },
+          "start": 0.0,
+          "duration": 1.0,
+          "in_point": 0.0,
+          "speed": 1.0,
+          "speed_curve": null,
+          "props": {
+            "opacity": {
+              "base": 1.0,
+              "keys": [],
+              "expr": []
+            },
+            "reveal": {
+              "base": 1.0,
+              "keys": [],
+              "expr": []
+            },
+            "rotation": {
+              "base": 0.0,
+              "keys": [],
+              "expr": []
+            },
+            "scale": {
+              "base": 1.0,
+              "keys": [],
+              "expr": []
+            },
+            "x": {
+              "base": 0.0,
+              "keys": [],
+              "expr": []
+            },
+            "y": {
+              "base": 0.0,
+              "keys": [],
+              "expr": []
+            }
+          },
+          "effects": [],
+          "grade_graph": null,
+          "blend": "normal",
+          "mask": null,
+          "time_mode": {
+            "mode": "normal"
+          },
+          "corners": null,
+          "audio": {
+            "effects": [],
+            "pan": 0.0,
+            "duck_gain": {
+              "base": 1.0,
+              "keys": [],
+              "expr": []
+            },
+            "mute": false,
+            "volume": {
+              "base": 1.0,
+              "keys": [],
+              "expr": []
+            },
+            "fade_in": 0.0,
+            "fade_out": 0.0,
+            "pitch": 0.0,
+            "highpass": 0.0,
+            "lowpass": 0.0,
+            "denoise": 0.0,
+            "compress": false,
+            "echo": 0.0,
+            "reverse": false
+          },
+          "motion_blur": 0.0,
+          "echo": null,
+          "motion_path": null,
+          "posterize_fps": 0.0,
+          "text_fx": null,
+          "transition_in": null
+        },
+        {
+          "id": "clip9",
+          "source": {
+            "type": "particles",
+            "kind": "sparks",
+            "count": 50,
+            "color": [
+              1.0,
+              0.7,
+              0.3
+            ],
+            "size": 3.0,
+            "seed": 5
+          },
+          "start": 0.0,
+          "duration": 1.0,
+          "in_point": 0.0,
+          "speed": 1.0,
+          "speed_curve": null,
+          "props": {
+            "opacity": {
+              "base": 1.0,
+              "keys": [],
+              "expr": []
+            },
+            "reveal": {
+              "base": 1.0,
+              "keys": [],
+              "expr": []
+            },
+            "rotation": {
+              "base": 0.0,
+              "keys": [],
+              "expr": []
+            },
+            "scale": {
+              "base": 1.0,
+              "keys": [],
+              "expr": []
+            },
+            "x": {
+              "base": 0.0,
+              "keys": [],
+              "expr": []
+            },
+            "y": {
+              "base": 0.0,
+              "keys": [],
+              "expr": []
+            }
+          },
+          "effects": [],
+          "grade_graph": null,
+          "blend": "add",
+          "mask": null,
+          "time_mode": {
+            "mode": "normal"
+          },
+          "corners": null,
+          "audio": {
+            "effects": [],
+            "pan": 0.0,
+            "duck_gain": {
+              "base": 1.0,
+              "keys": [],
+              "expr": []
+            },
+            "mute": false,
+            "volume": {
+              "base": 1.0,
+              "keys": [],
+              "expr": []
+            },
+            "fade_in": 0.0,
+            "fade_out": 0.0,
+            "pitch": 0.0,
+            "highpass": 0.0,
+            "lowpass": 0.0,
+            "denoise": 0.0,
+            "compress": false,
+            "echo": 0.0,
+            "reverse": false
+          },
+          "motion_blur": 0.0,
+          "echo": null,
+          "motion_path": null,
+          "posterize_fps": 0.0,
+          "text_fx": null,
+          "transition_in": null
+        },
+        {
+          "id": "clip10",
+          "source": {
+            "type": "shard_burst",
+            "count": 20,
+            "origin": [
+              160.0,
+              90.0,
+              0.0
+            ],
+            "speed": 100.0,
+            "size_min": 10.0,
+            "size_max": 30.0,
+            "seed": 3,
+            "tint": [
+              0.78,
+              0.9,
+              1.0
+            ],
+            "drag": 1.1,
+            "gravity": 0.0,
+            "spin": 260.0,
+            "dof": 1.0,
+            "focus": 0.0,
+            "brightness": 1.0,
+            "light": [
+              -0.5,
+              -0.6,
+              -0.62
+            ],
+            "toward_camera": 0.0,
+            "spread_time": 0.0,
+            "fade_out": 0.0,
+            "dispersion": 0.0,
+            "origin_spread": 0.0,
+            "physics": false,
+            "restitution": 0.35,
+            "friction": 0.5,
+            "floor": null,
+            "ang_drag": 0.0,
+            "collide": true,
+            "thickness": null,
+            "glass": 0.0,
+            "aspect": null,
+            "fresnel": 0.0,
+            "refract": 30.0,
+            "falloff": 0.0,
+            "material": "glass",
+            "size_bias": 1.0,
+            "size_scale": 1.0,
+            "env_reflection": 0.0,
+            "env_roughness": 0.0,
+            "plane": null,
+            "trail": 0.0,
+            "trail_length": 0.0,
+            "trail_samples": 0,
+            "shutter_deg": 180.0,
+            "blur_samples": 0,
+            "contact_shadow": 0.0,
+            "shadow_reach": 0.0,
+            "shadow_plane_z": 0.0
+          },
+          "start": 0.0,
+          "duration": 1.0,
+          "in_point": 0.0,
+          "speed": 1.0,
+          "speed_curve": null,
+          "props": {
+            "opacity": {
+              "base": 1.0,
+              "keys": [],
+              "expr": []
+            },
+            "reveal": {
+              "base": 1.0,
+              "keys": [],
+              "expr": []
+            },
+            "rotation": {
+              "base": 0.0,
+              "keys": [],
+              "expr": []
+            },
+            "scale": {
+              "base": 1.0,
+              "keys": [],
+              "expr": []
+            },
+            "x": {
+              "base": 0.0,
+              "keys": [],
+              "expr": []
+            },
+            "y": {
+              "base": 0.0,
+              "keys": [],
+              "expr": []
+            }
+          },
+          "effects": [],
+          "grade_graph": null,
+          "blend": "normal",
+          "mask": null,
+          "time_mode": {
+            "mode": "normal"
+          },
+          "corners": null,
+          "audio": {
+            "effects": [],
+            "pan": 0.0,
+            "duck_gain": {
+              "base": 1.0,
+              "keys": [],
+              "expr": []
+            },
+            "mute": false,
+            "volume": {
+              "base": 1.0,
+              "keys": [],
+              "expr": []
+            },
+            "fade_in": 0.0,
+            "fade_out": 0.0,
+            "pitch": 0.0,
+            "highpass": 0.0,
+            "lowpass": 0.0,
+            "denoise": 0.0,
+            "compress": false,
+            "echo": 0.0,
+            "reverse": false
+          },
+          "motion_blur": 0.0,
+          "echo": null,
+          "motion_path": null,
+          "posterize_fps": 0.0,
+          "text_fx": null,
+          "transition_in": null
+        },
+        {
+          "id": "clip11",
+          "source": {
+            "type": "precomp",
+            "tracks": [
+              {
+                "id": "track1",
+                "clips": [
+                  {
+                    "id": "clip3",
+                    "source": {
+                      "type": "shape",
+                      "shape": "rect",
+                      "width": 120.0,
+                      "height": 70.0,
+                      "fill": [
+                        0.9,
+                        0.3,
+                        0.2
+                      ],
+                      "stroke_width": 0.0,
+                      "stroke_color": [
+                        0.0,
+                        0.0,
+                        0.0
+                      ],
+                      "sides": 5,
+                      "corner_radius": 0.0
+                    },
+                    "start": 0.0,
+                    "duration": 2.0,
+                    "in_point": 0.0,
+                    "speed": 1.0,
+                    "speed_curve": null,
+                    "props": {
+                      "opacity": {
+                        "base": 1.0,
+                        "keys": [],
+                        "expr": []
+                      },
+                      "reveal": {
+                        "base": 1.0,
+                        "keys": [],
+                        "expr": []
+                      },
+                      "rotation": {
+                        "base": 0.0,
+                        "keys": [],
+                        "expr": []
+                      },
+                      "scale": {
+                        "base": 1.0,
+                        "keys": [
+                          {
+                            "t": 0.5,
+                            "v": 1.4,
+                            "ease": "linear",
+                            "bez": null
+                          }
+                        ],
+                        "expr": []
+                      },
+                      "x": {
+                        "base": 0.0,
+                        "keys": [],
+                        "expr": []
+                      },
+                      "y": {
+                        "base": 0.0,
+                        "keys": [],
+                        "expr": []
+                      }
+                    },
+                    "effects": [
+                      {
+                        "id": "fx6",
+                        "kind": "glow",
+                        "params": {},
+                        "strings": {}
+                      },
+                      {
+                        "id": "fx7",
+                        "kind": "blur",
+                        "params": {
+                          "radius": {
+                            "base": 3.0,
+                            "keys": [],
+                            "expr": []
+                          }
+                        },
+                        "strings": {}
+                      }
+                    ],
+                    "grade_graph": null,
+                    "blend": "normal",
+                    "mask": {
+                      "shape": "ellipse",
+                      "props": {
+                        "cx": {
+                          "base": 0.5,
+                          "keys": [],
+                          "expr": []
+                        },
+                        "cy": {
+                          "base": 0.5,
+                          "keys": [],
+                          "expr": []
+                        },
+                        "feather": {
+                          "base": 0.2,
+                          "keys": [],
+                          "expr": []
+                        },
+                        "h": {
+                          "base": 0.6,
+                          "keys": [],
+                          "expr": []
+                        },
+                        "rotation": {
+                          "base": 0.0,
+                          "keys": [],
+                          "expr": []
+                        },
+                        "w": {
+                          "base": 0.5,
+                          "keys": [],
+                          "expr": []
+                        }
+                      },
+                      "invert": false,
+                      "layers": [],
+                      "matte": null
+                    },
+                    "time_mode": {
+                      "mode": "normal"
+                    },
+                    "corners": null,
+                    "audio": {
+                      "effects": [],
+                      "pan": 0.0,
+                      "duck_gain": {
+                        "base": 1.0,
+                        "keys": [],
+                        "expr": []
+                      },
+                      "mute": false,
+                      "volume": {
+                        "base": 1.0,
+                        "keys": [],
+                        "expr": []
+                      },
+                      "fade_in": 0.0,
+                      "fade_out": 0.0,
+                      "pitch": 0.0,
+                      "highpass": 0.0,
+                      "lowpass": 0.0,
+                      "denoise": 0.0,
+                      "compress": false,
+                      "echo": 0.0,
+                      "reverse": false
+                    },
+                    "motion_blur": 0.0,
+                    "echo": null,
+                    "motion_path": null,
+                    "posterize_fps": 0.0,
+                    "text_fx": null,
+                    "transition_in": null
+                  }
+                ],
+                "locked": false,
+                "muted": false,
+                "name": ""
+              },
+              {
+                "id": "track2",
+                "clips": [
+                  {
+                    "id": "clip4",
+                    "source": {
+                      "type": "shape",
+                      "shape": "ellipse",
+                      "width": 90.0,
+                      "height": 90.0,
+                      "fill": [
+                        0.2,
+                        0.8,
+                        0.4
+                      ],
+                      "stroke_width": 0.0,
+                      "stroke_color": [
+                        0.0,
+                        0.0,
+                        0.0
+                      ],
+                      "sides": 5,
+                      "corner_radius": 0.0
+                    },
+                    "start": 0.5,
+                    "duration": 2.0,
+                    "in_point": 0.0,
+                    "speed": 1.0,
+                    "speed_curve": null,
+                    "props": {
+                      "opacity": {
+                        "base": 0.7,
+                        "keys": [],
+                        "expr": []
+                      },
+                      "reveal": {
+                        "base": 1.0,
+                        "keys": [],
+                        "expr": []
+                      },
+                      "rotation": {
+                        "base": 0.0,
+                        "keys": [],
+                        "expr": []
+                      },
+                      "scale": {
+                        "base": 1.0,
+                        "keys": [],
+                        "expr": []
+                      },
+                      "x": {
+                        "base": 0.0,
+                        "keys": [],
+                        "expr": []
+                      },
+                      "y": {
+                        "base": 0.0,
+                        "keys": [],
+                        "expr": []
+                      }
+                    },
+                    "effects": [
+                      {
+                        "id": "fx8",
+                        "kind": "vignette",
+                        "params": {},
+                        "strings": {}
+                      }
+                    ],
+                    "grade_graph": null,
+                    "blend": "normal",
+                    "mask": null,
+                    "time_mode": {
+                      "mode": "normal"
+                    },
+                    "corners": null,
+                    "audio": {
+                      "effects": [],
+                      "pan": 0.0,
+                      "duck_gain": {
+                        "base": 1.0,
+                        "keys": [],
+                        "expr": []
+                      },
+                      "mute": false,
+                      "volume": {
+                        "base": 1.0,
+                        "keys": [],
+                        "expr": []
+                      },
+                      "fade_in": 0.0,
+                      "fade_out": 0.0,
+                      "pitch": 0.0,
+                      "highpass": 0.0,
+                      "lowpass": 0.0,
+                      "denoise": 0.0,
+                      "compress": false,
+                      "echo": 0.0,
+                      "reverse": false
+                    },
+                    "motion_blur": 0.0,
+                    "echo": null,
+                    "motion_path": null,
+                    "posterize_fps": 0.0,
+                    "text_fx": null,
+                    "transition_in": null
+                  }
+                ],
+                "locked": false,
+                "muted": false,
+                "name": ""
+              }
+            ]
+          },
+          "start": 0.0,
+          "duration": 2.5,
+          "in_point": 0.0,
+          "speed": 1.0,
+          "speed_curve": null,
+          "props": {
+            "opacity": {
+              "base": 1.0,
+              "keys": [],
+              "expr": []
+            },
+            "reveal": {
+              "base": 1.0,
+              "keys": [],
+              "expr": []
+            },
+            "rotation": {
+              "base": 0.0,
+              "keys": [],
+              "expr": []
+            },
+            "scale": {
+              "base": 1.0,
+              "keys": [],
+              "expr": []
+            },
+            "x": {
+              "base": 0.0,
+              "keys": [],
+              "expr": []
+            },
+            "y": {
+              "base": 0.0,
+              "keys": [],
+              "expr": []
+            }
+          },
+          "effects": [],
+          "grade_graph": null,
+          "blend": "normal",
+          "mask": null,
+          "time_mode": {
+            "mode": "normal"
+          },
+          "corners": null,
+          "audio": {
+            "effects": [],
+            "pan": 0.0,
+            "duck_gain": {
+              "base": 1.0,
+              "keys": [],
+              "expr": []
+            },
+            "mute": false,
+            "volume": {
+              "base": 1.0,
+              "keys": [],
+              "expr": []
+            },
+            "fade_in": 0.0,
+            "fade_out": 0.0,
+            "pitch": 0.0,
+            "highpass": 0.0,
+            "lowpass": 0.0,
+            "denoise": 0.0,
+            "compress": false,
+            "echo": 0.0,
+            "reverse": false
+          },
+          "motion_blur": 0.0,
+          "echo": null,
+          "motion_path": null,
+          "posterize_fps": 0.0,
+          "text_fx": null,
+          "transition_in": null
+        }
+      ],
+      "locked": false,
+      "muted": false,
+      "name": ""
+    }
+  ],
+  "markers": []
+}

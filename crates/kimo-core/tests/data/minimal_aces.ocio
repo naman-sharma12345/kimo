@@ -1,0 +1,48 @@
+ocio_profile_version: 2
+
+environment:
+  {}
+search_path: ""
+strictparsing: true
+luma: [0.2126, 0.7152, 0.0722]
+
+roles:
+  default: ACEScg
+  scene_linear: ACEScg
+
+file_rules:
+  - !<Rule> {name: Default, colorspace: default}
+
+displays:
+  Test monitor:
+    - !<View> {name: Gamma2 test (not ACES ODT), colorspace: DisplayGamma2}
+
+active_displays: []
+active_views: []
+
+colorspaces:
+  - !<ColorSpace>
+    name: ACEScg
+    family: ""
+    equalitygroup: ""
+    bitdepth: unknown
+    isdata: false
+    allocation: uniform
+
+  - !<ColorSpace>
+    name: ACEScct
+    family: ""
+    equalitygroup: ""
+    bitdepth: unknown
+    isdata: false
+    allocation: uniform
+    to_scene_reference: !<BuiltinTransform> {style: CURVE - ACEScct-LOG_to_LINEAR}
+
+  - !<ColorSpace>
+    name: DisplayGamma2
+    family: ""
+    equalitygroup: ""
+    bitdepth: unknown
+    isdata: false
+    allocation: uniform
+    to_scene_reference: !<ExponentTransform> {value: 2}

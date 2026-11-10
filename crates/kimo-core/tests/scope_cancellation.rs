@@ -1,0 +1,3 @@
+use kimo_core::{colortools,effects::Frame,guard};
+use std::sync::atomic::Ordering::Relaxed;
+#[test]fn cancelled_scope_rasters_do_not_publish(){let f=Frame{w:2,h:2,d:vec![0.5;16]};let before=f.d.clone();for kind in ["waveform","parade","vectorscope","histogram"]{let path=std::env::temp_dir().join(format!("kimo-scope-cancel-{kind}-{}.png",std::process::id()));assert!(!path.exists());let tok=guard::new_token();tok.store(true,Relaxed);let g=guard::install_token(&tok);let result=std::panic::catch_unwind(||colortools::scope_png(&f,kind,path.to_str().unwrap()));drop(g);assert!(result.is_err());assert_eq!(f.d,before);assert!(!path.exists());}}

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+<title>KIMO</title>
+<rect width="1024" height="1024" rx="204.8" fill="#0E0E12"/>
+<g transform="translate(71.68 78.56) scale(0.86)">
+<rect x="176" y="220" width="96" height="584" rx="24" fill="#F4F0E8"/>
+<rect x="320" y="360" width="96" height="444" rx="24" fill="#F4F0E8"/>
+<rect x="464" y="520" width="96" height="284" rx="24" fill="#F4F0E8"/>
+<rect x="608" y="360" width="96" height="444" rx="24" fill="#F4F0E8"/>
+<rect x="752" y="220" width="96" height="584" rx="24" fill="#F4F0E8"/>
+<rect x="498" y="150" width="28" height="724" fill="#FF5C28"/>
+<path d="M452 110h120v8l-60 72l-60 -72z" fill="#FF5C28"/></g>
+</svg>

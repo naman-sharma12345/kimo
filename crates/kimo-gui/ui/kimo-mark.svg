@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>kimo</title>
+  <!-- Kimo mark, traced 1:1 from the approved logo (9 bars + ember playhead).
+       Colours come from the darkroom tokens when the mark is referenced with
+       <use href="kimo-mark.svg#kimo-mark"> (custom properties inherit into the
+       use tree); the fallbacks are the brand values, so the file also stands alone.
+       #kimo-mark     master trace, any size (this is what the file draws).
+       #kimo-mark-sm  optical variant for 32px and below: identical bars, playhead
+                      widened to 55 units (about 1.5px at 28px) so it stays a line. -->
+  <defs>
+    <symbol id="kimo-mark-sm" viewBox="0 0 1024 1024">
+      <rect width="1024" height="1024" style="fill:var(--kimo-tile,#0D0D10)"/>
+      <g style="fill:var(--kimo-cream,#F3EFE7)">
+      <rect x="148" y="212" width="56" height="624" rx="12"/>
+      <rect x="232" y="212" width="56" height="624" rx="12"/>
+      <rect x="316" y="312" width="56" height="524" rx="12"/>
+      <rect x="400" y="412" width="56" height="424" rx="12"/>
+      <rect x="484" y="512" width="56" height="324" rx="12"/>
+      <rect x="568" y="412" width="56" height="424" rx="12"/>
+      <rect x="652" y="312" width="56" height="524" rx="12"/>
+      <rect x="736" y="212" width="56" height="624" rx="12"/>
+      <rect x="820" y="212" width="56" height="624" rx="12"/>
+      </g>
+      <g style="fill:var(--ember,#FF5A23)">
+        <rect x="484.5" y="140" width="55" height="776"/>
+        <path d="M446 71.6H578L512 150Z"/>
+      </g>
+    </symbol>
+  </defs>
+  <g id="kimo-mark">
+    <rect class="tile" width="1024" height="1024" style="fill:var(--kimo-tile,#0D0D10)"/>
+    <g class="bars" style="fill:var(--kimo-cream,#F3EFE7)">
+      <rect x="148" y="212" width="56" height="624" rx="12"/>
+      <rect x="232" y="212" width="56" height="624" rx="12"/>
+      <rect x="316" y="312" width="56" height="524" rx="12"/>
+      <rect x="400" y="412" width="56" height="424" rx="12"/>
+      <rect x="484" y="512" width="56" height="324" rx="12"/>
+      <rect x="568" y="412" width="56" height="424" rx="12"/>
+      <rect x="652" y="312" width="56" height="524" rx="12"/>
+      <rect x="736" y="212" width="56" height="624" rx="12"/>
+      <rect x="820" y="212" width="56" height="624" rx="12"/>
+    </g>
+    <g class="playhead" style="fill:var(--ember,#FF5A23)">
+      <rect x="506" y="140" width="12" height="776"/>
+      <path d="M480 107H544L512 145Z"/>
+    </g>
+  </g>
+</svg>

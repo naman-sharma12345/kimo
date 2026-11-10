@@ -1,0 +1,71 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "kimo",
+  "version": "9.0.0",
+  "identifier": "dev.kimo.app",
+  "build": {
+    "frontendDist": "ui"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "kimo",
+        "url": "studio.html",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 1024,
+        "minHeight": 680,
+        "resizable": true,
+        "label": "main",
+        "backgroundColor": "#0b0b0c"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: kimo: http://kimo.localhost; media-src 'self' kimo: http://kimo.localhost; font-src 'self'"
+    },
+    "withGlobalTauri": true
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/128x128.png",
+      "icons/32x32.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "Video",
+    "shortDescription": "kimo: AI video editor (engine, MCP for coding agents, live agent view)",
+    "longDescription": "kimo is the main kimo app: it runs the kimo engine, lets you edit by chatting with an agent using your own API key, connects Claude Code or Codex through MCP (off by default, local only) and shows every agent action live.",
+    "publisher": "naman-sharma12345",
+    "copyright": "Copyright (c) 2026 naman-sharma12345",
+    "license": "MIT",
+    "homepage": "https://getkimo.tech",
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "compression": "lzma",
+        "headerImage": "installer/windows/header.bmp",
+        "sidebarImage": "installer/windows/sidebar.bmp",
+        "installerIcon": "icons/icon.ico",
+        "displayLanguageSelector": false,
+        "languages": [
+          "English"
+        ]
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
+  },
+  "mainBinaryName": "kimo-gui"
+}

@@ -1,0 +1,5 @@
+lower_third	f43e55b4aafa7467 a6c975b2fb6dc802 a6c975b2fb6dc802
+title_card	2bee42cd6b38202c 3a1c420a6a59b279 3a1c420a6a59b279
+stat_counter	c79bd795c0a3a01b 91d97a443850a9ba 91d97a443850a9ba
+explainer_diagram	1b97d5ce9eabf484 4066a661cb48bf85 56e71c75525df695
+product_reveal	fa2440a671e8b183 ccd77832404cb6d9 ccd77832404cb6d9

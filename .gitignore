@@ -1,0 +1,6 @@
+target/
+dist/
+*.mp4
+__pycache__/
+fonts/*.ttf
+nope

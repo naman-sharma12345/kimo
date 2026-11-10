@@ -1,0 +1,121 @@
+{
+ "templates": [
+  {
+   "name": "codex_segment",
+   "params": [
+    {
+     "name": "captions",
+     "type": "number",
+     "default": 40
+    },
+    {
+     "name": "titles",
+     "type": "number",
+     "default": 12
+    }
+   ],
+   "ops": [
+    {
+     "id": "trk",
+     "tool": "add_track",
+     "args": {}
+    },
+    {
+     "foreach": {
+      "var": "k",
+      "in": {
+       "range": [
+        0,
+        "{{captions}}"
+       ]
+      }
+     },
+     "ops": [
+      {
+       "tool": "add_text",
+       "args": {
+        "track_id": "$trk.track_id",
+        "text": "Caption {{k}}",
+        "start": {
+         "$calc": "i*1.5"
+        },
+        "duration": 1.25
+       }
+      }
+     ]
+    },
+    {
+     "foreach": {
+      "var": "k",
+      "in": {
+       "range": [
+        0,
+        "{{titles}}"
+       ]
+      }
+     },
+     "ops": [
+      {
+       "id": "title",
+       "tool": "add_text",
+       "args": {
+        "track_id": "$trk.track_id",
+        "text": "Title {{k}}",
+        "start": {
+         "$calc": "60+i*4"
+        },
+        "duration": 3.5
+       }
+      },
+      {
+       "tool": "set_keyframes",
+       "args": {
+        "clip_id": "$title.clip_id",
+        "property": "opacity",
+        "keys": [
+         {
+          "t": 0,
+          "v": 0
+         },
+         {
+          "t": 0.5,
+          "v": 1
+         },
+         {
+          "t": 3.0,
+          "v": 1
+         },
+         {
+          "t": 3.5,
+          "v": 0
+         }
+        ]
+       }
+      },
+      {
+       "tool": "set_keyframes",
+       "args": {
+        "clip_id": "$title.clip_id",
+        "property": "y",
+        "keys": [
+         {
+          "t": 0,
+          "v": {
+           "$calc": "i*8"
+          }
+         },
+         {
+          "t": 3.5,
+          "v": {
+           "$calc": "i*8-40"
+          }
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,97 @@
+00 no_such_tool {}	unknown tool 'no_such_tool'
+01 set_propertyy {}	unknown tool 'set_propertyy'
+02 delete_clip {}	missing string 'clip_id'
+03 delete_clip {"clip_id":5}	argument 'clip_id' must be a string (got number)
+04 delete_clip {"clip_id":"nope"}	no such clip 'nope'
+05 move_clip {"clip_id":"clip3"}	missing number 'start'
+06 move_clip {"clip_id":"clip3","start":"x"}	argument 'start' must be a number (got string)
+07 move_clip {"clip_id":"nope","start":1.0}	no such clip 'nope'
+08 trim_clip {"clip_id":"clip3","duration":-1.0}	duration must be > 0 and at most 1e6 seconds
+09 set_speed {"clip_id":"clip3","speed":0.0}	speed must be 0.1..100
+10 set_speed {"clip_id":"clip3","speed":1000.0}	speed must be 0.1..100
+11 set_property {"clip_id":"clip3","property":"bogus","value":1.0}	unknown property 'bogus': nothing reads it, so it would silently do nothing. Valid: opacity, x, y, scale, rotation, rot_x, rot_y, pos_z, backface, fill_alpha, stroke_alpha. For crop use add_effect/crop tools; for effect params use set_effect_param.
+12 set_property {"clip_id":"clip3","property":"opacity"}	missing number 'value'
+13 split_clip {"at":99.0,"clip_id":"clip3"}	split point outside clip
+14 split_clip {"clip_id":"clip3"}	missing number 'at'
+15 freeze_frame {"at":1.0,"clip_id":"clip3","hold_from_here":true}	hold_from_here: `at` must be strictly inside the clip
+16 freeze_frame {"at":99.0,"clip_id":"clip3"}	at 99 is outside the clip (1..3)
+17 insert_gap {"at":-1.0,"duration":1.0,"track_id":"track1"}	at must be a finite time >= 0
+18 insert_gap {"at":1.0,"duration":-1.0,"track_id":"track1"}	duration must be > 0 and at most 1000000 seconds
+19 insert_gap {"at":1.0,"duration":1.0,"track_id":"nope"}	no such track 'nope'
+20 add_track {"kind":5}	OK (no error)
+21 add_shape {"track_id":"track1"}	missing string 'shape'
+22 add_shape {"duration":1.0,"fill":[1,1,1,1],"height":1,"shape":"rect","start":0.0,"track_id":"nope","width":1}	no such track 'nope'
+23 add_shape {"duration":1.0,"fill":[1,1,1,1],"height":1,"shape":"hexagonal","start":0.0,"track_id":"track1","width":1}	unknown shape 'hexagonal'. Valid: rect, ellipse, polygon, line
+24 add_effect {"clip_id":"clip3","kind":"no_such_effect"}	unknown effect 'no_such_effect'
+25 add_effect {"clip_id":"nope","kind":"blur"}	no such clip 'nope'
+26 set_keyframe {"clip_id":"clip3","property":"opacity","time":0.5}	missing number 'value'
+27 set_keyframe {"clip_id":"clip3","property":"bogus","time":0.5,"value":1.0}	unknown clip property 'bogus': nothing reads it. Valid: opacity, x, y, scale, rotation, rot_x, rot_y, pos_z, backface, fill_alpha, stroke_alpha. To keyframe an effect param pass effect_id.
+28 set_camera {"cam_fov":3.0}	cam_fov must be 5..170
+29 set_camera {"cam_x":"a"}	argument 'cam_x' must be a number (got string)
+30 set_track {"locked":true,"track_id":"nope"}	no such track 'nope'
+31 remove_silence_cuts {"ranges":[[1.0,2.0]],"track_id":"nope"}	no such track 'nope'
+32 loop_clip {"clip_id":"clip3","times":0}	times must be an integer 1..100
+33 loop_clip {"clip_id":"clip3","gap":-1.0,"times":1}	gap must be a finite number >= 0
+34 swap_clips {"clip_a":"clip3","clip_b":"clip3"}	clip_a and clip_b must differ
+35 distribute_clips {"gap":-1.0,"track_id":"track1"}	gap must be a finite number >= 0
+36 get_scopes {}	missing number 'time'
+37 render_frame {"time":"x"}	missing string 'path'
+38 bind_shared_grade_graphs {"clip_id":"clip3","graphs":["missing"]}	missing shared graph missing
+39 save_project {}	missing string 'path'
+40 load_project {"path":"/nonexistent/x.kimo"}	cannot read '/nonexistent/x.kimo': No such file or directory (os error 2)
+41 set_property {"clip_id":"clip3","property":"x","time":0.0,"value":1.0}	set_property sets the static value and has no time; use set_keyframe with time to animate
+42 delete_clip {"clipid":"x"}	missing string 'clip_id'; ignored unknown argument 'clipid' (did you mean 'clip_id'?) (valid: clip_id)
+43 cache_set_budget {}	missing number 'megabytes'
+44 cache_set_budget {"megabytes":-1.0}	megabytes must be >= 0, got -1
+45 collect_project {}	missing string 'dest_dir'
+46 collect_project {"dest_dir":"/tmp"}	dest_exists: '/tmp' is not empty; pass overwrite:true to replace a previous collect
+47 collect_project {"copy":"zip","dest_dir":"/tmp/kimo_err_row"}	invalid_argument: copy must be copy|link, got 'zip'
+48 relink_media {"match":"fuzzy","search_dirs":["/tmp"]}	invalid_argument: match must be name_size_hash|name|hash, got 'fuzzy'
+49 transcript_import {}	missing string 'path'
+50 transcript_import {"path":"/nonexistent/x.srt"}	cannot read '/nonexistent/x.srt': No such file or directory (os error 2)
+51 transcript_get {"transcript_id":"nope"}	no such transcript 'nope'
+52 transcript_coverage {}	no such transcript: import one with transcript_import
+53 transcript_to_captions {"track_id":"nope"}	no such transcript: import one with transcript_import
+54 validate_captions {}	pass group_id or all:true
+55 transcript_edit_preview {"edits":[{"from_index":0,"op":"wipe"}]}	no such transcript: import one with transcript_import
+56 batch {"ops":[{"tool":"undo"}]}	forbidden_in_batch: ops[0] (undo): tool 'undo' cannot run inside a batch (forbidden: batch, undo, redo, restore, load_project, save_project, checkpoint, checkpoint_delete, collect_project, relink_media, recipe_apply, template_apply, proxy_generate, export*, render_job*, history_*)\n{"applied":0,"rolled_back":false,"validation_errors":[{"code":"forbidden_in_batch","id":"1","index":0,"message":"tool 'undo' cannot run inside a batch (forbidden: batch, undo, redo, restore, load_project, save_project, checkpoint, checkpoint_delete, collect_project, relink_media, recipe_apply, template_apply, proxy_generate, export*, render_job*, history_*)","tool":"undo"}]}
+57 batch {"ops":[{"args":{"name":"$zz.x"},"tool":"add_track"}]}	invalid_reference: ops[0] (add_track): reference '$zz.x' names an unknown op 'zz'\n{"applied":0,"rolled_back":false,"validation_errors":[{"code":"invalid_reference","id":"1","index":0,"message":"reference '$zz.x' names an unknown op 'zz'","tool":"add_track"}]}
+58 batch {"ops":[{"args":{"clip_id":"clip3"},"tool":"delete_clip"},{"args":{"clip_id":"clip3"},"tool":"delete_clip"}]}	batch_failed: ops[1] (delete_clip) failed: no such clip 'clip3' (rolled back, nothing applied)\n{"applied":0,"failed_op":{"error":{"code":"not_found","message":"no such clip 'clip3'","param":null},"id":"2","index":1,"tool":"delete_clip"},"rolled_back":true}
+59 batch {"expect_revision":"deadbeef","ops":[{"tool":"add_track"}]}	project_drift: the project changed since the dry run (expected revision deadbeef, live revision e221abe3998712f6); run the dry_run again
+60 audio_speech_intervals {"mode":"bogus"}	mode must be vad|silence
+61 audio_speech_intervals {"aggressiveness":4}	aggressiveness must be an integer 0..3
+62 audio_speech_intervals {"target":{"clip_id":"missing"}}	no such clip 'missing'
+63 set_keyframes {"clip_id":"clip3","keys":[{"t":0.0}],"property":"opacity"}	keys[0].v must be a number
+64 set_keyframes {"clip_id":"clip3","keys":[],"property":"opacity"}	keys must have at least one key
+65 set_keyframes {"clip_id":"clip3","keys":[{"t":0.0,"v":1.0}],"property":"nope"}	unknown clip property 'nope': nothing reads it. Valid: opacity, x, y, scale, rotation, rot_x, rot_y, pos_z, backface, fill_alpha, stroke_alpha, gradient_angle, flow_blur, flow_quality, pin_gain, reveal, path. To keyframe an effect param pass effect_id.
+66 sample_property {"clip_id":"clip3","property":"nope","times":[0.0]}	clip has no property 'nope'. Properties on this clip: opacity, reveal, rotation, scale, x, y
+67 sample_property {"clip_id":"clip3","property":"x","times":[]}	times needs 1 to 100000 numbers
+68 sample_property {"clip_id":"clip3","property":"x","space":"zzz","times":[0.0]}	space is not allowed. Valid: timeline, clip
+69 bake_property {"clip_id":"clip3","end":1.0,"n":3,"property":"nope","start":0.0}	clip has no property 'nope'. Properties on this clip: opacity, reveal, rotation, scale, x, y
+70 bake_property {"clip_id":"clip3","end":1.0,"property":"x","start":0.0}	give fps (keys per second) or n (key count)
+71 bake_property {"clip_id":"clip3","end":1.0,"fps":10,"property":"x","start":1.0}	end must be greater than start
+72 bake_property {"clip_id":"clip3","drop_expression":false,"end":1.0,"fps":10,"property":"x","start":0.0}	drop_expression:false would apply the expression twice (the baked keys already contain it). Use sample_property to read without changing the property
+73 set_expression {"clip_id":"clip3","mass":0.0,"op":"spring","property":"x"}	spring needs stiffness > 0, mass > 0 and damping >= 0 (finite)
+74 set_expression {"clip_id":"clip3","duration":0.0,"op":"bezier","property":"x"}	bezier needs duration > 0
+75 set_expression {"clip_id":"clip3","combine":"zzz","op":"spring","property":"x"}	combine is not allowed. Valid: set, add, mul
+76 set_expression {"camera":true,"op":"spring","property":"nope"}	no camera field 'nope'. Valid: 
+77 set_parent {"clip_id":"clip3","parent_id":"clip3"}	parent_cycle: clip clip3 cannot be its own parent
+78 set_parent {"clip_id":"clip3","parent_id":"nope"}	no such clip 'nope'
+79 set_parent {"clip_id":"clip3","mode":"zip","parent_id":null}	mode is not allowed. Valid: keep_world, keep_local
+80 set_parent {"clip_id":"clip3","inherit":{"time":true},"parent_id":null}	inherit.time is not supported: parents do not pass time on (v1). Valid: position, scale, rotation, opacity
+81 get_transform {"clip_id":"clip3","space":"zzz"}	space is not allowed. Valid: local, world, canvas_px
+82 get_transform {"clip_id":"nope"}	no such clip 'nope'
+83 add_null {"duration":1.0,"start":0.0,"track_id":"nope"}	no such track 'nope'
+84 set_meta {"id":"clip3","name":"has space"}	invalid_name: 'has space' must be 1..64 characters from A-Z a-z 0-9 _ . - (no leading @, no spaces)
+85 set_meta {"id":"@nope"}	name_not_found: no clip named 'nope'. Nearest: (no clip has a name yet; set one with set_meta)
+86 set_meta {"id":"clip3","target":"zzz"}	target is not allowed. Valid: clip, track
+87 set_meta {"id":"clip3","tags":["bad tag"]}	invalid_name: tag 'bad tag' must be 1..64 characters from A-Z a-z 0-9 _ . - : =
+88 set_meta {"id":"track1","role":"x","target":"track"}	tracks only carry a name; role, color and tags are for clips
+89 find {"limit":0}	limit must be an integer 1..500
+90 find {"kind":"zzz"}	kind is not allowed. Valid: clip, track
+91 find {"time_range":[2.0,1.0]}	time_range must be [start, end] seconds with start <= end
+92 find {"track":"@missing"}	name_not_found: no track named 'missing'. Nearest: (no track has a name yet; set one with set_meta)
+93 project_diff {"a":"undo:0","b":"current"}	undo:<n> needs n >= 1 (undo:1 = the state before the last change)
+94 project_diff {"a":"nope","b":"current"}	revision 'nope' is not allowed. Valid: current, undo:<n>, checkpoint:<name>, file:<path.kimo>
+95 project_diff {"a":"checkpoint:zzz","b":"current"}	no checkpoint 'zzz'. Existing: 
+96 project_diff {"a":"current"}	b must be a revision string: current, undo:<n>, checkpoint:<name> or file:<path.kimo>

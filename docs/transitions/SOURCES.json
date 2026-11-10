@@ -1,0 +1,32 @@
+[
+  {
+    "path": "LICENSE",
+    "url": "https://raw.githubusercontent.com/gl-transitions/gl-transitions/b2dfdcfbec079af4a05306d32b9366aa495c5155/LICENSE",
+    "sha256": "0db684e0150546743ae96d8ecf083be716786d834af7dbf8170ee8b6c247978d",
+    "byte_verified": true
+  },
+  {
+    "path": "transitions/luma.glsl",
+    "url": "https://raw.githubusercontent.com/gl-transitions/gl-transitions/b2dfdcfbec079af4a05306d32b9366aa495c5155/transitions/luma.glsl",
+    "sha256": "63d4adf2851eeb9f136cf95f89e1e53edf4af1b47aab1e0df1fec0d188ccccda",
+    "byte_verified": true
+  },
+  {
+    "path": "transitions/directionalwarp.glsl",
+    "url": "https://raw.githubusercontent.com/gl-transitions/gl-transitions/b2dfdcfbec079af4a05306d32b9366aa495c5155/transitions/directionalwarp.glsl",
+    "sha256": "9b4988a12affa2fc89a7a1d87ad2df8c8bfaf185fc83e958188e5c674dbf03ce",
+    "byte_verified": true
+  },
+  {
+    "path": "transitions/CrossZoom.glsl",
+    "url": "https://raw.githubusercontent.com/gl-transitions/gl-transitions/b2dfdcfbec079af4a05306d32b9366aa495c5155/transitions/CrossZoom.glsl",
+    "sha256": "a30adba2a78deac0ac114a30ea285e972fdd7d488ed0cde90e15bc0eef333e84",
+    "byte_verified": true
+  },
+  {
+    "path": "transitions/displacement.glsl",
+    "url": "https://raw.githubusercontent.com/gl-transitions/gl-transitions/b2dfdcfbec079af4a05306d32b9366aa495c5155/transitions/displacement.glsl",
+    "sha256": "ef090908787642ad5c43104d84562b57ee3ac80b51c787bd67b88016e2674290",
+    "byte_verified": true
+  }
+]

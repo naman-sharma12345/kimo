@@ -1,0 +1,931 @@
+16826
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>kimo gui (v7, minimal)</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; margin: 0; background: #1b1b1f; color: #eee; }
+  header { padding: 10px 16px; background: #222; border-bottom: 1px solid #333; }
+  main { display: grid; grid-template-columns: 1fr 360px; gap: 12px; padding: 12px; }
+  section { background: #222; border: 1px solid #333; border-radius: 6px; padding: 10px; }
+  h2 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: #9ab; }
+  #timeline-scroll { overflow-x: auto; }
+  #timeline-minimap { position: relative; height: 24px; background: #15151a; border: 1px solid #333; border-radius: 3px; margin-bottom: 6px; cursor: pointer; overflow: hidden; }
+  #timeline-minimap .mm-block { position: absolute; height: 3px; background: #3a6; border-radius: 1px; }
+  #timeline-minimap .mm-viewport { position: absolute; top: 0; bottom: 0; background: rgba(154, 187, 255, .18); border: 1px solid #58a; pointer-events: none; }
+  .track { display: flex; align-items: center; height: 28px; border-bottom: 1px solid #2c2c33; }
+  .track-label { width: 70px; font-size: 11px; color: #889; flex: none; }
+  .clip { position: relative; height: 20px; background: #3a6; border-radius: 3px; margin-right: 1px; font-size: 10px; color: #012; padding: 2px 4px; overflow: hidden; white-space: nowrap; flex: none; }
+  #clip-context-menu { position: fixed; background: #222; border: 1px solid #444; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,.5); padding: 4px 0; font-size: 12px; z-index: 50; min-width: 140px; }
+  #clip-context-menu .ctx-item { padding: 5px 12px; cursor: pointer; color: #eee; }
+  #clip-context-menu .ctx-item:hover { background: #357; }
+  #clip-context-menu .ctx-item.disabled { color: #667; cursor: default; }
+  #clip-context-menu .ctx-item.disabled:hover { background: none; }
+  #preview img { max-width: 100%; border: 1px solid #333; background: #000; display: block; }
+  #preview input { width: 70px; }
+  textarea { width: 100%; box-sizing: border-box; background: #111; color: #cfc; border: 1px solid #333; font-family: monospace; font-size: 12px; }
+  button { background: #357; color: #fff; border: 0; border-radius: 4px; padding: 6px 10px; cursor: pointer; }
+  #tool-list { max-height: 160px; overflow-y: auto; font-size: 11px; }
+  #tool-list div { padding: 2px 0; cursor: pointer; color: #9cf; }
+  #result { white-space: pre-wrap; font-family: monospace; font-size: 11px; background: #111; padding: 6px; border-radius: 4px; max-height: 220px; overflow: auto; }
+  .clip.selected { outline: 2px solid #fd6; }
+  .clip { cursor: grab; }
+  .clip:active { cursor: grabbing; }
+  .clip .trim-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 6px; cursor: ew-resize; background: rgba(255,255,255,.25); }
+  #tracks { position: relative; cursor: text; }
+  #playhead { position: absolute; top: 0; bottom: 0; width: 1px; background: #f55; z-index: 5; pointer-events: none; }
+  .marker-tick { position: absolute; top: 0; bottom: 0; width: 2px; z-index: 4; cursor: pointer; }
+  #inspector .fx { border: 1px solid #333; border-radius: 4px; padding: 6px; margin-bottom: 6px; }
+  #inspector .fx-head { display: flex; justify-content: space-between; font-size: 11px; color: #9cf; margin-bottom: 4px; }
+  #inspector .param-row { display: flex; justify-content: space-between; align-items: center; font-size: 11px; margin: 2px 0; }
+  #inspector .param-row input { width: 90px; }
+  #inspector .prop-row { display: flex; justify-content: space-between; align-items: center; font-size: 11px; margin: 2px 0; }
+  #inspector .prop-row input { width: 90px; }
+  #inspector select, #inspector button.small { font-size: 11px; padding: 3px 6px; }
+  #no-selection { font-size: 11px; color: #778; }
+  #history-list { max-height: 120px; overflow-y: auto; font-size: 11px; }
+  #history-list .step { padding: 1px 0; color: #9ab; }
+  #history-list .step.next-undo { color: #fd6; font-weight: bold; }
+  #history-list .step.redo { color: #6a9; }
+  .track-state-btn { font-size: 9px; padding: 1px 4px; margin-left: 2px; border-radius: 3px; cursor: pointer; border: 1px solid #445; background: #2a2a33; color: #889; }
+  .track-state-btn.active { background: #c74; color: #fff; border-color: #c74; }
+  .track-state-btn.active.mute { background: #966; border-color: #966; }
+  .track-state-btn.active.solo { background: #a90; border-color: #a90; }
+  .track.locked .clip { cursor: not-allowed; opacity: .55; }
+  .clip .waveform { position: absolute; inset: 0; z-index: -1; pointer-events: none; opacity: .6; }
+  .clip .waveform svg { display: block; }
+  #fx-browser { margin-top: 6px; }
+  #fx-browser input { width: 100%; box-sizing: border-box; margin-bottom: 4px; }
+  #fx-browser-list { max-height: 140px; overflow-y: auto; font-size: 11px; border: 1px solid #333; border-radius: 4px; }
+  #fx-browser-list .fx-entry { padding: 3px 6px; cursor: pointer; display: flex; justify-content: space-between; }
+  #fx-browser-list .fx-entry:hover { background: #2a2a33; }
+  #fx-browser-list .fx-entry .fx-kind { color: #eee; }
+  #fx-browser-list .fx-entry .fx-type { color: #789; font-size: 10px; text-transform: uppercase; }
+  #fx-browser-list .fx-empty { padding: 6px; color: #667; }
+  #marker-list .marker-row { display: flex; justify-content: space-between; align-items: center; padding: 3px 4px; cursor: pointer; border-radius: 3px; }
+  #marker-list .marker-row:hover { background: #2a2a33; }
+  #marker-list .marker-swatch { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; flex: none; }
+  #marker-list .marker-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #marker-list .marker-time { color: #9ab; margin-left: 6px; flex: none; }
+  #marker-list .marker-remove { color: #f77; cursor: pointer; margin-left: 6px; flex: none; }
+  #marker-list .marker-empty { padding: 6px; color: #667; }
+  #render-queue-list .rq-row { display: flex; justify-content: space-between; align-items: center; padding: 3px 4px; font-size: 11px; }
+  #render-queue-list .rq-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; }
+  #render-queue-list .rq-state { color: #9ab; margin-left: 6px; flex: none; }
+  #render-queue-list .rq-state.rq-running, #render-queue-list .rq-state.rq-queued, #render-queue-list .rq-state.rq-cancelling { color: #fd6; }
+  #render-queue-list .rq-state.rq-done { color: #6a9; }
+  #render-queue-list .rq-state.rq-failed { color: #f77; }
+  #render-queue-list .rq-clear { color: #778; cursor: pointer; margin-left: 6px; flex: none; }
+  #render-queue-list .rq-empty { padding: 6px; color: #667; }
+  #keyframe-lane .kf-key { position: absolute; top: 4px; width: 9px; height: 9px; margin-left: -4px; background: #fd6; border: 1px solid #a80; transform: rotate(45deg); cursor: pointer; }
+  #keyframe-lane .kf-key:hover { background: #fff; }
+  #media-bin-list .mb-row { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 3px; }
+  #media-bin-list .mb-row:hover { background: #2a2a33; }
+  #media-bin-list .mb-thumb { width: 48px; height: 27px; object-fit: cover; background: #111; border: 1px solid #333; border-radius: 2px; flex: none; }
+  #media-bin-list .mb-meta { flex: 1 1 auto; overflow: hidden; }
+  #media-bin-list .mb-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #media-bin-list .mb-sub { color: #9ab; font-size: 10px; }
+  #media-bin-list .mb-empty { padding: 6px; color: #667; }
+</style>
+</head>
+<body>
+<header><strong>kimo</strong> &middot; v7 minimal GUI over the MCP registry
+  <span style="float:right;font-size:12px">
+    <input id="project-path" placeholder="project.json" style="width:220px">
+    <button class="small" style="font-size:11px;padding:3px 8px" onclick="saveProject()">Save</button>
+    <button class="small" style="font-size:11px;padding:3px 8px" onclick="openProject()">Open</button>
+    <span id="project-status" style="color:#9ab;margin-left:6px"></span>
+  </span>
+</header>
+<main>
+  <div>
+    <section id="preview">
+      <h2>Preview frame</h2>
+      <div><label>t = <input id="t" type="number" step="0.1" value="0" onchange="scrubTo(parseFloat(this.value))"> s <button onclick="loadPreview()">Render</button> <button id="play-btn" onclick="togglePlay()">Play</button></label></div>
+      <img id="frame" alt="(no frame rendered yet)">
+    </section>
+    <section id="timeline" style="margin-top:12px">
+      <h2>Timeline <button class="small" style="font-size:11px;padding:2px 6px" onclick="addTrack()">+ Track</button> <button class="small" style="font-size:11px;padding:2px 6px" onclick="addMarkerAtPlayhead()">+ Marker</button> <label style="font-size:11px;font-weight:normal;text-transform:none;letter-spacing:normal;color:#9ab"><input type="checkbox" id="snap-enabled" checked style="vertical-align:middle"> snap</label> <button class="small" style="font-size:11px;padding:2px 6px" onclick="zoomBy(0.5)">−</button> <span id="zoom-label" style="font-size:11px;color:#9ab">40px/s</span> <button class="small" style="font-size:11px;padding:2px 6px" onclick="zoomBy(2)">+</button> <button class="small" style="font-size:11px;padding:2px 6px" onclick="zoomReset()">reset</button></h2>
+      <div id="timeline-minimap" onclick="jumpFromMinimap(event)"></div>
+      <div id="timeline-scroll" onscroll="updateMinimapViewport()">
+        <div id="tracks"></div>
+      </div>
+    </section>
+    <section id="marker-panel" style="margin-top:12px">
+      <h2>Markers &amp; chapters</h2>
+      <div id="marker-list" style="max-height:140px;overflow-y:auto;font-size:11px"></div>
+    </section>
+    <section id="media-bin" style="margin-top:12px">
+      <h2>Media bin</h2>
+      <div style="display:flex;gap:4px;margin-bottom:6px">
+        <input id="media-bin-import-path" placeholder="path to import..." style="flex:1 1 auto;box-sizing:border-box">
+        <button class="small" style="font-size:11px;padding:3px 8px" onclick="importMediaBinAsset()">Import</button>
+      </div>
+      <input id="media-bin-search" placeholder="search media..." oninput="renderMediaBin()" style="width:100%;box-sizing:border-box;margin-bottom:6px">
+      <div id="media-bin-list" style="max-height:200px;overflow-y:auto;font-size:11px"></div>
+    </section>
+    <section id="inspector" style="margin-top:12px">
+      <h2>Clip &middot; effect params</h2>
+      <div id="no-selection">Click a clip on the timeline to inspect it.</div>
+      <div id="inspector-body" style="display:none">
+        <div style="font-size:12px;margin-bottom:6px"><strong id="insp-name"></strong> <span id="insp-timing" style="color:#889"></span></div>
+        <div id="insp-props"></div>
+        <div id="insp-effects"></div>
+        <div id="keyframe-panel" style="margin-top:6px">
+          <div style="font-size:11px;color:#9ab;margin:4px 0">keyframes</div>
+          <select id="keyframe-property" onchange="loadKeyframeLane()" style="width:100%;box-sizing:border-box;font-size:11px"></select>
+          <div id="keyframe-lane" style="position:relative;height:24px;margin-top:4px;background:#111;border:1px solid #333;border-radius:4px;display:none"></div>
+          <div id="keyframe-hint" style="font-size:10px;color:#667;margin-top:2px"></div>
+        </div>
+        <div id="fx-browser">
+          <div style="font-size:11px;color:#9ab;margin:4px 0">effects &amp; transitions</div>
+          <input id="fx-browser-filter" placeholder="filter effects/transitions..." oninput="renderFxBrowser()">
+          <div id="fx-browser-list"></div>
+        </div>
+      </div>
+    </section>
+    <section id="history" style="margin-top:12px">
+      <h2>History</h2>
+      <div><button onclick="doUndo()" id="undo-btn">Undo</button> <button onclick="doRedo()" id="redo-btn">Redo</button></div>
+      <div id="history-list" style="margin-top:6px"></div>
+    </section>
+    <section id="export" style="margin-top:12px">
+      <h2>Export</h2>
+      <div><input id="export-path" value="export.mp4" style="width:65%"> <button id="export-btn" onclick="startExport()">Export</button> <button id="export-cancel-btn" onclick="cancelExport()" style="display:none;background:#733">Cancel</button></div>
+      <div id="export-bar-outer" style="display:none;margin-top:6px;background:#111;border-radius:4px;height:10px;overflow:hidden"><div id="export-bar-inner" style="background:#5a8;height:100%;width:0%"></div></div>
+      <div id="export-status" style="font-size:11px;color:#9ab;margin-top:4px"></div>
+    </section>
+    <section id="render-queue" style="margin-top:12px">
+      <h2>Render queue</h2>
+      <div id="render-queue-list"></div>
+    </section>
+  </div>
+  <section>
+    <h2>Tools</h2>
+    <input id="search" placeholder="filter tools..." style="width:100%;box-sizing:border-box" oninput="filterTools()">
+    <div id="tool-list"></div>
+    <h2 style="margin-top:10px">Invoke</h2>
+    <div><input id="tool-name" placeholder="tool name" style="width:100%;box-sizing:border-box"></div>
+    <textarea id="tool-args" rows="4">{}</textarea>
+    <button onclick="callTool()">Run</button>
+    <h2 style="margin-top:10px">Result</h2>
+    <div id="result"></div>
+  </section>
+</main>
+<div id="clip-context-menu" style="display:none"></div>
+<script src="/gui_keymap.js"></script>
+<script src="/gui_snap.js"></script>
+<script src="/gui_zoom.js"></script>
+<script src="/gui_trackstate.js"></script>
+<script src="/gui_multiselect.js"></script>
+<script src="/gui_waveform.js"></script>
+<script src="/gui_fxbrowser.js"></script>
+<script src="/gui_clipboard.js"></script>
+<script src="/gui_markerpanel.js"></script>
+<script src="/gui_renderqueue.js"></script>
+<script src="/gui_keyframes.js"></script>
+<script src="/gui_contextmenu.js"></script>
+<script src="/gui_mediabin.js"></script>
+<script src="/gui_minimap.js"></script>
+<script>
+let registry = [];
+let projectFps = 30; // set from /api/timeline; used by J/K/L's frame step
+let effectCatalog = [];
+let transitionKinds = []; // v7.4: list_transitions' kinds, cached alongside effectCatalog for the fx browser
+let selectedClipId = null;
+let selectedClipIds = []; // v7.4 multi-select: every selected clip id, newest last; selectedClipId mirrors its last element
+let clipboardClips = []; // v7.5: {id, start} snapshots from the last copy_clip, independent of current selection
+let pxPerSec = (window.kimoZoom ? window.kimoZoom.DEFAULT_PX_PER_SEC : 40); // v7.3: mutable for zoom in/out (bounds live in gui_zoom.js)
+const labelWidth = 70; // matches .track-label's CSS width
+let projectDuration = 0;
+let currentT = 0;
+let playing = false; let playTimer = null; let playLastWall = 0;
+
+async function loadTimeline() {
+  const r = await fetch('/api/timeline'); const tl = await r.json();
+  lastTimeline = tl; // cached for snapProposed() -- a drag's candidates need no mid-drag API call
+  projectDuration = tl.duration;
+  if (tl.fps) projectFps = tl.fps;
+  const el = document.getElementById('tracks'); el.innerHTML = '';
+  el.onmousedown = (ev) => { if (!ev.target.closest('.clip')) scrubToPixel(ev.clientX, el); };
+  for (const t of tl.tracks) {
+    const row = document.createElement('div'); row.className = 'track' + (t.locked ? ' locked' : ''); row.style.position = 'relative';
+    const label = document.createElement('div'); label.className = 'track-label'; label.style.display = 'flex'; label.style.justifyContent = 'space-between'; label.style.alignItems = 'center';
+    const labelText = document.createElement('span'); labelText.textContent = t.name || t.id; label.appendChild(labelText);
+    const btnBar = document.createElement('span');
+    const bs = kimoTrackState.buttonState(t);
+    for (const which of ['mute', 'solo', 'lock']) {
+      const b = bs[which];
+      const btn = document.createElement('button'); btn.className = 'track-state-btn ' + which + (b.active ? ' active' : '');
+      btn.textContent = b.label; btn.title = b.title;
+      btn.onclick = (ev) => { ev.stopPropagation(); toggleTrackState(t, which); };
+      btnBar.appendChild(btn);
+    }
+    const removeBtn = document.createElement('span'); removeBtn.textContent = '\u00d7'; removeBtn.title = 'remove this track and all its clips';
+    removeBtn.style.cursor = 'pointer'; removeBtn.style.color = '#f77'; removeBtn.style.padding = '0 4px';
+    removeBtn.onclick = (ev) => { ev.stopPropagation(); removeTrack(t.id); };
+    btnBar.appendChild(removeBtn); label.appendChild(btnBar); row.appendChild(label);
+    const lane = document.createElement('div'); lane.style.position = 'relative'; lane.style.height = '20px'; lane.style.flex = '1 1 auto';
+    const interactive = kimoTrackState.clipInteractionAllowed(t);
+    for (const c of t.clips) {
+      const bar = document.createElement('div'); bar.className = 'clip' + (kimoMultiselect.isSelected(selectedClipIds, c.id) ? ' selected' : '');
+      bar.style.position = 'absolute'; bar.style.left = (c.start * pxPerSec) + 'px';
+      bar.style.width = Math.max(4, c.duration * pxPerSec) + 'px';
+      bar.title = (c.name || c.id) + ' (' + c.source_kind + ') ' + c.start.toFixed(2) + 's..' + c.end.toFixed(2) + 's' + (interactive ? ' -- drag to move (shift/cmd-click to select several and drag any one to move the group), drag the right edge to trim, click to inspect' : ' -- track is locked');
+      bar.textContent = c.name || c.source_kind;
+      bar.dataset.clipId = c.id;
+      const handle = document.createElement('div'); handle.className = 'trim-handle';
+      if (interactive) {
+        handle.onmousedown = (ev) => startDrag(ev, c, 'trim');
+        bar.onmousedown = (ev) => { if (ev.target === handle) return; startDrag(ev, c, 'move'); };
+      }
+      bar.appendChild(handle);
+      if (kimoWaveform.shouldFetchWaveform(c)) { const wf = document.createElement('div'); wf.className = 'waveform'; bar.appendChild(wf); }
+      bar.onclick = (ev) => { if (!justDragged) selectClip(c.id, ev); };
+      bar.oncontextmenu = (ev) => { ev.preventDefault(); showContextMenu(ev, c); };
+      lane.appendChild(bar);
+    }
+    row.appendChild(lane);
+    el.appendChild(row);
+  }
+  for (const m of (tl.markers || [])) {
+    const tick = document.createElement('div'); tick.className = 'marker-tick';
+    tick.style.left = (labelWidth + m.time * pxPerSec) + 'px';
+    tick.style.background = m.color || 'gold';
+    tick.title = (m.name || '(marker)') + ' @ ' + m.time.toFixed(2) + 's -- click to remove';
+    tick.onclick = (ev) => { ev.stopPropagation(); removeMarkerAt(m.id); };
+    el.appendChild(tick);
+  }
+  const ph = document.createElement('div'); ph.id = 'playhead'; ph.style.left = (labelWidth + currentT * pxPerSec) + 'px'; ph.style.pointerEvents = 'none';
+  el.appendChild(ph);
+  renderMarkerPanel(tl);
+  renderMinimap(tl);
+  loadHistory();
+  loadWaveforms(tl);
+}
+
+// v7.5: the marker/chapter LIST panel beside the timeline ruler's own ticks -- same markers
+// (kimoMarkerPanel.buildMarkerRows formats each one), click a row to seek there, click the x to remove it
+// (removeMarkerAt already exists for the ruler ticks; reused here, not reimplemented).
+function renderMarkerPanel(tl) {
+  const listEl = document.getElementById('marker-list'); if (!listEl) return;
+  const rows = kimoMarkerPanel.buildMarkerRows(tl.markers || []);
+  listEl.innerHTML = '';
+  if (!rows.length) { const empty = document.createElement('div'); empty.className = 'marker-empty'; empty.textContent = 'no markers yet'; listEl.appendChild(empty); return; }
+  for (const r of rows) {
+    const row = document.createElement('div'); row.className = 'marker-row';
+    const swatch = document.createElement('span'); swatch.className = 'marker-swatch'; swatch.style.background = r.color;
+    const name = document.createElement('span'); name.className = 'marker-name'; name.textContent = r.label;
+    const time = document.createElement('span'); time.className = 'marker-time'; time.textContent = r.timeLabel;
+    const remove = document.createElement('span'); remove.className = 'marker-remove'; remove.textContent = '\u00d7'; remove.title = 'remove this marker';
+    row.appendChild(swatch); row.appendChild(name); row.appendChild(time); row.appendChild(remove);
+    row.onclick = () => scrubTo(r.time);
+    remove.onclick = (ev) => { ev.stopPropagation(); removeMarkerAt(r.id); };
+    listEl.appendChild(row);
+  }
+}
+
+// v7.6: timeline minimap -- a fixed-width strip showing every clip across the WHOLE project duration,
+// independent of the main timeline's own zoom/scroll, with a highlighted rectangle over whatever the main
+// timeline currently shows and click-to-jump. kimoMinimap owns all the pixel math (fit-to-width scale,
+// per-clip blocks, the viewport rectangle, a click's target time); this just renders that model.
+let lastTimelineModel = null;
+const MINIMAP_WIDTH = 300; // matches the CSS block's effective content width closely enough for a quick overview
+function renderMinimap(tl) {
+  lastTimelineModel = tl;
+  const el = document.getElementById('timeline-minimap'); if (!el) return;
+  el.innerHTML = '';
+  const blocks = kimoMinimap.buildBlocks(tl, MINIMAP_WIDTH);
+  const trackCount = Math.max(1, (tl.tracks || []).length);
+  for (const b of blocks) {
+    const row = document.createElement('div'); row.className = 'mm-block';
+    row.style.left = b.left + 'px'; row.style.width = b.width + 'px';
+    row.style.top = (3 + (b.trackIndex / trackCount) * 18) + 'px';
+    el.appendChild(row);
+  }
+  const vp = document.createElement('div'); vp.className = 'mm-viewport'; vp.id = 'mm-viewport-rect';
+  el.appendChild(vp);
+  updateMinimapViewport();
+}
+function updateMinimapViewport() {
+  const scrollEl = document.getElementById('timeline-scroll');
+  const vp = document.getElementById('mm-viewport-rect');
+  if (!scrollEl || !vp || !lastTimelineModel) return;
+  const visibleSec = Math.max(0, scrollEl.clientWidth - labelWidth) / pxPerSec;
+  const scrollLeftSec = Math.max(0, scrollEl.scrollLeft) / pxPerSec;
+  const rect = kimoMinimap.viewportRect(lastTimelineModel.duration, MINIMAP_WIDTH, scrollLeftSec, visibleSec);
+  vp.style.left = rect.left + 'px'; vp.style.width = rect.width + 'px';
+}
+function jumpFromMinimap(ev) {
+  if (!lastTimelineModel) return;
+  const el = document.getElementById('timeline-minimap');
+  const rect = el.getBoundingClientRect();
+  const t = kimoMinimap.timeFromClick(ev.clientX - rect.left, MINIMAP_WIDTH, lastTimelineModel.duration);
+  scrubTo(t);
+  const scrollEl = document.getElementById('timeline-scroll');
+  if (scrollEl) scrollEl.scrollLeft = Math.max(0, t * pxPerSec - (scrollEl.clientWidth - labelWidth) / 2);
+  updateMinimapViewport();
+}
+
+// v7.4: one audio_transients call per media clip (image:"waveform"), fired after the timeline itself has
+// rendered so the bars appear immediately and the waveforms fill in as each decode finishes; fetched in
+// parallel (one real ffmpeg decode per clip, same cost class as a preview frame render). A clip with no
+// audio track, or any other failure, just leaves that bar without a waveform -- audio_transients' own
+// no_audio case, not an error worth surfacing here.
+async function loadWaveforms(tl) {
+  for (const t of tl.tracks) {
+    for (const c of t.clips) {
+      if (!kimoWaveform.shouldFetchWaveform(c)) continue;
+      const bar = document.querySelector(`.clip[data-clip-id="${CSS.escape(c.id)}"] .waveform`);
+      if (!bar) continue;
+      callApi('audio_transients', kimoWaveform.waveformToolArgs(c)).then((v) => {
+        if (!v.ok || !v.result || !v.result.waveform || !v.result.waveform.svg) return;
+        const target = document.querySelector(`.clip[data-clip-id="${CSS.escape(c.id)}"] .waveform`);
+        if (target) target.innerHTML = kimoWaveform.scaleSvgToFill(v.result.waveform.svg);
+      }).catch(() => {});
+    }
+  }
+}
+
+async function loadHistory() {
+  const v = await callApi('history_list', {});
+  if (!v.ok) return;
+  const h = v.result;
+  const el = document.getElementById('history-list'); el.innerHTML = '';
+  for (const step of h.undo) {
+    const d = document.createElement('div'); d.className = 'step' + (step.step === h.undo.length - 1 ? ' next-undo' : '');
+    d.textContent = step.tool; el.appendChild(d);
+  }
+  for (const label of h.redo) { const d = document.createElement('div'); d.className = 'step redo'; d.textContent = '\u21bb ' + label; el.appendChild(d); }
+  if (h.undo.length === 0 && h.redo.length === 0) el.innerHTML = '<div style="color:#667">(nothing yet)</div>';
+  document.getElementById('undo-btn').disabled = h.undo.length === 0;
+  document.getElementById('redo-btn').disabled = h.redo.length === 0;
+}
+async function zoomBy(factor) {
+  pxPerSec = window.kimoZoom.zoomBy(pxPerSec, factor);
+  const lbl = document.getElementById('zoom-label'); if (lbl) lbl.textContent = pxPerSec + 'px/s';
+  await loadTimeline();
+}
+async function zoomReset() {
+  pxPerSec = window.kimoZoom.DEFAULT_PX_PER_SEC;
+  const lbl = document.getElementById('zoom-label'); if (lbl) lbl.textContent = pxPerSec + 'px/s';
+  await loadTimeline();
+}
+// v7.3: export with progress -- export_job_start/job_status/cancel_job already exist in kimo-core
+// (chunked export, incremental reuse, ETA); this just polls and renders what they already report.
+let exportJobId = null; let exportPollTimer = null;
+function exportStatusLine(s) {
+  const parts = [s.state];
+  if (s.chunks) parts.push(`${s.chunks.done}/${s.chunks.total} chunks`);
+  if (s.eta && s.eta.seconds != null) parts.push(`~${Math.ceil(s.eta.seconds)}s left (${s.eta.uncertainty})`);
+  if (s.error) parts.push(`error: ${s.error}`);
+  return parts.join(' · ');
+}
+function renderExportStatus(s) {
+  const outer = document.getElementById('export-bar-outer'); const inner = document.getElementById('export-bar-inner');
+  const status = document.getElementById('export-status'); const cancelBtn = document.getElementById('export-cancel-btn'); const btn = document.getElementById('export-btn');
+  outer.style.display = 'block';
+  const pct = (s.chunks && s.chunks.total > 0) ? Math.round(100 * s.chunks.done / s.chunks.total) : (s.frames_total > 0 ? Math.round(100 * s.frames_done / s.frames_total) : 0);
+  inner.style.width = pct + '%';
+  status.textContent = exportStatusLine(s);
+  const active = s.state === 'running' || s.state === 'queued' || s.state === 'cancelling';
+  cancelBtn.style.display = active ? 'inline-block' : 'none';
+  btn.disabled = active;
+}
+async function startExport() {
+  const path = document.getElementById('export-path').value.trim() || 'export.mp4';
+  const r = await callApi('export_job_start', { path, wait: false });
+  if (!r.ok) { document.getElementById('export-status').textContent = 'could not start: ' + (typeof r.error === 'string' ? r.error : JSON.stringify(r.error)); return; }
+  exportJobId = r.result.job_id;
+  renderExportStatus({ state: 'queued', chunks: { done: 0, total: 0 } });
+  renderQueueJobs = kimoRenderQueue.addJob(renderQueueJobs, exportJobId, path);
+  renderQueuePanel();
+  if (exportPollTimer) clearInterval(exportPollTimer);
+  exportPollTimer = setInterval(pollExportJob, 500);
+  if (renderQueuePollTimer) clearInterval(renderQueuePollTimer);
+  renderQueuePollTimer = setInterval(pollRenderQueue, 500);
+  await pollExportJob();
+}
+async function pollExportJob() {
+  if (!exportJobId) return;
+  const r = await callApi('job_status', { job_id: exportJobId });
+  if (!r.ok) { clearInterval(exportPollTimer); exportPollTimer = null; return; }
+  renderExportStatus(r.result);
+  if (['done', 'failed', 'cancelled'].includes(r.result.state)) { clearInterval(exportPollTimer); exportPollTimer = null; }
+}
+
+// v7.5: render queue panel -- every export job started this session, each polled independently, so a
+// finished job's result is still visible after a new export starts rather than being overwritten by it.
+let renderQueueJobs = [];
+let renderQueuePollTimer = null;
+function renderQueuePanel() {
+  const el = document.getElementById('render-queue-list'); if (!el) return;
+  el.innerHTML = '';
+  if (!renderQueueJobs.length) { const empty = document.createElement('div'); empty.className = 'rq-empty'; empty.textContent = 'no renders started yet'; el.appendChild(empty); return; }
+  for (const j of renderQueueJobs) {
+    const row = document.createElement('div'); row.className = 'rq-row';
+    const path = document.createElement('span'); path.className = 'rq-path'; path.textContent = j.path; path.title = j.path;
+    const state = document.createElement('span'); state.className = 'rq-state rq-' + j.state;
+    state.textContent = j.state + (j.pct ? ' ' + j.pct + '%' : '') + (j.note ? ' \u00b7 ' + j.note : '');
+    row.appendChild(path); row.appendChild(state);
+    if (kimoRenderQueue.isFinished(j)) {
+      const clear = document.createElement('span'); clear.className = 'rq-clear'; clear.textContent = '\u00d7'; clear.title = 'remove from this list';
+      clear.onclick = () => { renderQueueJobs = kimoRenderQueue.removeJob(renderQueueJobs, j.id); renderQueuePanel(); };
+      row.appendChild(clear);
+    }
+    el.appendChild(row);
+  }
+}
+async function pollRenderQueue() {
+  const active = kimoRenderQueue.activeJobIds(renderQueueJobs);
+  if (!active.length) { if (renderQueuePollTimer) { clearInterval(renderQueuePollTimer); renderQueuePollTimer = null; } return; }
+  for (const id of active) {
+    const r = await callApi('job_status', { job_id: id });
+    if (r.ok) renderQueueJobs = kimoRenderQueue.updateJob(renderQueueJobs, id, r.result);
+  }
+  renderQueuePanel();
+}
+async function cancelExport() {
+  if (!exportJobId) return;
+  await callApi('cancel_job', { job_id: exportJobId });
+  await pollExportJob();
+}
+// v7.3: project open/save -- save_project/load_project already exist in kimo-core (atomic write with a
+// temp+rename, optional with_history); this just wires the existing path field + buttons onto them.
+async function saveProject() {
+  const path = document.getElementById('project-path').value.trim();
+  const status = document.getElementById('project-status');
+  if (!path) { status.textContent = 'enter a path first'; return; }
+  const r = await callApi('save_project', { path });
+  status.textContent = r.ok ? `saved ${path}` : ('could not save: ' + (typeof r.error === 'string' ? r.error : JSON.stringify(r.error)));
+}
+async function openProject() {
+  const path = document.getElementById('project-path').value.trim();
+  const status = document.getElementById('project-status');
+  if (!path) { status.textContent = 'enter a path first'; return; }
+  const r = await callApi('load_project', { path });
+  if (!r.ok) { status.textContent = 'could not open: ' + (typeof r.error === 'string' ? r.error : JSON.stringify(r.error)); return; }
+  status.textContent = `opened ${path}`;
+  selectedClipId = null;
+  document.getElementById('inspector-body').style.display = 'none';
+  document.getElementById('no-selection').style.display = 'block';
+  await loadTimeline();
+  await loadHistory();
+}
+async function addTrack() { await callApi('add_track', {}); await loadTimeline(); }
+async function addMarkerAtPlayhead() {
+  const name = (typeof prompt === 'function' ? prompt('Marker name (optional):', '') : '') || '';
+  const v = await callApi('add_marker', { time: currentT, name });
+  if (!v.ok) { alert(typeof v.error === 'string' ? v.error : 'could not add a marker'); return; }
+  await loadTimeline();
+}
+async function removeMarkerAt(markerId) {
+  if (!confirm('Remove this marker?')) return;
+  const v = await callApi('remove_marker', { marker_id: markerId });
+  if (!v.ok) { alert(typeof v.error === 'string' ? v.error : 'could not remove that marker'); return; }
+  await loadTimeline();
+}
+async function toggleTrackState(track, which) {
+  const args = kimoTrackState.toggleArgs(track, which); args.track_id = track.id;
+  await callApi('set_track', args);
+  await loadTimeline();
+}
+async function removeTrack(trackId) {
+  if (!confirm('Remove this track and all its clips?')) return;
+  const v = await callApi('delete_track', { track_id: trackId });
+  if (!v.ok) { alert(typeof v.error === 'string' ? v.error : 'could not remove that track'); return; }
+  if (selectedClipId || selectedClipIds.length) { selectedClipId = null; selectedClipIds = []; await loadInspector(); } // a selected clip may have lived on this track
+  await loadTimeline();
+}
+async function doUndo() { const v = await callApi('undo', {}); if (!v.ok) { alert(v.error && v.error.message || 'nothing to undo'); return; } await loadTimeline(); if (selectedClipId) await loadInspector(); }
+async function doRedo() { const v = await callApi('redo', {}); if (!v.ok) { alert(v.error && v.error.message || 'nothing to redo'); return; } await loadTimeline(); if (selectedClipId) await loadInspector(); }
+
+function scrubToPixel(clientX, tracksEl) {
+  const rect = tracksEl.getBoundingClientRect();
+  const t = Math.max(0, Math.min(projectDuration, (clientX - rect.left - labelWidth) / pxPerSec));
+  scrubTo(t);
+}
+function scrubTo(t) {
+  currentT = Math.max(0, t);
+  document.getElementById('t').value = currentT.toFixed(2);
+  const ph = document.getElementById('playhead'); if (ph) ph.style.left = (labelWidth + currentT * pxPerSec) + 'px';
+  loadPreview();
+}
+function togglePlay() {
+  if (playing) { playing = false; clearInterval(playTimer); document.getElementById('play-btn').textContent = 'Play'; return; }
+  playing = true; document.getElementById('play-btn').textContent = 'Pause'; playLastWall = performance.now();
+  playTimer = setInterval(() => {
+    const now = performance.now(); const dt = (now - playLastWall) / 1000; playLastWall = now;
+    let t = currentT + dt;
+    if (t >= projectDuration) { t = projectDuration; playing = false; clearInterval(playTimer); document.getElementById('play-btn').textContent = 'Play'; }
+    scrubTo(t);
+  }, 150); // frame-stepped preview (one still image per tick), not continuous video playback
+}
+
+function stepFrame(dir) {
+  if (playing) togglePlay();
+  const frame = 1 / (projectFps || 30);
+  scrubTo(currentT + dir * frame);
+}
+
+async function deleteSelectedClip() {
+  if (selectedClipIds.length > 1) {
+    const ops = kimoMultiselect.buildGroupDeleteOps(selectedClipIds);
+    const v = await callApi('batch', { ops });
+    if (!v.ok) { alert(typeof v.error === 'string' ? v.error : 'could not delete the selected clips'); return; }
+    selectedClipId = null; selectedClipIds = [];
+    await loadTimeline(); await loadInspector();
+    return;
+  }
+  if (!selectedClipId) return;
+  const id = selectedClipId;
+  const v = await callApi('delete_clip', { clip_id: id });
+  if (!v.ok) { alert(typeof v.error === 'string' ? v.error : 'could not delete that clip'); return; }
+  selectedClipId = null; selectedClipIds = [];
+  await loadTimeline(); await loadInspector();
+}
+
+async function splitAtPlayhead() {
+  if (!selectedClipId) return; // nothing selected: no clip to split
+  const v = await callApi('split_clip', { clip_id: selectedClipId, at: currentT });
+  if (!v.ok) { alert(typeof v.error === 'string' ? v.error : 'cannot split here (playhead must be strictly inside the selected clip)'); return; }
+  await loadTimeline(); await loadInspector();
+}
+
+// v7.5: copy/paste (one or more selected clips) and ripple-delete (single clip only -- see
+// gui_clipboard.js's own doc comment for why group ripple has no settled meaning yet).
+function copySelectedClips() {
+  if (!selectedClipIds.length) return;
+  const clips = selectedClipIds.map(findClipInTimeline).filter(Boolean);
+  clipboardClips = kimoClipboard.copySelection(clips);
+}
+async function pasteClipboard() {
+  if (!clipboardClips.length) return;
+  const ops = kimoClipboard.buildPasteOps(clipboardClips, currentT);
+  const v = await callApi('batch', { ops });
+  if (!v.ok) { alert(typeof v.error === 'string' ? v.error : 'could not paste'); return; }
+  await loadTimeline(); await loadInspector();
+}
+async function rippleDeleteSelected() {
+  if (selectedClipIds.length > 1) { alert('ripple delete works on one clip at a time; use Delete to remove the whole group'); return; }
+  if (!selectedClipId) return;
+  const op = kimoClipboard.buildRippleDeleteOp(selectedClipId);
+  const v = await callApi(op.tool, op.args);
+  if (!v.ok) { alert(typeof v.error === 'string' ? v.error : 'could not ripple-delete that clip'); return; }
+  selectedClipId = null; selectedClipIds = [];
+  await loadTimeline(); await loadInspector();
+}
+
+// v7.6: right-click context menu on a clip bar (Split/Duplicate/Delete/Properties) -- the same tools the
+// keyboard shortcuts and inspector already call, surfaced as a visible menu so they don't need to be known
+// by heart. kimoContextMenu owns which items are enabled and the exact action for each; this just renders
+// that model and dispatches the click.
+let contextMenuClip = null;
+function showContextMenu(ev, clip) {
+  contextMenuClip = clip;
+  const items = kimoContextMenu.buildMenuItems(clip, currentT);
+  const menu = document.getElementById('clip-context-menu');
+  menu.innerHTML = '';
+  for (const item of items) {
+    const row = document.createElement('div');
+    row.className = 'ctx-item' + (item.enabled ? '' : ' disabled');
+    row.textContent = item.label;
+    if (item.reason) row.title = item.reason;
+    if (item.enabled) row.onclick = () => runContextMenuAction(item.id);
+    menu.appendChild(row);
+  }
+  const pos = kimoContextMenu.menuPosition(ev.clientX, ev.clientY, window.innerWidth, window.innerHeight, 150, items.length * 26 + 8);
+  menu.style.left = pos.left + 'px'; menu.style.top = pos.top + 'px';
+  menu.style.display = '';
+}
+function hideContextMenu() { const menu = document.getElementById('clip-context-menu'); if (menu) menu.style.display = 'none'; contextMenuClip = null; }
+document.addEventListener('click', () => hideContextMenu());
+async function runContextMenuAction(itemId) {
+  const clip = contextMenuClip;
+  const action = kimoContextMenu.actionFor(itemId, clip, currentT);
+  hideContextMenu();
+  if (!action) return;
+  if (action.open === 'properties') { selectedClipId = clip.id; selectedClipIds = [clip.id]; await loadTimeline(); await loadInspector(); return; }
+  const v = await callApi(action.tool, action.args);
+  if (!v.ok) { alert(typeof v.error === 'string' ? v.error : `could not ${itemId} that clip`); return; }
+  if (itemId === 'delete') { selectedClipId = null; selectedClipIds = []; }
+  await loadTimeline(); await loadInspector();
+}
+
+// v7.3 keyboard shortcuts: space play/pause, J/K/L shuttle (step back / pause / step forward -- this is a
+// frame-stepped preview, not continuous video playback, so J/L step one frame rather than shuttling at
+// speed), Delete removes the selected clip, S splits it at the playhead, Ctrl/Cmd+Z undoes, +Shift redoes.
+// The mapping itself lives in gui_keymap.js (one pure function, unit-tested headless under Node); this
+// listener is just the DOM glue that calls it and dispatches on its answer.
+document.addEventListener('keydown', (ev) => {
+  const action = window.kimoKeymap && window.kimoKeymap.resolveKeyAction(ev);
+  if (!action) return;
+  ev.preventDefault();
+  if (action === 'play_pause') togglePlay();
+  else if (action === 'pause') { if (playing) togglePlay(); }
+  else if (action === 'step_back') stepFrame(-1);
+  else if (action === 'step_forward') stepFrame(1);
+  else if (action === 'delete_clip') deleteSelectedClip();
+  else if (action === 'ripple_delete_clip') rippleDeleteSelected();
+  else if (action === 'split_at_playhead') splitAtPlayhead();
+  else if (action === 'copy_clip') copySelectedClips();
+  else if (action === 'paste_clip') pasteClipboard();
+  else if (action === 'undo') doUndo();
+  else if (action === 'redo') doRedo();
+});
+
+let justDragged = false;
+let lastTimeline = null; // cached from the most recent loadTimeline(), so a drag's snap candidates need no mid-drag API call
+const SNAP_PX = 8; // pixel tolerance for snapping, converted to seconds via pxPerSec (matches the drag's own units)
+function snapEnabled() { const el = document.getElementById('snap-enabled'); return !el || el.checked; }
+function snapProposed(proposed, excludeClipId) {
+  if (!snapEnabled() || !window.kimoSnap || !lastTimeline) return proposed;
+  const candidates = window.kimoSnap.candidatesFromTimeline(lastTimeline, excludeClipId);
+  return window.kimoSnap.snapTime(proposed, candidates, SNAP_PX / pxPerSec);
+}
+function startDrag(ev, clip, mode) {
+  ev.preventDefault(); ev.stopPropagation();
+  const startX = ev.clientX; const origStart = clip.start; const origDuration = clip.duration;
+  justDragged = false;
+  // v7.4: dragging a clip that is part of a multi-selection of 2+ moves the whole group together, as one
+  // atomic batch call (one undo step) -- un-snapped (snapping a whole group against every other clip's
+  // edges at once is a different, harder feature; this drags the group by the raw pixel delta, clamped only
+  // so the earliest clip in the group never goes negative). Trim stays single-clip: there is no settled
+  // meaning for "trim a group" the way there is for "move a group".
+  const isGroupMove = mode === 'move' && kimoMultiselect.isSelected(selectedClipIds, clip.id) && selectedClipIds.length > 1;
+  const groupClips = isGroupMove ? selectedClipIds.map(findClipInTimeline).filter((c) => c) : [];
+  function onMove(mv) {
+    const deltaSec = (mv.clientX - startX) / pxPerSec;
+    if (Math.abs(mv.clientX - startX) > 3) justDragged = true;
+    if (isGroupMove) {
+      const delta = kimoMultiselect.clampGroupDelta(groupClips.map((c) => c.start), deltaSec);
+      for (const gc of groupClips) {
+        const bar = document.querySelector(`.clip[data-clip-id="${CSS.escape(gc.id)}"]`); if (bar) bar.style.left = ((gc.start + delta) * pxPerSec) + 'px';
+      }
+      return;
+    }
+    const bar = document.querySelector(`.clip[data-clip-id="${CSS.escape(clip.id)}"]`); if (!bar) return;
+    if (mode === 'move') {
+      const snapped = snapProposed(Math.max(0, origStart + deltaSec), clip.id);
+      bar.style.left = snapped * pxPerSec + 'px';
+    } else {
+      const proposedEnd = snapProposed(origStart + Math.max(0.04, origDuration + deltaSec), clip.id);
+      bar.style.width = Math.max(4, (proposedEnd - origStart) * pxPerSec) + 'px';
+    }
+  }
+  async function onUp(up) {
+    document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp);
+    const deltaSec = (up.clientX - startX) / pxPerSec;
+    if (Math.abs(up.clientX - startX) <= 3) return; // a click, not a drag: selectClip's onclick handles it
+    if (isGroupMove) {
+      const delta = kimoMultiselect.clampGroupDelta(groupClips.map((c) => c.start), deltaSec);
+      const ops = kimoMultiselect.buildGroupMoveOps(groupClips, delta);
+      await callApi('batch', { ops });
+      await loadTimeline();
+      setTimeout(() => { justDragged = false; }, 0);
+      return;
+    }
+    if (mode === 'move') {
+      const snapped = snapProposed(Math.max(0, origStart + deltaSec), clip.id);
+      await callApi('move_clip', { clip_id: clip.id, start: snapped });
+    } else {
+      const snappedEnd = snapProposed(origStart + Math.max(0.04, origDuration + deltaSec), clip.id);
+      await callApi('trim_clip', { clip_id: clip.id, duration: Math.max(0.04, snappedEnd - origStart) });
+    }
+    await loadTimeline(); if (selectedClipId === clip.id) await loadInspector();
+    setTimeout(() => { justDragged = false; }, 0);
+  }
+  document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
+}
+
+function findClipInTimeline(id) {
+  if (!lastTimeline) return null;
+  for (const t of lastTimeline.tracks) { const c = t.clips.find((x) => x.id === id); if (c) return c; }
+  return null;
+}
+async function selectClip(id, ev) {
+  const additive = !!(ev && (ev.shiftKey || ev.metaKey || ev.ctrlKey));
+  selectedClipIds = kimoMultiselect.toggleSelect(selectedClipIds, id, additive);
+  selectedClipId = selectedClipIds.length ? selectedClipIds[selectedClipIds.length - 1] : null;
+  document.querySelectorAll('.clip').forEach(el => el.classList.toggle('selected', kimoMultiselect.isSelected(selectedClipIds, el.dataset.clipId)));
+  if (selectedClipIds.length > 1) {
+    document.getElementById('inspector-body').style.display = 'none';
+    const ns = document.getElementById('no-selection');
+    ns.textContent = selectedClipIds.length + ' clips selected -- drag one to move the group, Delete removes them all.';
+    ns.style.display = '';
+    return;
+  }
+  document.getElementById('no-selection').textContent = 'Click a clip on the timeline to inspect it.';
+  await loadInspector();
+}
+
+async function loadEffectCatalog() {
+  if (effectCatalog.length) { renderFxBrowser(); return; }
+  const [ev, tv] = await Promise.all([callApi('list_effects', {}), callApi('list_transitions', {})]);
+  if (ev.ok) effectCatalog = ev.result;
+  if (tv.ok) transitionKinds = tv.result;
+  renderFxBrowser();
+}
+
+// v7.4: the effects/transitions browser -- one searchable list combining list_effects' catalog and
+// list_transitions' kinds (kimoFxBrowser.buildEntries), filtered by the box above it
+// (kimoFxBrowser.filterEntries), each entry clickable to add itself to the selected clip
+// (kimoFxBrowser.addArgsFor -> the exact {tool, args} to call).
+function renderFxBrowser() {
+  const listEl = document.getElementById('fx-browser-list'); if (!listEl) return;
+  const entries = kimoFxBrowser.buildEntries(effectCatalog, transitionKinds);
+  const q = document.getElementById('fx-browser-filter').value;
+  const shown = kimoFxBrowser.filterEntries(entries, q);
+  listEl.innerHTML = '';
+  if (shown.length === 0) { listEl.innerHTML = '<div class="fx-empty">no match</div>'; return; }
+  for (const entry of shown) {
+    const row = document.createElement('div'); row.className = 'fx-entry'; row.title = entry.description || entry.kind;
+    row.innerHTML = `<span class="fx-kind">${entry.kind}</span><span class="fx-type">${entry.type}</span>`;
+    row.onclick = () => addFxToSelected(entry);
+    listEl.appendChild(row);
+  }
+}
+async function addFxToSelected(entry) {
+  if (!selectedClipId) return;
+  const call = kimoFxBrowser.addArgsFor(entry, selectedClipId);
+  const v = await callApi(call.tool, call.args);
+  if (!v.ok) { alert(typeof v.error === 'string' ? v.error : `could not add ${entry.kind}`); return; }
+  await loadInspector();
+}
+
+async function loadInspector() {
+  if (!selectedClipId) { document.getElementById('no-selection').style.display = ''; document.getElementById('inspector-body').style.display = 'none'; return; }
+  await loadEffectCatalog();
+  const r = await fetch('/api/clip?id=' + encodeURIComponent(selectedClipId));
+  if (!r.ok) { selectedClipId = null; document.getElementById('no-selection').textContent = 'that clip is gone.'; document.getElementById('no-selection').style.display = ''; document.getElementById('inspector-body').style.display = 'none'; return; }
+  const c = await r.json();
+  document.getElementById('no-selection').style.display = 'none';
+  document.getElementById('inspector-body').style.display = '';
+  document.getElementById('insp-name').textContent = c.name || c.id;
+  document.getElementById('insp-timing').textContent = c.start.toFixed(2) + 's .. ' + c.end.toFixed(2) + 's (' + c.source_kind + ')';
+
+  const propsEl = document.getElementById('insp-props'); propsEl.innerHTML = '<div style="font-size:11px;color:#9ab;margin:4px 0">properties</div>';
+  for (const [name, value] of Object.entries(c.props)) {
+    const row = document.createElement('div'); row.className = 'prop-row';
+    row.innerHTML = `<span>${name}</span>`;
+    const input = document.createElement('input'); input.type = 'number'; input.step = 'any'; input.value = value;
+    input.onchange = () => setProperty(c.id, name, parseFloat(input.value));
+    row.appendChild(input); propsEl.appendChild(row);
+  }
+
+  const fxEl = document.getElementById('insp-effects'); fxEl.innerHTML = '<div style="font-size:11px;color:#9ab;margin:4px 0">effects (in order)</div>';
+  for (const fx of c.effects) {
+    const box = document.createElement('div'); box.className = 'fx';
+    const head = document.createElement('div'); head.className = 'fx-head';
+    head.innerHTML = `<span>${fx.kind}</span>`;
+    const rm = document.createElement('button'); rm.className = 'small'; rm.textContent = 'remove'; rm.onclick = () => removeEffect(c.id, fx.id);
+    head.appendChild(rm); box.appendChild(head);
+    for (const [pname, pval] of Object.entries(fx.params)) {
+      const row = document.createElement('div'); row.className = 'param-row';
+      row.innerHTML = `<span>${pname}</span>`;
+      const input = document.createElement('input'); input.type = 'number'; input.step = 'any'; input.value = pval;
+      input.onchange = () => setEffectParam(c.id, fx.id, pname, parseFloat(input.value));
+      row.appendChild(input); box.appendChild(row);
+    }
+    fxEl.appendChild(box);
+  }
+  await loadKeyframePanel(c);
+}
+
+// v7.5: keyframe lane -- pick an animated property on the selected clip, see its keyframes laid out
+// across the clip's own duration, click an existing diamond to remove it, click empty lane to add one at
+// that clip-local time with whatever value is already playing there (sample_property), so adding a
+// keyframe never silently resets the value. No dragging yet -- moving a key in time is left to move_key
+// through the generic tool invoker below; this lane is add/remove, the same honest scope the multiselect
+// panel already states for group trim.
+let keyframeClip = null; // {id, duration}
+async function loadKeyframePanel(c) {
+  keyframeClip = { id: c.id, duration: c.end - c.start };
+  const sel = document.getElementById('keyframe-property');
+  const prev = sel.value;
+  const r = await callApi('list_animated_properties', { clip_id: c.id });
+  const animated = (r.ok && r.result && Array.isArray(r.result.animated)) ? r.result.animated : [];
+  const options = kimoKeyframes.buildPropertyOptions(animated);
+  sel.innerHTML = '<option value="">(choose a property)</option>' + options.map((o) => `<option value="${o.key}">${o.label}</option>`).join('');
+  sel.value = options.some((o) => o.key === prev) ? prev : '';
+  await loadKeyframeLane();
+}
+async function loadKeyframeLane() {
+  const sel = document.getElementById('keyframe-property');
+  const lane = document.getElementById('keyframe-lane');
+  const hint = document.getElementById('keyframe-hint');
+  lane.innerHTML = ''; lane.onclick = null;
+  if (!sel.value || !keyframeClip) { lane.style.display = 'none'; hint.textContent = ''; return; }
+  const { effectId, property } = kimoKeyframes.parsePropertyKey(sel.value);
+  const args = { clip_id: keyframeClip.id, property }; if (effectId) args.effect_id = effectId;
+  const r = await callApi('get_curve', args);
+  if (!r.ok) { lane.style.display = 'none'; hint.textContent = typeof r.error === 'string' ? r.error : 'could not read that curve'; return; }
+  lane.style.display = 'block';
+  const width = lane.clientWidth || 300;
+  const fps = projectFps || 25;
+  const keys = r.result.keys || [];
+  const markers = kimoKeyframes.buildKeyMarkers(keys, keyframeClip.duration, width);
+  for (const m of markers) {
+    const dot = document.createElement('div'); dot.className = 'kf-key'; dot.style.left = m.x + 'px';
+    dot.title = `t=${m.time.toFixed(2)}s v=${m.value} -- click to remove`;
+    dot.onclick = async (ev) => {
+      ev.stopPropagation();
+      const rr = await callApi('remove_key', Object.assign({ time: m.time }, args));
+      if (!rr.ok) { alert(typeof rr.error === 'string' ? rr.error : 'could not remove that keyframe'); return; }
+      await loadKeyframeLane(); await loadInspector();
+    };
+    lane.appendChild(dot);
+  }
+  hint.textContent = markers.length ? `${markers.length} keyframe${markers.length === 1 ? '' : 's'} -- click one to remove, click empty space to add` : 'no keyframes yet -- click to add one';
+  lane.onclick = async (ev) => {
+    const rect = lane.getBoundingClientRect();
+    const x = ev.clientX - rect.left;
+    const t = kimoKeyframes.timeForLaneX(x, keyframeClip.duration, width);
+    if (kimoKeyframes.nearestKeyWithinHalfFrame(keys, t, fps)) return; // a diamond's own handler covers this
+    const sv = await callApi('sample_property', Object.assign({}, args, { space: 'clip', times: [t] }));
+    const value = (sv.ok && sv.result && Array.isArray(sv.result.values)) ? sv.result.values[0] : 0;
+    const kr = await callApi('set_keyframe', Object.assign({ time: t, value }, args));
+    if (!kr.ok) { alert(typeof kr.error === 'string' ? kr.error : 'could not add a keyframe there'); return; }
+    await loadKeyframeLane(); await loadInspector();
+  };
+}
+
+async function callApi(tool, args) {
+  const r = await fetch('/api/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tool, args }) });
+  return r.json();
+}
+async function setProperty(clipId, property, value) { await callApi('set_property', { clip_id: clipId, property, value }); loadInspector(); loadTimeline(); }
+async function setEffectParam(clipId, effectId, param, value) { await callApi('set_effect_param', { clip_id: clipId, effect_id: effectId, param, value }); loadInspector(); }
+async function removeEffect(clipId, effectId) { await callApi('remove_effect', { clip_id: clipId, effect_id: effectId }); loadInspector(); }
+async function loadPreview() {
+  const t = document.getElementById('t').value;
+  currentT = parseFloat(t) || 0;
+  const ph = document.getElementById('playhead'); if (ph) ph.style.left = (labelWidth + currentT * pxPerSec) + 'px';
+  document.getElementById('frame').src = '/preview.png?t=' + encodeURIComponent(t) + '&_=' + Date.now();
+}
+async function loadRegistry() {
+  const r = await fetch('/api/registry'); registry = await r.json(); renderToolList(registry);
+}
+function renderToolList(list) {
+  const el = document.getElementById('tool-list'); el.innerHTML = '';
+  for (const c of list) {
+    const d = document.createElement('div'); d.textContent = c.name + (c.mutates ? ' *' : '');
+    d.title = c.summary; d.onclick = () => { document.getElementById('tool-name').value = c.name; };
+    el.appendChild(d);
+  }
+}
+function filterTools() {
+  const q = document.getElementById('search').value.toLowerCase();
+  renderToolList(registry.filter(c => c.name.toLowerCase().includes(q) || c.summary.toLowerCase().includes(q)));
+}
+async function callTool() {
+  const tool = document.getElementById('tool-name').value.trim();
+  let args; try { args = JSON.parse(document.getElementById('tool-args').value || '{}'); } catch (e) { document.getElementById('result').textContent = 'bad JSON in args: ' + e; return; }
+  const r = await fetch('/api/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tool, args }) });
+  const v = await r.json();
+  document.getElementById('result').textContent = JSON.stringify(v, null, 2);
+  loadTimeline();
+  loadMediaBin();
+}
+// v7.6: media bin panel -- a searchable, thumbnailed view of every imported asset (find_assets' own
+// result reshaped by kimoMediaBin), with a plain path input to import more. Nothing the GUI did not
+// already let you do through the generic Tools panel; this is the first place the GUI shows media that
+// is not yet placed on the timeline at all.
+let mediaBinAssets = [];
+async function loadMediaBin() {
+  const r = await callApi('find_assets', { limit: 500 });
+  mediaBinAssets = r.ok ? (r.result.matches || []) : [];
+  renderMediaBin();
+}
+function renderMediaBin() {
+  const listEl = document.getElementById('media-bin-list'); if (!listEl) return;
+  const q = document.getElementById('media-bin-search').value;
+  const rows = kimoMediaBin.buildAssetRows(mediaBinAssets, q);
+  listEl.innerHTML = '';
+  if (rows.length === 0) { listEl.innerHTML = '<div class="mb-empty">no media imported yet</div>'; return; }
+  for (const row of rows) {
+    const el = document.createElement('div'); el.className = 'mb-row';
+    const img = document.createElement('img'); img.className = 'mb-thumb'; img.src = row.thumbUrl; img.alt = '';
+    const meta = document.createElement('div'); meta.className = 'mb-meta';
+    const name = document.createElement('div'); name.className = 'mb-name'; name.title = row.path; name.textContent = row.name;
+    const sub = document.createElement('div'); sub.className = 'mb-sub'; sub.textContent = row.bin + ' \u00b7 ' + row.durationLabel + (row.used ? ' \u00b7 used' : '');
+    meta.appendChild(name); meta.appendChild(sub);
+    el.appendChild(img); el.appendChild(meta);
+    listEl.appendChild(el);
+  }
+}
+async function importMediaBinAsset() {
+  const pathEl = document.getElementById('media-bin-import-path');
+  const path = pathEl.value.trim(); if (!path) return;
+  const v = await callApi('import_media', { path: path });
+  if (!v.ok) { alert(typeof v.error === 'string' ? v.error : 'could not import that file'); return; }
+  pathEl.value = '';
+  await loadMediaBin();
+}
+
+loadTimeline(); loadRegistry(); renderQueuePanel(); loadMediaBin();
+</script>
+</body>
+</html>
+

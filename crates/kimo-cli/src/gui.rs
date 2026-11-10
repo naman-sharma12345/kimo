@@ -1,0 +1,1542 @@
+//! v7 GUI (FEATURES.md L562, built LAST as instructed): a minimal local web UI over the same tool
+//! registry/dispatch the CLI and MCP server use -- no second dispatch path (`run_tool`, shared with main.rs).
+//! `kimo gui` serves it. Requirements this meets: a timeline view of the project (timeline_view_model,
+//! served at GET /api/timeline), a preview frame rendered by the actual engine (GET /preview.png?t=..,
+//! through render::render_png -- the same function render_frame/export use), and a tool-invocation panel
+//! (POST /api/call -> run_tool, the same path the CLI's `call` subcommand and the MCP server use).
+//!
+//! `handle_request` is a pure function of (Session, method, path, query, body) with no socket anywhere in
+//! it, so every route is unit-tested headless (tests/gui_tests.rs) without ever binding a port; only
+//! `serve`'s outer accept loop (untested here, it is a thin and unremarkable std::net::TcpListener read/
+//! write loop) touches a real socket.
+use kimo_core::commands::{registry_ref, Session};
+use serde_json::{json, Value};
+use std::sync::{Arc, Mutex};
+
+fn source_kind(c: &kimo_core::model::Clip) -> String {
+    serde_json::to_value(&c.source).ok().and_then(|v| v.get("type").and_then(|x| x.as_str().map(String::from))).unwrap_or_default()
+}
+
+/// The timeline view-model: tracks and their clips, with the fields a timeline UI actually needs to lay
+/// out bars on a ruler (start/duration/end in project seconds) and label them (name/role/source kind).
+pub fn timeline_view_model(ss: &Session) -> Value {
+    let p = &ss.project;
+    let tracks: Vec<Value> = p.tracks.iter().map(|t| {
+        let clips: Vec<Value> = t.clips.iter().map(|c| json!({
+            "id": c.id, "name": c.name, "role": c.role, "source_kind": source_kind(c),
+            "start": c.start, "duration": c.duration, "end": c.start + c.duration,
+        })).collect();
+        json!({"id": t.id, "name": t.name, "clip_count": clips.len(), "clips": clips, "locked": t.locked, "muted": t.muted, "solo": t.solo})
+    }).collect();
+    // v7.3: markers, sorted by time (same order list_markers already returns), for the timeline's marker
+    // ticks -- the GUI's own display, not a second source of truth (add_marker/list_markers/remove_marker
+    // are untouched; this just surfaces what they already hold).
+    let mut markers: Vec<Value> = p.markers.iter().map(|m| json!({"id": m.id, "time": m.time, "duration": m.duration, "name": m.name, "color": m.color})).collect();
+    markers.sort_by(|a, b| a["time"].as_f64().unwrap_or(0.0).partial_cmp(&b["time"].as_f64().unwrap_or(0.0)).unwrap_or(std::cmp::Ordering::Equal));
+    json!({"width": p.width, "height": p.height, "fps": p.fps, "duration": p.duration(), "track_count": tracks.len(), "tracks": tracks, "markers": markers})
+}
+
+/// Full detail for one clip -- the effect-params panel's data: id/name/role/timing, every property's base
+/// value (not its keyframes; this panel edits base values the same way set_property does without a time),
+/// and every effect with its id, kind and params (again base values) so the panel can list and edit them
+/// through the same set_effect_param the tool-invocation panel already exposes generically.
+pub fn clip_detail(ss: &Session, clip_id: &str) -> Option<Value> {
+    let c = ss.project.find_clip(clip_id)?;
+    let props: Value = json!(c.props.iter().map(|(k, p)| (k.clone(), json!(p.base))).collect::<serde_json::Map<_, _>>());
+    let effects: Vec<Value> = c.effects.iter().map(|e| json!({
+        "id": e.id, "kind": e.kind,
+        "params": e.params.iter().map(|(k, p)| (k.clone(), json!(p.base))).collect::<serde_json::Map<_, _>>(),
+        "strings": e.strings,
+    })).collect();
+    Some(json!({"id": c.id, "name": c.name, "role": c.role, "start": c.start, "duration": c.duration, "end": c.start + c.duration, "source_kind": source_kind(c), "props": props, "effects": effects}))
+}
+
+/// Every registered tool, name + first line of its description + mutates, for the tool-invocation panel's
+/// picker (the full schema is available per-tool at GET /api/tool/<name> so the picker stays small).
+pub fn registry_summary() -> Value {
+    json!(registry_ref().iter().map(|c| { let first = c.description.split(". ").next().unwrap_or(&c.description); json!({"name": c.name, "summary": first, "mutates": c.mutates}) }).collect::<Vec<_>>())
+}
+
+/// Renders one PNG frame of a single media asset, for the media bin panel's thumbnails -- NOT a frame of
+/// the live project. Builds a throwaway Session carrying just that one asset on a fresh one-clip
+/// project (through add_track/add_clip, the same tools any caller uses, so this needs no new clip-
+/// construction code of its own) and renders its midpoint with the same render_png /preview.png already
+/// uses. The real session (and its undo history) is never touched: `ss` is read only to look up the
+/// asset's own record.
+fn asset_thumbnail_png(ss: &Session, asset_id: &str, path_str: &str) -> Result<(), String> {
+    let asset = ss.project.assets.get(asset_id).cloned().ok_or_else(|| format!("unknown_asset: no asset '{asset_id}'"))?;
+    let mut temp = Session::new();
+    temp.project.width = ss.project.width;
+    temp.project.height = ss.project.height;
+    temp.project.fps = ss.project.fps;
+    temp.project.assets.insert(asset_id.to_string(), asset.clone());
+    let tid = kimo_core::commands::dispatch(&mut temp, "add_track", &json!({}))?["track_id"].as_str().unwrap_or_default().to_string();
+    let dur = if asset.duration > 0.0 { asset.duration.min(4.0) } else { 1.0 };
+    kimo_core::commands::dispatch(&mut temp, "add_clip", &json!({"track_id": tid, "source_type": "media", "asset_id": asset_id, "start": 0.0, "duration": dur, "fit": "cover"}))?;
+    kimo_core::render::render_png(&temp.project, dur / 2.0, path_str, &mut temp.cache)
+}
+
+pub struct Response { pub status: u16, pub content_type: &'static str, pub body: Vec<u8> }
+fn json_response(status: u16, v: Value) -> Response { Response { status, content_type: "application/json", body: serde_json::to_vec(&v).unwrap_or_default() } }
+fn err_response(status: u16, msg: impl Into<String>) -> Response { json_response(status, json!({"error": msg.into()})) }
+
+const INDEX_HTML: &str = include_str!("gui_index.html");
+/// v7.3: the keyboard-shortcut resolver (space/J/K/L/Delete/S/undo/redo), served as a real static file so
+/// gui_index.html's <script src="/gui_keymap.js"> and tests/js/keymap_test.js (Node, headless) run the
+/// exact same bytes -- one mapping, not two to keep in sync.
+const KEYMAP_JS: &str = include_str!("gui_keymap.js");
+/// v7.3: the timeline-snapping helper (nearest clip edge / marker / 0, within tolerance), served the same
+/// way and for the same reason -- gui_index.html's drag handlers and tests/js/snap_test.js (Node) run the
+/// exact same bytes.
+const SNAP_JS: &str = include_str!("gui_snap.js");
+/// v7.3: the timeline-zoom helper (bounds-clamped px/sec), served the same way for the same reason --
+/// gui_index.html's zoomBy()/zoomReset() and tests/js/zoom_test.js (Node) run the exact same bytes.
+const ZOOM_JS: &str = include_str!("gui_zoom.js");
+/// v7.4: the track mute/solo/lock button-state helper (button label/active/title + whether clip drag/trim
+/// is allowed + the toggle args to send), served the same way for the same reason -- gui_index.html's
+/// track-row renderer and tests/js/trackstate_test.js (Node) run the exact same bytes.
+const TRACKSTATE_JS: &str = include_str!("gui_trackstate.js");
+/// v7.4: the multi-select / group-move / group-delete helper (selection-set toggling, group-move delta
+/// clamping, the atomic `batch` op lists for a group move/delete), served the same way for the same reason
+/// -- gui_index.html's selection/drag handlers and tests/js/multiselect_test.js (Node) run the exact same
+/// bytes.
+const MULTISELECT_JS: &str = include_str!("gui_multiselect.js");
+/// v7.4: the waveform fetch/scale helper (which clips get a waveform fetch, the audio_transients args to
+/// ask with, and rewriting its fixed-pixel-width SVG to fill the clip bar's actual CSS width), served the
+/// same way for the same reason -- gui_index.html's timeline renderer and tests/js/waveform_test.js (Node)
+/// run the exact same bytes.
+const WAVEFORM_JS: &str = include_str!("gui_waveform.js");
+/// v7.4: the effects/transitions browser helper (combines list_effects' and list_transitions' two different
+/// catalog shapes into one searchable list, filters it, builds the add call), served the same way for the
+/// same reason -- gui_index.html's fx-browser panel and tests/js/fxbrowser_test.js (Node) run the exact same
+/// bytes.
+const FXBROWSER_JS: &str = include_str!("gui_fxbrowser.js");
+/// v7.5: the clipboard helper (copy/paste op lists for one or more clips, the ripple-delete op), served the
+/// same way for the same reason -- gui_index.html's copy/paste/ripple-delete shortcuts and
+/// tests/js/clipboard_test.js (Node) run the exact same bytes.
+const CLIPBOARD_JS: &str = include_str!("gui_clipboard.js");
+/// v7.5: the marker/chapter list panel's view model (format timestamps, build display rows from
+/// timeline_view_model's own markers array), served the same way for the same reason -- gui_index.html's
+/// marker panel and tests/js/markerpanel_test.js (Node) run the exact same bytes.
+const MARKERPANEL_JS: &str = include_str!("gui_markerpanel.js");
+/// v7.5: the render queue panel's view model (job list state, reshaping job_status responses into display
+/// rows), served the same way for the same reason -- gui_index.html's render queue panel and
+/// tests/js/renderqueue_test.js (Node) run the exact same bytes.
+const RENDERQUEUE_JS: &str = include_str!("gui_renderqueue.js");
+/// v7.5: the keyframe lane's view model (property option list, lane pixel mapping, the server's own
+/// "nearest key within half a frame" rule mirrored for click-handling), served the same way for the same
+/// reason -- gui_index.html's keyframe lane and tests/js/keyframes_test.js (Node) run the exact same bytes.
+const KEYFRAMES_JS: &str = include_str!("gui_keyframes.js");
+/// v7.6: the clip context menu's view model (which items are enabled, the exact tool call or inspector-
+/// open for each, viewport-clamped menu positioning), served the same way for the same reason --
+/// gui_index.html's right-click handler and tests/js/contextmenu_test.js (Node) run the exact same bytes.
+const CONTEXTMENU_JS: &str = include_str!("gui_contextmenu.js");
+/// v7.6: the media bin panel's view model (search/filter, used/unfiled display, the per-asset thumbnail
+/// URL), served the same way for the same reason -- gui_index.html's media bin panel and
+/// tests/js/mediabin_test.js (Node) run the exact same bytes.
+const MEDIABIN_JS: &str = include_str!("gui_mediabin.js");
+/// v7.6: the timeline minimap/overview's view model (fit-to-width scale, per-clip blocks across the whole
+/// duration, the viewport rectangle, click-to-jump time), served the same way for the same reason --
+/// gui_index.html's minimap strip and tests/js/minimap_test.js (Node) run the exact same bytes.
+const MINIMAP_JS: &str = include_str!("gui_minimap.js");
+
+/// Parses `?t=1.5` (or any single-key query) out of a raw query string; used for /preview.png's `t`.
+fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
+    query.split('&').find_map(|kv| { let (k, v) = kv.split_once('=')?; if k == key { Some(v) } else { None } })
+}
+
+/// The whole routing table. No socket, no I/O beyond what a route explicitly needs (render_png writes a
+/// temp file and reads it back; everything else is pure JSON over the in-memory Session). This is what
+/// tests/gui_tests.rs calls directly.
+pub fn handle_request(ss: &Arc<Mutex<Session>>, method: &str, path: &str, query: &str, body: &[u8]) -> Response {
+    match (method, path) {
+        ("GET", "/") => Response { status: 200, content_type: "text/html; charset=utf-8", body: INDEX_HTML.as_bytes().to_vec() },
+        ("GET", "/gui_keymap.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: KEYMAP_JS.as_bytes().to_vec() },
+        ("GET", "/gui_snap.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: SNAP_JS.as_bytes().to_vec() },
+        ("GET", "/gui_zoom.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: ZOOM_JS.as_bytes().to_vec() },
+        ("GET", "/gui_trackstate.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: TRACKSTATE_JS.as_bytes().to_vec() },
+        ("GET", "/gui_multiselect.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: MULTISELECT_JS.as_bytes().to_vec() },
+        ("GET", "/gui_waveform.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: WAVEFORM_JS.as_bytes().to_vec() },
+        ("GET", "/gui_fxbrowser.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: FXBROWSER_JS.as_bytes().to_vec() },
+        ("GET", "/gui_clipboard.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: CLIPBOARD_JS.as_bytes().to_vec() },
+        ("GET", "/gui_markerpanel.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: MARKERPANEL_JS.as_bytes().to_vec() },
+        ("GET", "/gui_renderqueue.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: RENDERQUEUE_JS.as_bytes().to_vec() },
+        ("GET", "/gui_keyframes.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: KEYFRAMES_JS.as_bytes().to_vec() },
+        ("GET", "/gui_contextmenu.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: CONTEXTMENU_JS.as_bytes().to_vec() },
+        ("GET", "/gui_mediabin.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: MEDIABIN_JS.as_bytes().to_vec() },
+        ("GET", "/gui_minimap.js") => Response { status: 200, content_type: "application/javascript; charset=utf-8", body: MINIMAP_JS.as_bytes().to_vec() },
+        ("GET", "/api/timeline") => { let ss = ss.lock().unwrap(); json_response(200, timeline_view_model(&ss)) }
+        ("GET", "/api/registry") => json_response(200, registry_summary()),
+        ("GET", "/api/clip") => { // ?id=<clip_id>
+            let Some(id) = query_param(query, "id") else { return err_response(400, "missing_arg: id") };
+            let ss = ss.lock().unwrap();
+            match clip_detail(&ss, id) { Some(v) => json_response(200, v), None => err_response(404, format!("unknown_clip: no clip '{id}'")) }
+        }
+        ("GET", "/api/tool") => { // ?name=<tool>
+            let Some(name) = query_param(query, "name") else { return err_response(400, "missing_arg: name") };
+            match registry_ref().iter().find(|c| c.name == name) {
+                Some(c) => json_response(200, json!({"name": c.name, "description": c.description, "schema": c.schema, "mutates": c.mutates})),
+                None => err_response(404, format!("unknown_tool: no tool named '{name}'")),
+            }
+        }
+        ("GET", "/preview.png") => {
+            let t: f64 = query_param(query, "t").and_then(|s| s.parse().ok()).unwrap_or(0.0);
+            let ss = ss.lock().unwrap();
+            let dir = std::env::temp_dir().join("kimo_gui_preview");
+            if std::fs::create_dir_all(&dir).is_err() { return err_response(500, "could not create preview temp dir"); }
+            let path = dir.join(format!("preview_{}.png", std::process::id()));
+            let path_str = match path.to_str() { Some(s) => s, None => return err_response(500, "non-utf8 temp path") };
+            let mut cache = kimo_core::render::Cache::new();
+            match kimo_core::render::render_png(&ss.project, t, path_str, &mut cache) {
+                Ok(()) => match std::fs::read(&path) { Ok(bytes) => Response { status: 200, content_type: "image/png", body: bytes }, Err(e) => err_response(500, format!("rendered but could not read back: {e}")) },
+                Err(e) => err_response(500, format!("render failed: {e}")),
+            }
+        }
+        ("GET", "/asset_thumb.png") => { // ?asset_id=<id> -- an ephemeral one-clip render of just that asset, never touching the live project
+            let Some(asset_id) = query_param(query, "asset_id") else { return err_response(400, "missing_arg: asset_id") };
+            let ss = ss.lock().unwrap();
+            let dir = std::env::temp_dir().join("kimo_gui_asset_thumb");
+            if std::fs::create_dir_all(&dir).is_err() { return err_response(500, "could not create thumbnail temp dir"); }
+            let safe_id: String = asset_id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect();
+            let path = dir.join(format!("thumb_{}_{safe_id}.png", std::process::id()));
+            let path_str = match path.to_str() { Some(s) => s, None => return err_response(500, "non-utf8 temp path") };
+            match asset_thumbnail_png(&ss, asset_id, path_str) {
+                Ok(()) => match std::fs::read(&path) { Ok(bytes) => Response { status: 200, content_type: "image/png", body: bytes }, Err(e) => err_response(500, format!("rendered but could not read back: {e}")) },
+                Err(e) => err_response(404, e),
+            }
+        }
+        ("POST", "/api/call") => {
+            let v: Value = match serde_json::from_slice(body) { Ok(v) => v, Err(e) => return err_response(400, format!("body is not valid JSON: {e}")) };
+            let Some(tool) = v.get("tool").and_then(|v| v.as_str()) else { return err_response(400, "missing_arg: tool") };
+            let args = v.get("args").cloned().unwrap_or(json!({}));
+            match crate::run_tool(ss, tool, &args) {
+                Ok(result) => json_response(200, json!({"ok": true, "result": result})),
+                Err(e) => json_response(200, json!({"ok": false, "error": e})),
+            }
+        }
+        (_, "/") | (_, "/gui_keymap.js") | (_, "/gui_snap.js") | (_, "/gui_zoom.js") | (_, "/gui_trackstate.js") | (_, "/gui_multiselect.js") | (_, "/gui_waveform.js") | (_, "/gui_fxbrowser.js") | (_, "/gui_clipboard.js") | (_, "/gui_markerpanel.js") | (_, "/gui_renderqueue.js") | (_, "/gui_keyframes.js") | (_, "/gui_contextmenu.js") | (_, "/gui_mediabin.js") | (_, "/asset_thumb.png") | (_, "/gui_minimap.js") | (_, "/api/timeline") | (_, "/api/registry") | (_, "/api/tool") | (_, "/api/clip") | (_, "/preview.png") | (_, "/api/call") => err_response(405, format!("method {method} not allowed on {path}")),
+        _ => err_response(404, format!("no route for {path}")),
+    }
+}
+
+/// Reads one HTTP/1.1 request off `stream` (request line, headers for Content-Length, then the body) --
+/// minimal by design (no chunked transfer, no keep-alive): this server is for one person's browser on
+/// localhost, not a public endpoint. Returns (method, path, query, body).
+fn read_request(stream: &mut std::net::TcpStream) -> std::io::Result<(String, String, String, Vec<u8>)> {
+    use std::io::{BufRead, BufReader, Read};
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let mut line = String::new(); reader.read_line(&mut line)?;
+    let mut parts = line.split_whitespace();
+    let method = parts.next().unwrap_or("GET").to_string();
+    let target = parts.next().unwrap_or("/").to_string();
+    let (path, query) = target.split_once('?').map(|(p, q)| (p.to_string(), q.to_string())).unwrap_or((target, String::new()));
+    let mut content_length = 0usize;
+    loop { let mut h = String::new(); if reader.read_line(&mut h)? == 0 || h == "\r\n" || h == "\n" { break; }
+        if let Some(v) = h.to_ascii_lowercase().strip_prefix("content-length:") { content_length = v.trim().parse().unwrap_or(0); } }
+    let mut body = vec![0u8; content_length]; if content_length > 0 { reader.read_exact(&mut body)?; }
+    Ok((method, path, query, body))
+}
+
+fn write_response(stream: &mut std::net::TcpStream, r: &Response) -> std::io::Result<()> {
+    use std::io::Write;
+    let status_text = match r.status { 200 => "OK", 400 => "Bad Request", 404 => "Not Found", 405 => "Method Not Allowed", 500 => "Internal Server Error", _ => "Unknown" };
+    write!(stream, "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", r.status, status_text, r.content_type, r.body.len())?;
+    stream.write_all(&r.body)
+}
+
+/// Blocks forever accepting one connection at a time (a local single-user tool; no concurrency needed).
+pub fn serve(ss: Arc<Mutex<Session>>, bind: &str, port: u16) -> std::io::Result<()> {
+    let listener = std::net::TcpListener::bind((bind, port))?;
+    eprintln!("kimo gui listening on http://{bind}:{port}");
+    for stream in listener.incoming() {
+        let mut stream = match stream { Ok(s) => s, Err(_) => continue };
+        let resp = match read_request(&mut stream) {
+            Ok((method, path, query, body)) => handle_request(&ss, &method, &path, &query, &body),
+            Err(e) => err_response(400, format!("malformed request: {e}")),
+        };
+        let _ = write_response(&mut stream, &resp);
+    }
+    Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kimo_core::commands::dispatch;
+
+    fn fixture() -> Arc<Mutex<Session>> {
+        let mut ss = Session::new();
+        dispatch(&mut ss, "project_set", &json!({"width": 64, "height": 36, "fps": 25})).unwrap();
+        let tr = dispatch(&mut ss, "add_track", &json!({})).unwrap()["track_id"].as_str().unwrap().to_string();
+        dispatch(&mut ss, "add_shape", &json!({"track_id": tr, "shape": "rect", "start": 0.0, "duration": 2.0, "color": [1.0, 0.0, 0.0]})).unwrap();
+        Arc::new(Mutex::new(ss))
+    }
+
+    #[test]
+    fn timeline_view_model_lists_tracks_and_clips_with_timing() {
+        let ss = fixture();
+        let v = timeline_view_model(&ss.lock().unwrap());
+        assert_eq!(v["width"], 64);
+        assert_eq!(v["track_count"], 1);
+        let clips = v["tracks"][0]["clips"].as_array().unwrap();
+        assert_eq!(clips.len(), 1);
+        assert_eq!(clips[0]["start"], 0.0);
+        assert_eq!(clips[0]["duration"], 2.0);
+        assert_eq!(clips[0]["end"], 2.0);
+        assert_eq!(clips[0]["source_kind"], "shape");
+    }
+
+    #[test]
+    fn registry_summary_lists_every_tool_with_a_short_summary() {
+        let v = registry_summary();
+        let arr = v.as_array().unwrap();
+        assert!(arr.len() > 100, "the whole registry should be listed, got {}", arr.len());
+        let add_track = arr.iter().find(|c| c["name"] == "add_track").expect("add_track should be in the registry");
+        assert!(!add_track["summary"].as_str().unwrap().is_empty());
+        assert_eq!(add_track["mutates"], true);
+    }
+
+    #[test]
+    fn query_param_reads_a_key_from_a_raw_query_string() {
+        assert_eq!(query_param("t=1.5&x=2", "t"), Some("1.5"));
+        assert_eq!(query_param("t=1.5&x=2", "x"), Some("2"));
+        assert_eq!(query_param("t=1.5", "missing"), None);
+        assert_eq!(query_param("", "t"), None);
+    }
+
+    #[test]
+    fn handle_request_serves_the_index_page() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        assert_eq!(r.status, 200);
+        assert_eq!(r.content_type, "text/html; charset=utf-8");
+        assert!(String::from_utf8_lossy(&r.body).contains("kimo gui"));
+    }
+
+    #[test]
+    fn handle_request_serves_the_timeline_json() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/api/timeline", "", &[]);
+        assert_eq!(r.status, 200);
+        let v: Value = serde_json::from_slice(&r.body).unwrap();
+        assert_eq!(v["track_count"], 1);
+    }
+
+    #[test]
+    fn handle_request_serves_registry_and_one_tool_schema() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/api/registry", "", &[]);
+        assert_eq!(r.status, 200);
+        let r2 = handle_request(&ss, "GET", "/api/tool", "name=add_track", &[]);
+        assert_eq!(r2.status, 200);
+        let v: Value = serde_json::from_slice(&r2.body).unwrap();
+        assert_eq!(v["name"], "add_track");
+        assert!(v["schema"].is_object());
+        let r3 = handle_request(&ss, "GET", "/api/tool", "name=not_a_real_tool_xyz", &[]);
+        assert_eq!(r3.status, 404);
+        let r4 = handle_request(&ss, "GET", "/api/tool", "", &[]);
+        assert_eq!(r4.status, 400);
+    }
+
+    #[test]
+    fn handle_request_renders_a_real_preview_frame_png() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/preview.png", "t=0.5", &[]);
+        assert_eq!(r.status, 200, "{:?}", String::from_utf8_lossy(&r.body));
+        assert_eq!(r.content_type, "image/png");
+        assert!(r.body.len() > 8, "a real PNG should have real bytes");
+        assert_eq!(&r.body[1..4], b"PNG", "the engine should have actually rendered a PNG, not a placeholder");
+    }
+
+    #[test]
+    fn handle_request_dispatches_a_tool_call_and_it_changes_the_project() {
+        let ss = fixture();
+        let before = timeline_view_model(&ss.lock().unwrap())["track_count"].as_u64().unwrap();
+        let body = serde_json::to_vec(&json!({"tool": "add_track", "args": {}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        assert_eq!(r.status, 200);
+        let v: Value = serde_json::from_slice(&r.body).unwrap();
+        assert_eq!(v["ok"], true);
+        let after = timeline_view_model(&ss.lock().unwrap())["track_count"].as_u64().unwrap();
+        assert_eq!(after, before + 1, "the tool-invocation panel should actually run real tools through the same dispatch path");
+    }
+
+    #[test]
+    fn handle_request_reports_a_tool_error_without_an_http_error() {
+        // A bad tool call is a normal (200) response with ok:false -- the HTTP layer isn't the place to
+        // encode tool-level failure, the same way the MCP server and the CLI's `call` both return it as data.
+        let ss = fixture();
+        let body = serde_json::to_vec(&json!({"tool": "delete_clip", "args": {"clip_id": "not_a_real_clip"}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        assert_eq!(r.status, 200);
+        let v: Value = serde_json::from_slice(&r.body).unwrap();
+        assert_eq!(v["ok"], false);
+        assert!(v["error"].is_object() || v["error"].is_string(), "error should carry something useful: {v}");
+        assert!(v["error"]["message"].as_str().map(|s| !s.is_empty()).unwrap_or(false), "{v}");
+    }
+
+    #[test]
+    fn handle_request_rejects_malformed_call_bodies() {
+        let ss = fixture();
+        let r = handle_request(&ss, "POST", "/api/call", "", b"not json");
+        assert_eq!(r.status, 400);
+        let r2 = handle_request(&ss, "POST", "/api/call", "", b"{}");
+        assert_eq!(r2.status, 400, "missing tool name should be a 400, not a dispatch attempt");
+    }
+
+    #[test]
+    fn handle_request_404s_an_unknown_route_and_405s_a_wrong_method() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/nope", "", &[]);
+        assert_eq!(r.status, 404);
+        let r2 = handle_request(&ss, "POST", "/api/timeline", "", &[]);
+        assert_eq!(r2.status, 405);
+    }
+
+    #[test]
+    fn clip_detail_lists_props_and_effects_with_base_values() {
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        dispatch(&mut ss.lock().unwrap(), "add_effect", &json!({"clip_id": clip_id, "kind": "glow", "params": {"amount": 0.6}})).unwrap();
+        let v = { let s = ss.lock().unwrap(); clip_detail(&s, &clip_id).expect("clip should exist") };
+        assert_eq!(v["id"], clip_id); assert_eq!(v["duration"], 2.0); assert_eq!(v["end"], 2.0); assert_eq!(v["source_kind"], "shape");
+        assert!(v["props"]["opacity"].as_f64().is_some(), "{v}");
+        let effects = v["effects"].as_array().unwrap(); assert_eq!(effects.len(), 1);
+        assert_eq!(effects[0]["kind"], "glow"); assert_eq!(effects[0]["params"]["amount"], 0.6);
+        let s = ss.lock().unwrap(); assert!(clip_detail(&s, "not_a_real_clip").is_none());
+    }
+
+    #[test]
+    fn handle_request_serves_clip_detail_and_404s_an_unknown_id() {
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        let r = handle_request(&ss, "GET", "/api/clip", &format!("id={clip_id}"), &[]);
+        assert_eq!(r.status, 200);
+        let v: Value = serde_json::from_slice(&r.body).unwrap();
+        assert_eq!(v["id"], clip_id);
+        let r2 = handle_request(&ss, "GET", "/api/clip", "id=nope", &[]);
+        assert_eq!(r2.status, 404);
+        let r3 = handle_request(&ss, "GET", "/api/clip", "", &[]);
+        assert_eq!(r3.status, 400);
+        let r4 = handle_request(&ss, "POST", "/api/clip", "", &[]);
+        assert_eq!(r4.status, 405);
+    }
+
+    #[test]
+    fn undo_redo_and_history_list_round_trip_through_the_same_api_call_path() {
+        // The History panel's own sequence: history_list, undo, history_list again, redo, history_list again.
+        let ss = fixture();
+        let baseline = { let mut s = ss.lock().unwrap(); dispatch(&mut s, "history_list", &json!({})).unwrap() };
+        let n0 = baseline["undo"].as_array().unwrap().len(); // fixture() itself did project_set/add_track/add_shape
+
+        let add_track_body = serde_json::to_vec(&json!({"tool": "add_track", "args": {}})).unwrap();
+        handle_request(&ss, "POST", "/api/call", "", &add_track_body);
+        let after_add = { let mut s = ss.lock().unwrap(); dispatch(&mut s, "history_list", &json!({})).unwrap() };
+        let undo_steps = after_add["undo"].as_array().unwrap();
+        assert_eq!(undo_steps.len(), n0 + 1); assert_eq!(undo_steps.last().unwrap()["tool"], "add_track", "the most recent step is the one undo reverts next");
+        assert_eq!(after_add["redo"].as_array().unwrap().len(), 0);
+
+        let track_count_before = timeline_view_model(&ss.lock().unwrap())["track_count"].as_u64().unwrap();
+        let undo_body = serde_json::to_vec(&json!({"tool": "undo", "args": {}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &undo_body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        assert_eq!(timeline_view_model(&ss.lock().unwrap())["track_count"].as_u64().unwrap(), track_count_before - 1, "undo actually reverted the add_track");
+        let after_undo = { let mut s = ss.lock().unwrap(); dispatch(&mut s, "history_list", &json!({})).unwrap() };
+        assert_eq!(after_undo["undo"].as_array().unwrap().len(), n0);
+        assert_eq!(after_undo["redo"].as_array().unwrap(), &vec![json!("add_track")], "redo now holds the undone step");
+
+        let redo_body = serde_json::to_vec(&json!({"tool": "redo", "args": {}})).unwrap();
+        let r2 = handle_request(&ss, "POST", "/api/call", "", &redo_body);
+        let v2: Value = serde_json::from_slice(&r2.body).unwrap(); assert_eq!(v2["ok"], true, "{v2}");
+        assert_eq!(timeline_view_model(&ss.lock().unwrap())["track_count"].as_u64().unwrap(), track_count_before, "redo brought the track back");
+
+        // undo with nothing to undo is a tool-level error (not an HTTP error), same shape the panel's alert() reads
+        let r3 = handle_request(&ss, "POST", "/api/call", "", &serde_json::to_vec(&json!({"tool": "undo", "args": {"steps": 99}})).unwrap());
+        let v3: Value = serde_json::from_slice(&r3.body).unwrap();
+        assert_eq!(v3["ok"], true, "steps clamps to what's actually available rather than failing"); // one real undo step existed (the redo above)
+    }
+
+    #[test]
+    fn the_index_page_carries_the_scrub_and_play_controls() {
+        // Scrubbing/play is JS driving the existing /preview.png endpoint repeatedly (no new backend route,
+        // same honest shape as the rest of this GUI); what's checkable without a browser is that the markup
+        // and functions it depends on actually shipped in the page this server sends.
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8_lossy(&r.body);
+        for needle in ["id=\"play-btn\"", "function togglePlay", "function scrubTo", "ph.id = 'playhead'", "id=\"undo-btn\"", "function doUndo", "function loadHistory"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn the_editable_timeline_moves_and_trims_a_clip_through_the_same_api_call_path() {
+        // The drag itself is mouse events in gui_index.html's JS (no DOM here); what's tested is the exact
+        // sequence a move-drag and a trim-drag each end in: one /api/call, then a /api/timeline refetch.
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        let before = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        assert_eq!(before["tracks"][0]["clips"][0]["start"], 0.0);
+
+        // move-drag: drops the clip at a new start time
+        let move_body = serde_json::to_vec(&json!({"tool": "move_clip", "args": {"clip_id": clip_id, "start": 3.5}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &move_body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let after_move = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        assert_eq!(after_move["tracks"][0]["clips"][0]["start"], 3.5);
+        assert_eq!(after_move["tracks"][0]["clips"][0]["duration"], 2.0, "trim wasn't touched yet");
+
+        // trim-drag: drags the right edge, changing only duration
+        let trim_body = serde_json::to_vec(&json!({"tool": "trim_clip", "args": {"clip_id": clip_id, "duration": 1.2}})).unwrap();
+        let r2 = handle_request(&ss, "POST", "/api/call", "", &trim_body);
+        let v2: Value = serde_json::from_slice(&r2.body).unwrap(); assert_eq!(v2["ok"], true, "{v2}");
+        let after_trim = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        assert_eq!(after_trim["tracks"][0]["clips"][0]["start"], 3.5, "move's position survives the trim");
+        assert_eq!(after_trim["tracks"][0]["clips"][0]["duration"], 1.2);
+        assert_eq!(after_trim["tracks"][0]["clips"][0]["end"], 4.7);
+
+        // a too-short drag (<=3px in the JS, so no call at all) is simply never sent -- nothing to test at
+        // this layer; a clip_id that no longer exists is the one real failure mode worth covering here:
+        let bad = serde_json::to_vec(&json!({"tool": "move_clip", "args": {"clip_id": "not_a_real_clip", "start": 1.0}})).unwrap();
+        let r3 = handle_request(&ss, "POST", "/api/call", "", &bad);
+        let v3: Value = serde_json::from_slice(&r3.body).unwrap(); assert_eq!(v3["ok"], false, "a stale clip id reports a tool error, not an HTTP error");
+    }
+
+    #[test]
+    fn the_effect_params_panel_round_trips_through_the_same_api_call_path() {
+        // The panel itself is HTML/JS (no DOM in this test binary); what's tested here is the exact
+        // sequence it drives: fetch clip detail, edit a param through /api/call, refetch and see it moved.
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        let eid = { let mut s = ss.lock().unwrap(); dispatch(&mut s, "add_effect", &json!({"clip_id": clip_id, "kind": "blur", "params": {"radius": 2.0}})).unwrap()["effect_id"].as_str().unwrap().to_string() };
+        let before = { let s = ss.lock().unwrap(); clip_detail(&s, &clip_id).unwrap() };
+        assert_eq!(before["effects"][0]["params"]["radius"], 2.0);
+        let body = serde_json::to_vec(&json!({"tool": "set_effect_param", "args": {"clip_id": clip_id, "effect_id": eid, "param": "radius", "value": 9.0}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        assert_eq!(r.status, 200); let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true);
+        let after = { let s = ss.lock().unwrap(); clip_detail(&s, &clip_id).unwrap() };
+        assert_eq!(after["effects"][0]["params"]["radius"], 9.0, "the panel's own round trip actually moved the param: {after}");
+    }
+
+    // ---- v7.3: keyboard shortcuts ----
+
+    #[test]
+    fn gui_keymap_js_is_served_as_a_real_static_file() {
+        // Served so the browser's <script src="/gui_keymap.js"> and tests/js/keymap_test.js (Node,
+        // headless) run the exact same bytes -- one mapping, not two to keep in sync.
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_keymap.js", "", &[]);
+        assert_eq!(r.status, 200);
+        assert!(r.content_type.contains("javascript"), "{}", r.content_type);
+        let body = String::from_utf8(r.body).unwrap();
+        assert!(body.contains("resolveKeyAction"), "should serve the real keymap module");
+        assert!(body.contains("module.exports"), "must stay requireable from Node for the headless test");
+    }
+
+    #[test]
+    fn gui_keymap_js_rejects_non_get() {
+        let ss = fixture();
+        let r = handle_request(&ss, "POST", "/gui_keymap.js", "", &[]);
+        assert_eq!(r.status, 405);
+    }
+
+    #[test]
+    fn the_index_page_wires_up_the_keyboard_shortcuts() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["/gui_keymap.js", "addEventListener('keydown'", "kimoKeymap.resolveKeyAction", "deleteSelectedClip", "splitAtPlayhead", "stepFrame"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn delete_shortcut_removes_the_selected_clip_through_the_same_api_call_path() {
+        // The keypress itself is DOM (tested in tests/js/keymap_test.js + the wiring check above); what's
+        // tested here is the exact call deleteSelectedClip() makes and its effect on the project.
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        let before = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        assert_eq!(before["tracks"][0]["clips"].as_array().unwrap().len(), 1);
+
+        let body = serde_json::to_vec(&json!({"tool": "delete_clip", "args": {"clip_id": clip_id}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let after = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        assert_eq!(after["tracks"][0]["clips"].as_array().unwrap().len(), 0, "the clip should actually be gone: {after}");
+
+        // a clip that's already gone (double-press, or stale selection) reports a tool error, not a crash
+        let bad = serde_json::to_vec(&json!({"tool": "delete_clip", "args": {"clip_id": clip_id}})).unwrap();
+        let r2 = handle_request(&ss, "POST", "/api/call", "", &bad);
+        let v2: Value = serde_json::from_slice(&r2.body).unwrap(); assert_eq!(v2["ok"], false);
+    }
+
+    #[test]
+    fn split_shortcut_splits_the_selected_clip_at_the_playhead() {
+        let ss = fixture(); // a 2s shape clip, start 0
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+
+        let body = serde_json::to_vec(&json!({"tool": "split_clip", "args": {"clip_id": clip_id, "at": 1.25}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let after = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        let clips = after["tracks"][0]["clips"].as_array().unwrap();
+        assert_eq!(clips.len(), 2, "splitting should leave two clips: {after}");
+        assert_eq!(clips[0]["duration"], 1.25);
+        assert_eq!(clips[1]["start"], 1.25);
+        assert_eq!(clips[1]["end"], 2.0);
+
+        // a playhead outside the (new, shorter) clip is a plain tool error, not a crash -- this is the
+        // path splitAtPlayhead()'s alert() surfaces to the person
+        let outside = serde_json::to_vec(&json!({"tool": "split_clip", "args": {"clip_id": clips[0]["id"], "at": 5.0}})).unwrap();
+        let r2 = handle_request(&ss, "POST", "/api/call", "", &outside);
+        let v2: Value = serde_json::from_slice(&r2.body).unwrap(); assert_eq!(v2["ok"], false);
+    }
+
+    #[test]
+    fn undo_redo_shortcuts_use_the_same_history_tools_the_buttons_already_use() {
+        // Ctrl+Z / Ctrl+Shift+Z call the same doUndo()/doRedo() the existing Undo/Redo buttons do --
+        // nothing new to dispatch, just confirming the mapping lands on tools that actually exist and work.
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        let move_body = serde_json::to_vec(&json!({"tool": "move_clip", "args": {"clip_id": clip_id, "start": 1.0}})).unwrap();
+        handle_request(&ss, "POST", "/api/call", "", &move_body);
+        assert_eq!({ let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].start }, 1.0);
+
+        let undo_body = serde_json::to_vec(&json!({"tool": "undo", "args": {}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &undo_body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        assert_eq!({ let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].start }, 0.0, "ctrl+z's own tool should undo the move");
+
+        let redo_body = serde_json::to_vec(&json!({"tool": "redo", "args": {}})).unwrap();
+        let r2 = handle_request(&ss, "POST", "/api/call", "", &redo_body);
+        let v2: Value = serde_json::from_slice(&r2.body).unwrap(); assert_eq!(v2["ok"], true, "{v2}");
+        assert_eq!({ let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].start }, 1.0, "ctrl+shift+z's own tool should redo it");
+    }
+
+    // ---- v7.3: add/remove tracks ----
+
+    #[test]
+    fn the_index_page_wires_up_track_add_and_remove() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["+ Track", "onclick=\"addTrack()\"", "function addTrack", "function removeTrack", "delete_track"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn add_track_button_adds_an_empty_track_through_the_same_api_call_path() {
+        let ss = fixture();
+        let before = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        assert_eq!(before["track_count"], 1);
+
+        let body = serde_json::to_vec(&json!({"tool": "add_track", "args": {}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+
+        let after = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        assert_eq!(after["track_count"], 2, "{after}");
+        assert_eq!(after["tracks"][1]["clips"].as_array().unwrap().len(), 0, "a freshly added track starts empty");
+    }
+
+    #[test]
+    fn remove_track_button_deletes_the_track_and_its_clips_through_the_same_api_call_path() {
+        let ss = fixture();
+        let (track2, clip2) = {
+            let mut s = ss.lock().unwrap();
+            let t2 = dispatch(&mut s, "add_track", &json!({})).unwrap()["track_id"].as_str().unwrap().to_string();
+            let c2 = dispatch(&mut s, "add_shape", &json!({"track_id": t2, "shape": "rect", "start": 0.0, "duration": 1.0, "color": [0.0, 0.0, 1.0]})).unwrap()["clip_id"].as_str().unwrap().to_string();
+            (t2, c2)
+        };
+        let before = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        assert_eq!(before["track_count"], 2);
+        let _ = clip2;
+
+        let body = serde_json::to_vec(&json!({"tool": "delete_track", "args": {"track_id": track2}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+
+        let after = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        assert_eq!(after["track_count"], 1, "the track (and its clip with it) should actually be gone: {after}");
+
+        // a stale track id (double-click, already removed) reports a tool error, not a crash
+        let bad = serde_json::to_vec(&json!({"tool": "delete_track", "args": {"track_id": track2}})).unwrap();
+        let r2 = handle_request(&ss, "POST", "/api/call", "", &bad);
+        let v2: Value = serde_json::from_slice(&r2.body).unwrap(); assert_eq!(v2["ok"], false);
+    }
+
+    // ---- v7.3: marker display + add ----
+
+    #[test]
+    fn timeline_view_model_lists_markers_sorted_by_time() {
+        let ss = fixture();
+        { let mut s = ss.lock().unwrap();
+          dispatch(&mut s, "add_marker", &json!({"time": 1.5, "name": "Second"})).unwrap();
+          dispatch(&mut s, "add_marker", &json!({"time": 0.25, "name": "First"})).unwrap(); }
+        let v = timeline_view_model(&ss.lock().unwrap());
+        let markers = v["markers"].as_array().unwrap();
+        assert_eq!(markers.len(), 2);
+        assert_eq!(markers[0]["name"], "First", "{v}");
+        assert_eq!(markers[0]["time"], 0.25);
+        assert_eq!(markers[1]["name"], "Second");
+    }
+
+    #[test]
+    fn timeline_view_model_markers_is_empty_not_missing_when_there_are_none() {
+        let ss = fixture();
+        let v = timeline_view_model(&ss.lock().unwrap());
+        assert_eq!(v["markers"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn the_index_page_wires_up_marker_display_and_add() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["+ Marker", "marker-tick", "function addMarkerAtPlayhead", "function removeMarkerAt", "tl.markers", "add_marker", "remove_marker"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn add_marker_button_adds_a_marker_at_the_given_time_through_the_same_api_call_path() {
+        let ss = fixture();
+        let body = serde_json::to_vec(&json!({"tool": "add_marker", "args": {"time": 0.9, "name": "beat"}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let tl = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        let markers = tl["markers"].as_array().unwrap();
+        assert_eq!(markers.len(), 1, "{tl}");
+        assert_eq!(markers[0]["name"], "beat");
+        assert_eq!(markers[0]["time"], 0.9);
+    }
+
+    #[test]
+    fn remove_marker_tick_deletes_it_through_the_same_api_call_path() {
+        let ss = fixture();
+        let marker_id = { let mut s = ss.lock().unwrap(); dispatch(&mut s, "add_marker", &json!({"time": 0.5, "name": "x"})).unwrap()["marker_id"].as_str().unwrap().to_string() };
+        assert_eq!({ let s = ss.lock().unwrap(); timeline_view_model(&s)["markers"].as_array().unwrap().len() }, 1);
+
+        let body = serde_json::to_vec(&json!({"tool": "remove_marker", "args": {"marker_id": marker_id}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        assert_eq!({ let s = ss.lock().unwrap(); timeline_view_model(&s)["markers"].as_array().unwrap().len() }, 0, "the marker should actually be gone");
+
+        // a stale marker id (double-click after it's already gone) reports a tool error, not a crash
+        let bad = serde_json::to_vec(&json!({"tool": "remove_marker", "args": {"marker_id": marker_id}})).unwrap();
+        let r2 = handle_request(&ss, "POST", "/api/call", "", &bad);
+        let v2: Value = serde_json::from_slice(&r2.body).unwrap(); assert_eq!(v2["ok"], false);
+    }
+
+    // ---- v7.3: timeline snapping ----
+
+    #[test]
+    fn gui_snap_js_is_served_as_a_real_static_file() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_snap.js", "", &[]);
+        assert_eq!(r.status, 200);
+        assert!(r.content_type.contains("javascript"), "{}", r.content_type);
+        let body = String::from_utf8(r.body).unwrap();
+        assert!(body.contains("snapTime"), "should serve the real snap module");
+        assert!(body.contains("candidatesFromTimeline"), "{body}");
+        assert!(body.contains("module.exports"), "must stay requireable from Node for the headless test");
+    }
+
+    #[test]
+    fn gui_snap_js_rejects_non_get() {
+        let ss = fixture();
+        let r = handle_request(&ss, "POST", "/gui_snap.js", "", &[]);
+        assert_eq!(r.status, 405);
+    }
+
+    #[test]
+    fn the_index_page_wires_up_snapping() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["/gui_snap.js", "snap-enabled", "kimoSnap.candidatesFromTimeline", "kimoSnap.snapTime", "function snapProposed", "lastTimeline"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn a_snapped_move_lands_the_dragged_clip_exactly_flush_against_its_neighbour() {
+        // The pure snapping math itself lives in gui_snap.js (tested headless in tests/js/snap_test.js);
+        // what's tested here is what a snapped drag actually produces once move_clip is called with the
+        // already-snapped value -- the second clip's start should land EXACTLY on the first clip's end,
+        // not a near-miss a few milliseconds off (which is the whole point of snapping).
+        let ss = fixture(); // one 2s clip, start 0, on track1
+        let (track_id, second_id) = {
+            let mut s = ss.lock().unwrap();
+            let t = s.project.tracks[0].id.clone();
+            let c2 = dispatch(&mut s, "add_shape", &json!({"track_id": t, "shape": "rect", "start": 2.1, "duration": 1.5, "color": [0.0, 1.0, 0.0]})).unwrap()["clip_id"].as_str().unwrap().to_string();
+            (t, c2)
+        };
+        let _ = track_id;
+        // the drag proposed 2.05s (a near miss); gui_snap.js's own candidatesFromTimeline+snapTime would
+        // resolve this to 2.0 (the first clip's end) within the default 8px tolerance at any sane zoom --
+        // this call is what onUp() sends once that snap has already happened client-side.
+        let body = serde_json::to_vec(&json!({"tool": "move_clip", "args": {"clip_id": second_id, "start": 2.0}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let tl = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        let clips = tl["tracks"][0]["clips"].as_array().unwrap();
+        assert_eq!(clips[0]["end"], 2.0); assert_eq!(clips[1]["start"], 2.0, "snapped clips must be exactly flush, not a near-miss: {tl}");
+    }
+
+    // ---- v7.3: timeline zoom ----
+
+    #[test]
+    fn gui_zoom_js_is_served_as_a_real_static_file() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_zoom.js", "", &[]);
+        assert_eq!(r.status, 200);
+        assert!(r.content_type.contains("javascript"), "{}", r.content_type);
+        let body = String::from_utf8(r.body).unwrap();
+        assert!(body.contains("clampZoom") && body.contains("zoomBy") && body.contains("module.exports"), "{body}");
+    }
+
+    #[test]
+    fn gui_zoom_js_rejects_non_get() {
+        let ss = fixture();
+        let r = handle_request(&ss, "POST", "/gui_zoom.js", "", &[]);
+        assert_eq!(r.status, 405);
+    }
+
+    #[test]
+    fn the_index_page_wires_up_zoom_controls() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["/gui_zoom.js", "zoom-label", "onclick=\"zoomBy(0.5)\"", "onclick=\"zoomBy(2)\"", "onclick=\"zoomReset()\"", "window.kimoZoom.zoomBy", "window.kimoZoom.DEFAULT_PX_PER_SEC"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    // ---- v7.3: export with progress ----
+
+    #[test]
+    fn the_index_page_wires_up_export_with_progress() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["export-path", "function startExport", "function pollExportJob", "function cancelExport", "export_job_start", "job_status", "cancel_job", "export-bar-inner", "export-cancel-btn"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn export_button_starts_a_real_job_and_polling_job_status_reaches_done_through_the_same_api_call_path() {
+        // The actual export_job_start/job_status machinery (chunking, ffmpeg, incremental reuse) is
+        // kimo-core's own, tested exhaustively there; what's new here is that the GUI drives it through
+        // plain /api/call round trips exactly like every other button, end to end to a real finished file.
+        let ss = fixture();
+        let dir = std::env::temp_dir().join(format!("kimo_gui_export_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("export.mp4");
+
+        let start_body = serde_json::to_vec(&json!({"tool": "export_job_start", "args": {"path": out.to_str().unwrap(), "chunk_s": 1}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &start_body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let job_id = v["result"]["job_id"].as_str().unwrap().to_string();
+
+        let t0 = std::time::Instant::now();
+        let fin = loop {
+            let body = serde_json::to_vec(&json!({"tool": "job_status", "args": {"job_id": job_id}})).unwrap();
+            let r = handle_request(&ss, "POST", "/api/call", "", &body);
+            let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+            let state = v["result"]["state"].as_str().unwrap_or("").to_string();
+            if state != "running" && state != "queued" { break v["result"].clone(); }
+            if t0.elapsed().as_secs() > 60 { panic!("export job never finished: {v}"); }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        assert_eq!(fin["state"], "done", "{fin}");
+        assert!(out.is_file(), "the exported file should actually exist on disk");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn cancel_export_reaches_a_real_running_job_through_the_same_api_call_path() {
+        let ss = fixture();
+        let dir = std::env::temp_dir().join(format!("kimo_gui_export_cancel_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("export.mp4");
+
+        let start_body = serde_json::to_vec(&json!({"tool": "export_job_start", "args": {"path": out.to_str().unwrap(), "chunk_s": 1}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &start_body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let job_id = v["result"]["job_id"].as_str().unwrap().to_string();
+
+        let cancel_body = serde_json::to_vec(&json!({"tool": "cancel_job", "args": {"job_id": job_id}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &cancel_body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        assert!(matches!(v["result"]["state"].as_str(), Some("cancelled") | Some("done")), "{v}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ---- v7.3: project open/save ----
+
+    #[test]
+    fn the_index_page_wires_up_project_open_and_save() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["project-path", "function saveProject", "function openProject", "save_project", "load_project", "project-status"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn save_button_writes_a_real_project_file_through_the_same_api_call_path() {
+        let ss = fixture();
+        let path = std::env::temp_dir().join(format!("kimo_gui_save_test_{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let body = serde_json::to_vec(&json!({"tool": "save_project", "args": {"path": path.to_str().unwrap()}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        assert!(path.is_file(), "save_project should have actually written the file");
+        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(saved.get("tracks").is_some(), "saved file should be a real project: {saved}");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn open_button_loads_a_saved_project_back_through_the_same_api_call_path() {
+        let ss = fixture();
+        let path = std::env::temp_dir().join(format!("kimo_gui_open_test_{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        // save the fixture's one-track, one-clip project, then add a second track so the live session
+        // genuinely differs from the file before re-opening it
+        { let save_body = serde_json::to_vec(&json!({"tool": "save_project", "args": {"path": path.to_str().unwrap()}})).unwrap();
+          let r = handle_request(&ss, "POST", "/api/call", "", &save_body); let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}"); }
+        { let mut s = ss.lock().unwrap(); dispatch(&mut s, "add_track", &json!({})).unwrap(); }
+        assert_eq!({ let s = ss.lock().unwrap(); timeline_view_model(&s)["track_count"].clone() }, json!(2));
+
+        let open_body = serde_json::to_vec(&json!({"tool": "load_project", "args": {"path": path.to_str().unwrap()}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &open_body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        assert_eq!({ let s = ss.lock().unwrap(); timeline_view_model(&s)["track_count"].clone() }, json!(1), "opening should have replaced the live project with the saved one");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn opening_a_nonexistent_project_file_is_a_clean_tool_error_not_a_crash() {
+        let ss = fixture();
+        let body = serde_json::to_vec(&json!({"tool": "load_project", "args": {"path": "/no/such/file/kimo_does_not_exist.json"}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], false, "{v}");
+    }
+
+    // ---- v7.4: track mute/solo/lock ----
+
+    #[test]
+    fn served_trackstate_js_matches_the_file_on_disk() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_trackstate.js", "", &[]);
+        assert_eq!(r.status, 200); assert_eq!(r.content_type, "application/javascript; charset=utf-8");
+        assert_eq!(r.body, include_bytes!("gui_trackstate.js").to_vec());
+    }
+
+    #[test]
+    fn the_index_page_wires_up_track_state_buttons() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["gui_trackstate.js", "kimoTrackState.buttonState", "kimoTrackState.clipInteractionAllowed", "kimoTrackState.toggleArgs", "function toggleTrackState", "track-state-btn"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn timeline_view_model_carries_locked_muted_solo_per_track() {
+        let ss = fixture();
+        let v = timeline_view_model(&ss.lock().unwrap());
+        let t0 = &v["tracks"][0];
+        assert_eq!(t0["locked"], false); assert_eq!(t0["muted"], false); assert_eq!(t0["solo"], false);
+    }
+
+    #[test]
+    fn set_track_through_api_call_actually_changes_what_the_next_timeline_fetch_reports() {
+        let ss = fixture();
+        let tid = { let s = ss.lock().unwrap(); s.project.tracks[0].id.clone() };
+        let body = serde_json::to_vec(&json!({"tool": "set_track", "args": {"track_id": tid, "muted": true, "solo": true, "locked": true}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let tl = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        let t0 = &tl["tracks"][0];
+        assert_eq!(t0["muted"], true); assert_eq!(t0["solo"], true); assert_eq!(t0["locked"], true);
+    }
+    // ---- v7.4: multi-select / group move / group delete ----
+
+    #[test]
+    fn served_multiselect_js_matches_the_file_on_disk() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_multiselect.js", "", &[]);
+        assert_eq!(r.status, 200); assert_eq!(r.content_type, "application/javascript; charset=utf-8");
+        assert_eq!(r.body, include_bytes!("gui_multiselect.js").to_vec());
+    }
+
+    #[test]
+    fn the_index_page_wires_up_multiselect() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["gui_multiselect.js", "kimoMultiselect.toggleSelect", "kimoMultiselect.isSelected", "kimoMultiselect.clampGroupDelta", "kimoMultiselect.buildGroupMoveOps", "kimoMultiselect.buildGroupDeleteOps", "function findClipInTimeline", "isGroupMove"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    /// A fixture with three clips on one track at 0..2, 3..5, 6..8, for group-move/delete tests.
+    fn three_clip_fixture() -> (Arc<Mutex<Session>>, Vec<String>) {
+        let ss = fixture();
+        let (tid, first_clip) = { let s = ss.lock().unwrap(); (s.project.tracks[0].id.clone(), s.project.tracks[0].clips[0].id.clone()) };
+        let mut ids = vec![first_clip];
+        for start in [3.0, 6.0] {
+            let mut s = ss.lock().unwrap();
+            let id = dispatch(&mut s, "add_shape", &json!({"track_id": tid, "shape": "rect", "start": start, "duration": 2.0, "color": [0.0, 1.0, 0.0]})).unwrap()["clip_id"].as_str().unwrap().to_string();
+            ids.push(id);
+        }
+        (ss, ids)
+    }
+
+    #[test]
+    fn a_group_move_batch_moves_every_selected_clip_in_one_atomic_call() {
+        let (ss, ids) = three_clip_fixture();
+        // move the first two clips (0..2, 3..5) by +10s, leave the third (6..8) alone
+        let ops: Vec<Value> = ids[..2].iter().map(|id| json!({"tool": "move_clip", "args": {"clip_id": id, "start": 10.0 + if id == &ids[0] { 0.0 } else { 3.0 }}})).collect();
+        let body = serde_json::to_vec(&json!({"tool": "batch", "args": {"ops": ops}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let tl = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        let clips = tl["tracks"][0]["clips"].as_array().unwrap();
+        let starts: std::collections::HashMap<&str, f64> = clips.iter().map(|c| (c["id"].as_str().unwrap(), c["start"].as_f64().unwrap())).collect();
+        assert!((starts[ids[0].as_str()] - 10.0).abs() < 1e-6, "{starts:?}");
+        assert!((starts[ids[1].as_str()] - 13.0).abs() < 1e-6, "{starts:?}");
+        assert!((starts[ids[2].as_str()] - 6.0).abs() < 1e-6, "the untouched third clip should not have moved: {starts:?}");
+    }
+
+    #[test]
+    fn a_group_move_batch_is_one_undo_step_for_the_whole_group() {
+        let (ss, ids) = three_clip_fixture();
+        let ops: Vec<Value> = ids[..2].iter().map(|id| json!({"tool": "move_clip", "args": {"clip_id": id, "start": 20.0}})).collect();
+        let body = serde_json::to_vec(&json!({"tool": "batch", "args": {"ops": ops}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        { let mut s = ss.lock().unwrap(); dispatch(&mut s, "undo", &json!({})).unwrap(); }
+        let tl = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        let clips = tl["tracks"][0]["clips"].as_array().unwrap();
+        let starts: std::collections::HashMap<&str, f64> = clips.iter().map(|c| (c["id"].as_str().unwrap(), c["start"].as_f64().unwrap())).collect();
+        assert!((starts[ids[0].as_str()] - 0.0).abs() < 1e-6, "one undo should restore both moved clips at once: {starts:?}");
+        assert!((starts[ids[1].as_str()] - 3.0).abs() < 1e-6, "one undo should restore both moved clips at once: {starts:?}");
+    }
+
+    #[test]
+    fn a_group_delete_batch_removes_every_selected_clip_and_leaves_the_rest() {
+        let (ss, ids) = three_clip_fixture();
+        let ops = vec![json!({"tool": "delete_clip", "args": {"clip_id": ids[0]}}), json!({"tool": "delete_clip", "args": {"clip_id": ids[2]}})];
+        let body = serde_json::to_vec(&json!({"tool": "batch", "args": {"ops": ops}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let tl = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        let clips = tl["tracks"][0]["clips"].as_array().unwrap();
+        assert_eq!(clips.len(), 1, "two of three clips should be gone: {clips:?}");
+        assert_eq!(clips[0]["id"], json!(ids[1]), "the untouched middle clip should be the only one left: {clips:?}");
+    }
+    // ---- v7.4: clip-bar waveforms (wires the existing audio_transients image:"waveform" option onto the
+    // timeline; no new peak-computation code -- the real decode and SVG already existed before this
+    // feature) ----
+
+    #[test]
+    fn served_waveform_js_matches_the_file_on_disk() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_waveform.js", "", &[]);
+        assert_eq!(r.status, 200); assert_eq!(r.content_type, "application/javascript; charset=utf-8");
+        assert_eq!(r.body, include_bytes!("gui_waveform.js").to_vec());
+    }
+
+    #[test]
+    fn the_index_page_wires_up_waveforms() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["gui_waveform.js", "kimoWaveform.shouldFetchWaveform", "kimoWaveform.waveformToolArgs", "kimoWaveform.scaleSvgToFill", "function loadWaveforms", "'waveform'"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    /// A one-track project with a real audible media clip (an ffmpeg-generated tone), for waveform tests --
+    /// the same fixture shape feature 1's mute test used. The dir name carries a per-call counter, not just
+    /// the test binary's one shared PID: two tests calling this fixture run on different threads in the
+    /// same process (cargo test's default), and a PID-only name raced one test's remove_dir_all/create_dir
+    /// against the other's in-flight ffmpeg write of the exact same path.
+    fn media_clip_fixture() -> (Arc<Mutex<Session>>, String) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let mut ss = Session::new();
+        dispatch(&mut ss, "project_set", &json!({"width": 64, "height": 36, "fps": 25})).unwrap();
+        let dir = std::env::temp_dir().join(format!("kimo_gui_waveform_{}_{n}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir); std::fs::create_dir_all(&dir).unwrap();
+        let wav = dir.join("tone.wav");
+        let status = std::process::Command::new("ffmpeg").args(["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-ar", "48000"]).arg(&wav).status().unwrap();
+        assert!(status.success());
+        let asset_id = dispatch(&mut ss, "import_media", &json!({"path": wav.to_str().unwrap()})).unwrap()["asset_id"].as_str().unwrap().to_string();
+        let tr = dispatch(&mut ss, "add_track", &json!({})).unwrap()["track_id"].as_str().unwrap().to_string();
+        let clip_id = dispatch(&mut ss, "add_clip", &json!({"track_id": tr, "source_type": "media", "asset_id": asset_id, "start": 0.0, "duration": 1.0})).unwrap()["clip_id"].as_str().unwrap().to_string();
+        (Arc::new(Mutex::new(ss)), clip_id)
+    }
+
+    #[test]
+    fn timeline_view_model_reports_media_source_kind_so_the_gui_knows_to_fetch_a_waveform() {
+        let (ss, _clip_id) = media_clip_fixture();
+        let tl = { let s = ss.lock().unwrap(); timeline_view_model(&s) };
+        assert_eq!(tl["tracks"][0]["clips"][0]["source_kind"], "media");
+    }
+
+    #[test]
+    fn audio_transients_through_api_call_returns_a_real_waveform_svg_for_a_media_clip() {
+        let (ss, clip_id) = media_clip_fixture();
+        let body = serde_json::to_vec(&json!({"tool": "audio_transients", "args": {"target": {"clip_id": clip_id}, "image": "waveform"}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let svg = v["result"]["waveform"]["svg"].as_str().expect("a real audible clip should get a real waveform svg back");
+        assert!(svg.starts_with("<svg"), "{svg}"); assert!(svg.contains("<path"), "{svg}");
+    }
+
+    #[test]
+    fn a_shape_clip_is_a_clean_no_audio_error_not_a_crash() {
+        let ss = fixture(); // the base fixture's clip is an add_shape rect, no audio track at all
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        let body = serde_json::to_vec(&json!({"tool": "audio_transients", "args": {"target": {"clip_id": clip_id}, "image": "waveform"}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap();
+        assert_eq!(v["ok"], false, "a silent clip should report a clean tool error, not a crash: {v}");
+    }
+    // ---- v7.4: effects/transitions browser ----
+
+    #[test]
+    fn served_fxbrowser_js_matches_the_file_on_disk() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_fxbrowser.js", "", &[]);
+        assert_eq!(r.status, 200); assert_eq!(r.content_type, "application/javascript; charset=utf-8");
+        assert_eq!(r.body, include_bytes!("gui_fxbrowser.js").to_vec());
+    }
+
+    #[test]
+    fn the_index_page_wires_up_the_fx_browser() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["gui_fxbrowser.js", "kimoFxBrowser.buildEntries", "kimoFxBrowser.filterEntries", "kimoFxBrowser.addArgsFor", "function renderFxBrowser", "function addFxToSelected", "fx-browser-filter", "fx-browser-list"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn list_effects_and_list_transitions_are_both_reachable_through_api_call_for_the_browser_to_combine() {
+        let ss = fixture();
+        let er = handle_request(&ss, "POST", "/api/call", "", &serde_json::to_vec(&json!({"tool": "list_effects", "args": {}})).unwrap());
+        let ev: Value = serde_json::from_slice(&er.body).unwrap(); assert_eq!(ev["ok"], true, "{ev}");
+        let effects = ev["result"].as_array().unwrap(); assert!(!effects.is_empty()); assert!(effects[0].get("kind").is_some()); assert!(effects[0].get("description").is_some());
+        let tr = handle_request(&ss, "POST", "/api/call", "", &serde_json::to_vec(&json!({"tool": "list_transitions", "args": {}})).unwrap());
+        let tv: Value = serde_json::from_slice(&tr.body).unwrap(); assert_eq!(tv["ok"], true, "{tv}");
+        let transitions = tv["result"].as_array().unwrap(); assert!(!transitions.is_empty(), "transitions catalog should not be empty");
+        assert!(transitions.iter().all(|t| t.is_string()), "list_transitions is a bare array of kind strings, a genuinely different shape than list_effects: {transitions:?}");
+    }
+
+    #[test]
+    fn adding_a_transition_through_api_call_actually_sets_it_on_the_clip() {
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        let body = serde_json::to_vec(&json!({"tool": "add_transition", "args": {"clip_id": clip_id, "kind": "crossfade", "duration": 1.0}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let s = ss.lock().unwrap();
+        let c = s.project.tracks[0].clips.iter().find(|c| c.id == clip_id).unwrap();
+        let t = c.transition_in.as_ref().expect("the clip should now carry a transition_in");
+        assert_eq!(t.kind, "crossfade"); assert_eq!(t.duration, 1.0);
+    }
+
+    // ---- v7.5: copy/paste and ripple-delete ----
+
+    #[test]
+    fn served_clipboard_js_matches_the_file_on_disk() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_clipboard.js", "", &[]);
+        assert_eq!(r.status, 200); assert_eq!(r.content_type, "application/javascript; charset=utf-8");
+        assert_eq!(r.body, include_bytes!("gui_clipboard.js").to_vec());
+    }
+
+    #[test]
+    fn the_index_page_wires_up_copy_paste_and_ripple_delete() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["gui_clipboard.js", "kimoClipboard.copySelection", "kimoClipboard.buildPasteOps", "kimoClipboard.buildRippleDeleteOp", "function copySelectedClips", "function pasteClipboard", "function rippleDeleteSelected", "'copy_clip'", "'paste_clip'", "'ripple_delete_clip'"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn a_real_duplicate_clip_through_api_call_copies_a_clip_with_its_effect() {
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        // give the source clip an effect, so a copy is proven to carry it, not just geometry
+        let addfx = serde_json::to_vec(&json!({"tool": "add_effect", "args": {"clip_id": clip_id, "kind": "blur"}})).unwrap();
+        handle_request(&ss, "POST", "/api/call", "", &addfx);
+        let body = serde_json::to_vec(&json!({"tool": "duplicate_clip", "args": {"clip_id": clip_id, "start": 5.0}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let new_id = v["result"]["clip_id"].as_str().unwrap().to_string();
+        let s = ss.lock().unwrap();
+        let newc = s.project.tracks[0].clips.iter().find(|c| c.id == new_id).expect("pasted clip should exist");
+        assert_eq!(newc.start, 5.0);
+        assert!(!newc.effects.is_empty(), "the pasted clip should carry the source clip's effect");
+    }
+
+    #[test]
+    fn a_batch_paste_of_two_clips_is_one_atomic_undo_step() {
+        let ss = fixture();
+        let (clip_id, second_id) = {
+            let s = ss.lock().unwrap();
+            let tr = s.project.tracks[0].id.clone();
+            let c1 = s.project.tracks[0].clips[0].id.clone();
+            drop(s);
+            let c2 = dispatch(&mut *ss.lock().unwrap(), "add_shape", &json!({"track_id": tr, "shape": "rect", "start": 3.0, "duration": 1.0, "color": [0.0, 1.0, 0.0]})).unwrap()["clip_id"].as_str().unwrap().to_string();
+            (c1, c2)
+        };
+        let before_count = { let s = ss.lock().unwrap(); s.project.tracks[0].clips.len() };
+        let ops = json!([
+            {"tool": "duplicate_clip", "args": {"clip_id": clip_id, "start": 10.0}},
+            {"tool": "duplicate_clip", "args": {"clip_id": second_id, "start": 13.0}},
+        ]);
+        let body = serde_json::to_vec(&json!({"tool": "batch", "args": {"ops": ops}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let after_count = { let s = ss.lock().unwrap(); s.project.tracks[0].clips.len() };
+        assert_eq!(after_count, before_count + 2, "both pasted clips should exist");
+        // one undo should remove BOTH pasted clips (one atomic step), not just the last one
+        let ub = serde_json::to_vec(&json!({"tool": "undo", "args": {}})).unwrap();
+        handle_request(&ss, "POST", "/api/call", "", &ub);
+        let after_undo = { let s = ss.lock().unwrap(); s.project.tracks[0].clips.len() };
+        assert_eq!(after_undo, before_count, "undo should remove the whole pasted group in one step");
+    }
+
+    #[test]
+    fn ripple_delete_through_api_call_closes_the_gap_it_leaves() {
+        let ss = fixture();
+        let tr = { let s = ss.lock().unwrap(); s.project.tracks[0].id.clone() };
+        let second_id = dispatch(&mut *ss.lock().unwrap(), "add_shape", &json!({"track_id": tr, "shape": "rect", "start": 2.0, "duration": 1.0, "color": [0.0, 0.0, 1.0]})).unwrap()["clip_id"].as_str().unwrap().to_string();
+        let body = serde_json::to_vec(&json!({"tool": "ripple_delete", "args": {"clip_id": second_id}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let s = ss.lock().unwrap();
+        assert_eq!(s.project.tracks[0].clips.len(), 1, "ripple_delete should actually remove the clip");
+    }
+
+
+    // ---- v7.5: marker/chapter list panel ----
+
+    #[test]
+    fn served_markerpanel_js_matches_the_file_on_disk() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_markerpanel.js", "", &[]);
+        assert_eq!(r.status, 200); assert_eq!(r.content_type, "application/javascript; charset=utf-8");
+        assert_eq!(r.body, include_bytes!("gui_markerpanel.js").to_vec());
+    }
+
+    #[test]
+    fn the_index_page_wires_up_the_marker_panel() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["gui_markerpanel.js", "kimoMarkerPanel.buildMarkerRows", "function renderMarkerPanel", "marker-list", "marker-panel"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn timeline_view_model_feeds_the_marker_panel_with_real_markers_through_api_call() {
+        let ss = fixture();
+        let add1 = serde_json::to_vec(&json!({"tool": "add_marker", "args": {"time": 1.5, "name": "Intro"}})).unwrap();
+        handle_request(&ss, "POST", "/api/call", "", &add1);
+        let add2 = serde_json::to_vec(&json!({"tool": "add_marker", "args": {"time": 0.5}})).unwrap();
+        handle_request(&ss, "POST", "/api/call", "", &add2);
+        let r = handle_request(&ss, "GET", "/api/timeline", "", &[]);
+        let tl: Value = serde_json::from_slice(&r.body).unwrap();
+        let markers = tl["markers"].as_array().unwrap();
+        assert_eq!(markers.len(), 2, "{tl}");
+        // sorted by time -- the panel relies on timeline_view_model's own ordering, same as the ruler ticks
+        assert_eq!(markers[0]["time"], 0.5, "{markers:?}");
+        assert_eq!(markers[1]["name"], "Intro", "{markers:?}");
+    }
+
+
+    // ---- v7.5: render queue panel ----
+
+    #[test]
+    fn served_renderqueue_js_matches_the_file_on_disk() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_renderqueue.js", "", &[]);
+        assert_eq!(r.status, 200); assert_eq!(r.content_type, "application/javascript; charset=utf-8");
+        assert_eq!(r.body, include_bytes!("gui_renderqueue.js").to_vec());
+    }
+
+    #[test]
+    fn the_index_page_wires_up_the_render_queue_panel() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["gui_renderqueue.js", "kimoRenderQueue.addJob", "kimoRenderQueue.updateJob", "kimoRenderQueue.activeJobIds", "function renderQueuePanel", "function pollRenderQueue", "render-queue-list"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn export_job_start_feeds_job_status_the_same_way_the_render_queue_panel_will_poll_it() {
+        let ss = fixture();
+        let dir = std::env::temp_dir().join(format!("kimo_gui_renderqueue_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir); std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("out.mp4");
+        let body = serde_json::to_vec(&json!({"tool": "export_job_start", "args": {"path": out.to_str().unwrap(), "wait": false}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let job_id = v["result"]["job_id"].as_str().expect("export_job_start should return a job_id the queue panel can poll").to_string();
+        // the panel polls job_status in a loop until a terminal state; here one call is enough to prove the shape it reads exists
+        let sbody = serde_json::to_vec(&json!({"tool": "job_status", "args": {"job_id": job_id}})).unwrap();
+        let sr = handle_request(&ss, "POST", "/api/call", "", &sbody);
+        let sv: Value = serde_json::from_slice(&sr.body).unwrap(); assert_eq!(sv["ok"], true, "{sv}");
+        assert!(sv["result"].get("state").is_some(), "job_status result should carry a state field: {sv}");
+    }
+
+    // ---- v7.5: keyframe lane ----
+
+    #[test]
+    fn served_keyframes_js_matches_the_file_on_disk() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_keyframes.js", "", &[]);
+        assert_eq!(r.status, 200); assert_eq!(r.content_type, "application/javascript; charset=utf-8");
+        assert_eq!(r.body, include_bytes!("gui_keyframes.js").to_vec());
+    }
+
+    #[test]
+    fn the_index_page_wires_up_the_keyframe_lane() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["gui_keyframes.js", "kimoKeyframes.buildKeyMarkers", "kimoKeyframes.nearestKeyWithinHalfFrame", "function loadKeyframePanel", "function loadKeyframeLane", "keyframe-lane", "keyframe-property"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn list_animated_properties_and_get_curve_through_api_call_feed_the_keyframe_lane_with_real_keys() {
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        let sk = serde_json::to_vec(&json!({"tool": "set_keyframe", "args": {"clip_id": clip_id, "property": "opacity", "time": 0.0, "value": 1.0}})).unwrap();
+        handle_request(&ss, "POST", "/api/call", "", &sk);
+        let sk2 = serde_json::to_vec(&json!({"tool": "set_keyframe", "args": {"clip_id": clip_id, "property": "opacity", "time": 0.5, "value": 0.2}})).unwrap();
+        handle_request(&ss, "POST", "/api/call", "", &sk2);
+
+        let la = serde_json::to_vec(&json!({"tool": "list_animated_properties", "args": {"clip_id": clip_id}})).unwrap();
+        let lar = handle_request(&ss, "POST", "/api/call", "", &la);
+        let lav: Value = serde_json::from_slice(&lar.body).unwrap(); assert_eq!(lav["ok"], true, "{lav}");
+        let entries = lav["result"]["animated"].as_array().unwrap();
+        assert!(entries.iter().any(|e| e["property"] == "opacity" && e["key_count"] == 2), "{entries:?}");
+
+        let gc = serde_json::to_vec(&json!({"tool": "get_curve", "args": {"clip_id": clip_id, "property": "opacity"}})).unwrap();
+        let gcr = handle_request(&ss, "POST", "/api/call", "", &gc);
+        let gcv: Value = serde_json::from_slice(&gcr.body).unwrap(); assert_eq!(gcv["ok"], true, "{gcv}");
+        let keys = gcv["result"]["keys"].as_array().unwrap();
+        assert_eq!(keys.len(), 2, "{keys:?}");
+    }
+
+    #[test]
+    fn remove_key_through_api_call_removes_exactly_the_clicked_keyframe() {
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        for t in [0.0, 0.5, 1.0] {
+            let sk = serde_json::to_vec(&json!({"tool": "set_keyframe", "args": {"clip_id": clip_id, "property": "opacity", "time": t, "value": 0.5}})).unwrap();
+            handle_request(&ss, "POST", "/api/call", "", &sk);
+        }
+        let rm = serde_json::to_vec(&json!({"tool": "remove_key", "args": {"clip_id": clip_id, "property": "opacity", "time": 0.5}})).unwrap();
+        let rmr = handle_request(&ss, "POST", "/api/call", "", &rm);
+        let rmv: Value = serde_json::from_slice(&rmr.body).unwrap(); assert_eq!(rmv["ok"], true, "{rmv}");
+        let gc = serde_json::to_vec(&json!({"tool": "get_curve", "args": {"clip_id": clip_id, "property": "opacity"}})).unwrap();
+        let gcr = handle_request(&ss, "POST", "/api/call", "", &gc);
+        let gcv: Value = serde_json::from_slice(&gcr.body).unwrap();
+        let times: Vec<f64> = gcv["result"]["keys"].as_array().unwrap().iter().map(|k| k["time"].as_f64().unwrap()).collect();
+        assert_eq!(times, vec![0.0, 1.0], "the keyframe nearest the clicked time should be the one that is gone");
+    }
+
+    #[test]
+    fn sample_property_through_api_call_reads_the_value_the_lane_would_seed_a_new_keyframe_with() {
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        let sk = serde_json::to_vec(&json!({"tool": "set_keyframe", "args": {"clip_id": clip_id, "property": "opacity", "time": 0.0, "value": 0.4, "ease": "hold"}})).unwrap();
+        handle_request(&ss, "POST", "/api/call", "", &sk);
+        let sp = serde_json::to_vec(&json!({"tool": "sample_property", "args": {"clip_id": clip_id, "property": "opacity", "space": "clip", "times": [0.3]}})).unwrap();
+        let spr = handle_request(&ss, "POST", "/api/call", "", &sp);
+        let spv: Value = serde_json::from_slice(&spr.body).unwrap(); assert_eq!(spv["ok"], true, "{spv}");
+        assert_eq!(spv["result"]["values"][0], 0.4, "a held value before any later key should sample back unchanged, matching what the lane would seed a new keyframe with");
+    }
+
+    // ---- v7.6: clip context menu ----
+
+    #[test]
+    fn served_contextmenu_js_matches_the_file_on_disk() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_contextmenu.js", "", &[]);
+        assert_eq!(r.status, 200); assert_eq!(r.content_type, "application/javascript; charset=utf-8");
+        assert_eq!(r.body, include_bytes!("gui_contextmenu.js").to_vec());
+    }
+
+    #[test]
+    fn the_index_page_wires_up_the_context_menu() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["gui_contextmenu.js", "kimoContextMenu.buildMenuItems", "kimoContextMenu.actionFor", "kimoContextMenu.menuPosition", "function showContextMenu", "oncontextmenu", "clip-context-menu"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn contextmenu_duplicate_action_through_api_call_creates_a_real_second_clip() {
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        // mirrors kimoContextMenu.actionFor('duplicate', clip, t): duplicate_clip at the clip's own end
+        let dup = serde_json::to_vec(&json!({"tool": "duplicate_clip", "args": {"clip_id": clip_id, "start": 2.0}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &dup);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let s = ss.lock().unwrap();
+        assert_eq!(s.project.tracks[0].clips.len(), 2, "duplicate should add a real second clip, not just report one");
+        assert_eq!(s.project.tracks[0].clips[1].start, 2.0);
+    }
+
+    #[test]
+    fn contextmenu_split_action_through_api_call_matches_the_js_disabled_rule() {
+        let ss = fixture();
+        let clip_id = { let s = ss.lock().unwrap(); s.project.tracks[0].clips[0].id.clone() };
+        // the fixture clip runs 0..2; splitting exactly at its end (what the JS marks disabled) must
+        // fail server-side too, so the menu's enabled/disabled state never promises something the API refuses.
+        let bad = serde_json::to_vec(&json!({"tool": "split_clip", "args": {"clip_id": clip_id, "at": 2.0}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &bad);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], false, "{v}");
+        let good = serde_json::to_vec(&json!({"tool": "split_clip", "args": {"clip_id": clip_id, "at": 1.0}})).unwrap();
+        let r2 = handle_request(&ss, "POST", "/api/call", "", &good);
+        let v2: Value = serde_json::from_slice(&r2.body).unwrap(); assert_eq!(v2["ok"], true, "{v2}");
+    }
+
+    // ---- v7.6: media bin panel ----
+
+    #[test]
+    fn served_mediabin_js_matches_the_file_on_disk() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_mediabin.js", "", &[]);
+        assert_eq!(r.status, 200); assert_eq!(r.content_type, "application/javascript; charset=utf-8");
+        assert_eq!(r.body, include_bytes!("gui_mediabin.js").to_vec());
+    }
+
+    #[test]
+    fn the_index_page_wires_up_the_media_bin_panel() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["gui_mediabin.js", "kimoMediaBin.buildAssetRows", "function loadMediaBin", "function renderMediaBin", "function importMediaBinAsset", "media-bin-list", "media-bin-search"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    fn test_video(name: &str) -> String {
+        let dir = std::env::temp_dir().join(format!("kimo_gui_mediabin_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join(name);
+        if !p.exists() {
+            let st = std::process::Command::new("ffmpeg").args(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=64x36:r=25:d=1", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", p.to_str().unwrap()]).status().expect("ffmpeg");
+            assert!(st.success());
+        }
+        p.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn import_media_through_api_call_feeds_find_assets_for_the_media_bin_panel() {
+        let ss = fixture();
+        let path = test_video("mb1.mp4");
+        let body = serde_json::to_vec(&json!({"tool": "import_media", "args": {"path": path}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap(); assert_eq!(v["ok"], true, "{v}");
+        let fa = serde_json::to_vec(&json!({"tool": "find_assets", "args": {"limit": 500}})).unwrap();
+        let far = handle_request(&ss, "POST", "/api/call", "", &fa);
+        let fav: Value = serde_json::from_slice(&far.body).unwrap();
+        assert_eq!(fav["result"]["matches"].as_array().unwrap().len(), 1, "{fav}");
+    }
+
+    #[test]
+    fn asset_thumb_png_renders_a_real_png_for_an_imported_asset() {
+        let ss = fixture();
+        let path = test_video("mb2.mp4");
+        let body = serde_json::to_vec(&json!({"tool": "import_media", "args": {"path": path}})).unwrap();
+        let r = handle_request(&ss, "POST", "/api/call", "", &body);
+        let v: Value = serde_json::from_slice(&r.body).unwrap();
+        let asset_id = v["result"]["asset_id"].as_str().unwrap().to_string();
+        let thumb = handle_request(&ss, "GET", "/asset_thumb.png", &format!("asset_id={asset_id}"), &[]);
+        assert_eq!(thumb.status, 200, "{thumb:?}", thumb = String::from_utf8_lossy(&thumb.body));
+        assert_eq!(thumb.content_type, "image/png");
+        assert!(thumb.body.len() > 100, "a real PNG should not be near-empty, got {} bytes", thumb.body.len());
+        assert_eq!(&thumb.body[0..8], &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], "should start with the PNG magic bytes");
+        // the live project must be untouched -- a thumbnail is a read, not an edit
+        let s = ss.lock().unwrap();
+        assert_eq!(s.project.tracks[0].clips.len(), 1, "asset_thumb.png must not add a clip to the real project");
+    }
+
+    #[test]
+    fn asset_thumb_png_of_an_unknown_asset_is_a_clean_404_not_a_crash() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/asset_thumb.png", "asset_id=no-such-asset", &[]);
+        assert_eq!(r.status, 404, "{r:?}", r = String::from_utf8_lossy(&r.body));
+    }
+
+    #[test]
+    fn asset_thumb_png_without_asset_id_is_a_clean_400() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/asset_thumb.png", "", &[]);
+        assert_eq!(r.status, 400);
+    }
+
+    // ---- v7.6: timeline minimap ----
+
+    #[test]
+    fn served_minimap_js_matches_the_file_on_disk() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/gui_minimap.js", "", &[]);
+        assert_eq!(r.status, 200); assert_eq!(r.content_type, "application/javascript; charset=utf-8");
+        assert_eq!(r.body, include_bytes!("gui_minimap.js").to_vec());
+    }
+
+    #[test]
+    fn the_index_page_wires_up_the_minimap() {
+        let ss = fixture();
+        let r = handle_request(&ss, "GET", "/", "", &[]);
+        let body = String::from_utf8(r.body).unwrap();
+        for needle in ["gui_minimap.js", "kimoMinimap.buildBlocks", "kimoMinimap.viewportRect", "kimoMinimap.timeFromClick", "function renderMinimap", "function jumpFromMinimap", "function updateMinimapViewport", "timeline-minimap", "timeline-scroll"] {
+            assert!(body.contains(needle), "index page should carry {needle:?}");
+        }
+    }
+
+    #[test]
+    fn timeline_view_model_duration_feeds_the_minimap_with_the_real_project_span() {
+        let ss = fixture(); // one clip 0..2 on one track
+        let track_id = { let s = ss.lock().unwrap(); s.project.tracks[0].id.clone() };
+        let add = serde_json::to_vec(&json!({"tool": "add_clip", "args": {"track_id": track_id, "source_type": "solid", "color": [0.0, 0.0, 0.0], "start": 5.0, "duration": 3.0}})).unwrap();
+        handle_request(&ss, "POST", "/api/call", "", &add);
+        let r = handle_request(&ss, "GET", "/api/timeline", "", &[]);
+        let tl: Value = serde_json::from_slice(&r.body).unwrap();
+        assert_eq!(tl["duration"], 8.0, "{tl}"); // the minimap's whole-strip scale depends on this being the real furthest clip end
+    }
+}

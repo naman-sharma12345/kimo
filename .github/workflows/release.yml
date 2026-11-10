@@ -1,0 +1,384 @@
+name: release
+
+# Builds every downloadable artifact and, on a v* tag, attaches them to a DRAFT
+# GitHub release. Nothing is ever published by this workflow: a maintainer reviews
+# the draft and clicks "Publish" by hand.
+#
+#   push tag v*         -> build everything, SHA256SUMS, create/update a DRAFT release
+#   workflow_dispatch   -> dry run: build everything, upload workflow artifacts and
+#                          SHA256SUMS, no release (unless run on a v* tag with
+#                          draft_release ticked)
+#
+# Unsigned on purpose: no secrets, no certificates, GitHub-hosted runners only.
+# Every third-party action is pinned to a full commit SHA (tag in the comment).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      draft_release:
+        description: "When run on a v* tag: also attach the artifacts to a DRAFT release (never published). Off = dry run, workflow artifacts only."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+  TAURI_CLI_VERSION: "2.12.3"
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ubuntu-22.04   # old glibc baseline for the gnu build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # glibc build (needs glibc >= 2.35). The static musl build was dropped for this release
+          # (owner decision 2026-10-17): the vendored Manifold C++ build has no musl C++ compiler on the runner.
+          - target: x86_64-unknown-linux-gnu
+            suffix: linux-x86_64-glibc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
+          rustup default stable
+          rustc -V
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build (default features, no OCIO)
+        run: cargo build --release --locked -p kimo-mcp --target ${{ matrix.target }}
+
+      - name: Fetch bundled fonts (SIL OFL)
+        run: |
+          bash fonts/fetch.sh
+          n=$(find fonts -maxdepth 1 -name '*.ttf' -size +10k | wc -l)
+          echo "fonts: $n"
+          # fetch.sh swallows download errors, so fail on a short or empty set
+          test "$n" -ge 70
+          find fonts -maxdepth 1 -name '*.ttf' -size -10k -print -quit | grep -q . && { echo "truncated font"; exit 1; } || true
+
+      - name: Smoke test the built binary
+        run: |
+          bin=target/${{ matrix.target }}/release/kimo-mcp
+          out=$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | KIMO_FONTS=$PWD/fonts "$bin")
+          echo "$out" | head -1 | grep -q '"serverInfo"'
+          echo "$out" | tail -1 | python3 -c 'import sys,json; n=len(json.loads(sys.stdin.read())["result"]["tools"]); print("tools:",n); assert n>=16'
+
+      - name: Package
+        id: pkg
+        run: |
+          ver="${GITHUB_REF_NAME//\//-}"
+          name="kimo-${ver}-${{ matrix.suffix }}"
+          mkdir -p "dist/$name/bin" "dist/$name/fonts"
+          install -m755 target/${{ matrix.target }}/release/kimo-mcp "dist/$name/bin/kimo-mcp"
+          strip "dist/$name/bin/kimo-mcp" || true
+          cp fonts/*.ttf fonts/fetch.sh "dist/$name/fonts/"
+          cp README.md FEATURES.md "dist/$name/" 
+          cp docs/RELEASE_BINARIES.md "dist/$name/"
+          (cd dist && tar -czf "$name.tar.gz" "$name" && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.pkg.outputs.name }}
+          path: |
+            dist/${{ steps.pkg.outputs.name }}.tar.gz
+            dist/${{ steps.pkg.outputs.name }}.tar.gz.sha256
+
+  windows:
+    name: build (windows-x86_64)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/release
+          key: windows-x86_64-v2-${{ hashFiles('Cargo.lock') }}
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+      - name: Build and package Windows
+        shell: pwsh
+        run: |
+          # Tag builds take the version from the tag (v3.0.0 -> 3.0.0); other runs use Cargo.toml.
+          if ($env:GITHUB_REF -like 'refs/tags/v*') { $version = $env:GITHUB_REF_NAME.Substring(1) }
+          else { $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"').Matches[0].Groups[1].Value }
+          ./packaging/windows/build.ps1 -Version $version
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kimo-windows-x86_64
+          path: dist/*
+          if-no-files-found: error
+
+  # Kimo Spectator desktop app (crates/kimo-gui). It is its own Cargo workspace,
+  # not a member of the root one, so tauri-action is pointed at it with projectPath.
+  gui:
+    name: spectator (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            label: linux-x86_64
+            rust_targets: ""
+            args: "--bundles deb,appimage"
+          - os: windows-latest
+            label: windows-x86_64
+            rust_targets: ""
+            args: "--bundles msi"
+          # macOS: no build for this release (owner decision 2026-10-17); coming later.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Linux system packages (WebKitGTK 4.1, libsoup 3, AppImage tooling)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libssl-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf file
+
+      - name: Install Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          for t in ${{ matrix.rust_targets }}; do rustup target add "$t"; done
+          rustc -V
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/kimo-gui/target
+          key: gui-${{ matrix.label }}-${{ hashFiles('crates/kimo-gui/Cargo.toml') }}
+          restore-keys: gui-${{ matrix.label }}-
+
+      # The cache restores crates/kimo-gui/target, including bundles from older versions (a 0.1.0 .msi/.deb
+      # was shipped beside 5.0.0 in dry run 39026491864). Drop them so only this build's installers are collected.
+      - name: Clear stale installer bundles from the cache
+        shell: bash
+        run: |
+          find crates/kimo-gui/target -type d -path '*/release/bundle' -prune -print -exec rm -rf {} + || true
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
+      - name: Install the Tauri CLI (exact version)
+        shell: bash
+        run: |
+          npm install -g "@tauri-apps/cli@${TAURI_CLI_VERSION}"
+          tauri --version
+
+      - name: App version from the tag (v1.2.3 -> 1.2.3; other runs keep tauri.conf.json)
+        id: ver
+        shell: bash
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          if [ "${GITHUB_REF_TYPE}" = tag ] && [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            printf '{"version":"%s"}\n' "$v" > crates/kimo-gui/tauri.release-version.json
+            echo "extra=--config tauri.release-version.json" >> "$GITHUB_OUTPUT"
+          else
+            echo "extra=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build with tauri-action
+        id: tauri
+        continue-on-error: ${{ runner.os == 'Windows' }}
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
+        with:
+          projectPath: crates/kimo-gui
+          tauriScript: tauri
+          args: ${{ matrix.args }} ${{ steps.ver.outputs.extra }}
+
+      # Windows: the .msi needs WiX. If that bundle fails, fall back to the NSIS setup .exe.
+      - name: Windows fallback, NSIS installer
+        if: runner.os == 'Windows' && steps.tauri.outcome == 'failure'
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
+        with:
+          projectPath: crates/kimo-gui
+          tauriScript: tauri
+          args: --bundles nsis ${{ steps.ver.outputs.extra }}
+
+      - name: Collect installers
+        shell: bash
+        run: |
+          mkdir -p dist
+          find crates/kimo-gui/target -path '*/release/bundle/*' -type f \
+            \( -name '*.deb' -o -name '*.AppImage' -o -name '*.msi' -o -name '*-setup.exe' \) \
+            -print0 | while IFS= read -r -d '' f; do
+              b="$(basename "$f")"; cp "$f" "dist/${b// /-}"
+            done
+          ls -l dist
+          case "$RUNNER_OS" in
+            Linux)   ls dist/*.deb >/dev/null && ls dist/*.AppImage >/dev/null ;;
+            Windows) ls dist/*.msi >/dev/null 2>&1 || ls dist/*-setup.exe >/dev/null ;;
+          esac
+
+      - name: Windows smoke test (msi install, launch + loopback listener, uninstall)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem dist -Filter *.msi | Select-Object -First 1
+          if (-not $msi) { throw "no .msi in dist (NSIS fallback was used); the msi smoke cannot run" }
+          $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$($msi.FullName)`"", '/qn', '/norestart', '/l*v', 'msi-install.log' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content msi-install.log -Tail 40; throw "msi install failed: $($p.ExitCode)" }
+          Write-Output "msi install exit code: $($p.ExitCode)"
+          $exe = Get-ChildItem -Path "$env:ProgramFiles\Kimo Spectator", "$env:LOCALAPPDATA\Programs\Kimo Spectator" -Filter *.exe -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notmatch 'uninstall' } | Select-Object -First 1
+          if (-not $exe) { throw "installed spectator exe not found" }
+          Write-Output "installed spectator exe: $($exe.FullName)"
+          $app = Start-Process $exe.FullName -PassThru
+          $ok = 0
+          for ($i = 0; $i -lt 40 -and -not $ok; $i++) {
+            Start-Sleep -Milliseconds 500
+            if ($app.HasExited) { break }
+            foreach ($port in 7421..7430) {
+              try { $c = New-Object Net.Sockets.TcpClient; $c.Connect('127.0.0.1', $port); $c.Close(); $ok = $port; break } catch { }
+            }
+          }
+          $alive = -not $app.HasExited
+          Write-Output "spectator process alive: $alive; listening on 127.0.0.1 port: $ok"
+          if ($alive) { Stop-Process -Id $app.Id -Force; $null = $app.WaitForExit(10000) }
+          Write-Output "spectator stopped: $($app.HasExited)"
+          # Pass 2: occupy 7421 with a dummy listener; the spectator must take the next free port (7422).
+          $dummy = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 7421); $dummy.Start()
+          $app2 = Start-Process $exe.FullName -PassThru
+          $ok2 = 0
+          for ($i = 0; $i -lt 40 -and -not $ok2; $i++) {
+            Start-Sleep -Milliseconds 500
+            if ($app2.HasExited) { break }
+            foreach ($port in 7422..7430) {
+              try { $c = New-Object Net.Sockets.TcpClient; $c.Connect('127.0.0.1', $port); $c.Close(); $ok2 = $port; break } catch { }
+            }
+          }
+          $alive2 = -not $app2.HasExited
+          Write-Output "pass 2 (7421 occupied by a dummy): spectator process alive: $alive2; listening on 127.0.0.1 port: $ok2"
+          if ($alive2) { Stop-Process -Id $app2.Id -Force; $null = $app2.WaitForExit(10000) }
+          $dummy.Stop()
+          Write-Output "pass 2 spectator stopped: $($app2.HasExited)"
+          $u = Start-Process msiexec.exe -ArgumentList '/x', "`"$($msi.FullName)`"", '/qn', '/norestart' -Wait -PassThru
+          Write-Output "msi uninstall exit code: $($u.ExitCode)"
+          if (-not $alive -or -not $ok) { throw "spectator did not start and listen on 127.0.0.1:7421-7430" }
+          if (-not $alive2 -or $ok2 -ne 7422) { throw "pass 2: expected the spectator on 127.0.0.1:7422 with 7421 occupied, got '$ok2'" }
+          if ($u.ExitCode -ne 0) { throw "msi uninstall failed: $($u.ExitCode)" }
+
+      - name: Linux smoke test (dpkg metadata, install, headless launch + loopback listener, uninstall)
+        if: runner.os == 'Linux'
+        run: |
+          deb=$(find dist -maxdepth 1 -name '*.deb' | head -1)
+          dpkg-deb --info "$deb"
+          sudo apt-get install -y --no-install-recommends xvfb "./$deb"
+          pkg=$(dpkg-deb --field "$deb" Package)
+          bin=$(dpkg -L "$pkg" | grep -m1 '^/usr/bin/')
+          xvfb-run -a "$bin" > gui.log 2>&1 &
+          ok=0
+          for _ in $(seq 1 20); do
+            sleep 0.5
+            if python3 -c 'import socket; socket.create_connection(("127.0.0.1", 7421), 1).close()'; then ok=1; break; fi
+          done
+          pkill -f "$bin" || true
+          cat gui.log
+          echo "spectator listening on 127.0.0.1:7421: $ok"
+          test "$ok" = 1
+          sudo dpkg -r "$pkg"
+          test -z "$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep ' installed$' || true)"
+          test ! -e "$bin"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kimo-spectator-${{ matrix.label }}
+          path: dist/*
+          if-no-files-found: error
+
+  checksums:
+    name: SHA256SUMS
+    needs: [build, windows, gui]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Write SHA256SUMS
+        run: |
+          cd artifacts
+          ls -l
+          find . -maxdepth 1 -type f ! -name '*.sha256' ! -name SHA256SUMS -printf '%f\n' | LC_ALL=C sort > ../files.txt
+          test -s ../files.txt
+          xargs -d '\n' sha256sum -- < ../files.txt > SHA256SUMS
+          cat SHA256SUMS
+          sha256sum -c SHA256SUMS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: SHA256SUMS
+          path: artifacts/SHA256SUMS
+          if-no-files-found: error
+
+  release:
+    name: draft release (never published)
+    needs: [build, windows, gui, checksums]
+    if: >-
+      ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v')
+          && (github.event_name == 'push' || inputs.draft_release)
+          && needs.build.result == 'success' && needs.windows.result == 'success'
+          && needs.gui.result == 'success' && needs.checksums.result == 'success' }}
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Create or update the DRAFT release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          ls -l artifacts
+          cat > notes.md <<'NOTES'
+          DRAFT. Unsigned builds for Linux and Windows. macOS is coming later.
+          Windows installer: unsigned draft, built on a GitHub-hosted runner, not tested on a real PC.
+          Windows: SmartScreen > More info > Run anyway. Verify downloads against SHA256SUMS.
+          NOTES
+          if draft=$(gh release view "$tag" --json isDraft -q .isDraft 2>/dev/null); then
+            if [ "$draft" != "true" ]; then
+              echo "Release $tag is already published. This workflow only touches drafts; refusing to change it."
+              exit 1
+            fi
+            gh release upload "$tag" artifacts/* --clobber
+          else
+            gh release create "$tag" artifacts/* --draft --verify-tag --title "kimo $tag" --notes-file notes.md
+          fi
+          test "$(gh release view "$tag" --json isDraft -q .isDraft)" = true

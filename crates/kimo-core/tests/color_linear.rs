@@ -1,0 +1,4 @@
+use kimo_core::{color::linear::apply,effects::{Frame,Params},keyframe::Prop};
+#[test]fn neutral_identity_and_hdr(){let mut f=Frame{w:1,h:1,d:vec![-0.2,4.,0.18,0.6]};apply(&Params::new(),&mut f,0.).unwrap();assert_eq!(f.d,vec![-0.2,4.,0.18,0.6])}
+#[test]fn exposure_doubles_radiance(){let mut f=Frame{w:1,h:1,d:vec![0.18,4.,-0.2,1.]};let mut p=Params::new();p.insert("exposure".into(),Prop::new(1.));apply(&p,&mut f,0.).unwrap();assert_eq!(f.d,vec![0.36,8.,-0.4,1.])}
+#[test]fn saturation_preserves_gamut_luma(){for g in 0..8{let c=[0.2,0.4,0.9];let w=kimo_core::color::managed::luma_weights(g);let l=(0..3).map(|j|c[j]*w[j]).sum::<f64>();let mut f=Frame{w:1,h:1,d:vec![0.2,0.4,0.9,1.]};let mut p=Params::new();p.insert("gamut".into(),Prop::new(g as f64));p.insert("saturation".into(),Prop::new(2.));apply(&p,&mut f,0.).unwrap();let l2=(0..3).map(|j|f.d[j] as f64*w[j]).sum::<f64>();assert!((l-l2).abs()<4e-8)}}

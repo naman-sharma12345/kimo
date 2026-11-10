@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "spectator",
+  "description": "Read-only spectator window (opened from the Live tab): the webview may only listen to events.",
+  "windows": [
+    "spectator"
+  ],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-is-minimized",
+    "core:window:allow-is-visible"
+  ]
+}

@@ -1,0 +1,27 @@
+# Example CI job: render a Kimo project with the `kimo` CLI and gate on exit codes.
+# Exit codes: 0 ok, 1 tool error (JSON {"error":{code,message,param,hint}} on stderr with --json), 2 usage, 3 preflight or delivery check failed, 124 call hung and could not be cancelled.
+# Results go to stdout as one JSON document, progress goes to stderr (silence it with --quiet), so output is stable for CI diffs.
+name: render
+on: [push]
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Build kimo
+        run: cargo build --release -p kimo-cli
+      - name: Identity
+        run: ./target/release/kimo --json info
+      - name: Preflight (exit 3 stops the job when the project cannot be rendered)
+        run: ./target/release/kimo --json --quiet preflight --project project.kimo
+      - name: Export
+        run: ./target/release/kimo --json --quiet export project.kimo out.mp4 --range 0:10
+      - name: Call any tool
+        run: ./target/release/kimo --json --quiet call render_frame --args '{"time":1.0,"path":"frame.png"}' --project project.kimo
+      - uses: actions/upload-artifact@v4
+        with: { name: render, path: "out.mp4\nframe.png" }
+# Notes: tool arguments go in --args '{...}' (or '-' for stdin; --json '{...}' is an alias); a bare --json means machine output.
+# `call` without --project is stateless. With --project the file is loaded if present and saved atomically after a mutating call
+# (a missing file is created, "kimo: created <path>" on stderr). Progress is stderr-only; NDJSON progress events are planned (RV-6).

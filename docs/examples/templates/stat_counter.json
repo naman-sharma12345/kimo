@@ -1,0 +1,200 @@
+{
+ "templates": [
+  {
+   "name": "stat_counter",
+   "params": [
+    {
+     "name": "value",
+     "type": "string"
+    },
+    {
+     "name": "start",
+     "type": "number",
+     "default": 0
+    },
+    {
+     "name": "duration",
+     "type": "number",
+     "default": 3
+    },
+    {
+     "name": "pop",
+     "type": "number",
+     "default": 0.5
+    },
+    {
+     "name": "y",
+     "type": "number",
+     "default": 0
+    },
+    {
+     "name": "value_size",
+     "type": "number",
+     "default": 160
+    },
+    {
+     "name": "color",
+     "type": "array",
+     "default": [
+      1,
+      1,
+      1
+     ]
+    },
+    {
+     "name": "accent",
+     "type": "array",
+     "default": [
+      1.0,
+      0.55,
+      0.1
+     ]
+    }
+   ],
+   "ops": [
+    {
+     "id": "trk",
+     "tool": "add_track",
+     "args": {}
+    },
+    {
+     "id": "value",
+     "tool": "add_text",
+     "args": {
+      "track_id": "$trk.track_id",
+      "text": "{{value}}",
+      "size": "{{value_size}}",
+      "color": "{{color}}",
+      "start": "{{start}}",
+      "duration": "{{duration}}"
+     }
+    },
+    {
+     "id": "value_y",
+     "tool": "set_property",
+     "args": {
+      "clip_id": "$value.clip_id",
+      "property": "y",
+      "value": {
+       "$calc": "y-24"
+      }
+     }
+    },
+    {
+     "id": "bar",
+     "tool": "add_shape",
+     "args": {
+      "track_id": "$trk.track_id",
+      "shape": "rect",
+      "width": 360.0,
+      "height": 10.0,
+      "fill": "{{accent}}",
+      "start": "{{start}}",
+      "duration": "{{duration}}"
+     }
+    },
+    {
+     "id": "bar_y",
+     "tool": "set_property",
+     "args": {
+      "clip_id": "$bar.clip_id",
+      "property": "y",
+      "value": {
+       "$calc": "y+72"
+      }
+     }
+    },
+    {
+     "id": "value_o0",
+     "tool": "set_keyframe",
+     "args": {
+      "clip_id": "$value.clip_id",
+      "property": "opacity",
+      "time": 0.0,
+      "value": 0.0,
+      "ease": "linear"
+     }
+    },
+    {
+     "id": "value_o1",
+     "tool": "set_keyframe",
+     "args": {
+      "clip_id": "$value.clip_id",
+      "property": "opacity",
+      "time": "{{pop}}",
+      "value": 1.0,
+      "ease": "out"
+     }
+    },
+    {
+     "id": "bar_o0",
+     "tool": "set_keyframe",
+     "args": {
+      "clip_id": "$bar.clip_id",
+      "property": "opacity",
+      "time": 0.0,
+      "value": 0.0,
+      "ease": "linear"
+     }
+    },
+    {
+     "id": "bar_o1",
+     "tool": "set_keyframe",
+     "args": {
+      "clip_id": "$bar.clip_id",
+      "property": "opacity",
+      "time": "{{pop}}",
+      "value": 1.0,
+      "ease": "out"
+     }
+    },
+    {
+     "id": "value_s0",
+     "tool": "set_keyframe",
+     "args": {
+      "clip_id": "$value.clip_id",
+      "property": "scale",
+      "time": 0.0,
+      "value": 0.6,
+      "ease": "linear"
+     }
+    },
+    {
+     "id": "value_s1",
+     "tool": "set_keyframe",
+     "args": {
+      "clip_id": "$value.clip_id",
+      "property": "scale",
+      "time": "{{pop}}",
+      "value": 1.0,
+      "ease": "out_back"
+     }
+    },
+    {
+     "id": "bar_s0",
+     "tool": "set_keyframe",
+     "args": {
+      "clip_id": "$bar.clip_id",
+      "property": "scale",
+      "time": 0.0,
+      "value": 0.0,
+      "ease": "linear"
+     }
+    },
+    {
+     "id": "bar_s1",
+     "tool": "set_keyframe",
+     "args": {
+      "clip_id": "$bar.clip_id",
+      "property": "scale",
+      "time": {
+       "$calc": "pop*1.4"
+      },
+      "value": 1.0,
+      "ease": "out_expo"
+     }
+    }
+   ]
+  }
+ ]
+}

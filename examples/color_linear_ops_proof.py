@@ -1,0 +1,5 @@
+"""Reproducible stress proof for linear shoulder, adaptation and gamut-ray. Not a creative grade."""
+exec(open('examples/color_engine_proof.py').read().split("call('project_set'")[0])
+call('project_set',width=640,height=360,fps=25);a=call('import_media',path='/downloads/video-c61877f1.mp4')['asset_id'];tr=call('add_track')['track_id'];c=call('add_clip',track_id=tr,source_type='media',asset_id=a,start=0,in_point=3,duration=2)['clip_id'];call('set_color_pipeline',settings=dict(enabled=True,working_gamut=0,input_transfer=8))
+for kind,params in [('linear_grade',dict(exposure=2,saturation=3)),('luminance_shoulder',dict(knee=.7,peak=.95)),('white_adaptation',dict(source_x=.3127,source_y=.329,target_x=.34567,target_y=.3585)),('soft_gamut_ray',dict(ceiling=1,knee=.8))]:call('add_managed_linear_effect',clip_id=c,kind=kind,params=params)
+start=time.perf_counter();call('export_high_bit',format='ffv1_16',path='/downloads/linear-ops-proof.mkv');print('linear_ops50frames_seconds',time.perf_counter()-start);v=call('audit_color_output',time=.5);print('output_audit',v);call('render_frame',time=.5,path='/downloads/linear-ops-preview.png');p.terminate()

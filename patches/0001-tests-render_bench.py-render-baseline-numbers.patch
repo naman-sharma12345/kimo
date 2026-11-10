@@ -1,0 +1,66 @@
+From 87ae28a23a902f43e713bbbc29cd1dacfee12a81 Mon Sep 17 00:00:00 2001
+From: Instinct Agent <agent@instinct.com>
+Date: Mon, 12 Oct 2026 09:44:04 +0530
+Subject: [PATCH] tests/render_bench.py + render baseline numbers
+
+---
+ docs/ARCHITECTURE_AUDIT.md | 14 ++++++++++++++
+ tests/render_bench.py      | 24 ++++++++++++++++++++++++
+ 2 files changed, 38 insertions(+)
+ create mode 100644 tests/render_bench.py
+
+diff --git a/docs/ARCHITECTURE_AUDIT.md b/docs/ARCHITECTURE_AUDIT.md
+index 74c7fdb..8cd1c11 100644
+--- a/docs/ARCHITECTURE_AUDIT.md
++++ b/docs/ARCHITECTURE_AUDIT.md
+@@ -51,3 +51,17 @@ Confirmed bug found by the earlier strict-arg pass: set_text_style ignored line_
+ 
+ ## Proof harness hygiene
+ `tests/undo_coverage_proof.py` filled every required string arg with "x", so path-like args wrote a 1.2 MB LUT file `./x` into the repo root. Fixed (path-like args go to /tmp). `tests/run_proofs.sh` now fails the run when any proof leaves a stray file in the repo (checked with a stray-writing script). `tests/arc_property_proof.py` compares against an oracle binary built before the Arc flip and before central track-lock enforcement (u9l); with the stale /tmp/kimo-oracle it now fails at split_clip on a locked track (new binary errors, oracle allows). The oracle needs rebuilding from a post-u9l commit.
++
++## Render baseline, unit 8 step 0 (tests/render_bench.py, Oct 12, 640x360, release build, one core of a 2 GB box)
++Median of 5 `render_frame` calls at t=1.0 (includes MCP round trip and PNG write to /tmp), after one warm-up call.
++
++| Scene | median ms | min | max |
++|---|---|---|---|
++| background rect only | 83 | 76 | 86 |
++| + text (60 px) | 78 | 76 | 84 |
++| + ellipse with blur 20 | 92 | 85 | 102 |
++| + rect with frosted_glass | 96 | 92 | 105 |
++| + 400 dust particles | 79 | 66 | 85 |
++| + 20 translucent rects | 129 | 118 | 153 |
++
++Reading: a near-empty frame already costs about 80 ms, and every scene sits within 20 ms of it except the 20-rect scene (+46 ms, about 2.3 ms per layer). So the fixed per-call cost (frame setup, PNG encode and write, IPC) dominates these small scenes; measure that split before optimizing any single effect. Not measured: 1080p, video-source decode, multi-frame export throughput.
+diff --git a/tests/render_bench.py b/tests/render_bench.py
+new file mode 100644
+index 0000000..0bf6e97
+--- /dev/null
++++ b/tests/render_bench.py
+@@ -0,0 +1,24 @@
++"""Report-only render baseline (unit 8 step 0): median wall time of render_frame per scene over 5 runs, 640x360, writes only /tmp.
++Usage: python3 tests/render_bench.py"""
++import sys, time, statistics, os; sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'examples')); from mcp_client import Kimo
++def scene(name):
++    k = Kimo(); C = k.call; C("project_set", width=640, height=360, fps=24)
++    bg = C("add_track")["track_id"]; tr = C("add_track")["track_id"]
++    C("add_shape", track_id=bg, shape="rect", width=640, height=360, fill=[0.2, 0.3, 0.5, 1], start=0, duration=4)
++    if name == "text":
++        c = C("add_text", track_id=tr, text="Kimo render baseline", start=0, duration=4, font="Montserrat", size=60, color=[1, 1, 1], align="center")["clip_id"]
++    elif name == "blur":
++        c = C("add_shape", track_id=tr, shape="ellipse", width=300, height=200, fill=[1, 0.5, 0.2, 1], start=0, duration=4)["clip_id"]; C("add_effect", clip_id=c, kind="blur", params={"radius": 20})
++    elif name == "glass":
++        c = C("add_shape", track_id=tr, shape="rect", width=300, height=200, fill=[1, 1, 1, 1], start=0, duration=4)["clip_id"]; C("add_effect", clip_id=c, kind="frosted_glass", params={"blur": 8, "slab_thickness": 80})
++    elif name == "particles":
++        C("add_particles", track_id=tr, kind="dust", start=0, duration=4, count=400, color=[1, 0.9, 0.8], size=2, seed=7)
++    elif name == "shapes20":
++        for i in range(20): C("add_shape", track_id=tr, shape="rect", width=80, height=60, fill=[1, 1, 1, 0.5], start=0, duration=4)
++    return k
++print("scene\tmedian_ms\tmin_ms\tmax_ms")
++for n in ("empty", "text", "blur", "glass", "particles", "shapes20"):
++    k = scene(n); ts = []
++    for i in range(6):
++        a = time.perf_counter(); k.call("render_frame", time=1.0, path=f"/tmp/rb_{n}.png"); ts.append((time.perf_counter() - a) * 1000)
++    ts = ts[1:]; print(f"{n}\t{statistics.median(ts):.0f}\t{min(ts):.0f}\t{max(ts):.0f}")
+-- 
+2.34.1
+

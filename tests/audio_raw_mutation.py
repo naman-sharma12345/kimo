@@ -1,0 +1,6 @@
+"""Pure raw DSP coefficient-order mutation: analytic response must fail."""
+import pathlib,subprocess,tempfile
+R=pathlib.Path(__file__).resolve().parents[1];code=(R/'crates/kimo-core/src/perception/audio_raw.rs').read_text();h='''mod guard{pub fn check(){}pub fn reserve(_:usize){}}#[path="MODULE"]mod raw;use raw::*;fn main(){let s=Samples{rate:48000,planes:vec![vec![1.,0.,0.,0.]]};let out=biquad(&s,&[Section{b:[0.2,0.1,0.05],a:[1.,-0.5,0.12]}]).unwrap();assert!((out.planes[0][0]-0.2).abs()<1e-6);assert!((out.planes[0][1]-0.2).abs()<1e-6);let swap=mix_matrix(&Samples{rate:48000,planes:vec![vec![0.2],vec![0.8]]},&[vec![0.,1.],vec![1.,0.]]).unwrap();assert_eq!(swap.planes,vec![vec![0.8],vec![0.2]]);}'''
+with tempfile.TemporaryDirectory()as t:
+ for name,c in [('control',code),('coefficient_order',code.replace('s.b[0] / s.a[0] * v','s.b[1] / s.a[0] * v'))]:
+  m=pathlib.Path(t)/(name+'.rs');m.write_text(c);f=pathlib.Path(t)/(name+'_main.rs');f.write_text(h.replace('MODULE',str(m)));exe=f.with_suffix('');subprocess.run(['rustc','--edition=2021','-Awarnings','-C','opt-level=3',str(f),'-o',str(exe)],check=True);r=subprocess.run([str(exe)],capture_output=True);assert(r.returncode==0)==(name=='control'),(name,r.stderr);print('PASS',name,'survives'if name=='control'else'killed')

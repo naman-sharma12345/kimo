@@ -1,0 +1,8 @@
+use kimo_core::effects::Frame;
+#[test]fn float_flow_preserves_constant_radiance(){let c=[4.,0.18,-0.03,0.6];let f=Frame{w:32,h:32,d:(0..1024).flat_map(|_|c).collect()};let b=kimo_core::flow::flow_blur(&f,&f,0.5,3);for (a,b)in f.d.iter().zip(&b.d){assert!((a-b).abs()<1e-6)}}
+#[test]fn diagnostic_pair_covers_forward_reverse_end_and_freeze(){use kimo_core::{commands::{Session,dispatch},model::TimeMode,render};use serde_json::json;use std::process::Command;
+ let dir=std::env::temp_dir();let source=dir.join(format!("kimo-flow-pair-{}.mp4",std::process::id()));let out=dir.join(format!("kimo-flow-pair-{}.png",std::process::id()));assert!(Command::new("ffmpeg").args(["-v","error","-y","-f","lavfi","-i","testsrc2=s=32x32:r=25:d=1","-c:v","libx264",source.to_str().unwrap()]).status().unwrap().success());
+ let mut s=Session::new();dispatch(&mut s,"project_set",&json!({"width":32,"height":32,"fps":25})).unwrap();let a=dispatch(&mut s,"import_media",&json!({"path":source})).unwrap()["asset_id"].clone();let tr=dispatch(&mut s,"add_track",&json!({})).unwrap()["track_id"].clone();let c=dispatch(&mut s,"add_clip",&json!({"track_id":tr,"source_type":"media","asset_id":a,"start":0,"duration":1})).unwrap()["clip_id"].as_str().unwrap().to_string();
+ for mode in [TimeMode::Normal,TimeMode::Reverse]{s.project.find_clip_mut(&c).unwrap().time_mode=mode;for t in [0.48,0.96]{assert!(render::render_flow_png(&s.project,&c,t,out.to_str().unwrap(),&mut s.cache).is_ok());}}
+ s.project.find_clip_mut(&c).unwrap().time_mode=TimeMode::Freeze{at:0.5};assert!(render::render_flow_png(&s.project,&c,0.5,out.to_str().unwrap(),&mut s.cache).unwrap_err().contains("no motion"));std::fs::remove_file(source).unwrap();std::fs::remove_file(out).unwrap();
+}

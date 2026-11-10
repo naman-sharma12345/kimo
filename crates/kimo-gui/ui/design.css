@@ -1,0 +1,352 @@
+/* Kimo spectator — design layer (DESIGN-1).
+   Loaded after app.css. Visual only: light, depth, colour, weight and tracking.
+   Type SIZES stay those of each screen (legibility first); every row, track and
+   panel keeps its box, so live telemetry never moves anything. Every effect is
+   static: no infinite animation, no backdrop-filter, transitions only on a
+   state change (hover). */
+:root{
+  --d-bg:#050506;
+  --d-p-top:#1a1917; --d-p-mid:#121211; --d-p-bot:#0c0c0c;   /* panel: lit from above */
+  --d-hair:rgba(245,241,231,.085);
+  --d-hair-2:rgba(245,241,231,.055);
+  --d-hair-3:rgba(245,241,231,.14);
+  --d-sheen:rgba(255,248,236,.075);
+  --d-glow:rgba(255,90,35,.55);
+  --d-chip:#1c1b19; --d-chip-line:rgba(245,241,231,.09);
+}
+html,body{background:var(--d-bg)}
+body{background:
+  radial-gradient(1100px 340px at 50% -170px,rgba(255,90,35,.13),rgba(255,90,35,.04) 45%,transparent 72%),
+  radial-gradient(900px 500px at 8% 110%,rgba(245,241,231,.035),transparent 65%),
+  radial-gradient(900px 500px at 92% 110%,rgba(245,241,231,.03),transparent 65%),
+  var(--d-bg)}
+::selection{background:rgba(255,90,35,.32);color:var(--cream)}
+
+/* ---------- top bar: glass strip, fading hairline ---------- */
+#topbar{border-bottom-color:transparent;background:linear-gradient(180deg,rgba(245,241,231,.035),rgba(245,241,231,.008))}
+#topbar::after{content:'';position:absolute;left:0;right:0;bottom:-1px;height:1px;pointer-events:none;
+  background:linear-gradient(90deg,rgba(245,241,231,0),rgba(245,241,231,.16) 20%,rgba(255,140,90,.22) 50%,rgba(245,241,231,.16) 80%,rgba(245,241,231,0))}
+#topbar .logo{border-radius:8px;box-shadow:0 0 0 1px rgba(0,0,0,.7),0 0 18px -4px rgba(255,90,35,.45),0 4px 12px -4px rgba(0,0,0,.9)}
+#topbar .logo::after{box-shadow:inset 0 0 0 1px rgba(245,241,231,.12),inset 0 1px 0 rgba(255,248,236,.14)}
+#topbar .brand{font-weight:680;letter-spacing:-.03em}
+#topbar .slash{color:#3e3c38;font-weight:300}
+#topbar .proj{color:#bdb9af;letter-spacing:-.01em}
+#livepill{background:linear-gradient(180deg,#22201d,#161514);border-color:rgba(245,241,231,.11);
+  box-shadow:inset 0 1px 0 rgba(255,248,236,.08),0 0 0 1px rgba(0,0,0,.6),0 8px 22px -10px rgba(0,0,0,.95),0 0 28px -10px rgba(255,90,35,.35)}
+#livepill .dot{box-shadow:0 0 0 3px rgba(255,90,35,.18),0 0 12px 2px rgba(255,90,35,.6)}
+#livepill.down{box-shadow:inset 0 1px 0 rgba(255,248,236,.06),0 0 0 1px rgba(0,0,0,.6)}
+#livepill.down .dot{box-shadow:0 0 0 3px rgba(245,241,231,.05)}
+#livepill .sep{color:#57544e}
+#topbar .vsep{background:rgba(245,241,231,.14)}
+#topbar .chip,#topbar .right.chips .ro,#topbar .right.chips .clock,#topbar .right.chipclock .clock{
+  border-color:rgba(245,241,231,.10)!important;box-shadow:inset 0 1px 0 rgba(255,248,236,.06)}
+#topbar .right.boxed .ro{border-color:rgba(245,241,231,.14);box-shadow:inset 0 1px 0 rgba(255,248,236,.05)}
+#topbar .clock{letter-spacing:.02em}
+
+/* ---------- panels: lit surface, top sheen, soft drop ---------- */
+.panel{background:linear-gradient(180deg,var(--d-p-top) 0,var(--d-p-mid) 56px,var(--d-p-bot) 100%);
+  border-color:var(--d-hair);
+  box-shadow:inset 0 1px 0 var(--d-sheen),inset 0 0 0 1px rgba(255,255,255,.012),0 0 0 1px rgba(0,0,0,.55),0 18px 36px -22px rgba(0,0,0,1)}
+.panel.bare{background:none;box-shadow:none}
+.panel[data-panel=agent]{box-shadow:inset 0 1px 0 rgba(255,170,130,.12),inset 0 0 0 1px rgba(255,255,255,.012),0 0 0 1px rgba(0,0,0,.55),0 18px 36px -22px rgba(0,0,0,1),0 -8px 40px -26px rgba(255,90,35,.45)}
+.ph{align-items:baseline;background:linear-gradient(180deg,rgba(255,248,236,.028),rgba(255,248,236,0))}
+.ph .t{font-weight:650;letter-spacing:-.02em;color:#f7f3ea}
+.ph .t small{letter-spacing:-.005em}
+.ph .m{color:#9a968d;font-variant-numeric:tabular-nums}
+
+/* ---------- agent rail ---------- */
+.call{border-bottom-color:var(--d-hair-2)}
+.call .fn{font-weight:var(--fn-w,520)}
+.call.cur{background:linear-gradient(90deg,rgba(255,90,35,.30),rgba(255,90,35,.12) 45%,rgba(255,90,35,.05));
+  box-shadow:inset 0 1px 0 rgba(255,150,110,.16),inset 0 -1px 0 rgba(255,90,35,.18)}
+.call.cur::before{width:3px;box-shadow:0 0 12px 2px var(--d-glow)}
+.call.cur .fn{text-shadow:0 0 8px rgba(255,120,70,.35)}
+.calls.chips .call{background:linear-gradient(180deg,#1f1e1c,#191817);box-shadow:inset 0 0 0 1px var(--d-chip-line),inset 0 1px 0 rgba(255,248,236,.05)}
+.calls.chips .call.cur{background:linear-gradient(90deg,rgba(255,90,35,.30),rgba(255,90,35,.10));box-shadow:inset 0 0 0 1px rgba(255,90,35,.38),0 0 18px -6px var(--d-glow)}
+.call.picked{box-shadow:inset 0 0 0 1px rgba(245,241,231,.75)}
+.call.err{box-shadow:inset 0 0 0 1px rgba(255,77,58,.8);background:linear-gradient(90deg,rgba(255,77,58,.14),rgba(255,77,58,.03))}
+.call[data-call]{transition:background-color .12s ease}
+.call[data-call]:not(.cur):hover{background-color:rgba(245,241,231,.035)}
+.call[data-call]:focus-visible{outline:1px solid var(--ember);outline-offset:-1px}
+.callbar{background:rgba(245,241,231,.08)}
+.callbar i{box-shadow:0 0 10px 1px var(--d-glow)}
+
+/* ---------- viewer ---------- */
+.frame{box-shadow:0 0 0 1px rgba(245,241,231,.09),0 22px 44px -22px rgba(0,0,0,1),0 0 60px -30px rgba(255,248,236,.18)}
+.frame .ph-frame{background:radial-gradient(ellipse at 50% 45%,#181716,#0b0b0b 72%)}
+.tag{background:rgba(16,16,17,.94);box-shadow:inset 0 0 0 1px rgba(245,241,231,.14),inset 0 1px 0 rgba(255,248,236,.08),0 8px 18px -8px rgba(0,0,0,.95)}
+.vmeta .tc{letter-spacing:.03em}
+.thumb{border-color:rgba(245,241,231,.08);border-radius:5px}
+.thumb.sel{border-color:var(--cream);box-shadow:0 0 0 1px rgba(0,0,0,.6),0 0 16px -3px rgba(245,241,231,.4)}
+.thumb .badge{box-shadow:0 0 0 1px rgba(0,0,0,.5)}
+.frame .hud{background:rgba(10,10,11,.88);box-shadow:inset 0 1px 0 rgba(255,248,236,.06),0 8px 20px -10px rgba(0,0,0,.95),0 0 18px -8px rgba(255,90,35,.5)}
+.frame .hud i{box-shadow:0 0 8px 1px rgba(255,90,35,.7)}
+.frame .hud.err i{box-shadow:0 0 8px 1px rgba(255,77,58,.7)}
+.frame .hud.read{box-shadow:inset 0 1px 0 rgba(255,248,236,.06),0 8px 20px -10px rgba(0,0,0,.95)}
+.frame .hud.read i{box-shadow:inset 0 0 0 1.5px var(--cream)}
+.frame .gzread{background:rgba(10,10,11,.88);box-shadow:inset 0 1px 0 rgba(255,248,236,.06),0 8px 20px -10px rgba(0,0,0,.9)}
+.frame .split,.frame .wipe{box-shadow:0 0 12px 2px rgba(255,90,35,.6)}
+
+/* ---------- inspector ---------- */
+.kv.lines .row{border-bottom-color:var(--d-hair-2)}
+.kv.lines .sec{border-bottom-color:var(--d-hair-2)}
+.kv .sec{font-weight:650;letter-spacing:-.015em;color:#f7f3ea}
+.kv .sec::after{content:'';flex:1;align-self:center;height:1px;margin:0 0 0 14px;transform:translateY(calc(var(--sec-pb,9px) / 2 + 3px));
+  background:linear-gradient(90deg,rgba(255,140,90,.30),rgba(245,241,231,.06) 40%,rgba(245,241,231,0))}
+.kv .row .v{font-weight:450}
+.kv .row .v .arr{color:#6f6b64}
+.kv .row.ch .v{text-shadow:0 0 8px rgba(255,90,35,.45)}
+.kv .row.chip{background:linear-gradient(180deg,#1e1d1b,#181716);box-shadow:inset 0 0 0 1px var(--d-chip-line),inset 0 1px 0 rgba(255,248,236,.05)}
+.kv .row.chip.emb{background:linear-gradient(90deg,rgba(255,90,35,.26),rgba(255,90,35,.08));box-shadow:inset 0 0 0 1px rgba(255,90,35,.35),0 0 18px -8px var(--d-glow)}
+.kv .row.bar::before{box-shadow:0 0 12px 2px var(--d-glow)}
+body{--emb-row-bg:linear-gradient(90deg,rgba(255,90,35,.22),rgba(255,90,35,.07) 70%,rgba(255,90,35,.02))}
+.kv .list{border-color:var(--d-hair);background:#0e0e0d}
+.kv .list div+div{box-shadow:inset 0 1px 0 var(--d-hair-2)}
+.kv .list div.sel{background:linear-gradient(90deg,rgba(245,241,231,.11),rgba(245,241,231,.03));box-shadow:inset 2px 0 0 var(--cream)}
+.kv .code{background:linear-gradient(180deg,#151514,#111110);box-shadow:inset 0 0 0 1px var(--d-hair),inset 0 1px 0 rgba(255,248,236,.04)}
+.kv .widget{background:#0d0d0c;border-color:var(--d-hair);box-shadow:inset 0 1px 0 rgba(255,248,236,.03)}
+[data-panel=audio] .widget svg rect[fill="#161615"]{fill:#121211;stroke:rgba(245,241,231,.10)}
+
+/* ---------- timelines ---------- */
+.ruler i{background:#57544e} .ruler i.mn{background:#302f2c}
+.clip{background:linear-gradient(180deg,#4a443c 0,#3b3731 55%,#35312c 100%);
+  box-shadow:inset 0 1px 0 rgba(255,248,236,.12),inset 0 0 0 1px rgba(0,0,0,.30),0 2px 6px -3px rgba(0,0,0,.9)}
+.clip.mauve{background:linear-gradient(180deg,#71565d,#5c454b 60%,#553f45)}
+.clip.ghost{background:linear-gradient(180deg,#302e2a,#292724)}
+.clip .cl{text-shadow:0 1px 2px rgba(0,0,0,.6)}
+.clip.cap{background:linear-gradient(180deg,#34322f,#2a2826);box-shadow:inset 0 0 0 1px rgba(245,241,231,.08),inset 0 1px 0 rgba(255,248,236,.07)}
+.clip.cap.emb{background:linear-gradient(180deg,#45281a,#2f1b11);box-shadow:inset 0 0 0 1px rgba(255,90,35,.6),0 0 16px -4px var(--d-glow)}
+.clip.sel{box-shadow:inset 0 0 0 2px var(--cream),inset 0 3px 0 rgba(255,248,236,.10),0 0 18px -4px rgba(245,241,231,.45)}
+.clip.emb{box-shadow:inset 0 0 0 1.5px var(--ember),0 0 18px -4px var(--d-glow)}
+.clip .ct{box-shadow:inset 0 0 0 1px rgba(245,241,231,.08)}
+.trk .labchip,.labchip{box-shadow:inset 0 0 0 1px var(--d-chip-line),inset 0 1px 0 rgba(255,248,236,.04)}
+.playhead{box-shadow:0 0 12px 1px rgba(255,90,35,.65)}
+.playhead::before{filter:drop-shadow(0 0 4px rgba(255,90,35,.6))}
+.tlbar{background:rgba(245,241,231,.06)} .tlbar i{background:rgba(245,241,231,.32)}
+.fxchip{box-shadow:inset 0 0 0 1px rgba(245,241,231,.08)}
+.clip .fxrow .fxchip{background:linear-gradient(180deg,rgba(28,27,25,.85),rgba(18,18,17,.85));box-shadow:inset 0 0 0 1px rgba(245,241,231,.12),inset 0 1px 0 rgba(255,248,236,.06)}
+.clip .cpill{background:linear-gradient(180deg,rgba(30,29,27,.92),rgba(20,20,19,.92));box-shadow:inset 0 0 0 1px rgba(245,241,231,.16),0 6px 14px -6px rgba(0,0,0,.95)}
+.tlmk{box-shadow:0 0 8px rgba(255,90,35,.6)}
+.razor{box-shadow:0 0 12px 3px rgba(255,90,35,.8)}
+.trk .ms b{box-shadow:inset 0 0 0 1px rgba(245,241,231,.08)}
+.trk .ms b.m{box-shadow:inset 0 0 0 1px rgba(255,90,35,.4)}
+.k-keys svg[style*="graph-bg"]{box-shadow:inset 0 0 0 1px rgba(245,241,231,.08)}
+body{--graph-bg:#10100f}
+
+/* ---------- tables ---------- */
+.tbl .tr{border-bottom-color:var(--d-hair-2)}
+.tbl .tr.h{border-bottom-color:var(--d-hair-3);letter-spacing:.07em;text-transform:uppercase}
+.tbl .rthumb{border-color:var(--d-hair-3);border-radius:3px;box-shadow:0 2px 6px -3px rgba(0,0,0,.9)}
+.tbl .tr:not(.h) .mono.em{text-shadow:0 0 6px rgba(255,90,35,.4)}
+
+/* ---------- small objects ---------- */
+.snode{background:linear-gradient(180deg,#2f2e2a,#262522);box-shadow:inset 0 1px 0 rgba(255,248,236,.08),0 4px 10px -6px rgba(0,0,0,.9)}
+.snode.em{background:linear-gradient(180deg,#4a2a1a,#2f1b11);box-shadow:inset 0 1px 0 rgba(255,170,130,.15),0 0 18px -5px var(--d-glow)}
+.ptile{box-shadow:inset 0 0 0 1px var(--d-hair),0 6px 14px -8px rgba(0,0,0,.95)}
+.ptile.sel{box-shadow:inset 0 0 0 1px var(--ember),0 0 18px -5px var(--d-glow)}
+.tline .fix{text-shadow:0 0 6px rgba(255,90,35,.45)}
+
+/* ---------- footer ---------- */
+#footer{position:relative}
+#footer::before{content:'';position:absolute;left:0;right:0;top:0;height:1px;pointer-events:none;
+  background:linear-gradient(90deg,rgba(245,241,231,0),rgba(245,241,231,.09) 15%,rgba(245,241,231,.09) 85%,rgba(245,241,231,0))}
+
+::-webkit-scrollbar{width:8px;height:8px} ::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(245,241,231,.16);border-radius:4px;border:2px solid transparent;background-clip:padding-box}
+
+
+/* preview rev guard: "out of date · rev N" is a warm warning chip, lit from within */
+.frame .tag.stale{background:rgba(12,12,13,.9);box-shadow:inset 0 1px 0 rgba(255,248,236,.06),0 0 18px -6px rgba(255,90,35,.6),0 6px 16px -8px rgba(0,0,0,.95)}
+.frame .tag.stale i{box-shadow:0 0 8px 1px rgba(255,90,35,.7)}
+
+/* ---------- batch 2: mixing, color, effects, tracking ---------- */
+/* the viewer is a stage: a darker, vignetted well the frame floats in */
+.panel.k-viewer{background:radial-gradient(ellipse 75% 70% at 50% 42%,#151413 0,#0d0d0c 62%,#090909 100%)}
+/* scopes and gamut sit in recessed instrument wells */
+.panel.k-scopes,.panel.k-cie{background:linear-gradient(180deg,#0e0e0d,#0a0a0a);box-shadow:inset 0 2px 14px rgba(0,0,0,.7),inset 0 1px 0 rgba(255,248,236,.05),0 0 0 1px rgba(0,0,0,.55),0 18px 36px -22px rgba(0,0,0,1)}
+/* loudness: the integrated figure carries a faint warm light */
+
+/* compressor transfer box */
+
+/* tracked-range bars: dark lanes with a lit edge instead of flat grey slabs */
+.k-keys .trk svg rect[fill="#64625c"],.k-keys .trk svg rect[fill="#5e5c57"]{fill:#2f2d29;stroke:rgba(245,241,231,.16);stroke-width:1}
+/* effect stack: the applied effect chip on a tall clip reads as its own little lit object */
+.trk.tall .clip{box-shadow:inset 0 1px 0 rgba(255,248,236,.12),inset 0 0 0 1px rgba(0,0,0,.3),0 4px 10px -5px rgba(0,0,0,.95)}
+
+/* ---------- batch 3: modelling, graphics, particles, lighting ---------- */
+.k-stack .snode{border-radius:7px;letter-spacing:-.005em}
+.k-profile .ptile{border-radius:7px}
+.ptlab{letter-spacing:-.005em}
+.k-tree .kv .row,.k-tree .row{letter-spacing:-.005em}
+.k-lightrig .tbl .tr:not(.h){transition:background-color .12s ease}
+/* particle cache: the baked span reads as lit, the unbaked rest as a recessed slot */
+.k-keys .trk svg rect[fill="#070707"]{fill:#090909;stroke:rgba(245,241,231,.12)}
+.k-keys .trk svg rect[fill="#bdb8ae"]{fill:#d6d0c3}
+/* key diamonds: cream keys get a dark keyline so they sit crisply on any lane, ember keys glow */
+
+
+/* ---------- batch 4: roto, scene3d, export, grading ---------- */
+/* grade wheels: the hue ring is lit, the puck centre recessed */
+
+/* renders: the active job row is warm, its thumbnail framed */
+.k-renders .tbl .tr:not(.h):has(.mono.em){background:linear-gradient(90deg,rgba(255,90,35,.10),rgba(255,90,35,0) 70%)}
+.k-renders .tbl .rthumb{box-shadow:0 0 0 1px rgba(0,0,0,.6),0 4px 10px -4px rgba(0,0,0,.95)}
+/* scene / roto lists */
+.kv .list div{letter-spacing:-.005em}
+
+
+/* =====================================================================
+   v3 — DARKROOM DEPTH (DESIGN-2). Four visible layers, each one step lighter
+   and one shadow deeper than the layer under it:
+     L0 canvas  — near-black with a warm key light from above
+     L1 panels  — raised slabs: lit top edge, crisp hairline, deep drop
+     L2 wells   — recessed instrument areas inside a panel (lanes, code, lists)
+     L3 chips   — raised controls sitting on a well (track labels, chips)
+   Ember is light, not paint: it appears only where something is live,
+   current or selected, and there it glows. All static; nothing animates
+   at idle. Every hairline is a whole CSS px (2 device px at 2x).
+   ===================================================================== */
+:root{
+  --d-p-top:#201f1c; --d-p-mid:#131312; --d-p-bot:#0d0d0c;
+  --d-edge:rgba(245,241,231,.10);          /* L1 hairline */
+  --d-edge-top:rgba(255,248,236,.13);      /* L1 lit top edge */
+  --d-well:#080808;                        /* L2 */
+  --d-well-edge:rgba(245,241,231,.07);
+  --d-chip-top:#262522; --d-chip-bot:#1b1a18;   /* L3 */
+}
+/* the key light is its own still layer (fixed ::before, rasterised once and composited): a panel springing over the
+   canvas never repaints a radial gradient under itself (edit -> grading held 60 fps only this way) */
+body{background:#040405}
+body::before{content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;will-change:transform;background:
+  radial-gradient(1200px 380px at 50% -190px,rgba(255,110,50,.16),rgba(255,90,35,.05) 45%,transparent 72%),
+  radial-gradient(1000px 520px at 50% 120%,rgba(245,241,231,.04),transparent 70%)}
+
+/* L1 — panels */
+.panel{border-color:var(--d-edge);
+  background:linear-gradient(180deg,var(--d-p-top) 0,var(--d-p-mid) 64px,var(--d-p-bot) 100%);
+  box-shadow:inset 0 1px 0 var(--d-edge-top),0 0 0 1px rgba(0,0,0,.7),0 2px 3px rgba(0,0,0,.5),0 22px 44px -20px rgba(0,0,0,1)}
+.panel[data-panel=agent]{box-shadow:inset 0 1px 0 rgba(255,180,140,.20),0 0 0 1px rgba(0,0,0,.7),0 2px 3px rgba(0,0,0,.5),0 22px 44px -20px rgba(0,0,0,1),0 -10px 44px -24px rgba(255,90,35,.55)}
+
+/* panel header: a lit title band and a fading rule under it */
+.ph{position:relative;background:linear-gradient(180deg,rgba(255,248,236,.045),rgba(255,248,236,.012) 70%,rgba(255,248,236,0))}
+.ph::after{content:'';position:absolute;left:0;right:0;bottom:0;height:1px;pointer-events:none;
+  background:linear-gradient(90deg,rgba(245,241,231,0),rgba(245,241,231,.10) 12%,rgba(245,241,231,.10) 70%,rgba(245,241,231,0))}
+.ph:has(+ .psub)::after{content:none}
+.panel[data-panel=agent] .ph::after{background:linear-gradient(90deg,rgba(255,90,35,0),rgba(255,120,70,.40) 10%,rgba(255,90,35,.10) 70%,rgba(255,90,35,0))}
+.ph .t{color:#fbf8f1;font-weight:650;text-shadow:0 1px 0 rgba(0,0,0,.6)}
+.ph .m{color:#a6a198}
+
+/* agent rail — the live row is lit from its left edge */
+.call{color:var(--call-c,#d6d2c8)}
+.call .ck{color:#7d796f}
+.call .dur{color:#8f8a81}
+.call.cur{background:linear-gradient(90deg,rgba(255,90,35,.36),rgba(255,90,35,.16) 40%,rgba(255,90,35,.06) 85%,rgba(255,90,35,.03));
+  box-shadow:inset 0 1px 0 rgba(255,170,130,.22),inset 0 -1px 0 rgba(255,90,35,.28),0 0 24px -8px rgba(255,90,35,.55)}
+.call.cur::before{width:3px;background:#ff6a35;box-shadow:0 0 14px 3px rgba(255,90,35,.7)}
+.call.cur .fn{color:#fff6ee;text-shadow:0 0 8px rgba(255,130,80,.45)}
+.call.cur .dur{color:#ffb08f}
+.calls.chips .call{background:linear-gradient(180deg,var(--d-chip-top),var(--d-chip-bot));
+  box-shadow:inset 0 1px 0 rgba(255,248,236,.07),inset 0 0 0 1px rgba(245,241,231,.06),0 3px 8px -4px rgba(0,0,0,.9)}
+.calls.chips .call.cur{background:linear-gradient(90deg,rgba(255,90,35,.38),rgba(255,90,35,.14));
+  box-shadow:inset 0 0 0 1px rgba(255,110,60,.55),inset 0 1px 0 rgba(255,190,150,.20),0 0 22px -6px rgba(255,90,35,.6)}
+
+/* viewer — a recessed stage the picture floats above */
+.panel.k-viewer{background:radial-gradient(ellipse 80% 75% at 50% 40%,#171614 0,#0c0c0b 60%,#070707 100%);
+  box-shadow:inset 0 1px 0 var(--d-edge-top),inset 0 0 40px rgba(0,0,0,.55),0 0 0 1px rgba(0,0,0,.7),0 22px 44px -20px rgba(0,0,0,1)}
+.frame{box-shadow:0 0 0 1px rgba(245,241,231,.14),0 0 0 2px rgba(0,0,0,.85),0 26px 50px -20px rgba(0,0,0,1),0 0 90px -34px rgba(255,236,210,.30)}
+.thumb{box-shadow:0 0 0 1px rgba(0,0,0,.6),0 4px 10px -5px rgba(0,0,0,.95)}
+.thumb.sel{border-color:#fffaf2;box-shadow:0 0 0 1px rgba(0,0,0,.7),0 0 0 3px rgba(245,241,231,.10),0 0 22px -4px rgba(245,241,231,.45)}
+.vmeta .tc{color:#fbf8f1}
+
+/* L2 — wells: lanes, code, lists, graph */
+.kv .code{background:linear-gradient(180deg,#0a0a0a,#0d0d0c);box-shadow:inset 0 0 0 1px var(--d-well-edge),inset 0 2px 8px rgba(0,0,0,.6)}
+.kv .list{background:var(--d-well);border-color:var(--d-well-edge);box-shadow:inset 0 2px 8px rgba(0,0,0,.55)}
+.kv .widget{background:var(--d-well);box-shadow:inset 0 0 0 1px var(--d-well-edge),inset 0 2px 10px rgba(0,0,0,.6)}
+
+/* L3 — chips on wells */
+.trk .labchip,.labchip{background:linear-gradient(180deg,var(--d-chip-top),var(--d-chip-bot));
+  box-shadow:inset 0 1px 0 rgba(255,248,236,.08),inset 0 0 0 1px rgba(245,241,231,.07),0 3px 8px -4px rgba(0,0,0,.95)}
+
+/* inspector — section titles carry a short ember key, values read brighter than their keys */
+.kv .sec{color:#fbf8f1}
+.kv .row .k{color:#a39e95}
+.kv .row .v{color:#efebe2}
+.kv .row.ch .v{color:#ff7a4a}
+
+/* timeline — clips are lit objects, the playhead is a light source */
+.clip{box-shadow:inset 0 1px 0 rgba(255,248,236,.16),inset 0 0 0 1px rgba(0,0,0,.35),0 3px 8px -4px rgba(0,0,0,.95)}
+.clip.sel{box-shadow:inset 0 0 0 2px #fffaf2,inset 0 3px 0 rgba(255,248,236,.12),0 0 0 1px rgba(0,0,0,.8),0 0 24px -4px rgba(245,241,231,.5)}
+.clip.emb{box-shadow:inset 0 0 0 2px var(--ember),0 0 0 1px rgba(0,0,0,.8),0 0 24px -4px rgba(255,90,35,.75)}
+.playhead{box-shadow:0 0 6px 0 rgba(255,90,35,.75),0 0 16px 0 rgba(255,90,35,.22)}
+
+/* footer & top bar edges */
+#footer{background:linear-gradient(180deg,rgba(245,241,231,.025),rgba(245,241,231,0))}
+
+/* rail hierarchy: the tool is the word, its arguments the detail */
+.call .fn{color:#efeae0}
+.call .args,.call .pp{color:#9c978d}
+.call.faded .fn{color:#a39e94} .call.faded .args,.call.faded .pp{color:#6f6b64}
+.call.cur .args,.call.cur .pp{color:#f2c9b4}
+
+/* timeline lanes: every track sits in its own shallow well; labels are engraved */
+.trk::before{content:'';position:absolute;left:0;right:0;top:0;bottom:0;pointer-events:none;
+  background:linear-gradient(180deg,rgba(0,0,0,.22),rgba(0,0,0,.10));box-shadow:inset 0 1px 0 rgba(0,0,0,.35),inset 0 -1px 0 rgba(245,241,231,.035)}
+.trk .lab{color:#c4bfb4;font-weight:600}
+.trk svg rect[fill="#2a2824"]{fill:#121110;stroke:rgba(245,241,231,.07);stroke-width:1}
+.trk svg path[fill="#4a4741"]{fill:#776c5e}
+.trk svg path[fill="#5f5c56"]{fill:#7b7062}
+.clip .cl{color:#f6f2ea;font-weight:500}
+.clip .ct img{border-radius:3px}
+
+/* clips: a lit top face over a darker body, like a physical strip */
+.clip:not(.cap):not(.ghost):not(.mauve){background:linear-gradient(180deg,#4f4840 0,#3d3832 48%,#35312b 100%)}
+
+/* section rule: sits on the title's x-height, whatever the screen's section height */
+.kv .sec::after{align-self:baseline;transform:none;margin-bottom:.34em}
+
+/* paint budget: the drop under each slab is a short, tight shadow (a software rasteriser repaints it on every spring
+   frame of a moving panel); depth comes from the lit edge and the layer contrast, not from a 44 px blur */
+.panel{box-shadow:inset 0 1px 0 var(--d-edge-top),0 0 0 1px rgba(0,0,0,.7),0 6px 14px -6px rgba(0,0,0,.9)}
+.panel[data-panel=agent]{box-shadow:inset 0 1px 0 rgba(255,180,140,.20),0 0 0 1px rgba(0,0,0,.7),0 6px 14px -6px rgba(0,0,0,.9),0 -6px 22px -14px rgba(255,90,35,.55)}
+.panel.k-viewer{box-shadow:inset 0 1px 0 var(--d-edge-top),inset 0 0 24px rgba(0,0,0,.5),0 0 0 1px rgba(0,0,0,.7),0 6px 14px -6px rgba(0,0,0,.9)}
+.panel.bare{box-shadow:none}
+
+/* no SVG filter glows: a drop-shadow filter on the wheels / curves / keys re-rasterises under every moving panel on a
+   software compositor (edit -> grading dropped frames with them, held 60 fps without) */
+
+/* perf (PERF-1): an edit flash (kflash on the clip, kflashrow on the track label and the Inspector row) animates
+   box-shadow / background, so it repaints on every frame for 0.7 s. Under this layer's lit slabs, gradients and soft
+   shadows each repaint re-rasterised whole tiles (28 ms of raster per edit vs 10 ms without it). While it flashes, the
+   element gets its own small compositor layer, so the repaint touches only its own pixels. Nothing drawn changes. */
+.clip.flash,.trk.flash .lab,.kv .row.flash{will-change:transform}
+
+/* GUI-FIX-1: a read's answer pinned to the bottom of the info panel (kv) and a colour read's stats line on the scopes.
+   Quiet: no blur, no transition; the flash is the same one-shot background pulse an Inspector row gets. */
+.readcard{position:absolute;left:var(--kv-pl,15px);right:var(--kv-pr,15px);bottom:12px;background:#191918;border:1px solid var(--line2,#2c2b29);border-radius:6px;padding:6px 10px 7px;font-size:var(--kv-fs,16px);line-height:1.35;z-index:2}
+.readcard .rh{display:flex;align-items:baseline;gap:8px;color:var(--text);font-family:var(--mono);font-size:.82em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-bottom:2px;border-bottom:1px solid var(--line2,#2c2b29);margin-bottom:3px}
+.readcard .rt{color:var(--dim);text-transform:uppercase;letter-spacing:.08em;font-size:.86em}
+.readcard .rr{display:flex;justify-content:space-between;gap:12px;white-space:nowrap}
+.readcard .rk{flex:none;color:var(--klabel,var(--text));font-family:var(--label-font)}
+.readcard .rv{min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:var(--mono);color:var(--cream);text-align:right}
+.readcard .rr.wrap{white-space:normal}.readcard .rr.wrap .rv{overflow:visible;text-overflow:clip}   /* a row that asks to wrap (flash_series Stamps) shows every value, not an ellipsis */
+.readcard .rr.stack{display:block;white-space:normal}.readcard .rr.stack .rv{display:block;overflow:visible;text-overflow:clip;text-align:right}   /* a long label (edit_check 'Changed outside band') takes its own line, the value goes under it */
+.readcard.flash{animation:kflashrow .7s ease-out 1;will-change:transform}
+.scopestats{position:absolute;right:14px;top:12px;max-width:70%;font-family:var(--mono);font-size:13px;color:var(--cream);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:rgba(18,18,17,.82);padding:2px 6px;border-radius:4px}
+.scopestats.flash{animation:kflashrow .7s ease-out 1;will-change:transform}
+
+/* GUI-FIX-2: tracking / mask chips, the feature-gated badge and the refused-render chip. Static: no blur, no transition,
+   no animation; same type size as every viewer tag (never smaller). */
+.frame .tag.trk2,.frame .tag.mask2,.frame .tag.gated{max-width:calc(100% - 20px);overflow:hidden;text-overflow:ellipsis}
+.frame .tag.trk2,.frame .tag.mask2{border:1px solid rgba(255,90,35,.5);font-family:var(--mono)}
+.frame .tag.gated{border:1px solid rgba(255,90,35,.75);color:var(--cream);font-family:var(--mono)}
+.frame .tag.gated::before{content:'';display:inline-block;width:7px;height:7px;margin-right:8px;border-radius:2px;background:var(--ember);vertical-align:1px}
+.frame .tag.stale.refused{border-color:var(--ember);max-width:calc(100% - 20px);overflow:hidden;text-overflow:ellipsis}
+.readcard.outliner .rt{color:var(--ember-text,var(--ember))}
+
+/* POLISH-1: (1) the Color scopes' stats line sits in the waveform half's top margin, above the plot's top line and left of
+   the vectorscope ring (it sat over the ring's top). Same 13px type, single line. (3) while a track / mask / feature-gated
+   chip is on a viewer, the HUD toast drops below the chip stack instead of landing on it: a static offset, no transition. */
+.scopestats{left:52px;right:auto;top:1px;max-width:640px;padding:0 6px;line-height:16px}
+.frame .tag:is(.trk2,.mask2,.gated)~.hud{margin-top:34px}
+.frame .tag:not(.stale)~.tag:is(.trk2,.mask2,.gated)~.hud{margin-top:68px}
+.frame .tag:not(.stale)~.tag:not(.stale)~.tag:is(.trk2,.mask2,.gated)~.hud{margin-top:102px}

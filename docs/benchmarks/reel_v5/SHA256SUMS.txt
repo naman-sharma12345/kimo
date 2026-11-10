@@ -1,0 +1,5 @@
+# SHA-256 of the 4 video deliverables, which are archived outside the repo (no binaries in git)
+530b850044673088281e217677accfc41ec9b372e8f20f901fe1f284c965176a  gui_raw.mp4 (original capture, 15 fps, untouched)  (35411221 bytes)
+1650eae5ff605faba4d6eb1f189deb8be47e907eede0f0f4f775a1b2a5e48c4e  kimo_reel_raw_take.mp4  (16837105 bytes)
+aa3475a9de71385795e66c145cb608ae7f53e6eac20f326bcb0cb706e4e903cb  kimo_reel_process.mp4  (28225590 bytes)
+e9c44a5f0692dd9c2da360791008c474fcf712beaf0490040aaea0dbdd14c030  kimo_reel_final.mp4 (engine export)  (10916119 bytes)

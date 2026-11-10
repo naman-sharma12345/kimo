@@ -1,0 +1,1935 @@
+[
+{
+"agent": "kimo-mcp 3.0.0",
+"elapsed_s": 0,
+"read_only": true,
+"reset": true,
+"ts_ms": 1792115366490,
+"type": "session"
+},
+{
+"call_id": "kf65a5c-1",
+"payload": {
+"args": {}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "add_track",
+"ts": 0.002,
+"ts_ms": 1792115366492
+},
+{
+"call_id": "kf65a5c-1",
+"duration_ms": 14.4,
+"payload": {
+"changed": {
+"tracks_added": [
+"track1"
+]
+},
+"dur_ms": 14.4,
+"mutated": true,
+"result": {
+"track_id": "track1"
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "add_track",
+"ts": 0.017,
+"ts_ms": 1792115366507
+},
+{
+"call_id": "kf65a5c-1",
+"rev": 1,
+"ts_ms": 1792115366507,
+"type": "project_changed"
+},
+{
+"call_id": "kf65a5c-2",
+"payload": {
+"args": {
+"path": "/tmp/covc/shot_0009.mp4"
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "import_media",
+"ts": 0.017,
+"ts_ms": 1792115366507
+},
+{
+"call_id": "kf65a5c-2",
+"duration_ms": 102.5,
+"payload": {
+"changed": {},
+"dur_ms": 102.5,
+"mutated": true,
+"result": {
+"asset_id": "asset2",
+"duration": 3.0,
+"fps": 24.0,
+"height": 180,
+"width": 320
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "import_media",
+"ts": 0.12,
+"ts_ms": 1792115366609
+},
+{
+"call_id": "kf65a5c-2",
+"rev": 2,
+"ts_ms": 1792115366610,
+"type": "project_changed"
+},
+{
+"call_id": "kf65a5c-3",
+"payload": {
+"args": {
+"asset_id": "asset2",
+"duration": 3,
+"source_type": "media",
+"start": 0,
+"track_id": "track1"
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": "track1"
+},
+"tool_name": "add_clip",
+"ts": 0.12,
+"ts_ms": 1792115366610
+},
+{
+"call_id": "kf65a5c-3",
+"duration_ms": 0.3,
+"payload": {
+"changed": {
+"clips_added": [
+{
+"clip_id": "clip3",
+"track_id": "track1"
+}
+],
+"duration": [
+0.0,
+3.0
+]
+},
+"clip": "clip3",
+"dur_ms": 0.3,
+"e": 3.0,
+"label": "clip3",
+"mutated": true,
+"result": {
+"clip_id": "clip3"
+},
+"s": 0.0,
+"track": "track1"
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": "track1"
+},
+"tool_name": "add_clip",
+"ts": 0.121,
+"ts_ms": 1792115366610
+},
+{
+"call_id": "kf65a5c-3",
+"rev": 3,
+"ts_ms": 1792115366610,
+"type": "project_changed"
+},
+{
+"call_id": "kf65a5c-4",
+"payload": {
+"args": {
+"path": "/tmp/covc/shot_0015.mp4"
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "import_media",
+"ts": 0.121,
+"ts_ms": 1792115366610
+},
+{
+"call_id": "kf65a5c-4",
+"duration_ms": 72.3,
+"payload": {
+"changed": {},
+"dur_ms": 72.3,
+"mutated": true,
+"result": {
+"asset_id": "asset4",
+"duration": 3.0,
+"fps": 24.0,
+"height": 180,
+"width": 320
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "import_media",
+"ts": 0.193,
+"ts_ms": 1792115366683
+},
+{
+"call_id": "kf65a5c-4",
+"rev": 4,
+"ts_ms": 1792115366683,
+"type": "project_changed"
+},
+{
+"call_id": "kf65a5c-5",
+"payload": {
+"args": {
+"asset_id": "asset4",
+"duration": 3,
+"source_type": "media",
+"start": 3,
+"track_id": "track1"
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": "track1"
+},
+"tool_name": "add_clip",
+"ts": 0.194,
+"ts_ms": 1792115366683
+},
+{
+"call_id": "kf65a5c-5",
+"duration_ms": 0.6,
+"payload": {
+"changed": {
+"clips_added": [
+{
+"clip_id": "clip5",
+"track_id": "track1"
+}
+],
+"duration": [
+3.0,
+6.0
+]
+},
+"clip": "clip5",
+"dur_ms": 0.6,
+"e": 6.0,
+"label": "clip5",
+"mutated": true,
+"result": {
+"clip_id": "clip5"
+},
+"s": 3.0,
+"track": "track1"
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": "track1"
+},
+"tool_name": "add_clip",
+"ts": 0.194,
+"ts_ms": 1792115366684
+},
+{
+"call_id": "kf65a5c-5",
+"rev": 5,
+"ts_ms": 1792115366684,
+"type": "project_changed"
+},
+{
+"call_id": "kf65a5c-6",
+"payload": {
+"args": {
+"name": "before_grade"
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "checkpoint",
+"ts": 0.195,
+"ts_ms": 1792115366684
+},
+{
+"call_id": "kf65a5c-6",
+"duration_ms": 0.3,
+"payload": {
+"changed": {},
+"dur_ms": 0.3,
+"mutated": false,
+"result": {
+"checkpoints": [
+"before_grade"
+],
+"name": "before_grade",
+"ok": true
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "checkpoint",
+"ts": 0.195,
+"ts_ms": 1792115366685
+},
+{
+"call_id": "kf65a5c-7",
+"payload": {
+"args": {
+"settings": {
+"enabled": true,
+"input_gamut": 0,
+"input_transfer": 1,
+"output_gamut": 1,
+"output_transfer": 6,
+"tone_map": true,
+"working_gamut": 3
+}
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "set_color_pipeline",
+"ts": 0.195,
+"ts_ms": 1792115366685
+},
+{
+"call_id": "kf65a5c-7",
+"duration_ms": 0.4,
+"payload": {
+"changed": {},
+"dur_ms": 0.4,
+"mutated": true,
+"result": {
+"compositing": "float linear in working_gamut when enabled",
+"decode": "16-bit RGBA project-sized when enabled",
+"settings": {
+"enabled": true,
+"gamut_compress": false,
+"input_gamut": 0,
+"input_transfer": 1,
+"linear_resample": false,
+"mastering": null,
+"output_gamut": 1,
+"output_transfer": 6,
+"reference_white": 100.0,
+"tone_map": true,
+"working_gamut": 3
+}
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "set_color_pipeline",
+"ts": 0.196,
+"ts_ms": 1792115366685
+},
+{
+"call_id": "kf65a5c-7",
+"rev": 6,
+"ts_ms": 1792115366685,
+"type": "project_changed"
+},
+{
+"call_id": "kf65a5c-8",
+"payload": {
+"args": {
+"clip_id": "clip3",
+"gamut": 4,
+"transfer": 3
+}
+},
+"phase": "start",
+"target": {
+"clip_id": "clip3",
+"param": null,
+"track_id": "track1"
+},
+"tool_name": "set_clip_input_color",
+"ts": 0.196,
+"ts_ms": 1792115366685
+},
+{
+"call_id": "kf65a5c-8",
+"duration_ms": 0.3,
+"payload": {
+"changed": {
+"clip": {
+"props.input_gamut.base": [
+null,
+4.0
+],
+"props.input_gamut.expr": [
+null,
+[]
+],
+"props.input_gamut.keys": [
+null,
+[]
+],
+"props.input_transfer.base": [
+null,
+3.0
+],
+"props.input_transfer.expr": [
+null,
+[]
+],
+"props.input_transfer.keys": [
+null,
+[]
+]
+}
+},
+"dur_ms": 0.3,
+"e": 3.0,
+"mutated": true,
+"result": {
+"gamut": 4.0,
+"transfer": 3.0
+},
+"s": 0.0
+},
+"phase": "complete",
+"target": {
+"clip_id": "clip3",
+"param": null,
+"track_id": "track1"
+},
+"tool_name": "set_clip_input_color",
+"ts": 0.196,
+"ts_ms": 1792115366686
+},
+{
+"call_id": "kf65a5c-8",
+"rev": 7,
+"ts_ms": 1792115366686,
+"type": "project_changed"
+},
+{
+"call_id": "kf65a5c-9",
+"payload": {
+"args": {
+"metadata": {
+"blue": [
+0.131,
+0.046
+],
+"green": [
+0.17,
+0.797
+],
+"max_cll": 1000,
+"max_fall": 400,
+"max_nits": 1000,
+"min_nits": 0.005,
+"red": [
+0.708,
+0.292
+],
+"white": [
+0.3127,
+0.329
+]
+}
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "set_hdr_mastering",
+"ts": 0.197,
+"ts_ms": 1792115366686
+},
+{
+"call_id": "kf65a5c-9",
+"duration_ms": 0.3,
+"payload": {
+"changed": {},
+"dur_ms": 0.3,
+"mutated": true,
+"result": {
+"mastering": {
+"blue": [
+0.131,
+0.046
+],
+"green": [
+0.17,
+0.797
+],
+"max_cll": 1000,
+"max_fall": 400,
+"max_nits": 1000.0,
+"min_nits": 0.005,
+"red": [
+0.708,
+0.292
+],
+"white": [
+0.3127,
+0.329
+]
+},
+"provenance": "caller supplied, not measured"
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "set_hdr_mastering",
+"ts": 0.197,
+"ts_ms": 1792115366687
+},
+{
+"call_id": "kf65a5c-9",
+"rev": 8,
+"ts_ms": 1792115366687,
+"type": "project_changed"
+},
+{
+"call_id": "kf65a5c-10",
+"payload": {
+"args": {
+"selection": {
+"config_path": "/tmp/covc/none.ocio",
+"display": "sRGB",
+"input_gamut": 3,
+"output_gamut": 0,
+"output_transfer": 1,
+"source": "ACEScg",
+"view": "ACES 1.0 SDR"
+}
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "set_ocio_view_delivery",
+"ts": 0.197,
+"ts_ms": 1792115366687
+},
+{
+"call_id": "kf65a5c-10",
+"duration_ms": 0.2,
+"payload": {
+"code": "other",
+"dur_ms": 0.2,
+"error": "requires native-ocio feature and OCIO2.5.1"
+},
+"phase": "error",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "set_ocio_view_delivery",
+"ts": 0.198,
+"ts_ms": 1792115366687
+},
+{
+"call_id": "kf65a5c-11",
+"payload": {
+"args": {
+"id": "clip3",
+"name": "hero_wide",
+"role": "a-roll",
+"tags": [
+"hero",
+"day"
+]
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "set_meta",
+"ts": 0.198,
+"ts_ms": 1792115366687
+},
+{
+"call_id": "kf65a5c-11",
+"duration_ms": 0.3,
+"payload": {
+"changed": {},
+"dur_ms": 0.3,
+"mutated": true,
+"result": {
+"id": "clip3",
+"name": "hero_wide",
+"role": "a-roll",
+"tags": [
+"hero",
+"day"
+],
+"target": "clip"
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "set_meta",
+"ts": 0.198,
+"ts_ms": 1792115366688
+},
+{
+"call_id": "kf65a5c-11",
+"rev": 9,
+"ts_ms": 1792115366688,
+"type": "project_changed"
+},
+{
+"call_id": "kf65a5c-12",
+"payload": {
+"args": {
+"id": "track1",
+"name": "dialogue",
+"target": "track"
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "set_meta",
+"ts": 0.198,
+"ts_ms": 1792115366688
+},
+{
+"call_id": "kf65a5c-12",
+"duration_ms": 0.2,
+"payload": {
+"changed": {},
+"dur_ms": 0.2,
+"mutated": true,
+"result": {
+"id": "track1",
+"name": "dialogue",
+"target": "track"
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "set_meta",
+"ts": 0.199,
+"ts_ms": 1792115366688
+},
+{
+"call_id": "kf65a5c-12",
+"rev": 10,
+"ts_ms": 1792115366688,
+"type": "project_changed"
+},
+{
+"call_id": "kf65a5c-13",
+"payload": {
+"args": {
+"name": "graded"
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "checkpoint",
+"ts": 0.199,
+"ts_ms": 1792115366688
+},
+{
+"call_id": "kf65a5c-13",
+"duration_ms": 0.2,
+"payload": {
+"changed": {},
+"dur_ms": 0.2,
+"mutated": false,
+"result": {
+"checkpoints": [
+"before_grade",
+"graded"
+],
+"name": "graded",
+"ok": true
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "checkpoint",
+"ts": 0.199,
+"ts_ms": 1792115366689
+},
+{
+"call_id": "kf65a5c-14",
+"payload": {
+"args": {
+"a": "checkpoint:before_grade",
+"b": "current"
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "project_diff",
+"ts": 0.199,
+"ts_ms": 1792115366689
+},
+{
+"call_id": "kf65a5c-14",
+"duration_ms": 0.7,
+"payload": {
+"changed": {},
+"dur_ms": 0.7,
+"mutated": false,
+"result": {
+"added": [],
+"canvas": null,
+"changed": [
+{
+"changes": [
+"{3 keys}",
+"{3 keys}",
+"{3 keys}",
+"{3 keys}",
+"{3 keys}"
+],
+"changes_truncated": false,
+"id": "clip3",
+"name": "hero_wide"
+}
+],
+"counts": {
+"added": 0,
+"changed": 1,
+"removed": 0
+},
+"identical": false,
+"removed": [],
+"reordered": [],
+"tracks": {
+"added": [],
+"removed": [],
+"renamed": [
+{
+"after": "dialogue",
+"before": "",
+"id": "track1"
+}
+]
+},
+"truncated": false
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "project_diff",
+"ts": 0.2,
+"ts_ms": 1792115366690
+},
+{
+"call_id": "kf65a5c-15",
+"payload": {
+"args": {}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "undo",
+"ts": 0.2,
+"ts_ms": 1792115366690
+},
+{
+"call_id": "kf65a5c-15",
+"duration_ms": 0.4,
+"payload": {
+"changed": {},
+"dur_ms": 0.4,
+"mutated": true,
+"result": {
+"ok": true,
+"redo_available": 1,
+"undo_left": 9,
+"undone": 1
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "undo",
+"ts": 0.201,
+"ts_ms": 1792115366690
+},
+{
+"call_id": "kf65a5c-15",
+"rev": 11,
+"ts_ms": 1792115366690,
+"type": "project_changed"
+},
+{
+"call_id": "kf65a5c-16",
+"payload": {
+"args": {}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "redo",
+"ts": 0.201,
+"ts_ms": 1792115366691
+},
+{
+"call_id": "kf65a5c-16",
+"duration_ms": 0.5,
+"payload": {
+"changed": {},
+"dur_ms": 0.5,
+"mutated": true,
+"result": {
+"ok": true,
+"redo_available": 0,
+"redone": 1,
+"undo_left": 10
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "redo",
+"ts": 0.202,
+"ts_ms": 1792115366691
+},
+{
+"call_id": "kf65a5c-16",
+"rev": 12,
+"ts_ms": 1792115366691,
+"type": "project_changed"
+},
+{
+"call_id": "kf65a5c-17",
+"payload": {
+"args": {
+"steps": 2
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "undo",
+"ts": 0.202,
+"ts_ms": 1792115366691
+},
+{
+"call_id": "kf65a5c-17",
+"duration_ms": 0.5,
+"payload": {
+"changed": {},
+"dur_ms": 0.5,
+"mutated": true,
+"result": {
+"ok": true,
+"redo_available": 2,
+"undo_left": 8,
+"undone": 2
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "undo",
+"ts": 0.202,
+"ts_ms": 1792115366692
+},
+{
+"call_id": "kf65a5c-17",
+"rev": 13,
+"ts_ms": 1792115366692,
+"type": "project_changed"
+},
+{
+"call_id": "kf65a5c-18",
+"payload": {
+"args": {
+"steps": 2
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "redo",
+"ts": 0.203,
+"ts_ms": 1792115366692
+},
+{
+"call_id": "kf65a5c-18",
+"duration_ms": 0.6,
+"payload": {
+"changed": {},
+"dur_ms": 0.6,
+"mutated": true,
+"result": {
+"ok": true,
+"redo_available": 0,
+"redone": 2,
+"undo_left": 10
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "redo",
+"ts": 0.203,
+"ts_ms": 1792115366693
+},
+{
+"call_id": "kf65a5c-18",
+"rev": 14,
+"ts_ms": 1792115366693,
+"type": "project_changed"
+},
+{
+"call_id": "kf65a5c-19",
+"payload": {
+"args": {
+"name": "before_grade"
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "restore",
+"ts": 0.203,
+"ts_ms": 1792115366693
+},
+{
+"call_id": "kf65a5c-19",
+"duration_ms": 0.4,
+"payload": {
+"changed": {},
+"dur_ms": 0.4,
+"mutated": true,
+"result": {
+"ok": true,
+"restored": "before_grade"
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "restore",
+"ts": 0.204,
+"ts_ms": 1792115366693
+},
+{
+"call_id": "kf65a5c-19",
+"rev": 15,
+"ts_ms": 1792115366693,
+"type": "project_changed"
+},
+{
+"call_id": "kf65a5c-20",
+"payload": {
+"args": {
+"name": "before_grade"
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "checkpoint_delete",
+"ts": 0.204,
+"ts_ms": 1792115366694
+},
+{
+"call_id": "kf65a5c-20",
+"duration_ms": 0.2,
+"payload": {
+"changed": {},
+"dur_ms": 0.2,
+"mutated": false,
+"result": {
+"ok": true
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "checkpoint_delete",
+"ts": 0.204,
+"ts_ms": 1792115366694
+},
+{
+"call_id": "kf65a5c-21",
+"payload": {
+"args": {
+"label": "trim both",
+"ops": [
+{
+"args": {
+"clip_id": "clip3",
+"end": 2.5
+},
+"tool": "trim_clip"
+},
+{
+"args": {
+"clip_id": "clip5",
+"end": 5.5
+},
+"tool": "trim_clip"
+}
+]
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "batch",
+"ts": 0.205,
+"ts_ms": 1792115366694
+},
+{
+"call_id": "kf65a5c-21",
+"duration_ms": 1.1,
+"payload": {
+"changed": {},
+"dur_ms": 1.1,
+"mutated": true,
+"result": {
+"applied": 2,
+"created": {
+"asset_ids": [],
+"clip_ids": [],
+"effect_ids": [],
+"track_ids": []
+},
+"dry_run": false,
+"elapsed_ms": 0,
+"ok": true,
+"results": [
+{
+"id": "1",
+"index": 0,
+"result_brief": {
+"duration": 3.0,
+"in_point": 0.0,
+"warnings": "[1 items]"
+},
+"tool": "trim_clip"
+},
+{
+"id": "2",
+"index": 1,
+"result_brief": {
+"duration": 3.0,
+"in_point": 0.0,
+"warnings": "[1 items]"
+},
+"tool": "trim_clip"
+}
+],
+"revision": "82569868bca8990c",
+"warnings": [
+{
+"id": "1",
+"index": 0,
+"warnings": [
+"ignored unknown argument 'end' (valid: clip_id, duration, in_point)"
+]
+},
+{
+"id": "2",
+"index": 1,
+"warnings": [
+"ignored unknown argument 'end' (valid: clip_id, duration, in_point)"
+]
+}
+]
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "batch",
+"ts": 0.206,
+"ts_ms": 1792115366695
+},
+{
+"call_id": "kf65a5c-21",
+"rev": 16,
+"ts_ms": 1792115366695,
+"type": "project_changed"
+},
+{
+"call_id": "kf65a5c-22",
+"payload": {
+"args": {
+"name": "lower_third",
+"ops": [
+{
+"args": {
+"duration": 2,
+"start": "{{at}}",
+"text": "{{text}}",
+"track_id": "track1"
+},
+"tool": "add_text"
+}
+],
+"params": [
+{
+"name": "text",
+"type": "string"
+},
+{
+"default": 0,
+"name": "at",
+"type": "number"
+}
+]
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "template_define",
+"ts": 0.206,
+"ts_ms": 1792115366696
+},
+{
+"call_id": "kf65a5c-22",
+"duration_ms": 0.4,
+"payload": {
+"changed": {},
+"dur_ms": 0.4,
+"mutated": true,
+"result": {
+"name": "lower_third",
+"ok": true,
+"op_count": 1,
+"params": [
+"text",
+"at"
+],
+"replaced": false
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "template_define",
+"ts": 0.207,
+"ts_ms": 1792115366696
+},
+{
+"call_id": "kf65a5c-22",
+"rev": 17,
+"ts_ms": 1792115366696,
+"type": "project_changed"
+},
+{
+"call_id": "kf65a5c-23",
+"payload": {
+"args": {
+"args": {
+"at": 1,
+"text": "Jane Doe"
+},
+"name": "lower_third"
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "template_apply",
+"ts": 0.207,
+"ts_ms": 1792115366696
+},
+{
+"call_id": "kf65a5c-23",
+"duration_ms": 1.0,
+"payload": {
+"changed": {
+"clips_added": [
+{
+"clip_id": "clip1000",
+"track_id": "track1"
+}
+]
+},
+"clip": "clip1000",
+"dur_ms": 1.0,
+"e": 3.0,
+"label": "Jane Doe",
+"mutated": true,
+"result": {
+"applied_ops": 1,
+"args": {
+"at": 1,
+"text": "Jane Doe"
+},
+"count": 1,
+"created": [
+"clip1000"
+],
+"dry_run": false,
+"expansion_hash": "1330fc1be67e67d4423d669f853476e1d8ffda9bc8119f021ead83ef2e70770b",
+"ok": true,
+"revision": "147b97749228b208",
+"template": "lower_third"
+},
+"s": 1.0,
+"track": "track1"
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "template_apply",
+"ts": 0.208,
+"ts_ms": 1792115366698
+},
+{
+"call_id": "kf65a5c-23",
+"rev": 18,
+"ts_ms": 1792115366698,
+"type": "project_changed"
+},
+{
+"call_id": "kf65a5c-24",
+"payload": {
+"args": {
+"name": "lower_third",
+"params": {
+"subtitle": "Director",
+"title": "Jane Doe"
+},
+"start": 0.5,
+"track_id": "track1"
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": "track1"
+},
+"tool_name": "recipe_apply",
+"ts": 0.208,
+"ts_ms": 1792115366698
+},
+{
+"call_id": "kf65a5c-24",
+"duration_ms": 24.9,
+"payload": {
+"changed": {
+"clips_added": [
+{
+"clip_id": "clip1001",
+"track_id": "track1"
+},
+{
+"clip_id": "clip1002",
+"track_id": "track1"
+},
+{
+"clip_id": "clip1003",
+"track_id": "track1"
+},
+{
+"clip_id": "clip1004",
+"track_id": "track1"
+}
+]
+},
+"clip": "clip1001",
+"dur_ms": 24.9,
+"e": 5.5,
+"label": "clip1001",
+"mutated": true,
+"result": {
+"anchors": {
+"end": 5.5,
+"start": 0.5,
+"unit": "timeline seconds"
+},
+"applied": 40,
+"created": {
+"asset_ids": [],
+"clip_ids": [
+"clip1001",
+"clip1002",
+"clip1003",
+"clip1004"
+],
+"effect_ids": [],
+"track_ids": []
+},
+"dry_run": false,
+"elapsed_ms": 4,
+"expansion_hash": "fb58a694c391fa93f7960321e187c7845a09dfdbddc33976a90a2ca4916a3adb",
+"ok": true,
+"recipe": {
+"name": "lower_third",
+"recipe_version": 1
+},
+"results": [
+{
+"id": "bar",
+"index": 0,
+"tool": "add_shape"
+},
+{
+"id": "accent",
+"index": 1,
+"tool": "add_shape"
+},
+{
+"id": "title",
+"index": 2,
+"tool": "add_text"
+},
+{
+"id": "subtitle",
+"index": 3,
+"tool": "add_text"
+},
+{
+"id": "bar_x",
+"index": 4,
+"tool": "set_property"
+},
+{
+"id": "key5",
+"index": 5,
+"tool": "set_keyframe"
+},
+{
+"id": "key6",
+"index": 6,
+"tool": "set_keyframe"
+},
+{
+"id": "key7",
+"index": 7,
+"tool": "set_keyframe"
+},
+"\u2026+32"
+],
+"revision": "d016abfb20dd195e",
+"roles": {
+"lower_third/accent": "clip1002",
+"lower_third/bar": "clip1001",
+"lower_third/subtitle": "clip1004",
+"lower_third/title": "clip1003"
+},
+"track_id": "track1",
+"warnings": []
+},
+"s": 0.5,
+"track": "track1"
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": "track1"
+},
+"tool_name": "recipe_apply",
+"ts": 0.234,
+"ts_ms": 1792115366723
+},
+{
+"call_id": "kf65a5c-24",
+"rev": 19,
+"ts_ms": 1792115366723,
+"type": "project_changed"
+},
+{
+"call_id": "kf65a5c-25",
+"payload": {
+"args": {
+"name": "lower_third"
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "template_delete",
+"ts": 0.234,
+"ts_ms": 1792115366724
+},
+{
+"call_id": "kf65a5c-25",
+"duration_ms": 0.4,
+"payload": {
+"changed": {},
+"dur_ms": 0.4,
+"mutated": true,
+"result": {
+"deleted": "lower_third",
+"ok": true
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "template_delete",
+"ts": 0.235,
+"ts_ms": 1792115366724
+},
+{
+"call_id": "kf65a5c-25",
+"rev": 20,
+"ts_ms": 1792115366724,
+"type": "project_changed"
+},
+{
+"call_id": "kf65a5c-26",
+"payload": {
+"args": {
+"path": "/tmp/covc/proj.kimo",
+"with_history": true
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "save_project",
+"ts": 0.235,
+"ts_ms": 1792115366725
+},
+{
+"call_id": "kf65a5c-26",
+"duration_ms": 5.1,
+"payload": {
+"changed": {},
+"dur_ms": 5.1,
+"mutated": false,
+"result": {
+"checkpoints": 1,
+"history": "/tmp/covc/proj.kimo.history",
+"history_bytes": 45220,
+"path": "/tmp/covc/proj.kimo",
+"project_sha": "d8215d27f761188e",
+"undo_steps": 16,
+"undo_steps_available": 16
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "save_project",
+"ts": 0.24,
+"ts_ms": 1792115366730
+},
+{
+"call_id": "kf65a5c-27",
+"payload": {
+"args": {
+"path": "/tmp/covc/proj.kimo",
+"report": true,
+"with_history": true
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "load_project",
+"ts": 0.241,
+"ts_ms": 1792115366730
+},
+{
+"call_id": "kf65a5c-27",
+"duration_ms": 26.2,
+"payload": {
+"changed": {},
+"dur_ms": 26.2,
+"mutated": true,
+"result": {
+"checkpoints": 1,
+"dependencies": {
+"changed": 0,
+"missing": 3,
+"not_ok": [
+{
+"family": true,
+"field": "clip[clip1000].source.font",
+"kind": "font",
+"owner": "{1 keys}",
+"path": "Montserrat",
+"resolved": "Montserrat",
+"status": "missing"
+},
+{
+"family": true,
+"field": "clip[clip1003].source.font",
+"kind": "font",
+"owner": "{1 keys}",
+"path": "Montserrat",
+"resolved": "Montserrat",
+"status": "missing"
+},
+{
+"family": true,
+"field": "clip[clip1004].source.font",
+"kind": "font",
+"owner": "{1 keys}",
+"path": "Montserrat",
+"resolved": "Montserrat",
+"status": "missing"
+}
+],
+"total": 5
+},
+"history_ignored": null,
+"next_id": 1005,
+"tracks": 1,
+"undo_steps": 16
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "load_project",
+"ts": 0.267,
+"ts_ms": 1792115366756
+},
+{
+"call_id": "kf65a5c-27",
+"rev": 21,
+"ts_ms": 1792115366756,
+"type": "project_changed"
+},
+{
+"call_id": "kf65a5c-28",
+"payload": {
+"args": {
+"megabytes": 512
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "cache_set_budget",
+"ts": 0.267,
+"ts_ms": 1792115366757
+},
+{
+"call_id": "kf65a5c-28",
+"duration_ms": 0.3,
+"payload": {
+"changed": {},
+"dur_ms": 0.3,
+"mutated": false,
+"result": {
+"bytes": 0,
+"cap_bytes": 536870912,
+"entries": 0
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "cache_set_budget",
+"ts": 0.267,
+"ts_ms": 1792115366757
+},
+{
+"call_id": "kf65a5c-29",
+"payload": {
+"args": {}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "cache_clear",
+"ts": 0.268,
+"ts_ms": 1792115366757
+},
+{
+"call_id": "kf65a5c-29",
+"duration_ms": 0.2,
+"payload": {
+"changed": {},
+"dur_ms": 0.2,
+"mutated": false,
+"result": {
+"cleared_entries": 0,
+"freed_bytes": 0
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "cache_clear",
+"ts": 0.268,
+"ts_ms": 1792115366757
+},
+{
+"call_id": "kf65a5c-30",
+"payload": {
+"args": {
+"a": {
+"time": 0.5
+},
+"b": {
+"source": "snapshot:checkpoint:graded",
+"time": 0.5
+}
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "diff_frames",
+"ts": 0.268,
+"ts_ms": 1792115366758
+},
+{
+"call_id": "kf65a5c-30",
+"duration_ms": 3999.9,
+"payload": {
+"changed": {},
+"dur_ms": 3999.9,
+"mutated": false,
+"result": {
+"a": {
+"h": 720,
+"source": "composite",
+"time": 0.5,
+"w": 1280
+},
+"b": {
+"h": 720,
+"source": "snapshot:checkpoint:graded",
+"time": 0.5,
+"w": 1280
+},
+"compared": {
+"h": 270,
+"method": "fixed-order f64, box downscale, Rec709 luma, SSIM luma 8x8 population variance C1=.01^2 C2=.03^2, 8x8x8 RGB histogram half-L1",
+"region": [
+0,
+0,
+1280,
+720
+],
+"scale": 0.375,
+"space": "display-referred RGB u8/255",
+"threshold": 0.04,
+"w": 480
+},
+"delta": {
+"bbox": [
+0,
+0,
+480,
+270
+],
+"bit_identical": false,
+"changed_percent": 77.02546296296296,
+"changed_pixels": 99825
+},
+"grid": {
+"cols": 4,
+"mean_abs_delta": [
+0.11809612933771944,
+0.11688236896065186,
+0.2366015563814456,
+0.35026473525138196,
+0.15991082622472086,
+0.11686236573125244,
+0.2365936927562594,
+0.29548264035667854,
+"\u2026+8"
+],
+"rows": 4
+},
+"metrics": {
+"changed_ratio": 0.7702546296296297,
+"luma_delta": 0.22717866371854292,
+"mse": 0.0901418943657182,
+"psnr_db": 10.450733193077166
+},
+"verdict_hint": "major"
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "diff_frames",
+"ts": 4.268,
+"ts_ms": 1792115370758
+},
+{
+"call_id": "kf65a5c-31",
+"payload": {
+"args": {
+"annotate": true,
+"time": 1.0
+}
+},
+"phase": "start",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "lint_frame",
+"ts": 4.269,
+"ts_ms": 1792115370758
+},
+{
+"call_id": "kf65a5c-31",
+"duration_ms": 2217.1,
+"payload": {
+"changed": {},
+"dur_ms": 2217.1,
+"images": 1,
+"mutated": false,
+"result": {
+"frames": [
+{
+"annotation": {
+"path": "/tmp/kimo-lint-802329-1792115372694626055-0.png"
+},
+"elapsed_ms": 2065.329748,
+"findings": [
+"{6 keys}"
+],
+"time": 1.0
+}
+],
+"intervals": [
+{
+"code": "low_res_upscale",
+"layers": [
+"{3 keys}"
+],
+"note": "sampled hits only",
+"t0": 1.0,
+"t1": 1.0,
+"worst": {
+"drawn_bounds_px": "[2 items]",
+"ratio": 4.0,
+"source_px": "[2 items]"
+}
+}
+],
+"notes": [
+"Advisory only, not a design certification. No edit, undo entry or export block.",
+"Geometry is matrix-transformed source layer bounds, not effect-expanded ink. Fully masked visibility is not measured. Text uses static C2 ink, excluding shadow/glow/bg and animator deformation; contrast is a WCAG heuristic on background und\u2026",
+"Static results cover sampled times only; audio presence does not establish speech or intentional holding."
+],
+"params_used": {
+"changed_ratio_threshold": 0.0,
+"contrast_large": 3.0,
+"contrast_normal": 4.5,
+"delivery_height": 720.0,
+"large_cap_px": 24.0,
+"max_frames": 120.0,
+"max_static_s": 3.0,
+"min_cap_px": 20.0,
+"mse_threshold": 0.0,
+"opacity_epsilon": 0.001,
+"pixel_threshold": 0.04,
+"upscale_ratio": 1.5
+},
+"summary": {
+"counts_by_code": {
+"low_res_upscale": 1
+},
+"frames_checked": 1,
+"ignored_by_tag": 0,
+"omitted_findings": 0,
+"suppressed": []
+}
+}
+},
+"phase": "complete",
+"target": {
+"clip_id": null,
+"param": null,
+"track_id": null
+},
+"tool_name": "lint_frame",
+"ts": 6.486,
+"ts_ms": 1792115372976
+}
+]

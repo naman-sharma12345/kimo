@@ -1,0 +1,5 @@
+exec(open('examples/color_engine_proof.py').read().split("call('project_set'")[0])
+call('project_set',width=640,height=360,fps=25);a=call('import_media',path='/downloads/video-c61877f1.mp4')['asset_id'];tr=call('add_track')['track_id'];c=call('add_clip',track_id=tr,source_type='media',asset_id=a,start=0,in_point=3,duration=2)['clip_id'];call('set_color_pipeline',settings=dict(enabled=True,working_gamut=3,input_transfer=8))
+call('add_effect',clip_id=c,kind='linear_grade',params=dict(gamut=3,exposure=3));call('render_frame',time=.5,path='/downloads/shoulder-before.png');call('add_effect',clip_id=c,kind='luminance_shoulder',params=dict(gamut=3,knee=.75,peak=1));call('render_frame',time=.5,path='/downloads/shoulder-after.png');start=time.perf_counter();call('export_high_bit',format='ffv1_16',path='/downloads/shoulder-real16.mkv');print('shoulder50frame_seconds',time.perf_counter()-start);p.terminate()
+from PIL import Image
+out=Image.new('RGB',(1280,360));out.paste(Image.open('/downloads/shoulder-before.png'),(0,0));out.paste(Image.open('/downloads/shoulder-after.png'),(640,0));out.save('/downloads/shoulder-comparison.png')

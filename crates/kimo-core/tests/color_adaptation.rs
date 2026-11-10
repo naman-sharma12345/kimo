@@ -1,0 +1,5 @@
+use kimo_core::color::managed::{white_adaptation,mv,rgb_xyz};
+#[test]fn adaptation_identity_inverse_white(){for g in 0..8{let s=[0.3127,0.329];let t=[0.34567,0.3585];let a=white_adaptation(g,s,t).unwrap();let b=white_adaptation(g,t,s).unwrap();for c in [[-0.25,2.,4.],[0.1,0.2,0.3],[1.,1.,1.]]{let x=mv(b,mv(a,c));for j in 0..3{assert!((x[j]-c[j]).abs()<1e-10)}}let same=white_adaptation(g,s,s).unwrap();let c=mv(same,[0.3,0.5,2.]);for(j,v)in c.iter().enumerate(){assert!((*v-[0.3,0.5,2.][j]).abs()<1e-10)}let _=rgb_xyz(g);}}
+#[test]fn adaptation_badwhite(){for q in [[0.,0.3],[0.3,0.],[0.9,0.9],[f64::NAN,0.3]]{assert!(white_adaptation(0,q,[0.3127,0.329]).is_err());}}
+#[test]fn declaredwhite_maps_to_declaredwhite(){// XYZ source/target normalizedY1, converted through Rec709 matrix.
+let s=[0.3127,0.329];let t=[0.34567,0.3585];let rgb=rgb_xyz(0);let a=white_adaptation(0,s,t).unwrap();let source_rgb=[1.,1.,1.];let out_xyz=mv(rgb,mv(a,source_rgb));let expected=[t[0]/t[1],1.,(1.-t[0]-t[1])/t[1]];for j in 0..3{assert!((out_xyz[j]-expected[j]).abs()<1e-10);}}

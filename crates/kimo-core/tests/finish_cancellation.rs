@@ -1,0 +1,2 @@
+use kimo_core::{color::finish,effects::{Frame,Params},guard};use std::sync::atomic::Ordering::Relaxed;
+#[test]fn cancelled_finish_no_partial_edits(){let mut f=Frame{w:2,h:2,d:vec![0.5;16]};let before=f.d.clone();let tok=guard::new_token();tok.store(true,Relaxed);let g=guard::install_token(&tok);let r=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||finish::apply(&Params::new(),&mut f,0.,0)));drop(g);assert!(r.is_err());assert_eq!(f.d,before);}
