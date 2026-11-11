@@ -100,7 +100,7 @@ pub fn split_frames(ffmpeg: &Path, mp4: &Path, dir: &Path, stem: &str) -> Vec<Pa
 pub fn find_ffmpeg(data_dir: &Path) -> Option<PathBuf> {
     let name = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
     let p = data_dir.join("tools").join(name);
-    if p.is_file() { Some(p) } else { crate::agents::which("ffmpeg") }
+    if p.is_file() { Some(p) } else { crate::system::find("ffmpeg") }
 }
 
 /// Least-recently-used frames by (revision, frame index); evicting one deletes its file unless it is pinned.

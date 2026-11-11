@@ -63,13 +63,79 @@ fn extra_dirs(k: Kind) -> Vec<PathBuf> {
     v
 }
 
+/// Copies that other apps install and keep up to date, outside PATH: the Claude desktop app's own Claude Code, npm's
+/// package folder when its `claude`/`codex` shortcut is missing, and the Codex app's CLI. Newest version first.
+fn bundled(k: Kind) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = vec![];
+    let exe = |n: &str| if cfg!(windows) { format!("{n}.exe") } else { n.to_string() };
+    // <root>/<version>/<build>/<bin> and <root>/<version>/<bin>, newest version first
+    let versions = |root: PathBuf, bin: &str| -> Vec<PathBuf> {
+        let mut ds: Vec<_> = std::fs::read_dir(&root).map(|r| r.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect()).unwrap_or_default();
+        ds.sort_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok());
+        ds.reverse();
+        let mut out = vec![];
+        for d in ds {
+            out.push(d.join(bin));
+            if let Ok(sub) = std::fs::read_dir(&d) { for s in sub.flatten() { out.push(s.path().join(bin)); } }
+        }
+        out
+    };
+    let env = |k: &str| std::env::var_os(k).map(PathBuf::from);
+    let home = home_dir();
+    match k {
+        Kind::ClaudeCode => {
+            // Claude desktop app: <LOCALAPPDATA>/Claude-Data/<profile>/claude-code/<version>/<build>/claude.exe (Windows),
+            // ~/Library/Application Support/Claude/claude-code/<version>/claude (macOS), ~/.config/Claude/claude-code (Linux)
+            let mut roots = vec![];
+            if let Some(l) = env("LOCALAPPDATA") {
+                if let Ok(rd) = std::fs::read_dir(l.join("Claude-Data")) { for p in rd.flatten() { roots.push(p.path().join("claude-code")); } }
+                roots.push(l.join("AnthropicClaude").join("claude-code"));
+            }
+            if let Some(a) = env("APPDATA") { roots.push(a.join("Claude").join("claude-code")); }
+            if let Some(h) = &home {
+                roots.push(h.join("Library").join("Application Support").join("Claude").join("claude-code"));
+                roots.push(h.join(".config").join("Claude").join("claude-code"));
+                roots.push(h.join(".local").join("share").join("claude").join("versions"));
+            }
+            for r in roots { v.extend(versions(r, &exe("claude"))); }
+            if let Some(a) = env("APPDATA") {
+                let pkg = a.join("npm").join("node_modules").join("@anthropic-ai").join("claude-code");
+                v.push(pkg.join("node_modules").join("@anthropic-ai").join("claude-code-win32-x64").join("claude.exe"));
+                v.push(pkg.join("bin").join("claude.exe"));
+            }
+        }
+        Kind::Codex => {
+            if let Some(h) = &home { v.push(h.join(".codex").join("plugins").join(".plugin-appserver").join(exe("codex"))); v.push(h.join(".codex").join("bin").join(exe("codex"))); }
+            if let Some(l) = env("LOCALAPPDATA") { v.push(l.join("Programs").join("Codex").join("resources").join(exe("codex"))); v.push(l.join("Programs").join("codex").join("resources").join(exe("codex"))); }
+            v.push(PathBuf::from("/Applications/Codex.app/Contents/Resources/codex"));
+        }
+        Kind::Antigravity => {
+            if let Some(h) = &home { v.push(h.join(".gemini").join("antigravity-cli").join("bin").join(exe("agy"))); }
+        }
+    }
+    v.into_iter().filter(|p| p.is_file()).collect()
+}
+
+/// A copy counts only when it actually runs (`--version` answers): a half-finished install is skipped, not shown as
+/// installed. Results are remembered for the session; a copy that disappears is looked for again.
+fn works(p: &Path) -> bool { run_short(p, &["--version"], 15).map(|(ok, _)| ok).unwrap_or(false) }
+
 pub fn find(k: Kind) -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os(format!("KIMO_{}_BIN", k.bin_name().to_ascii_uppercase())).map(PathBuf::from).filter(|p| p.is_file()) { return Some(p); }
-    if let Some(p) = which(k.bin_name()) { return Some(p); }
+    static CACHE: std::sync::OnceLock<Mutex<std::collections::HashMap<&'static str, PathBuf>>> = std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    if let Some(p) = cache.lock().unwrap().get(k.id()).cloned() { if p.is_file() { return Some(p); } }
+    let mut cands: Vec<PathBuf> = vec![];
+    if let Some(p) = std::env::var_os(format!("KIMO_{}_BIN", k.bin_name().to_ascii_uppercase())).map(PathBuf::from).filter(|p| p.is_file()) { cands.push(p); }
+    if let Some(p) = which(k.bin_name()) { cands.push(p); }
     let dirs: Vec<String> = extra_dirs(k).iter().map(|d| d.display().to_string()).collect();
     let sep = if cfg!(windows) { ";" } else { ":" };
     let pathext = if cfg!(windows) { Some(".EXE;.CMD;.BAT") } else { None };
-    crate::agents::which_in(k.bin_name(), &dirs.join(sep), pathext)
+    if let Some(p) = crate::agents::which_in(k.bin_name(), &dirs.join(sep), pathext) { cands.push(p); }
+    cands.extend(bundled(k));
+    let mut seen = std::collections::HashSet::new();
+    let found = cands.into_iter().filter(|p| seen.insert(p.clone())).find(|p| works(p))?;
+    cache.lock().unwrap().insert(k.id(), found.clone());
+    Some(found)
 }
 
 /// A child with no console window on Windows (the app is a GUI; a flashing console would be alarming).
@@ -654,6 +720,13 @@ mod tests {
         assert_eq!(a[1], "make it warmer");
         assert!(a.windows(2).any(|p| p[0] == "--conversation" && p[1] == "C1"));
         let _ = std::fs::remove_dir_all(&w);
+    }
+
+    /// `cargo test --lib -- --ignored --nocapture where_are_the_agents`: what this computer has (no network, no login).
+    #[test]
+    #[ignore]
+    fn where_are_the_agents() {
+        for k in Kind::all() { let s = status(k); eprintln!("{:12} installed={} signed_in={:?} version={:?} path={:?}", s.id, s.installed, s.signed_in, s.version, s.path); }
     }
 
     #[test]

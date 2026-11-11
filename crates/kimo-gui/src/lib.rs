@@ -9,6 +9,7 @@ pub mod keys;
 pub mod ledger;
 pub mod mcp_config;
 pub mod settings;
+pub mod system;
 pub mod telemetry;
 pub mod viewer;
 #[cfg(test)]
@@ -19,10 +20,10 @@ impl agent::Tools for engine::Supervisor {
     fn call(&self, name: &str, args: &serde_json::Value) -> Result<serde_json::Value, String> { engine::Supervisor::call(self, name, args) }
 }
 
-/// A required part is satisfied when kimo downloaded it, or when this computer already has it (ffmpeg/ffprobe on PATH).
+/// A part is satisfied when kimo downloaded it, or when this computer already has it (then it is never downloaded).
 pub fn part_satisfied(data_dir: &std::path::Path, p: &download::Part) -> Option<&'static str> {
     if download::installed(data_dir, p) { return Some("downloaded"); }
-    if matches!(p.id.as_str(), "ffmpeg" | "ffprobe") && agents::which(&p.id).is_some() { return Some("system"); }
+    if system::find(&p.id).is_some() { return Some("system"); }
     None
 }
 
@@ -40,23 +41,24 @@ pub fn find_fonts(exe_dir: Option<&std::path::Path>, res_dir: Option<&std::path:
 pub const PARTS_JSON: &str = include_str!("../parts.json");
 
 /// The environment the engine needs on this machine, for both the GUI's own engine and external clients' configs.
-/// `tools_dir` holds downloaded ffmpeg/whisper; `fonts` is the bundled font dir.
+/// Each tool comes from kimo's own download folder when it is there, else from where this computer already has it.
 pub fn engine_env(fonts: Option<&std::path::Path>, data_dir: &std::path::Path, parts: &[download::Part]) -> Vec<(String, String)> {
+    engine_env_with(fonts, data_dir, parts, &system::find)
+}
+
+pub fn engine_env_with(fonts: Option<&std::path::Path>, data_dir: &std::path::Path, parts: &[download::Part], sys: &dyn Fn(&str) -> Option<std::path::PathBuf>) -> Vec<(String, String)> {
     let mut env = Vec::new();
     if let Some(f) = fonts.filter(|f| f.is_dir()) { env.push(("KIMO_FONTS".into(), f.display().to_string())); }
-    for p in parts {
-        let path = data_dir.join(&p.dest);
-        if !path.is_file() { continue; }
-        match p.id.as_str() {
-            "whisper" => env.push(("KIMO_WHISPER_BIN".into(), path.display().to_string())),
-            "model" => env.push(("KIMO_WHISPER_MODEL".into(), path.display().to_string())),
-            _ => {}
-        }
-    }
-    let tools = data_dir.join("tools");
-    if tools.join(if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" }).is_file() {
+    let have = |id: &str| parts.iter().find(|p| p.id == id).map(|p| data_dir.join(&p.dest)).filter(|p| p.is_file()).or_else(|| sys(id));
+    if let Some(w) = have("whisper") { env.push(("KIMO_WHISPER_BIN".into(), w.display().to_string())); }
+    if let Some(m) = have("model") { env.push(("KIMO_WHISPER_MODEL".into(), m.display().to_string())); }
+    // FFmpeg is found through PATH by the engine: put kimo's copy, or one installed outside PATH, in front
+    let ff = have("ffmpeg").and_then(|f| f.parent().map(|d| d.to_path_buf()));
+    if let Some(dir) = ff {
+        let path = std::env::var("PATH").unwrap_or_default();
         let sep = if cfg!(windows) { ";" } else { ":" };
-        env.push(("PATH".into(), format!("{}{sep}{}", tools.display(), std::env::var("PATH").unwrap_or_default())));
+        let on_path = std::env::split_paths(&path).any(|p| p == dir);
+        if !on_path { env.push(("PATH".into(), format!("{}{sep}{path}", dir.display()))); }
     }
     env
 }
@@ -76,13 +78,26 @@ mod tests {
         let d = std::env::temp_dir().join(format!("kimo-env-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         let parts = super::download::load_parts(super::PARTS_JSON).unwrap();
-        assert!(super::engine_env(None, &d, &parts).is_empty());
+        assert!(super::engine_env_with(None, &d, &parts, &|_| None).is_empty());
         let model = parts.iter().find(|p| p.id == "model").unwrap();
         std::fs::create_dir_all(d.join(&model.dest).parent().unwrap()).unwrap();
         std::fs::write(d.join(&model.dest), b"x").unwrap();
-        let env = super::engine_env(None, &d, &parts);
+        let env = super::engine_env_with(None, &d, &parts, &|_| None);
         assert_eq!(env[0].0, "KIMO_WHISPER_MODEL");
         let _ = std::fs::remove_dir_all(&d);
+    }
+    #[test]
+    fn tools_already_on_the_computer_are_used_not_downloaded() {
+        let d = std::env::temp_dir().join(format!("kimo-env-sys-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let parts = super::download::load_parts(super::PARTS_JSON).unwrap();
+        let ffdir = d.join("Program Files").join("ffmpeg").join("bin");
+        let sys = |id: &str| match id { "ffmpeg" => Some(ffdir.join("ffmpeg.exe")), "model" => Some(d.join("ggml-small.bin")), "whisper" => Some(d.join("whisper-cli")), _ => None };
+        let env = super::engine_env_with(None, &d, &parts, &sys);
+        let get = |k: &str| env.iter().find(|(a, _)| a == k).map(|(_, v)| v.clone());
+        assert_eq!(get("KIMO_WHISPER_MODEL").unwrap(), d.join("ggml-small.bin").display().to_string());
+        assert_eq!(get("KIMO_WHISPER_BIN").unwrap(), d.join("whisper-cli").display().to_string());
+        assert!(get("PATH").unwrap().starts_with(&ffdir.display().to_string()), "an FFmpeg outside PATH is put in front of PATH");
     }
 }
 
