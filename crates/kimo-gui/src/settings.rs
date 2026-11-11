@@ -20,6 +20,8 @@ pub struct Settings {
     pub agent: String,
     /// Optional model per subscription agent ("" = the CLI's own default).
     pub agent_models: HashMap<String, String>,
+    /// Optional reasoning effort per subscription agent ("" = the CLI's own default).
+    pub agent_efforts: HashMap<String, String>,
     /// Recently opened or saved project files, newest first.
     pub recent: Vec<String>,
     /// The welcome tour was finished or skipped.
@@ -27,7 +29,7 @@ pub struct Settings {
 }
 impl Default for Settings {
     fn default() -> Self { Settings { mcp_enabled: false, provider: "openai".into(), models: HashMap::new(), base_urls: HashMap::new(), remembered: vec![], setup_done: false,
-        agent: "claude-code".into(), agent_models: HashMap::new(), recent: vec![], onboarded: false } }
+        agent: "claude-code".into(), agent_models: HashMap::new(), agent_efforts: HashMap::new(), recent: vec![], onboarded: false } }
 }
 impl Settings {
     pub fn load(p: &Path) -> Settings { std::fs::read_to_string(p).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default() }

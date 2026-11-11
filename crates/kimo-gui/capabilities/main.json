@@ -27,6 +27,7 @@
     "allow-cli-signin",
     "allow-cli-install",
     "allow-cli-register",
+    "allow-cli-models",
     "allow-agent-select",
     "allow-agent-send",
     "allow-agent-stop",

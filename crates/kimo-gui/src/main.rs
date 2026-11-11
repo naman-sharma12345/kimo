@@ -288,11 +288,18 @@ async fn cli_register(app: tauri::AppHandle, id: String) -> Result<String, Strin
     }).await
 }
 
+/// The models (and effort levels) a subscription agent offers, straight from its CLI.
 #[tauri::command]
-fn agent_select(st: State<'_, AppState>, agent: String, model: Option<String>, select: Option<bool>) -> Result<(), String> {
+async fn cli_models(app: tauri::AppHandle, id: String) -> Result<cli_agents::Models, String> {
+    blocking(app, move |_| { let k = Kind::from_id(&id).ok_or("unknown agent")?; Ok(cli_agents::models(k)) }).await
+}
+
+#[tauri::command]
+fn agent_select(st: State<'_, AppState>, agent: String, model: Option<String>, effort: Option<String>, select: Option<bool>) -> Result<(), String> {
     if agent != "api" && Kind::from_id(&agent).is_none() { return Err("unknown agent".into()); }
     let mut s = st.settings.lock().unwrap();
     if select != Some(false) { s.agent = agent.clone(); }
+    if let Some(e) = effort { s.agent_efforts.insert(agent.clone(), e.trim().to_string()); }
     if let Some(m) = model { s.agent_models.insert(agent, m.trim().to_string()); }
     drop(s);
     st.save();
@@ -320,11 +327,13 @@ async fn agent_send(app: tauri::AppHandle, text: String, turn: u64) -> Result<Va
             cli_agents::register(k, &bin, &st.kimo_launch()).map_err(|e| format!("Could not add kimo to Antigravity: {e}"))?;
         }
         let model = st.settings.lock().unwrap().agent_models.get(&agent).cloned().filter(|m| !m.is_empty());
+        let effort = st.settings.lock().unwrap().agent_efforts.get(&agent).cloned().filter(|e| !e.is_empty());
         let session = st.sessions.lock().unwrap().get(&agent).cloned();
         let launch = st.kimo_launch();
         let workdir = st.workspace();
-        let t = cli_agents::Turn { kind: k, bin: &bin, prompt: &text, session: session.as_deref(), model: model.as_deref(), launch: &launch, workdir: &workdir };
-        emit_ev(&a2, &agent, turn, &Ev::Status { text: format!("{} is working on your {}", k.name(), k.plan()) });
+        let t = cli_agents::Turn { kind: k, bin: &bin, prompt: &text, session: session.as_deref(), model: model.as_deref(), effort: effort.as_deref(), launch: &launch, workdir: &workdir };
+        let using = model.as_deref().map(|m| format!(" · {m}")).unwrap_or_default() + &effort.as_deref().map(|e| format!(" · {e} effort")).unwrap_or_default();
+        emit_ev(&a2, &agent, turn, &Ev::Status { text: format!("{} is working on your {}{using}", k.name(), k.plan()) });
         let mut o = cli_agents::run(&t, &st.turn, &mut |ev| emit_ev(&a2, &agent, turn, &ev));
         // a resumed session the CLI no longer knows: start a fresh one once
         if o.error.as_deref().map(|e| e.to_ascii_lowercase().contains("session") || e.to_ascii_lowercase().contains("conversation")).unwrap_or(false) && session.is_some() && o.reply.is_empty() {
@@ -690,7 +699,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             app_state, engine_restart, engine_call, engine_read, changes_list, change_undo,
             project_open, project_save, project_new, pick, media_thumb, open_url, reveal,
-            cli_status, cli_signin, cli_install, cli_register, agent_select, agent_send, agent_stop, agent_reset,
+            cli_status, cli_signin, cli_install, cli_register, cli_models, agent_select, agent_send, agent_stop, agent_reset,
             mcp_set, mcp_probe, key_set, key_clear, key_test, settings_set, onboarded_set,
             open_spectator, setup_status, setup_start, setup_pause, setup_skip, viewer_frame, viewer_draft
         ])

@@ -150,13 +150,16 @@ fn run_short(bin: &Path, args: &[&str], secs: u64) -> Option<(bool, String)> {
     let mut c = Command::new(bin);
     quiet(&mut c).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = c.spawn().ok()?;
+    // drain both pipes while it runs: a big answer (a model catalog) would otherwise fill the pipe and stall the child
+    let drain = |p: Option<Box<dyn Read + Send>>| std::thread::spawn(move || { let mut s = String::new(); if let Some(mut r) = p { let _ = r.read_to_string(&mut s); } s });
+    let ho = drain(child.stdout.take().map(|o| Box::new(o) as Box<dyn Read + Send>));
+    let he = drain(child.stderr.take().map(|e| Box::new(e) as Box<dyn Read + Send>));
     let t0 = std::time::Instant::now();
     loop {
         match child.try_wait() {
             Ok(Some(st)) => {
-                let mut out = String::new();
-                if let Some(mut o) = child.stdout.take() { let _ = o.read_to_string(&mut out); }
-                if let Some(mut e) = child.stderr.take() { let _ = e.read_to_string(&mut out); }
+                let mut out = ho.join().unwrap_or_default();
+                out.push_str(&he.join().unwrap_or_default());
                 return Some((st.success(), out));
             }
             Ok(None) if t0.elapsed() < Duration::from_secs(secs) => std::thread::sleep(Duration::from_millis(50)),
@@ -493,6 +496,8 @@ pub struct Turn<'a> {
     pub prompt: &'a str,
     pub session: Option<&'a str>,
     pub model: Option<&'a str>,
+    /// Reasoning effort (low … max), or None for the CLI's own default.
+    pub effort: Option<&'a str>,
     pub launch: &'a KimoLaunch,
     /// The agent's working directory: an empty kimo workspace folder, never the user's files.
     pub workdir: &'a Path,
@@ -516,6 +521,7 @@ pub fn command(t: &Turn) -> Result<(Vec<String>, Option<String>), String> {
             a.extend(["--allowedTools", "mcp__kimo", "--disallowedTools", "Bash,Edit,Write,MultiEdit,NotebookEdit,WebFetch,WebSearch,Task", "--append-system-prompt", SYSTEM].map(String::from));
             if let Some(s) = t.session { a.push("--resume".into()); a.push(s.into()); }
             if let Some(m) = t.model.filter(|m| !m.is_empty()) { a.push("--model".into()); a.push(m.into()); }
+            if let Some(e) = t.effort.filter(|e| !e.is_empty()) { a.push("--effort".into()); a.push(e.into()); }
             Ok((a, Some(prompt)))
         }
         Kind::Codex => {
@@ -529,6 +535,7 @@ pub fn command(t: &Turn) -> Result<(Vec<String>, Option<String>), String> {
             for (k, v) in &t.launch.env { a.push("-c".into()); a.push(format!("mcp_servers.kimo.env.{k}='{v}'")); }
             a.extend(["-c", "mcp_servers.kimo.startup_timeout_sec=30", "-c", "mcp_servers.kimo.tool_timeout_sec=900", "-c", "approval_policy=\"never\""].map(String::from));
             if let Some(m) = t.model.filter(|m| !m.is_empty()) { a.push("-m".into()); a.push(m.into()); }
+            if let Some(e) = t.effort.filter(|e| !e.is_empty()) { a.push("-c".into()); a.push(format!("model_reasoning_effort=\"{e}\"")); }
             a.push("-".into()); // prompt from stdin
             Ok((a, Some(prompt)))
         }
@@ -536,6 +543,7 @@ pub fn command(t: &Turn) -> Result<(Vec<String>, Option<String>), String> {
             a.extend(["-p".into(), prompt, "--output-format".into(), "stream-json".into(), "--disable-slash-commands".into()]);
             if let Some(s) = t.session { a.push("--conversation".into()); a.push(s.into()); }
             if let Some(m) = t.model.filter(|m| !m.is_empty()) { a.push("--model".into()); a.push(m.into()); }
+            if let Some(e) = t.effort.filter(|e| !e.is_empty()) { a.push("--effort".into()); a.push(e.into()); }
             Ok((a, None))
         }
     }
@@ -607,6 +615,76 @@ pub fn explain(k: Kind, stderr: &str) -> Option<String> {
         return Some(format!("Your {} plan's usage limit was reached. Try again later or switch agents.", k.name()));
     }
     None
+}
+
+// ------------------------------------------------------------------------------------------------------------------
+// Models
+
+#[derive(Serialize, Debug, Clone, PartialEq)]
+pub struct ModelOpt {
+    /// What goes to the CLI (`--model` / `-m`).
+    pub id: String,
+    pub label: String,
+    /// Reasoning-effort levels this model takes (empty = the agent's general list).
+    pub efforts: Vec<String>,
+    pub default_effort: Option<String>,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct Models {
+    pub models: Vec<ModelOpt>,
+    /// Effort levels the CLI accepts.
+    pub efforts: Vec<String>,
+    /// Where the list came from, or why it is short.
+    pub source: String,
+}
+
+const EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
+
+/// `agy models`: one `id<TAB>Label` per line (stderr's "Fetching…" line has no tab).
+pub fn parse_agy_models(text: &str) -> Vec<ModelOpt> {
+    text.lines().filter_map(|l| {
+        let (id, label) = l.trim().split_once('\t')?;
+        let id = id.trim();
+        (!id.is_empty() && !id.contains(' ')).then(|| ModelOpt { id: id.into(), label: label.trim().into(), efforts: vec![], default_effort: None })
+    }).collect()
+}
+
+/// `codex debug models`: {"models":[{slug, display_name, visibility, supported_reasoning_levels:[{effort}], default_reasoning_level}]}.
+/// Only models Codex itself lists in its picker (visibility "list").
+pub fn parse_codex_models(text: &str) -> Vec<ModelOpt> {
+    let Some(i) = text.find('{') else { return vec![] };
+    let Some(Ok(v)) = serde_json::Deserializer::from_str(&text[i..]).into_iter::<Value>().next() else { return vec![] };
+    v["models"].as_array().into_iter().flatten().filter(|m| m["visibility"].as_str().map(|s| s == "list").unwrap_or(true)).filter_map(|m| {
+        let id = m["slug"].as_str()?.to_string();
+        let efforts = m["supported_reasoning_levels"].as_array().map(|a| a.iter().filter_map(|e| e["effort"].as_str().or(e.as_str()).map(String::from)).collect()).unwrap_or_default();
+        Some(ModelOpt { label: m["display_name"].as_str().unwrap_or(&id).to_string(), id, efforts, default_effort: m["default_reasoning_level"].as_str().map(String::from) })
+    }).collect()
+}
+
+/// The models a signed-in CLI offers. Claude Code has no list command, so its documented aliases are offered (each
+/// always means the newest model of that family); any full model name can still be typed.
+pub fn models(k: Kind) -> Models {
+    static CACHE: std::sync::OnceLock<Mutex<std::collections::HashMap<&'static str, Models>>> = std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    if let Some(m) = cache.lock().unwrap().get(k.id()) { return m.clone(); }
+    let efforts: Vec<String> = EFFORTS.iter().map(|s| s.to_string()).collect();
+    let opt = |id: &str, label: &str| ModelOpt { id: id.into(), label: label.into(), efforts: vec![], default_effort: None };
+    let m = match k {
+        Kind::ClaudeCode => Models { models: vec![opt("fable", "Fable (newest)"), opt("opus", "Opus (newest)"), opt("sonnet", "Sonnet (newest)"), opt("haiku", "Haiku (newest)")], efforts, source: "Claude Code's model aliases".into() },
+        Kind::Codex => {
+            let list = find(k).and_then(|b| run_short(&b, &["debug", "models"], 30)).map(|(_, o)| parse_codex_models(&o)).unwrap_or_default();
+            let source = if list.is_empty() { "Codex did not list its models; type one".into() } else { "from your Codex account".into() };
+            Models { models: list, efforts, source }
+        }
+        Kind::Antigravity => {
+            let list = find(k).and_then(|b| run_short(&b, &["models"], 30)).map(|(_, o)| parse_agy_models(&o)).unwrap_or_default();
+            let source = if list.is_empty() { "Antigravity did not list its models; type one".into() } else { "from your Antigravity account".into() };
+            Models { models: list, efforts, source }
+        }
+    };
+    if !m.models.is_empty() { cache.lock().unwrap().insert(k.id(), m.clone()); }
+    m
 }
 
 /// Stop the running turn (if any).
@@ -689,7 +767,7 @@ mod tests {
         assert!(parse_agy(&json!({"event":"step_update","step_update":{"step_index":13,"state":"DONE","step_type":"system_message"}})).is_empty());
     }
 
-    fn turn<'a>(k: Kind, l: &'a KimoLaunch, w: &'a Path, s: Option<&'a str>) -> Turn<'a> { Turn { kind: k, bin: Path::new("x"), prompt: "make it warmer", session: s, model: None, launch: l, workdir: w } }
+    fn turn<'a>(k: Kind, l: &'a KimoLaunch, w: &'a Path, s: Option<&'a str>) -> Turn<'a> { Turn { kind: k, bin: Path::new("x"), prompt: "make it warmer", session: s, model: None, effort: None, launch: l, workdir: w } }
 
     #[test]
     fn commands_attach_kimo_and_keep_the_prompt_off_the_command_line() {
@@ -726,7 +804,39 @@ mod tests {
     #[test]
     #[ignore]
     fn where_are_the_agents() {
-        for k in Kind::all() { let s = status(k); eprintln!("{:12} installed={} signed_in={:?} version={:?} path={:?}", s.id, s.installed, s.signed_in, s.version, s.path); }
+        for k in Kind::all() { let s = status(k); eprintln!("{:12} installed={} signed_in={:?} version={:?} path={:?}", s.id, s.installed, s.signed_in, s.version, s.path); let m = models(k); eprintln!("   models ({}): {:?}", m.source, m.models.iter().map(|o| format!("{} [{}]", o.id, o.efforts.join("/"))).collect::<Vec<_>>()); }
+    }
+
+    #[test]
+    fn model_and_effort_reach_each_cli() {
+        let w = std::env::temp_dir().join(format!("kimo-cli-m-{}", std::process::id()));
+        std::fs::create_dir_all(&w).unwrap();
+        let l = KimoLaunch { command: "kimo-gui".into(), env: vec![] };
+        let t = |k| Turn { kind: k, bin: Path::new("x"), prompt: "p", session: None, model: Some("m1"), effort: Some("high"), launch: &l, workdir: &w };
+        let (a, _) = command(&t(Kind::ClaudeCode)).unwrap();
+        assert!(a.windows(2).any(|p| p == ["--model", "m1"]) && a.windows(2).any(|p| p == ["--effort", "high"]));
+        let (a, _) = command(&t(Kind::Codex)).unwrap();
+        assert!(a.windows(2).any(|p| p == ["-m", "m1"]) && a.contains(&"model_reasoning_effort=\"high\"".to_string()));
+        assert_eq!(a.last().unwrap(), "-", "the prompt marker stays last");
+        let (a, _) = command(&t(Kind::Antigravity)).unwrap();
+        assert!(a.windows(2).any(|p| p == ["--model", "m1"]) && a.windows(2).any(|p| p == ["--effort", "high"]));
+        let _ = std::fs::remove_dir_all(&w);
+    }
+
+    #[test]
+    fn model_lists_as_the_clis_print_them() {
+        // `agy models` (1.5.5): progress line on stderr, then id<TAB>label
+        let agy = parse_agy_models("Fetching available models...
+gemini-3.8-flash-high	Gemini 3.8 Flash (High)
+claude-opus-4-6-thinking	Claude Opus 4.6 (Thinking)
+");
+        assert_eq!(agy.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["gemini-3.8-flash-high", "claude-opus-4-6-thinking"]);
+        assert_eq!(agy[1].label, "Claude Opus 4.6 (Thinking)");
+        // `codex debug models` (0.167): hidden models are left out, efforts come per model
+        let codex = parse_codex_models(r#"{"models":[{"slug":"gpt-reserve","display_name":"GPT-Reserve","visibility":"hide"},{"slug":"gpt-6-luna","display_name":"GPT-6-Luna","visibility":"list","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}]}]}
+warning: something on stderr"#);
+        assert_eq!(codex, vec![ModelOpt { id: "gpt-6-luna".into(), label: "GPT-6-Luna".into(), efforts: vec!["low".into(), "high".into()], default_effort: Some("medium".into()) }]);
+        assert!(parse_codex_models("not json").is_empty());
     }
 
     #[test]

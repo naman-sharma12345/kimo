@@ -742,12 +742,70 @@ function agentInfo(id) { return S.cli.find(c => c.id === id); }
 function agentReady(id) { if (id === 'api') return !!S.app?.keys?.find(k => k.provider === S.app.settings.provider && k.set); const a = agentInfo(id); return !!(a?.installed && a.signed_in !== false); }
 function stClass(id) { if (id === 'api') return agentReady('api') ? 'ok' : 'bad'; const a = agentInfo(id); if (!a) return ''; if (!a.installed || a.signed_in === false) return 'bad'; return a.signed_in == null ? 'unk' : 'ok'; }
 function currentAgent() { return S.app?.settings?.agent || 'claude-code'; }
+// ---------- model + effort, per agent (lists come from each CLI: agy models, codex debug models, Claude's aliases) ----------
+S.models = {};
+async function loadModels(id) {
+  if (!S.models[id]) { try { S.models[id] = await B.invoke('cli_models', { id }); } catch (e) { return { models: [], efforts: [], source: String(e) }; } }
+  return S.models[id];
+}
+const modelOf = id => S.app?.settings?.agent_models?.[id] || '';
+const effortOf = id => S.app?.settings?.agent_efforts?.[id] || '';
+function modelLabel(id) {
+  if (id === 'api') { const p = S.app?.settings?.provider; return S.app?.settings?.models?.[p] || S.app?.providers?.find(x => x.id === p)?.default_model || ''; }
+  const m = modelOf(id); if (!m) return '';
+  return S.models[id]?.models?.find(o => o.id === m)?.label?.replace(/ \(newest\)$/, '') || m;
+}
+async function saveModel(id, model, effort) {
+  await B.invoke('agent_select', { agent: id, model, effort, select: false });
+  S.app.settings.agent_models ??= {}; S.app.settings.agent_efforts ??= {};
+  if (model != null) S.app.settings.agent_models[id] = model;
+  if (effort != null) S.app.settings.agent_efforts[id] = effort;
+  renderAgentPill();
+}
+let modelSeq = 0;
+async function renderModelBar() {
+  const id = currentAgent(), bar = $('#model-bar'), my = ++modelSeq;
+  if (id === 'api') {
+    bar.innerHTML = `<span class="mb"><span>Model</span><b style="color:var(--ink)">${esc(modelLabel('api') || 'not set')}</b></span><a class="lnk" style="margin-left:0" data-go="connections">Change in Connections → Use an API key</a>`;
+    return;
+  }
+  if (!S.models[id]) bar.innerHTML = `<span class="note muted">Asking ${esc(actorName(id))} which models your plan has…</span>`;
+  const m = await loadModels(id);
+  if (my !== modelSeq || currentAgent() !== id) return;
+  const cur = modelOf(id), ef = effortOf(id);
+  const known = !cur || m.models.some(o => o.id === cur);
+  const sel = m.models.find(o => o.id === cur);
+  const efforts = sel?.efforts?.length ? sel.efforts : m.efforts;
+  bar.innerHTML = `<label class="mb"><span>Model</span><select id="model-sel">
+      <option value="">Default (${esc(actorName(id))} picks)</option>
+      ${m.models.map(o => `<option value="${esc(o.id)}"${o.id === cur ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}
+      <option value="__other"${known ? '' : ' selected'}>Other model…</option></select></label>
+    <input id="model-other" type="text" placeholder="Type a model name" value="${known ? '' : esc(cur)}"${known ? ' hidden' : ''} spellcheck="false">
+    <label class="mb"><span>Effort</span><select id="effort-sel"><option value="">Default${sel?.default_effort ? ` (${esc(sel.default_effort)})` : ''}</option>
+      ${efforts.map(e => `<option value="${esc(e)}"${e === ef ? ' selected' : ''}>${esc(e[0].toUpperCase() + e.slice(1))}</option>`).join('')}</select></label>
+    <span class="note muted" id="model-src" title="${esc(m.source)}">${esc(m.source)}</span>`;
+  const other = $('#model-other');
+  $('#model-sel').onchange = async e => {
+    const v = e.target.value;
+    if (v === '__other') { other.hidden = false; other.focus(); return; }
+    other.hidden = true;
+    const keepEffort = !v || (m.models.find(o => o.id === v)?.efforts?.length ? m.models.find(o => o.id === v).efforts : m.efforts).includes(effortOf(id));
+    await saveModel(id, v, keepEffort ? null : '');
+    toast(v ? `${actorName(id)} will use ${modelLabel(id)}` : `${actorName(id)} will pick its own model`);
+    renderModelBar();
+  };
+  other.onkeydown = e => { if (e.key === 'Enter') other.blur(); };
+  other.onchange = async () => { const v = other.value.trim(); await saveModel(id, v, null); if (v) toast(`${actorName(id)} will use ${v}`); };
+  $('#effort-sel').onchange = async e => { await saveModel(id, null, e.target.value); toast(e.target.value ? `Effort: ${e.target.value}` : 'Effort: default'); };
+}
+
 function renderAgentPick() {
   const cur = currentAgent();
   $('#agent-pick').innerHTML = [...AGENTS, 'api'].map(id => `<button class="apick${id === cur ? ' on' : ''}" data-agent="${id}" role="radio" aria-checked="${id === cur}" title="${esc(id === 'api' ? 'Your own API key' : (agentInfo(id)?.sign_in_note || ''))}">
     <span class="alogo ${id}">${id === 'claude-code' ? 'C' : id === 'codex' ? '◎' : id === 'antigravity' ? 'A' : ICON('key')}</span>${esc(actorName(id))}<span class="st ${stClass(id)}"></span></button>`).join('');
   $$('.apick').forEach(b => b.onclick = () => pickAgent(b.dataset.agent));
   renderAgentPill();
+  renderModelBar();
 }
 async function pickAgent(id) {
   await B.invoke('agent_select', { agent: id });
@@ -758,7 +816,9 @@ async function pickAgent(id) {
 function renderAgentPill() {
   const id = currentAgent(), st = S.busy ? 'busy' : stClass(id);
   $('#pill-agent').className = 'rail-pill ' + st; $('#pill-agent-t').textContent = actorName(id); $('#pill-agent').title = `Agent: ${actorName(id)}`;
-  const ask = $('#ask-agent'); ask.className = 'ask-agent ' + st; $('#ask-agent-t').textContent = actorName(id);
+  const ml = modelLabel(id);
+  const ask = $('#ask-agent'); ask.className = 'ask-agent ' + st; $('#ask-agent-t').textContent = actorName(id) + (ml ? ' · ' + ml : '');
+  ask.title = `${actorName(id)}${ml ? ' using ' + ml : ''}${effortOf(id) ? ', ' + effortOf(id) + ' effort' : ''} · change in the Agent tab`;
   $('#chat-in').placeholder = `Tell ${actorName(id)} what to change…`;
 }
 $('#ask-agent').onclick = () => show('agent');
@@ -955,7 +1015,7 @@ function cliCard(a, compact) {
   else acts += `<span class="chip ok">In use</span><button class="btn sm ghost" data-go="agent">Open chat</button>`;
   if (!compact && a.installed && a.signed_in !== true) acts += a.signed_in === false ? '' : `<button class="btn sm ghost" data-cli="signin" data-id="${a.id}">Sign in</button>`;
   if (!compact && a.installed && !a.registered) acts += `<button class="btn sm ghost" data-cli="register" data-id="${a.id}" title="So your own ${esc(a.name)} sessions can use kimo too">Add kimo to ${esc(a.name)}</button>`;
-  const model = compact || !a.installed ? '' : `<div class="model"><input type="text" placeholder="Model (optional, CLI default)" data-model="${a.id}" value="${esc(S.app?.settings?.agent_models?.[a.id] || '')}" spellcheck="false"></div>`;
+  const model = compact || !a.installed ? '' : `<div class="ln"><span class="d" style="background:transparent"></span><span>Model: <b>${esc(modelLabel(a.id) || 'default')}</b>${effortOf(a.id) ? ` · ${esc(effortOf(a.id))} effort` : ''} · pick it in the Agent tab</span></div>`;
   return `<div class="card acard${cur ? ' sel' : ''}" id="cli-${a.id}"><div class="top"><span class="alogo ${a.id}">${a.id === 'claude-code' ? 'C' : a.id === 'codex' ? '◎' : 'A'}</span><div><div class="nm">${esc(a.name)}</div><div class="plan">${esc(a.plan)}</div></div></div>
     <div class="lines">${inst}${sign}${reg}</div>${model}<div class="acts">${acts}</div></div>`;
 }
@@ -980,7 +1040,6 @@ document.addEventListener('click', async e => {
   } catch (err) { toast(String(err), 'bad'); $('#cli-msg').textContent = String(err); }
   b.disabled = false;
 });
-document.addEventListener('change', e => { const m = e.target.closest('[data-model]'); if (m) B.invoke('agent_select', { agent: m.dataset.model, model: m.value, select: false }).then(() => { toast(m.value.trim() ? `${actorName(m.dataset.model)} will use ${m.value.trim()}` : `${actorName(m.dataset.model)} will use its default model`); refresh(); }); });
 $('#cli-refresh').onclick = refreshCli;
 
 // API keys (optional)
