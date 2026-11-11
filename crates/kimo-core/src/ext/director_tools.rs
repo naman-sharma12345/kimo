@@ -964,9 +964,19 @@ fn lint_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
         } }
         best
     };
-    // 1 picture: dark, blown or empty frames, sampled every 0.5 s
-    let mut t = 0.25; let mut bad_at: Vec<(f64, String, Option<String>)> = vec![];
-    while t < end { let top = top_media(ss, t);
+    // 1 picture: dark, blown or empty frames. Every 0.5 s on short edits; on long ones a grid of at most ~150 samples plus
+    // the middle of every clip, under a time budget (KIMO_LINT_PICTURE_S, default 180 s), so a 10-minute edit is checked
+    // in minutes instead of hitting the call's 600 s limit and rolling back. What was covered is reported.
+    let step = (end / 150.0).max(0.5);
+    let mut times: Vec<f64> = { let mut v = vec![]; let mut x = step / 2.0; while x < end { v.push(x); x += step; } v };
+    for tr in ss.project.tracks.iter().filter(|tr| !tr.muted) { for c in &tr.clips { if matches!(c.source, Source::Media { .. }) { times.push(c.start + c.duration / 2.0); } } }
+    times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)); times.dedup_by(|a, b| (*a - *b).abs() < step / 4.0);
+    let budget = std::env::var("KIMO_LINT_PICTURE_S").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(180.0);
+    let t_start = std::time::Instant::now();
+    let (mut bad_at, mut checked, mut checked_to): (Vec<(f64, String, Option<String>)>, usize, f64) = (vec![], 0, 0.0);
+    for &t in &times {
+        if t_start.elapsed().as_secs_f64() > budget { break; }
+        let top = top_media(ss, t); let top = top_media(ss, t);
         // Perf history (KP1, KQ1): this loop used to pre-warm the decode cache itself (a big,
         // export-sized window, optionally through a short-GOP analysis proxy) immediately before
         // every get_scopes call, because get_scopes' OWN internal preparation once used a much
@@ -984,7 +994,9 @@ fn lint_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
         // corrupt file) to the caller. Guarded by analysis_prepare_calls_count in render_state_leak-
         // style tests: render::ANALYSIS_PREPARE_CALLS must advance by exactly 1 per sample now, not 2.
         match &top { None => bad_at.push((t, "empty_frame".into(), None)), Some(cid) => { if let Ok(s) = call(ss, "get_scopes", &json!({"time": r3(t)})) { let l = s["luma_mean"].as_f64().unwrap_or(0.5); if l < 0.08 { bad_at.push((t, "dark_frame".into(), Some(cid.clone()))); } else if l > 0.92 { bad_at.push((t, "blown_frame".into(), Some(cid.clone()))); } } } }
-        t += 0.5; }
+        checked += 1; checked_to = t; }
+    let picture_check = json!({"samples": checked, "planned": times.len(), "step_s": r3(step), "checked_up_to_s": r3(checked_to), "complete": checked == times.len(),
+        "note": if checked == times.len() { Value::Null } else { json!(format!("stopped after {budget:.0} s: frames after {checked_to:.1} s were not checked; set KIMO_LINT_PICTURE_S higher to check them all")) }});
     let mut seen = std::collections::HashSet::new();
     for (t, code, cid) in &bad_at { let key = format!("{code}{cid:?}"); if !seen.insert(key) { continue; }
         let fix = match (code.as_str(), cid) { ("empty_frame", _) => json!({"tool": "timeline_summary", "args": {}, "then": "fill the gap or end the timeline earlier"}), (_, Some(c)) => json!({"tool": "auto_grade", "args": {"clip_ids": [c]}, "or": "undo the grade that crushed it"}), _ => json!(null) };
@@ -1252,7 +1264,7 @@ fn lint_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
     // 5 length
     if let Some(d) = a.get("duration").and_then(|v| v.as_array()) { if let (Some(lo), Some(hi)) = (d.first().and_then(|v| v.as_f64()), d.get(1).and_then(|v| v.as_f64())) { if end < lo - 0.05 || end > hi + 0.05 { probs.push(json!({"code": "duration", "message": format!("timeline is {end:.2} s, wanted {lo}-{hi} s"), "fix": {"tool": "timeline_summary", "args": {}}})); } } }
     probs.truncate(20);
-    Ok(json!({"ok": probs.is_empty(), "problems": probs, "checked": ["frames every 0.5 s", "text vs title safe and the platform UI", "text vs the subject in frame", "fonts", "media clip aspect vs canvas", "b-roll inside speech", "captions cover speech", "caption confidence vs the recognizer", "mix loudness", "duration"], "platform": platform, "duration": r3(end)}))
+    Ok(json!({"ok": probs.is_empty(), "problems": probs, "picture_check": picture_check, "checked": ["frames (see picture_check for how many)", "text vs title safe and the platform UI", "text vs the subject in frame", "fonts", "media clip aspect vs canvas", "b-roll inside speech", "captions cover speech", "caption confidence vs the recognizer", "mix loudness", "duration"], "platform": platform, "duration": r3(end)}))
 }
 
 // ---------------------------------------------------------------- review_export

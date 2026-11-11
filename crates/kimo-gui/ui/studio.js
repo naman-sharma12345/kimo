@@ -67,9 +67,9 @@ const clock = t => new Date(t).toLocaleTimeString([], { hour12: false });
 const base = p => String(p || '').split(/[\\/]/).pop();
 const r3 = v => Math.round(v * 1000) / 1000;
 const AUDIO_EXT = /\.(mp3|wav|aac|m4a|flac|ogg|opus|aiff?)$/i, IMAGE_EXT = /\.(png|jpe?g|webp|gif|bmp|tiff?|exr|svg)$/i;
-function confirmBox(title, body, yes = 'OK') {
+function confirmBox(title, body, yes = 'OK', no = 'Cancel') {
   return new Promise(res => {
-    $('#cf-title').textContent = title; $('#cf-body').textContent = body; $('#cf-yes').textContent = yes;
+    $('#cf-title').textContent = title; $('#cf-body').textContent = body; $('#cf-yes').textContent = yes; $('#cf-no').textContent = no;
     $('#confirm').classList.add('on');
     const done = v => { $('#confirm').classList.remove('on'); res(v); };
     $('#cf-yes').onclick = () => done(true); $('#cf-no').onclick = () => done(false);
@@ -1277,6 +1277,7 @@ B.listen('agent-event', onAgentEvent);
 B.listen('agent-connection', m => { renderAttached(m.attached || {}); if (m.up && m.client !== currentAgent()) toast(`${actorName(m.client)} connected to this project`); });
 B.listen('setup-progress', onProgress);
 B.listen('open-file', p => openProject(p));
+B.listen('autosaved', m => { const el = $('#tb-auto'); el.hidden = false; el.textContent = 'Autosaved ' + new Date(m.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); el.title = 'Saved for crash recovery to ' + m.path + '. Use Save to write your own file.'; });
 B.listen('engine-status', s => { refresh().then(() => { if (s?.state === 'running') { loadProject(); viewerSoon(); } }); });
 addEventListener('resize', () => { if (S.tab === 'edit') renderTimeline(); });
 
@@ -1290,7 +1291,16 @@ if (S.app?.engine?.state === 'running') {
   S.transitions = (Array.isArray(tr) ? tr : tr?.transitions || tr?.kinds || []).map(x => typeof x === 'string' ? x : x.kind || x.name).filter(Boolean).slice(0, 60);
 }
 refreshCli();
-if (st && (st.ready || st.done)) maybeWelcome();
+// a crash (PC restart, power cut) left unsaved work: offer it back before anything else
+const lost = await B.invoke('recovery_status').catch(() => null);
+if (lost) {
+  const when = new Date(lost.autosaved_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  const what = lost.project_path ? base(lost.project_path).replace(/\.(kimo|json)$/, '') : 'an unsaved project';
+  if (await confirmBox('Restore your unsaved work?', `kimo closed before your last changes to ${what} were saved. Restore the copy autosaved at ${when}?`, 'Restore', 'Discard')) {
+    try { await B.invoke('recovery_restore'); S.dirty = true; await refresh(); show('edit'); await loadProject(); viewerSoon(); toast('Restored. Press Save to keep it.'); }
+    catch (e) { toast(String(e), 'bad'); }
+  } else { B.invoke('recovery_discard'); }
+} else if (st && (st.ready || st.done)) maybeWelcome();
 setInterval(() => { if (S.app?.engine?.state !== 'running') refresh().then(() => { if (S.app?.engine?.state === 'running') { loadProject(); viewerSoon(); } }); }, 2000);
 window.__kimo = { S, P, V, T, show, refresh, loadProject, sendAgent, importPaths, viewerRefresh };
 document.body.dataset.ready = '1';

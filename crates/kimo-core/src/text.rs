@@ -27,7 +27,32 @@ fn font_fallback_warning(name: &str) -> Option<String> {
 fn norm(s: &str) -> String { let mut n: String = s.to_lowercase().chars().filter(|c| c.is_alphanumeric()).collect(); for suf in ["variablefont", "var", "regular"] { if n.ends_with(suf) && n.len() > suf.len() { n.truncate(n.len() - suf.len()); } } n }
 pub fn font_dirs() -> Vec<std::path::PathBuf> { let mut v = vec![]; if let Ok(d) = std::env::var("KIMO_FONTS") { v.push(d.into()); }
     if let Ok(e) = std::env::current_exe() { let mut p = e.clone(); for _ in 0..4 { p.pop(); v.push(p.join("fonts")); } }
-    v.push("fonts".into()); if let Ok(h) = std::env::var("HOME") { v.push(std::path::Path::new(&h).join("kimo/fonts")); } v.push("/usr/share/fonts".into()); v }
+    v.push("fonts".into()); if let Some(h) = home_dir() { v.push(h.join("kimo/fonts")); }
+    // the fonts already on this computer (system and per-user), on every OS: Windows ships Nirmala UI (Devanagari),
+    // Segoe UI, Arial...; nothing has to be installed for text to draw
+    v.extend(system_font_dirs()); v }
+fn home_dir() -> Option<std::path::PathBuf> { std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(std::path::PathBuf::from) }
+pub fn system_font_dirs() -> Vec<std::path::PathBuf> {
+    let mut v: Vec<std::path::PathBuf> = vec![];
+    if cfg!(windows) {
+        v.push(std::path::PathBuf::from(std::env::var_os("WINDIR").unwrap_or_else(|| r"C:\Windows".into())).join("Fonts"));
+        if let Some(l) = std::env::var_os("LOCALAPPDATA") { v.push(std::path::PathBuf::from(l).join("Microsoft").join("Windows").join("Fonts")); }
+    } else if cfg!(target_os = "macos") {
+        v.extend(["/System/Library/Fonts", "/Library/Fonts"].map(std::path::PathBuf::from));
+        if let Some(h) = home_dir() { v.push(h.join("Library/Fonts")); }
+    } else {
+        v.extend(["/usr/share/fonts", "/usr/local/share/fonts"].map(std::path::PathBuf::from));
+        if let Some(h) = home_dir() { v.push(h.join(".local/share/fonts")); v.push(h.join(".fonts")); }
+    }
+    v
+}
+/// A font every machine has, for when the requested one and Montserrat are both missing.
+pub fn system_fallback_font() -> Option<std::path::PathBuf> {
+    let c: &[&str] = if cfg!(windows) { &["segoeui.ttf", "arial.ttf", "calibri.ttf", "tahoma.ttf"] }
+        else if cfg!(target_os = "macos") { &["Supplemental/Arial.ttf", "Arial.ttf", "Helvetica.ttc", "SFNS.ttf"] }
+        else { &["truetype/dejavu/DejaVuSans.ttf", "dejavu/DejaVuSans.ttf", "truetype/liberation/LiberationSans-Regular.ttf", "liberation-sans/LiberationSans-Regular.ttf", "noto/NotoSans-Regular.ttf", "truetype/noto/NotoSans-Regular.ttf"] };
+    system_font_dirs().iter().flat_map(|d| c.iter().map(move |f| d.join(f))).find(|p| p.is_file())
+}
 fn scan(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>, depth: usize) { if depth > 4 { return; } if let Ok(rd) = std::fs::read_dir(dir) { for e in rd.flatten() { let p = e.path(); if p.is_dir() { scan(&p, out, depth + 1); } else if matches!(p.extension().and_then(|x| x.to_str()), Some("ttf") | Some("otf") | Some("TTF") | Some("OTF")) { out.push(p); } } } }
 pub fn all_fonts() -> Vec<(String, std::path::PathBuf)> { let mut files = vec![]; for d in font_dirs() { scan(&d, &mut files, 0); } let mut seen = std::collections::HashSet::new(); let mut v = vec![];
     for p in files { let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string(); let n = norm(&stem); if seen.insert(n.clone()) { v.push((stem, p)); } } v.sort_by(|a, b| a.0.cmp(&b.0)); v }
@@ -41,7 +66,7 @@ pub fn resolve_font_info(name: &str) -> (String, bool) { if std::path::Path::new
     // One clear stderr line per distinct missing font name says so at the moment it actually happens.
     if let Some(msg) = font_fallback_warning(name) { eprintln!("{msg}"); }
     if let Some((_, p)) = fonts.iter().find(|(s, _)| norm(s) == "montserrat") { return (p.to_string_lossy().into(), true); }
-    ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".into(), true) }
+    (system_fallback_font().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".into()), true) }
 pub fn resolve_font(name: &str) -> String { resolve_font_info(name).0 }
 
 fn font(name: &str, weight: f64) -> Result<std::sync::Arc<FontVec>, String> {

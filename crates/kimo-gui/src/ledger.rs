@@ -55,14 +55,18 @@ pub struct Ledger {
     card_seq: AtomicU64,
     write: Mutex<()>,
     emit: Emit,
+    /// Counts successful possibly-mutating calls: autosave saves when it moves.
+    rev: AtomicU64,
 }
 
 impl Ledger {
     pub fn new(tools: Arc<dyn Tools + Send + Sync>, emit: Emit) -> Ledger {
-        Ledger { tools, changes: Mutex::new(vec![]), seq: AtomicU64::new(1), card_seq: AtomicU64::new(1), write: Mutex::new(()), emit }
+        Ledger { tools, changes: Mutex::new(vec![]), seq: AtomicU64::new(1), card_seq: AtomicU64::new(1), write: Mutex::new(()), emit, rev: AtomicU64::new(0) }
     }
 
     pub fn tools(&self) -> Vec<Value> { self.tools.list() }
+    /// How many edits have landed (any actor). Autosave compares this with the revision it last wrote.
+    pub fn revision(&self) -> u64 { self.rev.load(Ordering::SeqCst) }
     pub fn changes(&self) -> Vec<Change> { self.changes.lock().unwrap().clone() }
     /// A fresh project (engine restart / project load): the old cards can no longer be undone.
     pub fn reset(&self) { self.changes.lock().unwrap().clear(); (self.emit)("changes", json!([])); }
@@ -95,6 +99,7 @@ impl Ledger {
             (self.emit)("live-event", json!({"id": id, "phase": "end", "actor": actor, "tool": tool, "action": action, "summary": summary,
                 "ok": ok, "ms": ms, "result": clip(&text, 600), "change": change, "read_only": ro, "t": now_ms() as u64}));
         }
+        if !ro && ok && !matches!(action.as_str(), "save_project" | "export_job_start" | "export") { self.rev.fetch_add(1, Ordering::SeqCst); }
         if !ro && ok { (self.emit)("project-changed", json!({"actor": actor, "tool": tool, "action": action, "change": change})); }
         res
     }

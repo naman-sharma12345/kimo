@@ -8,7 +8,7 @@
 # Sandbox: the page is served from a virtual origin that maps only to files inside "dir"; every other request is aborted,
 # DNS resolves nothing, WebSocket/RTCPeerConnection are removed, Date/performance.now are frozen and Math.random is a
 # seeded PRNG restarted on every page load.
-import sys, os, json, time, mimetypes, io, fcntl, urllib.parse
+import sys, os, json, time, mimetypes, io, glob, urllib.parse
 
 ORIGIN = 'http://kimo-clip.invalid/'
 INIT = r"""(() => {
@@ -22,6 +22,42 @@ INIT = r"""(() => {
   window.WebSocket = off; window.RTCPeerConnection = off; window.EventSource = off;
 })();"""
 
+def lock_exclusive(path):
+    """Hold an exclusive lock on `path` for the life of the process (one browser at a time across kimo processes).
+    fcntl on Linux/macOS, msvcrt on Windows (which has no fcntl)."""
+    lf = open(path, 'a+b')
+    if os.name == 'nt':
+        import msvcrt
+        lf.seek(0)
+        while True:
+            try:
+                msvcrt.locking(lf.fileno(), msvcrt.LK_LOCK, 1)  # retries for ~10 s, then raises; keep waiting
+                break
+            except OSError:
+                time.sleep(0.5)
+    else:
+        import fcntl
+        fcntl.flock(lf, fcntl.LOCK_EX)
+    return lf
+
+def find_chromium():
+    """Playwright's headless Chromium in its cache, on every OS (newest first). Empty = let Playwright pick its own."""
+    if os.name == 'nt':
+        roots = [os.path.join(os.environ.get('LOCALAPPDATA', ''), 'ms-playwright')]
+        rels = ['chromium_headless_shell-*/chrome-headless-shell-win64/chrome-headless-shell.exe', 'chromium-*/chrome-win*/chrome.exe']
+    elif sys.platform == 'darwin':
+        roots = [os.path.expanduser('~/Library/Caches/ms-playwright')]
+        rels = ['chromium_headless_shell-*/chrome-headless-shell-mac*/chrome-headless-shell', 'chromium-*/chrome-mac*/Chromium.app/Contents/MacOS/Chromium']
+    else:
+        roots = [os.path.expanduser('~/.cache/ms-playwright')]
+        rels = ['chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell', 'chromium-*/chrome-linux*/chrome']
+    if os.environ.get('PLAYWRIGHT_BROWSERS_PATH'): roots.insert(0, os.environ['PLAYWRIGHT_BROWSERS_PATH'])
+    for r in roots:
+        for rel in rels:
+            for c in sorted(glob.glob(os.path.join(r, rel)), reverse=True):
+                if os.path.isfile(c): return c
+    return ''
+
 def out(o):
     sys.stdout.write(json.dumps(o) + '\n'); sys.stdout.flush()
 
@@ -32,16 +68,15 @@ def main():
     fms = int(job.get('frame_timeout_ms') or 20000); lms = int(job.get('load_timeout_ms') or 60000)
     lock = job.get('lock')
     if lock:
-        lf = open(lock, 'a'); fcntl.flock(lf, fcntl.LOCK_EX)
+        lf = lock_exclusive(lock)
     try:
         from playwright.sync_api import sync_playwright
         from PIL import Image
     except Exception as e:
-        out({'error': 'renderer_failed: the code clip renderer needs python3 with playwright and Pillow (%s)' % e}); sys.exit(3)
+        out({'error': 'renderer_failed: the code clip renderer needs Python with playwright and Pillow (%s). Install once: %s -m pip install playwright pillow && %s -m playwright install chromium-headless-shell' % (e, os.path.basename(sys.executable) or 'python', os.path.basename(sys.executable) or 'python')}); sys.exit(3)
     exe = job.get('chromium') or ''
     if not exe:
-        for c in sorted(__import__('glob').glob(os.path.expanduser('~/.cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell')), reverse=True):
-            exe = c; break
+        exe = find_chromium()
     args = ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--hide-scrollbars',
             '--mute-audio', '--force-device-scale-factor=1', '--disable-background-timer-throttling', '--disable-renderer-backgrounding',
             '--disable-background-networking', '--host-resolver-rules=MAP * ~NOTFOUND', '--no-first-run', '--disable-extensions', '--disable-sync']

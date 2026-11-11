@@ -8,6 +8,7 @@ pub mod engine;
 pub mod keys;
 pub mod ledger;
 pub mod mcp_config;
+pub mod recovery;
 pub mod settings;
 pub mod system;
 pub mod telemetry;

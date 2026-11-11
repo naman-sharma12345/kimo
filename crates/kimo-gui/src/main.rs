@@ -14,6 +14,7 @@ use kimo_gui::engine::{self, Status, Supervisor};
 use kimo_gui::keys::{self, KeyRing, Secret};
 use kimo_gui::ledger::{self, As, Ledger};
 use kimo_gui::mcp_config::{self, Launch};
+use kimo_gui::recovery;
 use kimo_gui::settings::Settings;
 use kimo_gui::telemetry::{self, External, Source};
 use kimo_gui::viewer::{self, Viewer};
@@ -47,6 +48,9 @@ struct AppState {
     /// Agents currently attached through the bridge (label → open connections).
     attached: Mutex<HashMap<String, u32>>,
     project_path: Mutex<Option<String>>,
+    /// Autosave / crash recovery: this session's record, and what the previous (crashed) session left to restore.
+    rec: Mutex<recovery::State>,
+    offer: Mutex<Option<recovery::Offer>>,
 }
 
 impl AppState {
@@ -73,6 +77,14 @@ impl AppState {
         *self.project_path.lock().unwrap() = Some(path.to_string());
         self.settings.lock().unwrap().touch_recent(path);
         self.save();
+        self.mark_saved();
+    }
+    /// Everything up to now is in the user's own file (saved, opened or a new empty project): nothing to recover.
+    fn mark_saved(&self) {
+        let mut r = self.rec.lock().unwrap();
+        r.saved_rev = self.ledger.revision();
+        r.project_path = self.project_path.lock().unwrap().clone();
+        recovery::store(&self.data_dir, &r);
     }
 }
 
@@ -175,7 +187,7 @@ async fn project_save(app: tauri::AppHandle, path: String) -> Result<String, Str
 #[tauri::command]
 async fn project_new(app: tauri::AppHandle) -> Result<Status, String> {
     let a2 = app.clone();
-    let s = blocking(app, |st| { let s = st.sup.start(); st.ledger.reset(); *st.project_path.lock().unwrap() = None; *st.chat.lock().unwrap() = Chat::default(); st.sessions.lock().unwrap().clear(); Ok(s) }).await?;
+    let s = blocking(app, |st| { let s = st.sup.start(); st.ledger.reset(); *st.project_path.lock().unwrap() = None; *st.chat.lock().unwrap() = Chat::default(); st.sessions.lock().unwrap().clear(); st.mark_saved(); Ok(s) }).await?;
     let _ = a2.emit("project-changed", json!({"actor": "you", "action": "new_project"}));
     Ok(s)
 }
@@ -471,6 +483,37 @@ fn settings_set(st: State<'_, AppState>, provider: String, model: Option<String>
     Ok(())
 }
 
+// ---------- crash recovery ----------
+/// Unsaved work the previous session left when it did not close normally (PC crash, power cut), if any.
+#[tauri::command]
+fn recovery_status(st: State<'_, AppState>) -> Option<recovery::Offer> { st.offer.lock().unwrap().clone() }
+
+/// Open the autosaved work. Save then writes to the user's original file (when there was one).
+#[tauri::command]
+async fn recovery_restore(app: tauri::AppHandle) -> Result<Value, String> {
+    let a2 = app.clone();
+    let v = blocking(app, |st| {
+        let o = st.offer.lock().unwrap().take().ok_or("nothing to restore")?;
+        let r = st.ledger.call("you", "project", &json!({"action": "load_project", "args": {"path": o.autosave}}))?;
+        if engine::is_error(&r) { return Err(engine::result_text(&r)); }
+        st.ledger.reset();
+        *st.project_path.lock().unwrap() = o.project_path.clone();
+        // restored work is unsaved work: keep it recoverable until the user saves
+        let mut rec = st.rec.lock().unwrap(); rec.project_path = o.project_path.clone(); rec.saved_rev = 0; recovery::store(&st.data_dir, &rec);
+        Ok(json!({"project_path": o.project_path, "autosaved_at": o.autosaved_at}))
+    }).await?;
+    let _ = a2.emit("project-changed", json!({"actor": "you", "action": "restore"}));
+    Ok(v)
+}
+
+#[tauri::command]
+fn recovery_discard(st: State<'_, AppState>) {
+    if let Some(o) = st.offer.lock().unwrap().take() { let _ = std::fs::remove_file(&o.autosave); }
+    let mut r = st.rec.lock().unwrap();
+    *r = recovery::State { clean: false, pid: std::process::id(), ..Default::default() };
+    recovery::store(&st.data_dir, &r);
+}
+
 #[tauri::command]
 fn onboarded_set(st: State<'_, AppState>) { st.settings.lock().unwrap().onboarded = true; st.save(); }
 
@@ -648,12 +691,44 @@ fn main() {
             let vdir = data_dir.join("viewer-cache");
             let _ = std::fs::remove_dir_all(&vdir);
             let viewer = Arc::new(Viewer::new(vdir).with_ffmpeg(viewer::find_ffmpeg(&data_dir)));
+            // what the previous session left (offered once the window is up), then start this session's record
+            let prev = recovery::load(&data_dir);
+            let offer = recovery::offer(&prev);
+            // an offer not yet answered stays on record (a second crash before Restore/Discard must not lose it)
+            let rec_now = if offer.is_some() { recovery::State { clean: false, pid: std::process::id(), ..prev } } else { recovery::State { clean: false, pid: std::process::id(), ..Default::default() } };
+            recovery::store(&data_dir, &rec_now);
             app.manage(AppState {
                 sup: sup.clone(), ledger, keys: keyring, settings: Mutex::new(settings), settings_path,
                 chat: Mutex::new(Chat::default()), external: Mutex::new(None), data_dir: data_dir.clone(), fonts, parts,
                 cancel_dl: Arc::new(AtomicBool::new(false)), viewer, bridge: Mutex::new(None),
                 turn: Arc::new(Mutex::new(None)), busy: AtomicBool::new(false), sessions: Mutex::new(HashMap::new()),
                 attached: Mutex::new(HashMap::new()), project_path: Mutex::new(None),
+                rec: Mutex::new(rec_now), offer: Mutex::new(offer),
+            });
+            // autosave: every minute after an edit, or after 20 edits, straight to the engine (not an edit itself)
+            let h6 = handle.clone();
+            std::thread::spawn(move || {
+                let (mut last_rev, mut last_t) = (0u64, std::time::Instant::now());
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    let st = h6.state::<AppState>();
+                    let rev = st.ledger.revision();
+                    if !recovery::due(rev, last_rev, last_t.elapsed().as_secs_f64(), 60.0, 20) { continue; }
+                    if !matches!(st.sup.status(), Status::Running { .. }) { continue; }
+                    let pp = st.project_path.lock().unwrap().clone();
+                    let path = recovery::autosave_path(&st.data_dir, pp.as_deref(), std::process::id());
+                    if let Some(d) = path.parent() { let _ = std::fs::create_dir_all(d); }
+                    let ok = st.sup.call("project", &json!({"action": "save_project", "args": {"path": path.display().to_string()}})).map(|r| !engine::is_error(&r)).unwrap_or(false);
+                    last_t = std::time::Instant::now();
+                    if !ok { continue; }
+                    last_rev = rev;
+                    let at = ledger::now_ms() as u64;
+                    let mut r = st.rec.lock().unwrap();
+                    r.autosave = Some(path.display().to_string()); r.autosaved_at = at; r.autosaved_rev = rev; r.project_path = pp;
+                    recovery::store(&st.data_dir, &r);
+                    drop(r);
+                    let _ = h6.emit("autosaved", json!({"at": at, "path": path.display().to_string()}));
+                }
             });
             // the bridge: agents launched with `kimo-gui mcp` join this engine
             let h4 = handle.clone();
@@ -701,6 +776,7 @@ fn main() {
             project_open, project_save, project_new, pick, media_thumb, open_url, reveal,
             cli_status, cli_signin, cli_install, cli_register, cli_models, agent_select, agent_send, agent_stop, agent_reset,
             mcp_set, mcp_probe, key_set, key_clear, key_test, settings_set, onboarded_set,
+            recovery_status, recovery_restore, recovery_discard,
             open_spectator, setup_status, setup_start, setup_pause, setup_skip, viewer_frame, viewer_draft
         ])
         .build(tauri::generate_context!())
@@ -709,6 +785,7 @@ fn main() {
             if let tauri::RunEvent::Exit = ev {
                 let st = app.state::<AppState>();
                 cli_agents::stop(&st.turn);
+                { let mut r = st.rec.lock().unwrap(); r.clean = true; recovery::store(&st.data_dir, &r); }
                 if let Some(b) = st.bridge.lock().unwrap().take() { b.remove_file(); }
                 st.sup.stop();
             }

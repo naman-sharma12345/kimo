@@ -216,7 +216,10 @@ fn prior(pcm:&[f32])->Vec<u8>{let data=(pcm.len()*2) as u32;let mut b=Vec::new()
 /// Strict audio errors preserve track absence separately from failed decode.
 #[derive(Debug,PartialEq)]pub enum AudioError{NoAudioTrack,DecodeFailed(String),InvalidInput(String),ResourceLimit(String)}
 impl std::fmt::Display for AudioError{fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result{match self{Self::NoAudioTrack=>write!(f,"no audio track"),Self::DecodeFailed(e)=>write!(f,"audio decode failed: {e}"),Self::InvalidInput(e)=>write!(f,"invalid audio input: {e}"),Self::ResourceLimit(e)=>write!(f,"audio resource limit: {e}")}}}
-fn strict_audio_cap()->usize{(crate::guard::limits().mem_bytes/16).min(64*1024*1024)}
+/// Whole-timeline float PCM may use up to a quarter of the engine's memory budget (KIMO_MEM_MB, default 55% of RAM):
+/// on a 16 GB machine that is about 5.5 hours of 48 kHz stereo. It used to be a fixed 64 MB (about 3 minutes), which
+/// stopped ducking, loudness and lint on any real-length edit. Allocations still go through guard::reserve.
+fn strict_audio_cap()->usize{(crate::guard::limits().mem_bytes/4).max(64*1024*1024)}
 fn strict_samples(seconds:f64)->Result<usize,AudioError>{if !seconds.is_finite()||seconds<0.{return Err(AudioError::InvalidInput("finite nonnegative duration required".into()))}let samples=(seconds*SR as f64).ceil()*2.;if !samples.is_finite()||samples>usize::MAX as f64{return Err(AudioError::ResourceLimit("sample count overflow".into()))}Ok(samples as usize)}
 pub(crate) fn source_info(path:&str)->Result<serde_json::Value,AudioError>{let raw=crate::color::process::capture(Command::new("ffprobe").args(["-v","error","-select_streams","a:0","-show_entries","stream=sample_rate,channels","-of","json",path]),1024*1024,std::time::Duration::from_secs(30)).map_err(AudioError::DecodeFailed)?;let v:serde_json::Value=serde_json::from_slice(&raw).map_err(|e|AudioError::DecodeFailed(e.to_string()))?;let stream=v["streams"].as_array().and_then(|v|v.first()).ok_or(AudioError::NoAudioTrack)?;Ok(serde_json::json!({"native_rate":stream["sample_rate"].as_str().and_then(|v|v.parse::<u32>().ok()),"native_channels":stream["channels"]}))}
 pub(crate) fn strict_decode(path:&str,c:&Clip)->Result<Vec<f32>,AudioError>{
