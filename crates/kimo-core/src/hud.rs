@@ -75,9 +75,10 @@ pub fn add_counter(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let (size, color) = (num(a, "size", 120.0), rgb(a, "color", [1.0; 3])); let font = a.get("font").and_then(|v| v.as_str()).unwrap_or("Anton").to_string();
     let (suffix, prefix) = (a.get("suffix").and_then(|v| v.as_str()).unwrap_or("").to_string(), a.get("prefix").and_then(|v| v.as_str()).unwrap_or("").to_string());
     let (px, py) = (num(a, "x", 0.0), num(a, "y", 0.0)); let decimals = num(a, "decimals", 0.0).clamp(0.0, 4.0) as usize; let mut cl = vec![]; let step = 1.0 / fps;
+    let grouping = crate::numfmt::Grouping::parse(a.get("grouping").and_then(|v| v.as_str()).unwrap_or("none"))?; let deva = a.get("devanagari_digits").and_then(|v| v.as_bool()).unwrap_or(false);
     for i in 0..n {
         let u = (i as f64 / (n - 1) as f64).clamp(0.0, 1.0); let eased = 1.0 - (1.0 - u).powi(4); let v = from + (to - from) * eased;
-        let s = format!("{}{:.*}{}", prefix, decimals, v, suffix); let t0 = start + i as f64 * step; let last = i == n - 1;
+        let num_s = crate::numfmt::format(v, decimals, grouping); let num_s = if deva { crate::numfmt::devanagari_digits(&num_s) } else { num_s }; let s = format!("{}{}{}", prefix, num_s, suffix); let t0 = start + i as f64 * step; let last = i == n - 1;
         let d = if last { (start + dur + hold - t0).max(step) } else { step };
         let mut c = clip(ss, txt(&s, &font, size, color, "center"), t0, d); set(&mut c, "x", px); set(&mut c, "y", py);
         if last { key(&mut c, "scale", 0.0, 1.0, Ease::Out); key(&mut c, "scale", 0.12, 1.06, Ease::Out); key(&mut c, "scale", 0.4, 1.0, Ease::Out); }

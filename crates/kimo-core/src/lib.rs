@@ -27,6 +27,8 @@ pub mod pushwipe;
 pub mod audiokeys;
 pub mod layerfx;
 pub mod paths;
+pub mod svgimport;
+pub mod numfmt;
 pub mod layerstyles;
 pub mod lighting;
 pub mod sfm;

@@ -620,6 +620,9 @@ fn source_frame_h(p: &Project, c: &Clip, lt_in: f64, cache: &Cache) -> (Frame, O
             // plain rect (exact SDF; the ellipse SDF is approximate and leaks past its box at extreme aspect ratios, found by shape_bound_equiv; no shape modifiers): every pixel farther than margin from the shape's bounding box has d >= 0.5 + stroke/2 and writes nothing, so skip it (bit-identical)
             let (mut bx0, mut bx1, mut by0, mut by1) = (0usize, w, 0usize, h);
             if SHAPE_BOUND.load(std::sync::atomic::Ordering::Relaxed) && !c.effects.iter().any(|e| e.kind.starts_with("shape_")) && shape.as_str() == "rect" { let m = 0.5 + stroke_width.max(0.0) / 2.0 + 4.0; bx0 = ((cx - hw - m).floor().max(0.0)) as usize; bx1 = (((cx + hw + m).ceil()).max(0.0) as usize).min(w); by0 = ((cy - hh - m).floor().max(0.0)) as usize; by1 = (((cy + hh + m).ceil()).max(0.0) as usize).min(h); hint = Some((bx0, by0, bx1, by1)); }
+            // a Bezier path whose modifiers do not move geometry (trim, gradients) writes nothing farther than half its stroke (+AA) from its own bbox: rasterize only that box
+            else if SHAPE_BOUND.load(std::sync::atomic::Ordering::Relaxed) && shape.as_str() == "path" && c.effects.iter().all(|e| matches!(e.kind.as_str(), "shape_path" | "shape_trim" | "shape_gradient_stroke" | "shape_gradient_fill")) { if let Some(p) = &pth { let m = 0.5 + stroke_width.max(0.0) / 2.0 + 4.0; let b = p.bbox;
+                bx0 = ((cx + b[0] - m).floor().max(0.0) as usize).min(w); bx1 = (((cx + b[2] + m).ceil()).max(0.0) as usize).min(w); by0 = ((cy + b[1] - m).floor().max(0.0) as usize).min(h); by1 = (((cy + b[3] + m).ceil()).max(0.0) as usize).min(h); if bx1 < bx0 { bx1 = bx0; } if by1 < by0 { by1 = by0; } } }
             let (fa, sa) = (prop_or(c, "fill_alpha", lt, 1.0).clamp(0.0, 1.0), prop_or(c, "stroke_alpha", lt, 1.0).clamp(0.0, 1.0)); // fill alpha, stroke alpha and layer opacity are three separate properties
             for y in by0..by1 { for x in bx0..bx1 { let d = sd(x as f64 + 0.5, y as f64 + 0.5); let inside = (0.5 - d).clamp(0.0, 1.0); if inside <= 0.0 && *stroke_width <= 0.0 { continue; }
                 let sk = if *stroke_width > 0.0 { (0.5 - (d.abs() - stroke_width / 2.0)).clamp(0.0, 1.0) * stack.trim_gate(x as f64 + 0.5 - cx, y as f64 + 0.5 - cy) } else { 0.0 }; let stroke_color = &stack.stroke_color(x as f64 + 0.5 - cx, y as f64 + 0.5 - cy, *width, *height, *stroke_color); let fill_color = &stack.fill_color(x as f64 + 0.5 - cx, y as f64 + 0.5 - cy, *width, *height, [fill[0], fill[1], fill[2]]); let fl = if fill[0] < 0.0 { 0.0 } else if *stroke_width > 0.0 { (0.5 - (d + stroke_width / 2.0)).clamp(0.0, 1.0) } else { inside };
@@ -1547,6 +1550,7 @@ fn corner_pin(src: &Frame, off: &[[f64; 2]; 4]) -> Frame {
 
 /// Dynamic text tokens, resolved per frame at render time: `{tc:S}` timecode HH:MM:SS:FF offset by S seconds,
 /// `{bar:BPM:S}` musical position "BAR bb.b.s" at BPM offset by S seconds, `{t:S}` seconds with 2 decimals, `{pct:A:B}` percent 0..100 from timeline time A to B,
+/// `{num:DEC:GROUPING:EASE:t0=v0,t1=v1,...[:deva]}` a live number eased between keyed values (times in the containing composition's clock; see numfmt.rs),
 /// `{tcd:S}` real SMPTE drop-frame timecode (29.97/59.94 only; falls back to a dashed placeholder at any other fps rather than a wrong label) via timecode::label.
 pub fn dyn_text(text: &str, gt: f64, fps: f64) -> String {
     if !text.contains('{') { return text.to_string(); }
@@ -1561,6 +1565,7 @@ pub fn dyn_text(text: &str, gt: f64, fps: f64) -> String {
                 "t" => out.push_str(&format!("{:.2}", gt + f(1))),
                 "pct" => { let (a, b) = (f(1), f(2)); out.push_str(&format!("{}", (((gt - a) / (b - a).max(1e-6)).clamp(0.0, 1.0) * 100.0).round() as u32)); }
                 "tcd" => { let g = (gt + f(1)).max(0.0); out.push_str(&crate::timecode::label(g, fps, true).unwrap_or_else(|_| "--:--:--;--".into())); }
+                "num" if crate::numfmt::resolve(&tail[..j], gt).is_some() => out.push_str(&crate::numfmt::resolve(&tail[..j], gt).unwrap()),
                 _ => { out.push('{'); out.push_str(&tail[..=j]); rest = &tail[j + 1..]; continue; }
             }
             rest = &tail[j + 1..];

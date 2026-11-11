@@ -114,6 +114,23 @@ inside the AppImage. They are not itemised here.
 - Geist and Geist Mono fonts (`crates/kimo-gui/ui/fonts`): SIL Open Font License 1.1, licence text in `ui/fonts/OFL.txt`.
 - App icons (`crates/kimo-gui/icons`): Kimo's own artwork, MIT with the rest of the repo.
 
+## Engine asset library (`crates/kimo-core/assets/library`)
+
+Bundled into the engine (`kimo-core`, compiled in from `library.json`) and placed with the `search_assets` / `add_asset` MCP
+actions. Rebuilt reproducibly by `tools/build_asset_library.py` from the npm packages named below.
+
+| Assets | Source | Licence | Licence text |
+|---|---|---|---|
+| `icon/*` (176 icons, a curated subset) | Lucide icons, `lucide-static` 1.72.0 (lucide.dev) | ISC; the icons Lucide marks as derived from Feather are MIT (Cole Bemis) | `assets/library/licenses/LUCIDE-ISC.txt` (contains both notices) |
+| `map/world` (176 countries, Antarctica dropped, equirectangular) | Natural Earth 1:110m admin-0 countries, via `world-atlas` 2.0.2 (Michael Bostock) | Natural Earth data: public domain; `world-atlas` packaging: ISC | `assets/library/licenses/WORLD-ATLAS-ISC.txt` |
+| `character/*` (ava, ravi; seven poses), `prop/*` (10 props) | Drawn for Kimo in `tools/build_asset_library.py` | MIT, with the rest of the repo | `LICENSE` |
+
+The engine also gained one crate with this work: `rustybuzz` 0.20.1 (MIT; a Rust port of HarfBuzz) shapes Devanagari and
+other Indic / complex-script words in text layout (`kimo-core/src/text.rs`). It builds on `ttf-parser` 0.25, already in the engine.
+
+Each asset also carries its licence string in `library.json`, returned by `search_assets` and `add_asset`, and written into
+the SVG by `export_asset_svg`.
+
 ## Full crate list
 
 <details>

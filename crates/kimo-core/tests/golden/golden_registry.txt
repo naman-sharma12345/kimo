@@ -1,6 +1,7 @@
 add_acescct_primaries b41358501d87ee1b
 add_adjustment_layer 1a618920cefd1a66
 add_arrow 7ac2c615598ce04d
+add_asset 1e486a7df8bb88a6
 add_audio_clip 7b3d9ad166896234
 add_audio_effect 2d6dc2d0fa4ae755
 add_blur_fill a3c4f9944c2d3a14
@@ -9,10 +10,11 @@ add_camera_shake 9a275014886af36b
 add_caption_cues 4df6d3d9f16aa500
 add_captions 59f096446c4d0d66
 add_channel_combiner 69fe26297ed4811f
+add_chart 387a1661c05a384b
 add_clip b26364e2a1be01ac
 add_clip_from_subclip 7830c64a31ad3e9b
 add_code_clip 79e8cbe027cdbd62
-add_counter 2cfd3406e38575f3
+add_counter 1a708a7e5bd2bdaf
 add_depth_parallax cc1c6063f0930b13
 add_detection_box e740cc0690940b44
 add_displacement_map be79622940cf29ef
@@ -149,6 +151,7 @@ detect_cuts 2d0b26c91f7deda5
 diff_frames 77dbd8fc4f3cfa48
 disconnect_nodes ad3dce0b755a8341
 distribute_clips de3b81a25b80ced1
+draw_on_svg_layer 16e1e9bf5c9c1996
 drop_short_segments cba48b305b730c2e
 duck_timeline 6e50b945ceb37bd7
 duplicate_clip e56f4cc4ca9b6b57
@@ -167,6 +170,7 @@ export 2393506cd9af274b
 export_aces2_reference_video aeadc88e69eedbab
 export_alpha 53571ab59e1b99ed
 export_asc_cdl bba60640e79ca448
+export_asset_svg 35c3b184e383e509
 export_audio 24abf7a62d81ecac
 export_camera_solve 55844ee547289f42
 export_captions 7467456686f5ca4f
@@ -220,6 +224,7 @@ import_mesh_raw 333cadbf73de6f0d
 import_pixels 90496dc0f91defc9
 import_samples 8a66895f38c7ad58
 import_srt 6bd61ba44116a50a
+import_svg 338e43b9ca8798fb
 import_template_package 4bddfa764c1bca8a
 ingest_vertex_stream ea0e4b037307853d
 insert_gap b236ff202828ce3c
@@ -238,6 +243,7 @@ inspect_mesh_primitive 41a827335f54d629
 inspect_ocio_config 04834eee72a14d76
 inspect_scene_matrices b676789695e0fd2f
 inspect_sdf_graph 9e3e075357bb85a5
+inspect_svg bad038e5976995b6
 inspect_threed_backend c448f0e8502b0106
 inspect_vertex_stream 1131d4d20cf1ffed
 instantiate_gltf_scene 84530f639eee8159
@@ -327,6 +333,7 @@ read_samples 58d6a9f3ea9c7b16
 recipe_apply 25bf86d6e0d5714f
 recipe_describe d6500745b10aabda
 recipe_list 260d6e832e090377
+recolor_svg_layer 1fbbfdc6de9aa7bb
 redo 738dbd6488fa90b3
 refine_matte b2b938688521e43d
 reframe_timeline f2af0127584f4157
@@ -376,7 +383,7 @@ render_textured_bvh ff1f91fde6db4cfa
 render_vertex_stream_pbr ac9d8af9a0820e8c
 render_wgpu_pbr 2be19c04be4cef5f
 reorder_mask b182a28a665330c4
-replace_clip_media 9198057d46274e0c
+replace_clip_media 5b0c47bea309e749
 restore dab5b50df493b4be
 resume_job ddf7317d0c4d5591
 review_export 01faaf79df6bf84c
@@ -401,6 +408,7 @@ sample_texture_material 4a03308329ef702a
 save_project d51a7abb5be457b3
 scene_split e3169bf97fff6916
 score_windows 2ee81cf98be42143
+search_assets 99bc5644005ec22f
 self_review 60d5d56439bd1c85
 session_stats 08b78ec5daffb184
 set_3d_compositor c3fab2e718ae3113
