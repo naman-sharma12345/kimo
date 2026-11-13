@@ -2,6 +2,9 @@
 //! Every user-visible operation is a registered Command; the MCP server
 //! is generated from the registry, so nothing can exist without a tool.
 pub mod ext;
+pub mod critic;
+pub mod observe;
+pub mod vision;
 #[cfg(feature = "libav")]
 pub mod libav_decode;
 pub mod deps;

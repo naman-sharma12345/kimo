@@ -148,7 +148,7 @@ pub fn initialize_result(params: &Value, version: &str) -> Value {
         "protocolVersion": proto,
         "capabilities": {"tools": {"listChanged": false}},
         "serverInfo": {"name": "kimo", "version": version},
-        "instructions": "You are connected to the kimo video editor app that is open on this computer: one shared project the user is watching live. Every tool is a group taking {\"action\": ..., \"args\": {...}}. Call project.timeline_summary first to see the edit, and search_tools or kimo_describe when unsure of an action. Each change you make appears in the user's timeline at once and can be undone there."
+        "instructions": "You are connected to the kimo video editor app that is open on this computer: one shared project the user is watching live. Every tool is a group taking {\"action\": ..., \"args\": {...}}. Call project.timeline_summary first to see the edit, and search_tools or kimo_describe when unsure of an action. Each change you make appears in the user's timeline at once and can be undone there. kimo shows you every edit: each call that changes the project returns `observe` (what it touched, before/after frames as an image, brightness numbers, and findings: mistakes with severity and the exact fix call). Read it after every edit and fix any error or warning before moving on. For anything that must hold, pass expect: [...] on the edit (visible/hidden at a time, inside title_safe, luma range, no_black_frames, readable, max_findings); if it fails the edit is rolled back and you are told why. Run review before export. Use observe: \"full\" for a sharper look, or render_frame/contact_sheet for any moment you want to see."
     })
 }
 

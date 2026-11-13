@@ -28,6 +28,8 @@ pub struct Change {
     pub summary: String,
     pub t: u128,
     pub undone: bool,
+    /// What the engine found wrong with this edit (its `observe.findings`): code, severity, message and the fix call.
+    pub findings: Vec<Value>,
 }
 
 /// Reads never change the project. Anything not listed is treated as possibly mutating (history tells the truth).
@@ -39,6 +41,14 @@ pub fn is_read_only(tool: &str, action: &str) -> bool {
         || matches!(a, "timeline_summary" | "history_list" | "render_frame" | "preview_range" | "snap_time" | "project_diff"
             | "kimo_info" | "kimo_search" | "describe" | "job_status" | "list" | "scope" | "waveform" | "vectorscope"
             | "analyze_exposure" | "export_edl")
+}
+
+/// The findings an engine result carries in its `observe` field (worst first, at most 6, compact) and their counts.
+pub fn observed(text: &str) -> (Vec<Value>, Value) {
+    let Some(obs) = serde_json::from_str::<Value>(text).ok().and_then(|v| v.get("observe").cloned()) else { return (vec![], Value::Null) };
+    let f: Vec<Value> = obs.get("findings").and_then(|x| x.as_array()).map(|a| a.iter().take(6).map(|x| json!({
+        "code": x["code"], "severity": x["severity"], "message": x["message"], "at": x["at"], "clip_id": x["clip_id"], "fix": x["fix"]})).collect()).unwrap_or_default();
+    (f, obs.get("counts").cloned().unwrap_or(Value::Null))
 }
 
 /// Calls the Live tab does not list (the window's own refresh reads, and history bookkeeping).
@@ -73,6 +83,11 @@ impl Ledger {
 
     /// tools/call as `actor`. Returns the MCP result object exactly as the engine sent it.
     pub fn call(&self, actor: &str, tool: &str, args: &Value) -> Result<Value, String> {
+        // the person's own edits stay instant: findings without rendering before/after frames (agents get the full look)
+        let owned;
+        let args = if (actor == "you" || actor == "app") && args.get("observe").is_none() && args.is_object() {
+            owned = { let mut a = args.clone(); a["observe"] = json!("numbers"); a }; &owned
+        } else { args };
         let action = args.get("action").and_then(|a| a.as_str()).unwrap_or("").to_string();
         let ro = is_read_only(tool, &action);
         let loud = !quiet(actor, &action);
@@ -95,9 +110,17 @@ impl Ledger {
         };
         let ms = t0.elapsed().as_millis() as u64;
         let (ok, text) = match &res { Ok(v) => (!is_error(v), result_text(v)), Err(e) => (false, e.clone()) };
+        // the engine's own verdict on this edit (kimo_core::observe): keep the worst few findings with their fixes
+        let (findings, counts) = observed(&text);
+        if let (Some(c), false) = (&change, findings.is_empty()) {
+            let mut cs = self.changes.lock().unwrap();
+            if let Some(x) = cs.iter_mut().find(|x| x.id == c.id) { x.findings = findings.clone(); }
+            (self.emit)("changes", serde_json::to_value(&*cs).unwrap_or(json!([])));
+        }
         if loud {
             (self.emit)("live-event", json!({"id": id, "phase": "end", "actor": actor, "tool": tool, "action": action, "summary": summary,
-                "ok": ok, "ms": ms, "result": clip(&text, 600), "change": change, "read_only": ro, "t": now_ms() as u64}));
+                "ok": ok, "ms": ms, "result": clip(&text, 600), "change": change, "read_only": ro, "t": now_ms() as u64,
+                "findings": findings, "counts": counts}));
         }
         if !ro && ok && !matches!(action.as_str(), "save_project" | "export_job_start" | "export") { self.rev.fetch_add(1, Ordering::SeqCst); }
         if !ro && ok { (self.emit)("project-changed", json!({"actor": actor, "tool": tool, "action": action, "change": change})); }
@@ -118,7 +141,7 @@ impl Ledger {
             // history branched: anything at or above the new depth that was undone is gone for good
             cs.retain(|c| !(c.undone && c.depth >= after));
             let c = Change { id: self.card_seq.fetch_add(1, Ordering::SeqCst), actor: actor.into(), depth: after, steps: after - b,
-                tool: tool.into(), action: action.into(), summary: summary.into(), t: now_ms(), undone: false };
+                tool: tool.into(), action: action.into(), summary: summary.into(), t: now_ms(), undone: false, findings: vec![] };
             cs.push(c.clone());
             changed = true;
             Some(c)
@@ -231,6 +254,16 @@ mod tests {
         l.call("you", "project", &json!({"action":"redo"})).unwrap();
         assert_eq!(l.changes().iter().map(|c| c.undone).collect::<Vec<_>>(), [false, false], "redo brings the card back");
         assert_eq!(l.changes().len(), 2, "redo makes no new card");
+    }
+
+    #[test]
+    fn observe_findings_are_kept_on_the_card() {
+        let text = json!({"clip_id": "c1", "observe": {"counts": {"warning": 1}, "findings": [{"code": "flash_clip", "severity": "warning", "message": "m", "fix": {"tool": "delete_clip", "args": {"clip_id": "c1"}}}]}}).to_string();
+        let (f, c) = observed(&text);
+        assert_eq!(f[0]["code"], "flash_clip");
+        assert_eq!(f[0]["fix"]["tool"], "delete_clip");
+        assert_eq!(c["warning"], 1);
+        assert!(observed("not json").0.is_empty());
     }
 
     #[test]

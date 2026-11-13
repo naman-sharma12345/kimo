@@ -976,7 +976,7 @@ fn lint_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let (mut bad_at, mut checked, mut checked_to): (Vec<(f64, String, Option<String>)>, usize, f64) = (vec![], 0, 0.0);
     for &t in &times {
         if t_start.elapsed().as_secs_f64() > budget { break; }
-        let top = top_media(ss, t); let top = top_media(ss, t);
+        let top = top_media(ss, t);
         // Perf history (KP1, KQ1): this loop used to pre-warm the decode cache itself (a big,
         // export-sized window, optionally through a short-GOP analysis proxy) immediately before
         // every get_scopes call, because get_scopes' OWN internal preparation once used a much

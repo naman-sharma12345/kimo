@@ -339,7 +339,7 @@ undone there. Edit ONLY through the kimo MCP tools (server kimo): each tool is a
 Start with project.timeline_summary (or project.get_project) to see the edit, and use search_tools / kimo_describe when you \
 are unsure of an action or its arguments. Make exactly the change asked for, the smallest edit that does it. Do not read, \
 write or run anything on the computer other than kimo tools, and do not export or delete files unless asked. When done, \
-reply in one or two plain sentences saying what you changed.";
+reply in one or two plain sentences saying what you changed. kimo shows you every edit: each call that changes the project returns `observe` (what it touched, before/after frames as an image, brightness numbers, and findings: mistakes with severity and the exact fix call). Read it after every edit and fix any error or warning before moving on. For anything that must hold, pass expect: [...] on the edit (visible/hidden at a time, inside title_safe, luma range, no_black_frames, readable, max_findings); if it fails the edit is rolled back and you are told why. Run review before export. Use observe: \"full\" for a sharper look, or render_frame/contact_sheet for any moment you want to see.";
 
 /// Display name of a tool: `mcp__kimo__timeline` → `timeline`.
 pub fn short_tool(name: &str) -> String {

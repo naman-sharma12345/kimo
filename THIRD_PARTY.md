@@ -131,6 +131,26 @@ other Indic / complex-script words in text layout (`kimo-core/src/text.rs`). It 
 Each asset also carries its licence string in `library.json`, returned by `search_assets` and `add_asset`, and written into
 the SVG by `export_asset_svg`.
 
+## Engine vision models (`crates/kimo-core/src/vision`, cargo feature `vision`, on by default)
+
+Not shipped in any installer or binary: each model is downloaded on first use into `~/.cache/kimo_models/vision`
+(`%USERPROFILE%\.cache\kimo_models\vision` when HOME is unset) and checked against the SHA-512 and size pinned in
+`src/vision/models.toml`; a file that does not match is refused and removed. Licences checked at the source on 2026-11-13.
+Only permissive licences: no AGPL weights (no Ultralytics YOLO).
+
+| Model | Used for | File (size) | Source | Licence |
+|---|---|---|---|---|
+| YuNet 2023mar | faces (`detect` faces, `vision::faces`) | `face_detection_yunet_2023mar.onnx` (227 KB) | OpenCV Zoo `models/face_detection_yunet`, Shiqi Yu et al. | MIT |
+| YOLOX-Nano | people and COCO objects (`vision::objects`) | `yolox_nano.onnx` (3.5 MB) | Megvii-BaseDetection/YOLOX release 0.1.1rc0 | Apache-2.0 |
+| U²-Netp | main-subject mask (`vision::subject_mask`) | `u2netp.onnx` (4.4 MB) | Xuebin Qin et al., U-2-Net (Apache-2.0); ONNX export from danielgatis/rembg release v0.0.0 (rembg: MIT) | Apache-2.0 |
+| MODNet (8-bit quantized) | person matte, fetched only when asked for (`vision::person_matte`) | `modnet_quantized.onnx` (6.3 MB) | Zhanghan Ke et al., ZHKKKe/MODNet (Apache-2.0); ONNX from Hugging Face `Xenova/modnet` (model card: Apache-2.0) | Apache-2.0 |
+
+The runtime adds these crates to the engine: `tract-onnx` 0.23.10 and its `tract-*` crates (MIT OR Apache-2.0; pure Rust,
+no native libraries), `ureq` 2 and `sha2` 0.10 (MIT OR Apache-2.0) for the download.
+
+The vision unit tests bundle one picture, `src/vision/testdata/astronaut_176x220.ppm`: NASA portrait of Neil Armstrong
+(1969, photo S69-31741), public domain as a work of the US government, via Wikimedia Commons `Neil_Armstrong_pose.jpg`, scaled down.
+
 ## Full crate list
 
 <details>

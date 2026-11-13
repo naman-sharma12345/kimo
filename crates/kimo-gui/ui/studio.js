@@ -728,8 +728,16 @@ function renderChanges(flash) {
   $('#changes').innerHTML = list.length ? list.map(c => `<div class="ccard${c.undone ? ' undone' : ''}${c.id === flash ? ' flash' : ''}">
       <div class="row" style="gap:8px">${actorChip(c.actor)}<span class="lbl">${esc(c.action || c.tool)}</span><span class="t" style="margin-left:auto">${clock(c.t)}</span></div>
       <div class="note mono" style="margin-top:7px">${esc(c.summary)}</div>
+      ${!c.undone && c.findings?.length ? `<div class="finds">${c.findings.map((f, i) => `<div class="find ${esc(f.severity)}"><span class="sv">${esc(f.severity)}</span><p class="msg">${esc(f.message)}</p>${f.fix?.tool ? `<button class="btn sm" data-fix="${c.id}:${i}" title="${esc(f.fix.tool)}">Fix</button>` : ''}</div>`).join('')}</div>` : ''}
       <div class="row" style="margin-top:8px">${c.undone ? '<span class="note muted">Undone</span>' : `<button class="btn sm" data-undo="${c.id}">Undo</button>`}${c.steps > 1 ? `<span class="note muted">${c.steps} steps</span>` : ''}</div></div>`).join('')
     : '<div class="empty sm card-ish"><svg class="km e" viewBox="0 0 1024 1024" aria-hidden="true"><use href="#km-sm"/></svg><div class="et">No changes yet</div><div class="ed">Every edit — yours or an agent\'s — lands here with its own Undo. Undo uses the engine\'s history: undoing one change also undoes the ones after it.</div></div>';
+  $$('[data-fix]').forEach(b => b.onclick = async () => {
+    const [cid, i] = b.dataset.fix.split(':'); const f = S.changes.find(x => String(x.id) === cid)?.findings?.[+i];
+    if (!f?.fix?.tool) return;
+    b.disabled = true;
+    try { const r = await B.invoke('engine_call', { tool: f.fix.tool, args: f.fix.args || {} }); if (r.ok) toast('Fixed: ' + f.code.replace(/_/g, ' ')); else { toast(r.text || 'The fix did not apply', 'bad'); b.disabled = false; } }
+    catch (e) { toast(String(e), 'bad'); b.disabled = false; }
+  });
   $$('[data-undo]').forEach(b => b.onclick = async () => {
     b.disabled = true;
     try { const r = await B.invoke('change_undo', { id: +b.dataset.undo }); toast(`Undid ${r.steps} step${r.steps > 1 ? 's' : ''}`); } catch (e) { toast(String(e), 'bad'); b.disabled = false; }
@@ -956,7 +964,11 @@ function liveMatch(r) { const f = S.liveFilter; return f === 'all' || (f === 'yo
 function onLive(ev) {
   let r = S.live.get(ev.id);
   if (!r) { r = { id: ev.id, actor: ev.actor, t: ev.t, tool: ev.tool, action: ev.action, summary: ev.summary, args: ev.args, phase: 'start', ro: ev.read_only }; S.live.set(ev.id, r); S.liveOrder.push(ev.id); r.isNew = true; }
-  if (ev.phase === 'end') { Object.assign(r, { phase: 'end', ok: ev.ok, ms: ev.ms, result: ev.result, change: ev.change }); }
+  if (ev.phase === 'end') {
+    Object.assign(r, { phase: 'end', ok: ev.ok, ms: ev.ms, result: ev.result, change: ev.change, findings: ev.findings || [], counts: ev.counts });
+    const bad = (ev.findings || []).find(f => f.severity === 'error');
+    if (bad && ev.actor !== 'you' && ev.actor !== 'app') toast(`${actorName(ev.actor)}'s edit: ${bad.message}`.slice(0, 140), 'bad');
+  }
   if (S.liveOrder.length > 600) { const old = S.liveOrder.shift(); S.live.delete(old); }
   if (S.tab !== 'live' && !r.ro) $('#nav-live').hidden = false;
   if (ev.actor !== 'you' && ev.actor !== 'app') { lastActor = ev.actor; }
@@ -984,7 +996,7 @@ function renderLive() {
     <td>${r.external ? `<span class="chip a-ext">${esc(r.actor)}</span>` : actorChip(r.actor)}</td>
     <td><div class="tool">${esc(r.tool)}${r.action ? '.' + esc(r.action) : ''}</div><div class="args mono">${esc(r.summary || '')}</div></td>
     <td>${r.phase === 'start' ? '<span class="chip acc">running</span>' : r.ok ? `<span class="chip ok">${r.ms != null ? r.ms + ' ms' : 'done'}</span>` : '<span class="chip bad">error</span>'}</td>
-    <td class="chg">${r.change ? `<b>change #${r.change.id}</b> ` : ''}<span class="note mono">${esc((r.result || '').slice(0, 140))}</span></td></tr>`).join('');
+    <td class="chg">${r.counts?.error ? `<span class="chip f-error">${r.counts.error} error${r.counts.error > 1 ? 's' : ''}</span> ` : ''}${r.counts?.warning ? `<span class="chip f-warning">${r.counts.warning} warning${r.counts.warning > 1 ? 's' : ''}</span> ` : ''}${r.change ? `<b>change #${r.change.id}</b> ` : ''}<span class="note mono">${esc((r.result || '').slice(0, 140))}</span></td></tr>`).join('');
   rows.forEach(r => r.isNew = false);
   const last = [...S.live.values()].reverse().find(r => r.change);
   $('#live-last').innerHTML = last ? `${actorChip(last.actor)} <b>${esc(last.action)}</b><div class="mono note" style="margin-top:6px">${esc(last.summary)}</div>` : '—';

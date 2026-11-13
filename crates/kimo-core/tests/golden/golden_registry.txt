@@ -124,6 +124,7 @@ collect_project 91bcadd45280c914
 compare_aces2_reference 59ec416ff6c4de21
 compare_linear_exposure afcdd34f6dab8f45
 compare_ranges c56b1ff8d178638e
+compare_reference 88608ec5797ca13c
 compile_scene3d_descriptor 4bb1f8788eb01144
 compute_text_bounds a1e565a4cc3fe0e4
 connect_nodes b6edfff20b9c6d1f
@@ -146,6 +147,7 @@ delete_subclip 226368377cade575
 delete_track e83a622c3e4b81fe
 derive_vertex_tangents 9f133ebacc301575
 describe_frame 485099af7f7b4b5e
+detect af47b575bb252d83
 detect_beats 0a305ba852c6ffd1
 detect_cuts 2d0b26c91f7deda5
 diff_frames 77dbd8fc4f3cfa48
@@ -279,6 +281,7 @@ list_subclips 80943e29cb08f2ff
 list_transitions e316853ba177f3f8
 lk_residual_audit 2cf7e10ac95fd795
 load_project 231dc74f5980a8b3
+look d161d038a25924be
 loop_clip 84a9f61420f1b87c
 make_montage_from_folder 23e863d91fb9cc4b
 mark_scene_cuts f8a5604d15845151
@@ -386,6 +389,7 @@ reorder_mask b182a28a665330c4
 replace_clip_media 5b0c47bea309e749
 restore dab5b50df493b4be
 resume_job ddf7317d0c4d5591
+review bb76f40bf6d4956a
 review_export 01faaf79df6bf84c
 ripple_delete af7455d513b9e3c9
 ripple_trim 5be54654d9c33c34
@@ -543,3 +547,4 @@ validate_planar_track 3b16f4f833d08581
 validate_timeline 1c72f3a9cfcf888a
 vfx_graph_describe 84a378a55d8b4ae3
 vfx_preview 6dee05506af74cdc
+watch cec12affdf460a11

@@ -465,6 +465,9 @@ pub fn prepare_preview_range(p:&Project,cache:&mut Cache,t0:f64,t1:f64)->Result<
 /// exact same instant.
 pub static ANALYSIS_PREPARE_CALLS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<std::thread::ThreadId, usize>>> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 pub fn analysis_prepare_call_count() -> usize { *ANALYSIS_PREPARE_CALLS.lock().unwrap().get(&std::thread::current().id()).unwrap_or(&0) }
+/// One frame for a draft look (observe, expect): the analysis path (short-GOP proxy when there is one) with a tiny
+/// decode window, so a single frame costs a seek and a few frames of decode instead of a 256-frame window.
+pub fn prepare_draft_at(p:&Project,cache:&mut Cache,t:f64)->Result<(),String>{prepare_window(p,cache,t,t,4,false,true)}
 pub fn prepare_analysis_range(p:&Project,cache:&mut Cache,t0:f64,t1:f64)->Result<(),String>{*ANALYSIS_PREPARE_CALLS.lock().unwrap().entry(std::thread::current().id()).or_insert(0)+=1;prepare_window(p,cache,t0,t1,256,false,true)}
 impl Cache {
     pub fn proxy_assets(&self)->Vec<String>{self.proxy_clips.values().cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect()}

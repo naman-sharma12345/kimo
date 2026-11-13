@@ -137,11 +137,38 @@ pub fn ensure(p: &Project, asset_id: &str, original_path: &str) -> Option<Analys
         // Stale/corrupt sidecar for this key: fall through and rebuild cleanly.
     }
     let asset = p.assets.get(asset_id)?;
-    let gap = max_keyframe_gap(original_path, asset.duration).ok()?;
+    // Observe's draft renders must never wait for a proxy (building one for a 10-minute file takes about a minute):
+    // start the build in the background once and decode the original this time; later renders find it ready.
+    if NONBLOCKING.with(|n| n.get()) {
+        let key2 = proxy_path.to_string_lossy().into_owned();
+        let started = { let mut b = BUILDING.lock().unwrap_or_else(|e| e.into_inner()); b.insert(key2.clone()) };
+        if started {
+            let (orig, dur, dir2, pp, sd, k) = (original_path.to_string(), asset.duration, dir.clone(), proxy_path.clone(), side.clone(), key.clone());
+            std::thread::spawn(move || { let _ = build(&orig, dur, fps, &dir2, &pp, &sd, &k); BUILDING.lock().unwrap_or_else(|e| e.into_inner()).remove(&key2); });
+        }
+        return None;
+    }
+    build(original_path, asset.duration, fps, &dir, &proxy_path, &side, &key)
+}
+
+thread_local! {
+    /// Set (scoped, via `NonBlocking`) by draft renders that must not wait for a proxy build.
+    static NONBLOCKING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+static BUILDING: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+
+/// While alive, `ensure` on this thread never builds a proxy synchronously (it starts one in the background instead).
+/// Restores the previous setting when dropped, so it cannot leak into later renders on the same thread.
+pub struct NonBlocking(bool);
+impl NonBlocking { pub fn new() -> NonBlocking { NonBlocking(NONBLOCKING.with(|n| n.replace(true))) } }
+impl Drop for NonBlocking { fn drop(&mut self) { NONBLOCKING.with(|n| n.set(self.0)); } }
+
+fn build(original_path: &str, duration: f64, fps: f64, dir: &std::path::Path, proxy_path: &std::path::Path, side: &std::path::Path, key: &str) -> Option<AnalysisProxy> {
+    let gap = max_keyframe_gap(original_path, duration).ok()?;
     if gap <= MIN_GAP_SECONDS {
         return None; // already cheap to seek on the original; a proxy would only cost disk and time
     }
-    std::fs::create_dir_all(&dir).ok()?;
+    std::fs::create_dir_all(dir).ok()?;
     let gop = ((fps * GOP_SECONDS).round() as usize).max(1);
     let tmp = proxy_path.with_extension("mp4.part");
     let status = Command::new("ffmpeg")
@@ -163,7 +190,7 @@ pub fn ensure(p: &Project, asset_id: &str, original_path: &str) -> Option<Analys
         let _ = std::fs::remove_file(&tmp);
         return None;
     }
-    let _ = std::fs::write(&side, serde_json::json!({"source_key": key, "gop": gop, "fps": fps}).to_string());
+    let _ = std::fs::write(side, serde_json::json!({"source_key": key, "gop": gop, "fps": fps}).to_string());
     Some(AnalysisProxy { path: proxy_path.to_string_lossy().into_owned(), gop, fps })
 }
 
