@@ -70,6 +70,7 @@ fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     preview::configure_demo(demo_arg(&argv).as_deref()); // spectator demo mode: off unless asked for
     spectator::init(); // telemetry for the spectator GUI, on by default (KIMO_SPECTATOR); KIMO_SPECTATOR=off = no thread, no work
+    kimo_core::auto_proxy::set_enabled(true); // heavy imports build preview/analysis proxies in the background (KIMO_AUTO_PROXY=off to stop)
     std::panic::set_hook(Box::new(|i| { if std::thread::current().name() == Some("kimo-preview") { return; } eprintln!("kimo: {i}"); })); // a cancelled live preview is not news
     let ss = Arc::new(Mutex::new(Session::new()));
     let mut enabled: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -122,6 +123,7 @@ fn main() {
         }
         if method == "tools/call" { spectator::pace(); } // spectator demo mode only: this call's frame on screen before the next call
     }
+    kimo_core::auto_proxy::shutdown(); // no proxy encoder outlives the engine
     spectator::flush(std::time::Duration::from_millis(500));
 }
 

@@ -65,7 +65,10 @@ pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
         schema: obj(vec![("path", s("absolute path to media file"))], &["path"]),
         run: |ss, a| { let path = str_arg(a, "path")?; let (w, h, d, fps) = render::probe(path)?; render::check_importable(path)?;
             let id = ss.project.gen_id("asset"); ss.project.assets.insert(id.clone(), Asset { origin:None,hash:None,kind:None,id: id.clone(), path: path.into(), width: w, height: h, duration: d, fps, bin: None });
-            Ok(json!({"asset_id":id,"width":w,"height":h,"duration":d,"fps":fps})) } },
+            let mut out = json!({"asset_id":id,"width":w,"height":h,"duration":d,"fps":fps});
+            // heavy video: proxies build in the background (auto_proxy.rs); this call does not wait for them
+            if let Some(job) = crate::auto_proxy::on_import(&ss.project, &id) { out["proxy"] = job; }
+            Ok(out) } },
     Command { name: "add_track", description: "Add a track on top of the stack. Higher tracks composite over lower ones.", mutates: true,
         schema: obj(vec![], &[]),
         run: |ss, _| { let id = ss.project.gen_id("track"); ss.project.tracks.push(Track { id: id.clone(), clips: vec![], locked: false, muted: false, solo: false, name: String::new() }); Ok(json!({"track_id":id})) } },

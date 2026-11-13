@@ -40,7 +40,7 @@ pub fn is_read_only(tool: &str, action: &str) -> bool {
         || a.starts_with("read_") || a.starts_with("cache_stats") || a.ends_with("_status") || a.ends_with("_info")
         || matches!(a, "timeline_summary" | "history_list" | "render_frame" | "preview_range" | "snap_time" | "project_diff"
             | "kimo_info" | "kimo_search" | "describe" | "job_status" | "list" | "scope" | "waveform" | "vectorscope"
-            | "analyze_exposure" | "export_edl")
+            | "analyze_exposure" | "export_edl" | "proxy_jobs")
 }
 
 /// The findings an engine result carries in its `observe` field (worst first, at most 6, compact) and their counts.

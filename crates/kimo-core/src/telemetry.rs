@@ -48,3 +48,17 @@ pub fn progress_frames(done: usize, total: usize, stage: &str) {
         h(&Progress { frac: done as f64 / total as f64, stage, frame: Some(done as u64), total_frames: Some(total as u64) })
     }
 }
+
+/// Receives each engine-level event (a JSON object with a `type`), such as background proxy progress.
+pub type EventFn = Box<dyn Fn(&serde_json::Value) + Send + Sync>;
+
+static EVENT_HOOK: OnceLock<EventFn> = OnceLock::new();
+
+/// Install the process-wide engine-event sink (kimo-mcp forwards these to the spectator stream). False when one is set.
+pub fn set_event_hook(f: EventFn) -> bool { EVENT_HOOK.set(f).is_ok() }
+
+/// Send one engine-level event from any thread, outside any tool call. Free when no sink is installed.
+#[inline]
+pub fn event(v: &serde_json::Value) {
+    if let Some(h) = EVENT_HOOK.get() { h(v) }
+}
