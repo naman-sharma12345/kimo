@@ -38,7 +38,7 @@ pub fn is_read_only(tool: &str, action: &str) -> bool {
     let a = action;
     a.starts_with("get_") || a.starts_with("list_") || a.starts_with("find") || a.starts_with("check_")
         || a.starts_with("read_") || a.starts_with("cache_stats") || a.ends_with("_status") || a.ends_with("_info")
-        || matches!(a, "timeline_summary" | "history_list" | "render_frame" | "preview_range" | "snap_time" | "project_diff"
+        || matches!(a, "timeline_summary" | "history_list" | "render_frame" | "preview_range" | "preview_stream" | "snap_time" | "project_diff"
             | "kimo_info" | "kimo_search" | "describe" | "job_status" | "list" | "scope" | "waveform" | "vectorscope"
             | "analyze_exposure" | "export_edl")
 }

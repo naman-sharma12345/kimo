@@ -2,7 +2,8 @@
 //! Frames and drafts live in a small disk cache keyed by project revision (sha256 of project.get_project) and frame
 //! index, so repeats, scrubs over rendered frames and undo are cache hits; the webview reads them through kimo://.
 //! Engine actions used (shapes from kimo_describe): project.get_project, project.timeline_summary,
-//! output.render_frame {time, path, inline}, output.preview_range {start, end, scale, path}.
+//! output.render_frame {time, path, inline}, output.preview_range {start, end, scale, path},
+//! output.preview_stream {op, ...} (real-time playback with sound: frames and audio chunks written into this cache).
 use crate::agent::Tools;
 use crate::engine::{is_error, result_text};
 #[cfg(test)]
@@ -37,12 +38,13 @@ pub fn frame_time(i: i64, fps: f64) -> f64 { if fps > 0.0 { i as f64 / fps } els
 /// The URL the webview loads a cache file from (Tauri serves custom schemes as http://<scheme>.localhost on Windows).
 pub fn cache_url(name: &str) -> String { if cfg!(windows) { format!("http://kimo.localhost/{name}") } else { format!("kimo://localhost/{name}") } }
 
-/// Map a kimo:// request path to a file in the cache: only the lower-case hex names this module writes, .png, .jpg or .mp4.
+/// Map a kimo:// request path to a file in the cache: only the lower-case hex names this module and the engine's preview
+/// stream write: .png, .jpg, .mp4, .bmp (stream frames) or .wav (stream audio chunks).
 pub fn cache_file(dir: &Path, uri_path: &str) -> Option<(PathBuf, &'static str)> {
     let name = uri_path.split(['?', '#']).next()?.trim_start_matches('/');
     let (stem, ext) = name.rsplit_once('.')?;
     if stem.is_empty() || !stem.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) { return None; }
-    let mime = match ext { "png" => "image/png", "jpg" => "image/jpeg", "mp4" => "video/mp4", _ => return None };
+    let mime = match ext { "png" => "image/png", "jpg" => "image/jpeg", "mp4" => "video/mp4", "bmp" => "image/bmp", "wav" => "audio/wav", _ => return None };
     let p = dir.join(name);
     p.is_file().then_some((p, mime))
 }
@@ -126,6 +128,14 @@ impl FrameCache {
     pub fn is_empty(&self) -> bool { self.items.is_empty() }
 }
 
+/// Give every file name in a preview_stream answer (`name` at the top, in `frames[]` and in `audio[]`) the URL the webview
+/// loads it from.
+pub fn stream_urls(v: &mut Value) {
+    fn one(x: &mut Value) { if let Some(n) = x.get("name").and_then(|n| n.as_str()).map(String::from) { x["url"] = json!(cache_url(&n)); } }
+    one(v);
+    for k in ["frames", "audio"] { if let Some(a) = v.get_mut(k).and_then(|a| a.as_array_mut()) { a.iter_mut().for_each(one); } }
+}
+
 #[derive(Default)]
 struct State { last_rev: Option<String>, last_frame: Option<Frame>, before_rev: Option<String>, before_fallback: Option<Frame>, drafts: Vec<Draft> }
 
@@ -144,6 +154,10 @@ impl Viewer {
     /// `dir` is the viewer's own cache directory (created if missing).
     pub fn new(dir: PathBuf) -> Viewer {
         let _ = std::fs::create_dir_all(&dir);
+        // a previous run's preview stream (frames, audio chunks, half-written files) is never reused: its engine is gone
+        if let Ok(rd) = std::fs::read_dir(&dir) {
+            for e in rd.flatten() { let p = e.path(); if matches!(p.extension().and_then(|x| x.to_str()), Some("bmp" | "wav" | "part")) { let _ = std::fs::remove_file(p); } }
+        }
         Viewer { dir, cache: Mutex::new(FrameCache::new(FRAME_CAP)), st: Mutex::new(State::default()), render: Mutex::new(()), latest: AtomicU64::new(0), ffmpeg: None }
     }
     /// The ffmpeg that splits drafts into frames (the same one the engine uses: downloaded tools dir, else PATH).
@@ -215,6 +229,19 @@ impl Viewer {
         Ok(Frame { rev: info.rev.clone(), index: idx, time: at, url: cache_url(&name), file, sha256, width: if w > 0 { w } else { info.width }, height: if h > 0 { h } else { info.height }, ms, cached: false })
     }
 
+    /// The engine's real-time preview session (output.preview_stream), writing into this viewer's cache directory.
+    /// `op` is start / update / seek / frame / stop; the answer's file names come back with their URLs. No render lock:
+    /// the stream renders on the engine's own threads, and a scrub frame is quick.
+    pub fn stream(&self, t: &dyn Tools, op: &str, mut args: Value) -> Result<Value, String> {
+        if !args.is_object() { args = json!({}); }
+        args["op"] = json!(op);
+        if op == "start" { args["dir"] = json!(self.dir); }
+        let r = engine(t, "output", "preview_stream", args)?;
+        let mut v: Value = serde_json::from_str(&result_text(&r)).map_err(|e| format!("preview_stream: {e}"))?;
+        stream_urls(&mut v);
+        Ok(v)
+    }
+
     /// A draft mp4 of `secs` seconds from `start` (half resolution, every frame), cached per revision and range.
     pub fn draft(&self, t: &dyn Tools, start: f64, secs: f64) -> Result<Draft, String> {
         let _g = self.render.lock().unwrap_or_else(|e| e.into_inner());
@@ -281,8 +308,23 @@ mod tests {
         assert!(cache_file(&dir, "/ab12cd.png/../../x").is_none());
         assert!(cache_file(&dir, "/AB12CD.png").is_none(), "names are lower-case hex we wrote ourselves");
         assert!(cache_file(&dir, "/ffff.png").is_none(), "missing file");
-        assert!(cache_file(&dir, "/ab12cd.sh").is_none(), "only png, jpg and mp4");
+        assert!(cache_file(&dir, "/ab12cd.sh").is_none(), "only png, jpg, mp4, bmp and wav");
+        std::fs::write(dir.join("0000000100000002.bmp"), b"BM").unwrap();
+        std::fs::write(dir.join("0000000100000002.wav"), b"RIFF").unwrap();
+        assert_eq!(cache_file(&dir, "/0000000100000002.bmp").map(|(_, m)| m), Some("image/bmp"), "preview stream frames");
+        assert_eq!(cache_file(&dir, "/0000000100000002.wav").map(|(_, m)| m), Some("audio/wav"), "preview stream audio");
+        assert!(cache_file(&dir, "/0000000100000002.part").is_none(), "a frame still being written is not served");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stream_answers_get_urls_for_every_file() {
+        let mut v = json!({"name": "ab.bmp", "frames": [{"name": "0001.bmp"}, {"index": 3}], "audio": [{"name": "0002.wav"}], "gen": 1});
+        stream_urls(&mut v);
+        assert_eq!(v["url"], json!(cache_url("ab.bmp")));
+        assert_eq!(v["frames"][0]["url"], json!(cache_url("0001.bmp")));
+        assert!(v["frames"][1].get("url").is_none());
+        assert_eq!(v["audio"][0]["url"], json!(cache_url("0002.wav")));
     }
 
     #[test]
@@ -432,6 +474,34 @@ mod tests {
         let f = undone.frame.unwrap();
         assert!(undone.changed && f.rev == old.rev && f.sha256 == old.sha256 && f.cached, "undo is a cache hit");
         assert_eq!(undone.before.unwrap().sha256, new.sha256, "before/after flips: the frame before the undo");
+        sup.stop(); let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn streams_frames_ahead_of_the_playhead_through_the_engine() {
+        let Some(sup) = engine() else { eprintln!("KIMO_MCP_BIN unset: skipped"); return };
+        gradient(&sup, 0.0, 3.0, "#ff5a24", "#141210");
+        let dir = tmpdir("stream");
+        let v = Viewer::new(dir.clone());
+        let r = v.stream(&sup, "start", json!({"time": 0.5, "scale": 0.5, "playing": true})).unwrap();
+        assert_eq!((r["width"].as_u64(), r["height"].as_u64(), r["fps"].as_f64()), (Some(640), Some(360), Some(30.0)), "{r}");
+        let t0 = Instant::now();
+        let r = loop {
+            let r = v.stream(&sup, "update", json!({"time": 0.5, "playing": true})).unwrap();
+            if r["ready_ahead"].as_u64().unwrap_or(0) >= 10 { break r; }
+            assert!(t0.elapsed().as_secs() < 60 && r["error"].is_null(), "{r}");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
+        let f = &r["frames"][0];
+        assert_eq!(f["index"].as_i64(), Some(15));
+        let name = f["name"].as_str().unwrap();
+        assert_eq!(f["url"].as_str().unwrap(), cache_url(name));
+        assert_eq!(cache_file(&dir, &format!("/{name}")).map(|(_, m)| m), Some("image/bmp"), "the protocol serves stream frames");
+        let s = v.stream(&sup, "frame", json!({"time": 2.0})).unwrap();
+        assert_eq!(s["index"].as_i64(), Some(60));
+        assert!(s["url"].as_str().unwrap().ends_with(".bmp"));
+        assert_eq!(v.stream(&sup, "stop", json!({})).unwrap()["stopped"], json!(true));
+        assert!(!dir.join(name).exists(), "stop deletes the stream's files");
         sup.stop(); let _ = std::fs::remove_dir_all(&dir);
     }
 

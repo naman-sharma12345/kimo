@@ -57,6 +57,7 @@ pub mod model;
 pub mod commands;
 pub mod render;
 pub mod framecache;
+pub mod preview_stream;
 pub mod buildinfo;
 pub mod effects;
 pub mod text;

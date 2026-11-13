@@ -395,7 +395,7 @@ label.check{display:flex;align-items:center;gap:9px;cursor:pointer}
 .vw-ab button{height:24px;padding:0 10px;font-size:12px}
 .vw-ab button:disabled{opacity:.45;cursor:default}
 .vw-screen{position:relative;aspect-ratio:16/9;border-radius:var(--r);overflow:hidden;background:var(--tile);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06),0 1px 2px rgba(0,0,0,.2)}
-.vw-screen>img,.vw-screen>video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;background:var(--tile)}
+.vw-screen>img,.vw-screen>video,.vw-screen>canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;background:var(--tile)}
 .vw-screen>[hidden]{display:none}
 .vw-empty,.vw-busy,.vw-err{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:16px;color:#C9C2B4}
 .vw-empty .km.e{width:30px;height:30px;margin-bottom:10px}
@@ -411,6 +411,13 @@ label.check{display:flex;align-items:center;gap:9px;cursor:pointer}
 .viewer[data-view=before] .vw-tag{background:var(--accent);color:#141210}
 .vw-ctl{display:flex;align-items:center;gap:10px;margin:10px 2px 0}
 .vw-play{width:30px;padding:0;flex:none}
+.vw-ic{width:30px;padding:0;flex:none}
+.vw-ic svg.i path{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.vw-ic.on{color:var(--acc);background:color-mix(in srgb,var(--acc) 14%,transparent)}
+.viewer[data-loop="1"] #vw-scrub{background-image:linear-gradient(90deg,transparent var(--li,0%),color-mix(in srgb,var(--acc) 30%,transparent) var(--li,0%),color-mix(in srgb,var(--acc) 30%,transparent) var(--lo,100%),transparent var(--lo,100%));background-size:100% 3px;background-position:0 100%;background-repeat:no-repeat}
+.viewer[data-buffering="1"] .vw-screen>canvas{filter:brightness(.85)}
+.vw-screen:fullscreen{aspect-ratio:auto;border-radius:0;background:#000}
+.vw-screen:fullscreen>img,.vw-screen:fullscreen>video,.vw-screen:fullscreen>canvas{background:#000}
 .vw-play .ipa,.viewer[data-playing="1"] .vw-play .ip{display:none}
 .viewer[data-playing="1"] .vw-play .ipa{display:block}
 .vw-play svg.i path{fill:currentColor}

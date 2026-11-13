@@ -528,6 +528,33 @@ async fn viewer_draft(app: tauri::AppHandle, start: f64, seconds: f64) -> Result
     blocking(app, move |st| st.viewer.draft(&st.app_tools(), start, seconds)).await
 }
 
+// ---------- real-time preview (the engine's preview_stream: frames + audio chunks ahead of the playhead) ----------
+/// Start a preview session at `time` (scale 0.5 half / 0.25 quarter of the project size).
+#[tauri::command]
+async fn preview_start(app: tauri::AppHandle, time: f64, scale: Option<f64>, rate: Option<f64>, playing: Option<bool>) -> Result<Value, String> {
+    blocking(app, move |st| st.viewer.stream(&st.app_tools(), "start", json!({"time": time, "scale": scale.unwrap_or(0.5), "rate": rate.unwrap_or(1.0), "playing": playing.unwrap_or(false)}))).await
+}
+
+/// The poll: the playhead (and play state / speed) in, the frames and audio chunks ready ahead out. `seek` starts a new run.
+#[tauri::command]
+async fn preview_update(app: tauri::AppHandle, time: f64, playing: Option<bool>, rate: Option<f64>, seek: Option<bool>) -> Result<Value, String> {
+    let mut a = json!({"time": time});
+    if let Some(p) = playing { a["playing"] = json!(p); }
+    if let Some(r) = rate { a["rate"] = json!(r); }
+    blocking(app, move |st| st.viewer.stream(&st.app_tools(), if seek == Some(true) { "seek" } else { "update" }, a)).await
+}
+
+/// One draft frame for scrubbing, now.
+#[tauri::command]
+async fn preview_frame(app: tauri::AppHandle, time: f64) -> Result<Value, String> {
+    blocking(app, move |st| st.viewer.stream(&st.app_tools(), "frame", json!({"time": time}))).await
+}
+
+#[tauri::command]
+async fn preview_stop(app: tauri::AppHandle) -> Result<Value, String> {
+    blocking(app, move |st| st.viewer.stream(&st.app_tools(), "stop", json!({}))).await
+}
+
 #[tauri::command]
 fn open_spectator(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("spectator") { return w.set_focus().map_err(|e| e.to_string()); }
@@ -777,7 +804,8 @@ fn main() {
             cli_status, cli_signin, cli_install, cli_register, cli_models, agent_select, agent_send, agent_stop, agent_reset,
             mcp_set, mcp_probe, key_set, key_clear, key_test, settings_set, onboarded_set,
             recovery_status, recovery_restore, recovery_discard,
-            open_spectator, setup_status, setup_start, setup_pause, setup_skip, viewer_frame, viewer_draft
+            open_spectator, setup_status, setup_start, setup_pause, setup_skip, viewer_frame, viewer_draft,
+            preview_start, preview_update, preview_frame, preview_stop
         ])
         .build(tauri::generate_context!())
         .expect("kimo failed to start")

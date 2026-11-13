@@ -70,7 +70,7 @@ fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     preview::configure_demo(demo_arg(&argv).as_deref()); // spectator demo mode: off unless asked for
     spectator::init(); // telemetry for the spectator GUI, on by default (KIMO_SPECTATOR); KIMO_SPECTATOR=off = no thread, no work
-    std::panic::set_hook(Box::new(|i| { if std::thread::current().name() == Some("kimo-preview") { return; } eprintln!("kimo: {i}"); })); // a cancelled live preview is not news
+    std::panic::set_hook(Box::new(|i| { if matches!(std::thread::current().name(), Some("kimo-preview" | "kimo-preview-stream" | "kimo-preview-audio")) { return; } eprintln!("kimo: {i}"); })); // a cancelled live preview is not news
     let ss = Arc::new(Mutex::new(Session::new()));
     let mut enabled: std::collections::HashSet<String> = std::collections::HashSet::new();
     let stdin = std::io::stdin();
