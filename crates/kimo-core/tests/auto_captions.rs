@@ -250,6 +250,7 @@ fn stub_said(tag: &str, said: &[&str]) -> PathBuf {
     assert_eq!(romanize("हमेशा"), "hamesha"); assert_eq!(romanize("I love it"), "I love it");
 }
 
+#[cfg(unix)] // builds a PATH with a symlinked ffmpeg and no recognizer
 #[test] fn no_recognizer_at_all_names_the_real_situation_and_a_real_fallback() { let _env_guard = env_guard();
     // The real no-setup-box scenario: no whisper-cli anywhere, no model, nothing overridden --
     // the exact shape director_mode.md's own small model hits when it calls auto_captions with no

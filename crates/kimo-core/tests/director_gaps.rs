@@ -85,6 +85,7 @@ fn apply_fix(ss: &mut Session, f: &Value) { let fx = &f["fix"]; call(ss, fx["too
 
 /// The demo machine (Oct 26): kimo silently fell back to a light sans when the title fonts were missing, and captions need a
 /// whisper binary and model on disk. check_environment reports each piece with the exact command that fixes it, and downloads nothing.
+#[cfg(unix)] // uses a shell-script whisper stub made executable with Unix permissions
 #[test] fn check_environment_reports_whisper_fonts_and_ffmpeg_with_fixes() {
     let d = dir().join("env"); let fonts = d.join("fonts"); let models = d.join("models"); std::fs::create_dir_all(&fonts).unwrap(); std::fs::create_dir_all(models.join("bin")).unwrap();
     let set = |k: &str, v: &std::path::Path| std::env::set_var(k, v);
