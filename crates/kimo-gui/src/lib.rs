@@ -75,6 +75,25 @@ mod tests {
         assert!(p.iter().any(|x| x.id == "model" && super::download::pinned(x)));
         assert!(p.iter().all(|x| x.sha512.len() == 128 || x.sha512.starts_with("PIN")), "every part is pinned or visibly unpinned");
     }
+    /// The updater public key built into the app belongs to the release signing key: a file signed with that private key
+    /// (tests/updater_key, signed by `tauri signer sign`) verifies with it, exactly as the updater checks a download, and
+    /// changed bytes do not. If this fails, installed copies would refuse every update.
+    #[test]
+    fn the_built_in_update_key_verifies_release_signatures() {
+        use base64::Engine;
+        let b64 = |s: &str| String::from_utf8(base64::engine::general_purpose::STANDARD.decode(s.trim()).unwrap()).unwrap();
+        let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let pubkey = conf["plugins"]["updater"]["pubkey"].as_str().expect("tauri.conf.json has an updater pubkey");
+        assert!(!pubkey.is_empty(), "release builds need the updater public key");
+        let pk = minisign_verify::PublicKey::decode(&b64(pubkey)).unwrap();
+        let data = include_bytes!("../tests/updater_key/sample.txt");
+        let sig = minisign_verify::Signature::decode(&b64(include_str!("../tests/updater_key/sample.txt.sig"))).unwrap();
+        pk.verify(data, &sig, true).expect("a file signed with the release key verifies with the built-in public key");
+        let mut bad = data.to_vec(); bad[0] ^= 1;
+        assert!(pk.verify(&bad, &sig, true).is_err(), "a changed download is refused");
+        let ep = conf["plugins"]["updater"]["endpoints"][0].as_str().unwrap();
+        assert!(ep.starts_with("https://github.com/") && ep.ends_with("/releases/latest/download/latest.json"), "{ep}");
+    }
     #[test]
     fn engine_env_uses_downloaded_parts_only_when_present() {
         let d = std::env::temp_dir().join(format!("kimo-env-{}", std::process::id()));

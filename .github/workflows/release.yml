@@ -12,10 +12,10 @@ name: release
 # In-app updates (docs/UPDATES_AND_CRASH_REPORTS.md): when the repository has the updater signing key, the app
 # installers are signed for the Tauri updater (`<installer>.sig`) and the `updater` job writes `latest.json`, which the
 # app reads from https://github.com/<repo>/releases/latest/download/latest.json. Only a PUBLISHED release is "latest",
-# so publishing the draft is what ships an update. Needed (Settings > Secrets and variables > Actions):
-#   secret   TAURI_SIGNING_PRIVATE_KEY           the private key from `tauri signer generate` (its file content)
-#   secret   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  its password (empty if generated without one)
-#   variable TAURI_UPDATER_PUBKEY                the matching public key (the .pub file content), built into the app
+# so publishing the draft is what ships an update. The PUBLIC key is committed (crates/kimo-gui/tauri.conf.json,
+# plugins.updater.pubkey). Needed (Settings > Secrets and variables > Actions):
+#   secret   TAURI_SIGNING_PRIVATE_KEY           the matching private key (content of kimo-updater.key)
+#   secret   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  its password
 # Without them the installers are built exactly as before, with no updater files (dry runs need no secrets).
 # Windows Authenticode code signing is NOT done yet (TODO, needs a code-signing certificate): see the gui job.
 # No other secrets or certificates, GitHub-hosted runners only.
@@ -155,7 +155,6 @@ jobs:
       # updater signing (optional, see the header). `tauri build` signs the updater artifacts with this key.
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
     strategy:
       fail-fast: false
       matrix:
@@ -231,19 +230,16 @@ jobs:
         run: |
           v="${GITHUB_REF_NAME#v}"
           if [ "${GITHUB_REF_TYPE}" = tag ] && [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then export KIMO_VERSION="$v"; fi
-          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] && [ -n "$UPDATER_PUBKEY" ]; then
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
             export KIMO_UPDATER=1
-            echo "updater: ON (installers signed for in-app updates)"
+            echo "updater: ON (installers signed for in-app updates; public key from tauri.conf.json)"
           else
-            echo "::warning::Updater signing key or public key not set: this build has no in-app updates (see docs/UPDATES_AND_CRASH_REPORTS.md)"
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY not set: no updater signatures, so this release cannot be installed as an in-app update (see docs/UPDATES_AND_CRASH_REPORTS.md)"
           fi
           node -e '
             const c = { bundle: { externalBin: ["binaries/kimo-mcp"], resources: { "../../fonts/": "fonts/" } } };
             if (process.env.KIMO_VERSION) c.version = process.env.KIMO_VERSION;
-            if (process.env.KIMO_UPDATER) {
-              c.bundle.createUpdaterArtifacts = true;                       // writes <installer>.sig next to each installer
-              c.plugins = { updater: { pubkey: process.env.UPDATER_PUBKEY.trim() } };
-            }
+            if (process.env.KIMO_UPDATER) c.bundle.createUpdaterArtifacts = true;   // writes <installer>.sig next to each installer
             require("fs").writeFileSync("crates/kimo-gui/tauri.release.json", JSON.stringify(c, null, 1) + "\n");
           '
           cat crates/kimo-gui/tauri.release.json
@@ -266,7 +262,7 @@ jobs:
           # each installer and, when the updater is on, its updater signature under the same stable name + .sig
           # (NSIS and AppImage signatures are required; a .deb signature depends on the Tauri CLI version, so it is optional)
           KIMO_UPDATER=""
-          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] && [ -n "$UPDATER_PUBKEY" ]; then KIMO_UPDATER=1; fi
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then KIMO_UPDATER=1; fi
           take() {
             cp "$1" "dist/$2"
             if [ -z "$KIMO_UPDATER" ]; then return 0; fi

@@ -16,30 +16,37 @@ Three safety features of `crates/kimo-gui`, all on Windows and Linux.
 
 Unsaved work is offered back after the restart, the same way as after a crash.
 
-- Debug builds never check. A build without an update key reports `"state": "off"` in `app_state().update`.
+- Debug builds never check. A build whose config has an empty `pubkey` reports `"state": "off"` in `app_state().update`.
 - `settings.json` → `"update_check": false` turns the automatic check off. `update_check` (command) checks on demand.
 - The check result is in `app_state().update`: `unchecked | off | none | available | error`.
 - Only a **published** release is "latest". The release workflow makes drafts, so an update reaches users when a
   maintainer publishes the draft.
 
-**Setting up the signing key (once, by the repo owner).**
+**The signing key.** The key pair was made with `tauri signer generate` (Tauri CLI 2.12.3) on 2026-11-14, on the
+maintainer's PC, in `%USERPROFILE%\.tauri\`:
+
+| File | What it is | Where it goes |
+|---|---|---|
+| `kimo-updater.key.pub` | public key: checks signatures | committed, `crates/kimo-gui/tauri.conf.json` → `plugins.updater.pubkey` |
+| `kimo-updater.key` | private key: signs releases | GitHub secret `TAURI_SIGNING_PRIVATE_KEY` (the file's content). Never in the repo. |
+| `kimo-updater.password.txt` | the private key's password | GitHub secret `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Never in the repo. |
+
+Back up the private key and password somewhere safe (a password manager), not only on that PC. If they are lost,
+installed copies can never update again and people must reinstall by hand. If they leak, anyone could ship a
+"kimo update": rotate by generating a new pair, committing the new public key, and releasing that build. Only copies
+that already have the new key can take updates signed with it.
+
+`the_built_in_update_key_verifies_release_signatures` (kimo-gui, `src/lib.rs`) checks that a file signed with the
+private key (`crates/kimo-gui/tests/updater_key/`) verifies with the committed public key, the way the updater checks
+a download. To re-sign after rotating:
 
 ```bash
-npx @tauri-apps/cli@2.12.3 signer generate -w ~/.tauri/kimo-updater.key
+npx @tauri-apps/cli@2.12.3 signer sign -f ~/.tauri/kimo-updater.key -p <password> crates/kimo-gui/tests/updater_key/sample.txt
 ```
 
-Keep the private key and its password safe. If the key is lost, installed copies can never update again: they would
-need a manual reinstall. In GitHub → Settings → Secrets and variables → Actions, add:
+With the two secrets set, `.github/workflows/release.yml`:
 
-| Kind | Name | Value |
-|---|---|---|
-| secret | `TAURI_SIGNING_PRIVATE_KEY` | content of `kimo-updater.key` |
-| secret | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | its password (empty if none) |
-| variable | `TAURI_UPDATER_PUBKEY` | content of `kimo-updater.key.pub` |
-
-With these set, `.github/workflows/release.yml`:
-
-- puts the public key into the bundle config and turns on `createUpdaterArtifacts`,
+- turns on `createUpdaterArtifacts` (the public key already comes from `tauri.conf.json`),
 - copies each installer's updater signature next to it under the stable name + `.sig`
   (`kimo-setup-windows-x64.exe.sig`, `kimo-linux-x86_64.AppImage.sig`, `kimo-linux-amd64.deb.sig` when the CLI makes
   one),

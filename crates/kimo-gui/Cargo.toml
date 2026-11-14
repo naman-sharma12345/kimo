@@ -49,5 +49,11 @@ lto = true
 codegen-units = 1
 panic = "abort"
 
+[dev-dependencies]
+# the updater's own signature check (already in the tree through tauri-plugin-updater): proves the public key in
+# tauri.conf.json belongs to the release signing key
+minisign-verify = "0.3"
+base64 = "0.22"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

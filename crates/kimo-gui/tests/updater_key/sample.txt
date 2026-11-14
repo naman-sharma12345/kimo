@@ -1,0 +1,1 @@
+kimo updater key check: this file is signed with the release key; the app test verifies it with the public key in tauri.conf.json.

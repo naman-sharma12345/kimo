@@ -1,0 +1,2 @@
+# signed bytes: any line-ending conversion would break the signature check
+crates/kimo-gui/tests/updater_key/** -text
