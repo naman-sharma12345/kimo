@@ -1313,6 +1313,33 @@ if (lost) {
     catch (e) { toast(String(e), 'bad'); }
   } else { B.invoke('recovery_discard'); }
 } else if (st && (st.ready || st.done)) maybeWelcome();
+// kimo crashed last time: ask before anything is sent. "Send report" opens a pre-filled GitHub issue in the browser,
+// which the person reads and submits themselves; kimo sends nothing. The log stays on this computer either way.
+const crashes = await B.invoke('crash_pending').catch(() => []);
+if (crashes?.length) {
+  const c = crashes[0], more = crashes.length > 1 ? ` (${crashes.length - 1} older crash log${crashes.length > 2 ? 's' : ''} will be filed away too)` : '';
+  const code = $('#cf-code'); code.textContent = c.text.split('\n').slice(0, 12).join('\n'); code.hidden = false;
+  const send = await confirmBox('kimo closed unexpectedly last time', `Send a crash report? It opens a pre-filled report on GitHub in your browser, with the log below (your home folder replaced by ~). You read it and submit it yourself: nothing is sent unless you do${more}.`, 'Send report', "Don't send");
+  code.hidden = true; code.textContent = '';
+  for (const r of crashes) await B.invoke('crash_answer', { file: r.file, send: send && r === c }).catch(e => toast(String(e), 'bad'));
+}
+// updates: release builds check GitHub releases after start; installing waits for a click here
+function showUpdate(u) {
+  const b = $('#tb-update');
+  if (!u || u.state !== 'available') { b.hidden = true; return; }
+  S.update = u; b.hidden = false; b.disabled = false; b.textContent = `Update to ${u.version}`;
+}
+$('#tb-update').onclick = async () => {
+  const u = S.update; if (!u) return;
+  const unsaved = S.dirty ? 'Your unsaved changes are autosaved first and offered back after the restart. ' : '';
+  if (!await confirmBox(`Install kimo ${u.version}?`, `${unsaved}kimo downloads the update, checks its signature, closes and starts again.${u.notes ? '\n\n' + u.notes : ''}`, 'Install and restart', 'Later')) return;
+  const b = $('#tb-update'); b.disabled = true; b.textContent = 'Downloading…';
+  try { await B.invoke('update_install'); } catch (e) { showUpdate(u); toast(String(e), 'bad'); }
+};
+B.listen('update-available', showUpdate);
+B.listen('update-progress', p => { if (p.total) $('#tb-update').textContent = `Downloading ${Math.round(100 * p.done / p.total)}%`; });
+B.listen('update-installing', () => { $('#tb-update').textContent = 'Installing…'; });
+showUpdate(S.app?.update);
 setInterval(() => { if (S.app?.engine?.state !== 'running') refresh().then(() => { if (S.app?.engine?.state === 'running') { loadProject(); viewerSoon(); } }); }, 2000);
 window.__kimo = { S, P, V, T, show, refresh, loadProject, sendAgent, importPaths, viewerRefresh };
 document.body.dataset.ready = '1';

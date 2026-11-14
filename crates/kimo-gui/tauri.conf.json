@@ -78,5 +78,16 @@
       }
     ]
   },
-  "mainBinaryName": "kimo-gui"
+  "mainBinaryName": "kimo-gui",
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": [
+        "https://github.com/naman-sharma12345/kimo/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
 }

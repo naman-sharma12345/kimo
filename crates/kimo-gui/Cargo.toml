@@ -28,6 +28,8 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 # one kimo per user: a second launch focuses the open window (one engine, one project, one bridge)
 tauri-plugin-single-instance = "2"
+# in-app updates from GitHub releases (signed manifest `latest.json`; checked only in release builds, installed only on the user's click)
+tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # provider calls (BYO key) and first-run downloads: blocking, rustls, no OpenSSL

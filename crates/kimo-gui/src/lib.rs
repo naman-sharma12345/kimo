@@ -3,6 +3,7 @@ pub mod agent;
 pub mod agents;
 pub mod bridge;
 pub mod cli_agents;
+pub mod crash;
 pub mod download;
 pub mod engine;
 pub mod keys;

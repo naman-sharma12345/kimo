@@ -26,10 +26,12 @@ pub struct Settings {
     pub recent: Vec<String>,
     /// The welcome tour was finished or skipped.
     pub onboarded: bool,
+    /// Release builds ask GitHub releases for a newer kimo shortly after start (installing always waits for a click).
+    pub update_check: bool,
 }
 impl Default for Settings {
     fn default() -> Self { Settings { mcp_enabled: false, provider: "openai".into(), models: HashMap::new(), base_urls: HashMap::new(), remembered: vec![], setup_done: false,
-        agent: "claude-code".into(), agent_models: HashMap::new(), agent_efforts: HashMap::new(), recent: vec![], onboarded: false } }
+        agent: "claude-code".into(), agent_models: HashMap::new(), agent_efforts: HashMap::new(), recent: vec![], onboarded: false, update_check: true } }
 }
 impl Settings {
     pub fn load(p: &Path) -> Settings { std::fs::read_to_string(p).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default() }

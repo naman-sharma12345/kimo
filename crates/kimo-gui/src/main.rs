@@ -9,6 +9,7 @@
 use kimo_gui::agent::{self, Chat};
 use kimo_gui::bridge;
 use kimo_gui::cli_agents::{self, Ev, Kind, KimoLaunch, Slot};
+use kimo_gui::crash;
 use kimo_gui::download::{self, Part};
 use kimo_gui::engine::{self, Status, Supervisor};
 use kimo_gui::keys::{self, KeyRing, Secret};
@@ -26,6 +27,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_updater::UpdaterExt;
 
 struct AppState {
     sup: Arc<Supervisor>,
@@ -51,6 +53,10 @@ struct AppState {
     /// Autosave / crash recovery: this session's record, and what the previous (crashed) session left to restore.
     rec: Mutex<recovery::State>,
     offer: Mutex<Option<recovery::Offer>>,
+    /// Updates: the newest check (`{"state": "available"|"none"|"off"|"error", ...}`), and set while an update installs
+    /// (the exit then leaves recovery "not clean", so unsaved work is offered back after the restart).
+    update: Mutex<Value>,
+    updating: AtomicBool,
 }
 
 impl AppState {
@@ -80,6 +86,21 @@ impl AppState {
         self.mark_saved();
     }
     /// Everything up to now is in the user's own file (saved, opened or a new empty project): nothing to recover.
+    /// Autosave right now (with history), whatever the timer says. true when written.
+    fn autosave_now(&self) -> bool {
+        if !matches!(self.sup.status(), Status::Running { .. }) { return false; }
+        let rev = self.ledger.revision();
+        let pp = self.project_path.lock().unwrap().clone();
+        let path = recovery::autosave_path(&self.data_dir, pp.as_deref(), std::process::id());
+        if let Some(d) = path.parent() { let _ = std::fs::create_dir_all(d); }
+        // the project and its undo history (`<autosave>.history`), so Undo still works after a crash restore
+        let ok = self.sup.call("project", &recovery::autosave_call(&path)).map(|r| !engine::is_error(&r)).unwrap_or(false);
+        if !ok { return false; }
+        let mut r = self.rec.lock().unwrap();
+        r.autosave = Some(path.display().to_string()); r.autosaved_at = ledger::now_ms() as u64; r.autosaved_rev = rev; r.project_path = pp;
+        recovery::store(&self.data_dir, &r);
+        true
+    }
     fn mark_saved(&self) {
         let mut r = self.rec.lock().unwrap();
         r.saved_rev = self.ledger.revision();
@@ -118,6 +139,7 @@ fn app_state(st: State<'_, AppState>) -> Value {
         "snippets": launch.as_ref().map(|l| mcp_config::snippets(&Launch { command: st.kimo_launch().command, args: vec!["mcp".into()], env: l.env.clone() }, cfg!(windows))),
         "kimo_launch": {"command": st.kimo_launch().command, "args": ["mcp"]},
         "settings": s,
+        "update": *st.update.lock().unwrap(),
         "providers": keys::PROVIDERS,
         "keys": keys,
         "key_store": st.keys.store_label(),
@@ -494,7 +516,8 @@ async fn recovery_restore(app: tauri::AppHandle) -> Result<Value, String> {
     let a2 = app.clone();
     let v = blocking(app, |st| {
         let o = st.offer.lock().unwrap().take().ok_or("nothing to restore")?;
-        let r = st.ledger.call("you", "project", &json!({"action": "load_project", "args": {"path": o.autosave}}))?;
+        // with its undo history: Ctrl+Z after the restore undoes the edits made before the crash
+        let r = st.ledger.call("you", "project", &recovery::restore_call(&o.autosave))?;
         if engine::is_error(&r) { return Err(engine::result_text(&r)); }
         st.ledger.reset();
         *st.project_path.lock().unwrap() = o.project_path.clone();
@@ -508,10 +531,79 @@ async fn recovery_restore(app: tauri::AppHandle) -> Result<Value, String> {
 
 #[tauri::command]
 fn recovery_discard(st: State<'_, AppState>) {
-    if let Some(o) = st.offer.lock().unwrap().take() { let _ = std::fs::remove_file(&o.autosave); }
+    if let Some(o) = st.offer.lock().unwrap().take() { recovery::remove_autosave(&o.autosave); }
     let mut r = st.rec.lock().unwrap();
     *r = recovery::State { clean: false, pid: std::process::id(), ..Default::default() };
     recovery::store(&st.data_dir, &r);
+}
+
+// ---------- crash reports (opt-in) ----------
+/// Crashes nobody answered yet (newest first): the window asks once whether to send a report.
+#[tauri::command]
+fn crash_pending(st: State<'_, AppState>) -> Vec<crash::Report> { crash::pending(&crash::dir(&st.data_dir)) }
+
+/// The person's answer. `send`: open the pre-filled report in their browser, where they read and submit it themselves
+/// (kimo itself sends nothing). Either way the log moves to `crashes/answered` and is not asked about again.
+#[tauri::command]
+fn crash_answer(st: State<'_, AppState>, file: String, send: bool) -> Result<(), String> {
+    let d = crash::dir(&st.data_dir);
+    if send {
+        let r = crash::pending(&d).into_iter().find(|r| r.file == file).ok_or("That crash log is no longer there.")?;
+        cli_agents::open_url(&crash::issue_url(&r, agents::home_dir().as_deref()))?;
+    }
+    crash::answer(&d, &file)
+}
+
+// ---------- updates (GitHub releases, signed) ----------
+/// The updater's public key from the bundle config (the release workflow sets it; a dev or self-built app has none).
+fn updater_pubkey(app: &tauri::AppHandle) -> Option<String> {
+    app.config().plugins.0.get("updater")?.get("pubkey")?.as_str().map(str::trim).filter(|k| !k.is_empty()).map(String::from)
+}
+
+/// Ask the release feed whether a newer kimo exists. Records the answer and announces `update-available` when there is one.
+async fn check_update(app: &tauri::AppHandle) -> Value {
+    let mut v = if updater_pubkey(app).is_none() {
+        json!({"state": "off", "reason": "this build has no update key (only release builds update themselves)"})
+    } else {
+        match app.updater() {
+            Err(e) => json!({"state": "error", "error": e.to_string()}),
+            Ok(u) => match u.check().await {
+                Ok(Some(up)) => json!({"state": "available", "version": up.version, "current": up.current_version, "notes": up.body, "date": up.date.map(|d| d.to_string())}),
+                Ok(None) => json!({"state": "none", "current": env!("CARGO_PKG_VERSION")}),
+                Err(e) => json!({"state": "error", "error": e.to_string()}),
+            },
+        }
+    };
+    v["checked_at"] = json!(ledger::now_ms() as u64);
+    *app.state::<AppState>().update.lock().unwrap() = v.clone();
+    if v["state"] == "available" { let _ = app.emit("update-available", &v); }
+    v
+}
+
+#[tauri::command]
+async fn update_check(app: tauri::AppHandle) -> Result<Value, String> { Ok(check_update(&app).await) }
+
+/// Install the available update, on the person's click: download and verify it (signature), autosave the project with its
+/// history, stop the engine and agents (the installer replaces their files), install, restart. Unsaved work is offered
+/// back after the restart, exactly like after a crash.
+#[tauri::command]
+async fn update_install(app: tauri::AppHandle) -> Result<(), String> {
+    if updater_pubkey(&app).is_none() { return Err("This build does not update itself. Download the newest kimo from getkimo.tech.".into()); }
+    let up = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?.ok_or("kimo is already up to date.")?;
+    let (h, mut done) = (app.clone(), 0usize);
+    let bytes = up.download(move |n, total| { done += n; let _ = h.emit("update-progress", json!({"done": done, "total": total})); }, || {}).await.map_err(|e| e.to_string())?;
+    let a2 = app.clone();
+    blocking(app.clone(), move |st| {
+        st.updating.store(true, Ordering::SeqCst);
+        st.autosave_now();
+        cli_agents::stop(&st.turn);
+        if let Some(b) = st.bridge.lock().unwrap().take() { b.remove_file(); }
+        st.sup.stop();
+        let _ = a2.emit("update-installing", json!({"version": up.version}));
+        up.install(bytes).map_err(|e| { st.updating.store(false, Ordering::SeqCst); st.sup.start(); e.to_string() })
+    }).await?;
+    // Windows: the installer has already closed kimo and reopens it. Linux: the AppImage / package is replaced, restart into it.
+    app.restart();
 }
 
 #[tauri::command]
@@ -654,6 +746,11 @@ fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     if argv.first().map(|a| a == "mcp").unwrap_or(false) { run_mcp(&argv[1..]); }
     if argv.first().map(|a| a == "--version").unwrap_or(false) { println!("kimo-gui {}", env!("CARGO_PKG_VERSION")); return; }
+    // a panic anywhere in the app leaves a local crash log; the next launch asks whether to send a report (never automatic)
+    let data_dir_early = bridge::data_dir().unwrap_or_else(|| std::env::temp_dir().join("kimo"));
+    crash::install(crash::dir(&data_dir_early), env!("CARGO_PKG_VERSION"));
+    // `kimo-gui --crash-test`: a deliberate panic, to check the crash log and the next launch's prompt end to end
+    if argv.first().map(|a| a == "--crash-test").unwrap_or(false) { panic!("kimo --crash-test: a deliberate crash to check crash reports"); }
 
     tauri::Builder::default()
         // must be the first plugin: a second launch hands its arguments here and exits
@@ -662,6 +759,7 @@ fn main() {
             if let Some(f) = argv.iter().skip(1).find(|a| a.to_ascii_lowercase().ends_with(".kimo")) { let _ = app.emit("open-file", f); }
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let handle = app.handle().clone();
             let data_dir = bridge::data_dir().or_else(|| app.path().app_data_dir().ok()).unwrap_or_else(|| std::env::temp_dir().join("kimo"));
@@ -704,8 +802,18 @@ fn main() {
                 turn: Arc::new(Mutex::new(None)), busy: AtomicBool::new(false), sessions: Mutex::new(HashMap::new()),
                 attached: Mutex::new(HashMap::new()), project_path: Mutex::new(None),
                 rec: Mutex::new(rec_now), offer: Mutex::new(offer),
+                update: Mutex::new(json!({"state": "unchecked"})), updating: AtomicBool::new(false),
             });
-            // autosave: every minute after an edit, or after 20 edits, straight to the engine (not an edit itself)
+            // updates: release builds ask GitHub releases once, shortly after start (the person installs with a click)
+            if !cfg!(debug_assertions) && app.state::<AppState>().settings.lock().unwrap().update_check {
+                let h7 = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = tauri::async_runtime::spawn_blocking(|| std::thread::sleep(std::time::Duration::from_secs(8))).await;
+                    let v = check_update(&h7).await;
+                    if v["state"] == "error" { eprintln!("kimo: update check failed: {}", v["error"]); }
+                });
+            }
+            // autosave (with undo history): every minute after an edit, or after 20 edits, straight to the engine (not an edit itself)
             let h6 = handle.clone();
             std::thread::spawn(move || {
                 let (mut last_rev, mut last_t) = (0u64, std::time::Instant::now());
@@ -715,19 +823,12 @@ fn main() {
                     let rev = st.ledger.revision();
                     if !recovery::due(rev, last_rev, last_t.elapsed().as_secs_f64(), 60.0, 20) { continue; }
                     if !matches!(st.sup.status(), Status::Running { .. }) { continue; }
-                    let pp = st.project_path.lock().unwrap().clone();
-                    let path = recovery::autosave_path(&st.data_dir, pp.as_deref(), std::process::id());
-                    if let Some(d) = path.parent() { let _ = std::fs::create_dir_all(d); }
-                    let ok = st.sup.call("project", &json!({"action": "save_project", "args": {"path": path.display().to_string()}})).map(|r| !engine::is_error(&r)).unwrap_or(false);
+                    let ok = st.autosave_now();
                     last_t = std::time::Instant::now();
                     if !ok { continue; }
                     last_rev = rev;
-                    let at = ledger::now_ms() as u64;
-                    let mut r = st.rec.lock().unwrap();
-                    r.autosave = Some(path.display().to_string()); r.autosaved_at = at; r.autosaved_rev = rev; r.project_path = pp;
-                    recovery::store(&st.data_dir, &r);
-                    drop(r);
-                    let _ = h6.emit("autosaved", json!({"at": at, "path": path.display().to_string()}));
+                    let r = st.rec.lock().unwrap().clone();
+                    let _ = h6.emit("autosaved", json!({"at": r.autosaved_at, "path": r.autosave}));
                 }
             });
             // the bridge: agents launched with `kimo-gui mcp` join this engine
@@ -776,7 +877,7 @@ fn main() {
             project_open, project_save, project_new, pick, media_thumb, open_url, reveal,
             cli_status, cli_signin, cli_install, cli_register, cli_models, agent_select, agent_send, agent_stop, agent_reset,
             mcp_set, mcp_probe, key_set, key_clear, key_test, settings_set, onboarded_set,
-            recovery_status, recovery_restore, recovery_discard,
+            recovery_status, recovery_restore, recovery_discard, crash_pending, crash_answer, update_check, update_install,
             open_spectator, setup_status, setup_start, setup_pause, setup_skip, viewer_frame, viewer_draft
         ])
         .build(tauri::generate_context!())
@@ -785,7 +886,8 @@ fn main() {
             if let tauri::RunEvent::Exit = ev {
                 let st = app.state::<AppState>();
                 cli_agents::stop(&st.turn);
-                { let mut r = st.rec.lock().unwrap(); r.clean = true; recovery::store(&st.data_dir, &r); }
+                // an update restart is not a clean exit: unsaved work (autosaved just before) is offered back afterwards
+                if !st.updating.load(Ordering::SeqCst) { let mut r = st.rec.lock().unwrap(); r.clean = true; recovery::store(&st.data_dir, &r); }
                 if let Some(b) = st.bridge.lock().unwrap().take() { b.remove_file(); }
                 st.sup.stop();
             }

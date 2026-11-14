@@ -9,7 +9,16 @@ name: release
 #                          SHA256SUMS, no release (unless run on a v* tag with
 #                          draft_release ticked)
 #
-# Unsigned on purpose: no secrets, no certificates, GitHub-hosted runners only.
+# In-app updates (docs/UPDATES_AND_CRASH_REPORTS.md): when the repository has the updater signing key, the app
+# installers are signed for the Tauri updater (`<installer>.sig`) and the `updater` job writes `latest.json`, which the
+# app reads from https://github.com/<repo>/releases/latest/download/latest.json. Only a PUBLISHED release is "latest",
+# so publishing the draft is what ships an update. Needed (Settings > Secrets and variables > Actions):
+#   secret   TAURI_SIGNING_PRIVATE_KEY           the private key from `tauri signer generate` (its file content)
+#   secret   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  its password (empty if generated without one)
+#   variable TAURI_UPDATER_PUBKEY                the matching public key (the .pub file content), built into the app
+# Without them the installers are built exactly as before, with no updater files (dry runs need no secrets).
+# Windows Authenticode code signing is NOT done yet (TODO, needs a code-signing certificate): see the gui job.
+# No other secrets or certificates, GitHub-hosted runners only.
 # Every third-party action is pinned to a full commit SHA (tag in the comment).
 
 on:
@@ -142,6 +151,11 @@ jobs:
   gui:
     name: kimo app (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
+    env:
+      # updater signing (optional, see the header). `tauri build` signs the updater artifacts with this key.
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
     strategy:
       fail-fast: false
       matrix:
@@ -212,13 +226,32 @@ jobs:
           npm install -g "@tauri-apps/cli@${TAURI_CLI_VERSION}"
           tauri --version
 
-      - name: Bundle config (version from the tag, engine sidecar, fonts)
+      - name: Bundle config (version from the tag, engine sidecar, fonts, updater key)
         shell: bash
         run: |
           v="${GITHUB_REF_NAME#v}"
-          if [ "${GITHUB_REF_TYPE}" = tag ] && [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then ver=",\"version\":\"$v\""; else ver=""; fi
-          printf '{"bundle":{"externalBin":["binaries/kimo-mcp"],"resources":{"../../fonts/":"fonts/"}}%s}\n' "$ver" > crates/kimo-gui/tauri.release.json
+          if [ "${GITHUB_REF_TYPE}" = tag ] && [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then export KIMO_VERSION="$v"; fi
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] && [ -n "$UPDATER_PUBKEY" ]; then
+            export KIMO_UPDATER=1
+            echo "updater: ON (installers signed for in-app updates)"
+          else
+            echo "::warning::Updater signing key or public key not set: this build has no in-app updates (see docs/UPDATES_AND_CRASH_REPORTS.md)"
+          fi
+          node -e '
+            const c = { bundle: { externalBin: ["binaries/kimo-mcp"], resources: { "../../fonts/": "fonts/" } } };
+            if (process.env.KIMO_VERSION) c.version = process.env.KIMO_VERSION;
+            if (process.env.KIMO_UPDATER) {
+              c.bundle.createUpdaterArtifacts = true;                       // writes <installer>.sig next to each installer
+              c.plugins = { updater: { pubkey: process.env.UPDATER_PUBKEY.trim() } };
+            }
+            require("fs").writeFileSync("crates/kimo-gui/tauri.release.json", JSON.stringify(c, null, 1) + "\n");
+          '
           cat crates/kimo-gui/tauri.release.json
+
+      # TODO(windows-signing): Authenticode-sign kimo-setup-windows-x64.exe (and kimo-gui.exe / kimo-mcp.exe inside it)
+      # so SmartScreen stops warning. Needs a code-signing certificate (OV/EV, or Azure Trusted Signing). Then set
+      # bundle.windows.signCommand (or certificateThumbprint + timestampUrl) in tauri.release.json above, with the
+      # certificate from repository secrets. The updater signature (.sig) is separate and already handled.
 
       - name: Build the installers
         working-directory: crates/kimo-gui
@@ -230,10 +263,21 @@ jobs:
         run: |
           mkdir -p dist
           b=crates/kimo-gui/target/release/bundle
+          # each installer and, when the updater is on, its updater signature under the same stable name + .sig
+          # (NSIS and AppImage signatures are required; a .deb signature depends on the Tauri CLI version, so it is optional)
+          KIMO_UPDATER=""
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] && [ -n "$UPDATER_PUBKEY" ]; then KIMO_UPDATER=1; fi
+          take() {
+            cp "$1" "dist/$2"
+            if [ -z "$KIMO_UPDATER" ]; then return 0; fi
+            if [ -s "$1.sig" ]; then cp "$1.sig" "dist/$2.sig"
+            elif [ "${3:-}" = optional ]; then echo "::warning::no updater signature for $2: that package will not update in-app"
+            else echo "missing updater signature $1.sig"; exit 1; fi
+          }
           case "$RUNNER_OS" in
-            Windows) cp "$(ls $b/nsis/*-setup.exe | head -1)" dist/kimo-setup-windows-x64.exe ;;
-            Linux)   cp "$(ls $b/appimage/*.AppImage | head -1)" dist/kimo-linux-x86_64.AppImage
-                     cp "$(ls $b/deb/*.deb | head -1)" dist/kimo-linux-amd64.deb ;;
+            Windows) take "$(ls $b/nsis/*-setup.exe | head -1)" kimo-setup-windows-x64.exe ;;
+            Linux)   take "$(ls $b/appimage/*.AppImage | head -1)" kimo-linux-x86_64.AppImage
+                     take "$(ls $b/deb/*.deb | head -1)" kimo-linux-amd64.deb optional ;;
           esac
           ls -l dist
 
@@ -302,9 +346,75 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  # The updater manifest the app reads (releases/latest/download/latest.json): version, notes, and per platform the
+  # download URL (the stable asset names on this tag's release) and the updater signature. Skipped (no file) when the
+  # installers were built without the signing key.
+  updater:
+    name: updater manifest (latest.json)
+    needs: [gui]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: kimo-app-*
+          path: app
+          merge-multiple: true
+      - name: Write latest.json
+        id: manifest
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          ls -l app
+          python3 - <<'PY'
+          import datetime, json, os, re, sys
+          app = "app"
+          ref, ref_type = os.environ["GITHUB_REF_NAME"], os.environ["GITHUB_REF_TYPE"]
+          if ref_type == "tag" and re.fullmatch(r"v\d+\.\d+\.\d+", ref):
+              version, tag = ref[1:], ref
+          else:  # dry run: the version the app was built with; the URLs point at a tag that may not exist yet
+              version = json.load(open("crates/kimo-gui/tauri.conf.json"))["version"]; tag = "v" + version
+          def sig(name):
+              p = os.path.join(app, name + ".sig")
+              return open(p).read().strip() if os.path.isfile(p) and os.path.getsize(p) > 0 else None
+          base = f"https://github.com/{os.environ['REPO']}/releases/download/{tag}/"
+          files = {  # updater key -> stable asset name; {os}-{arch}-{bundle} is looked up first, then {os}-{arch}
+              "windows-x86_64-nsis": "kimo-setup-windows-x64.exe",
+              "windows-x86_64": "kimo-setup-windows-x64.exe",
+              "linux-x86_64-appimage": "kimo-linux-x86_64.AppImage",
+              "linux-x86_64": "kimo-linux-x86_64.AppImage",
+              "linux-x86_64-deb": "kimo-linux-amd64.deb",
+          }
+          platforms = {}
+          for key, name in files.items():
+              s = sig(name)
+              if s and os.path.isfile(os.path.join(app, name)):
+                  platforms[key] = {"signature": s, "url": base + name}
+          if not platforms:
+              print("::notice::no updater signatures (signing key not configured): no latest.json")
+              open(os.environ["GITHUB_OUTPUT"], "a").write("made=false\n"); sys.exit(0)
+          missing = [k for k in ("windows-x86_64", "linux-x86_64") if k not in platforms]
+          if missing: sys.exit(f"updater signatures missing for {missing}: refusing a manifest that strands those installs")
+          m = {"version": version,
+               "notes": f"kimo {version}. Release notes: https://github.com/{os.environ['REPO']}/releases/tag/{tag}",
+               "pub_date": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+               "platforms": platforms}
+          os.makedirs("out", exist_ok=True)
+          json.dump(m, open("out/latest.json", "w"), indent=2)
+          print(json.dumps(m, indent=2))
+          open(os.environ["GITHUB_OUTPUT"], "a").write("made=true\n")
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.manifest.outputs.made == 'true'
+        with:
+          name: kimo-updater-manifest
+          path: out/latest.json
+          if-no-files-found: error
+
   checksums:
     name: SHA256SUMS
-    needs: [build, windows, gui]
+    needs: [build, windows, gui, updater]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-22.04
     steps:
@@ -329,12 +439,13 @@ jobs:
 
   release:
     name: draft release (never published)
-    needs: [build, windows, gui, checksums]
+    needs: [build, windows, gui, updater, checksums]
     if: >-
       ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v')
           && (github.event_name == 'push' || inputs.draft_release)
           && needs.build.result == 'success' && needs.windows.result == 'success'
-          && needs.gui.result == 'success' && needs.checksums.result == 'success' }}
+          && needs.gui.result == 'success' && needs.updater.result == 'success'
+          && needs.checksums.result == 'success' }}
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -363,8 +474,9 @@ jobs:
           Antigravity on the plan you already have (no API key needed), and watch every edit land on the timeline live.
           The other files are the engine on its own, for people who only want the MCP server.
 
-          DRAFT. Unsigned builds; macOS is coming later. Windows: SmartScreen > More info > Run anyway.
-          Verify downloads against SHA256SUMS.
+          DRAFT. Not yet code-signed on Windows; macOS is coming later. Windows: SmartScreen > More info > Run anyway.
+          Verify downloads against SHA256SUMS. Installed copies of kimo offer this update in-app once the release is
+          published (latest.json; the .sig files are the updater signatures).
           NOTES
           if draft=$(gh release view "$tag" --json isDraft -q .isDraft 2>/dev/null); then
             if [ "$draft" != "true" ]; then
