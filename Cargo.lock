@@ -1064,7 +1064,7 @@ dependencies = [
 
 [[package]]
 name = "kimo-cli"
-version = "8.12.1"
+version = "9.0.0"
 dependencies = [
  "kimo-core",
  "serde_json",
@@ -1072,7 +1072,7 @@ dependencies = [
 
 [[package]]
 name = "kimo-core"
-version = "8.12.1"
+version = "9.0.0"
 dependencies = [
  "ab_glyph",
  "bvh",
@@ -1100,7 +1100,7 @@ dependencies = [
 
 [[package]]
 name = "kimo-mcp"
-version = "8.12.1"
+version = "9.0.0"
 dependencies = [
  "kimo-core",
  "serde_json",
