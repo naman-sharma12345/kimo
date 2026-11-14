@@ -24,9 +24,9 @@ Bring Claude Code, Codex or Antigravity on the plan you already pay for, and wat
 
 <br><br>
 
-<img src="docs/media/kimo_brand_reveal.gif" alt="A brand reveal rendered entirely by kimo" width="560">
+<a href="docs/media/kimo_brand_reveal.mp4"><img src="docs/media/kimo_brand_reveal.gif" alt="A brand reveal rendered entirely by kimo" width="560"></a>
 
-<sub><b>Made with kimo.</b> A 33-second brand reveal, rendered by the engine from tool calls an agent made.</sub>
+<sub><b>Made with kimo.</b> A 33-second brand reveal, rendered by the engine from tool calls an agent made. <a href="docs/media/kimo_brand_reveal.mp4">Watch with sound ▶</a></sub>
 
 <br><br>
 
