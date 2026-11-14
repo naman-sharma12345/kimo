@@ -315,11 +315,11 @@ tlScroll.addEventListener('wheel', e => {
 }, { passive: false });
 // seek by ruler / empty lane
 function seekTo(t, render = true) {
-  V.t = clamp(r3(t), 0, Math.max(P.dur, 0)); $('#vw-scrub').value = V.t; vTime(); placePlayhead();
+  V.t = clamp(r3(t), 0, Math.max(P.dur || 0, V.dur || 0, 0)); $('#vw-scrub').value = V.t; vTime(); placePlayhead();
   if (render) { if (inDraft(V.t)) $('#vw-scrub').oninput(); else viewerSeek(); }
 }
 let seekTimer = 0;
-function viewerSeek() { const hit = V.frames.get(`${V.rev}:${fidx(V.t)}`); if (hit) { $('#vw-img').src = hit.url; vMedia('image'); } clearTimeout(seekTimer); seekTimer = setTimeout(() => { if (!V.frames.has(`${V.rev}:${fidx(V.t)}`)) viewerRefresh(); }, 140); }
+function viewerSeek() { const hit = V.frames.get(`${V.rev}:${fidx(V.t)}`); if (hit) { $('#vw-img').src = hit.url; vMedia('image'); } else PB.scrub(V.t); clearTimeout(seekTimer); seekTimer = setTimeout(() => { if (!V.frames.has(`${V.rev}:${fidx(V.t)}`)) viewerRefresh(); }, 140); }
 $('#tl-ruler').addEventListener('pointerdown', e => {
   if (e.target.dataset.mk) { const m = P.markers.find(x => String(x.id) === e.target.dataset.mk); if (m) seekTo(m.time); return; }
   const r = tlCanvas.getBoundingClientRect();
@@ -607,11 +607,27 @@ function renderInspector() {
 const V = { t: 0, dur: 0, fps: 30, rev: null, before: null, draft: null, frames: new Map(), seq: 0, timer: null, raf: 0 };
 const vw = $('#viewer'), scrub = $('#vw-scrub'), video = $('#vw-video');
 const fidx = t => Math.round(Math.max(0, t) * V.fps);
+// real-time playback (playback.js): the engine renders ahead of the playhead, Web Audio keeps the sound in sync
+const PB = new KimoPlayer({
+  invoke: (c, a) => B.invoke(c, a), canvas: $('#vw-canvas'),
+  fps: () => V.fps, duration: () => V.dur, scale: () => ((V.w || 1920) > 2000 ? 0.25 : 0.5),
+  onTime: t => { V.t = t; scrub.value = String(t); vTime(); },
+  onState: (st, i) => {
+    if (st === 'playing' || st === 'buffering') {
+      vw.dataset.playing = '1'; vw.dataset.buffering = st === 'buffering' ? '1' : '0'; setView('after'); vMedia('stream'); vState('ready');
+      const sp = PB.rate === 1 ? '' : ` · ${PB.rate > 0 ? '' : '−'}${Math.abs(PB.rate)}×`;
+      $('#vw-msg').textContent = st === 'buffering' ? `Buffering${sp}…` : `Playing${sp} · ${i.fps || '…'} fps · draft ${i.size}${i.skip > 1 ? ` · every ${['', '', '2nd', '3rd', '4th'][i.skip] || i.skip + 'th'} frame` : ''}${i.audio ? ' · sound' : ''}${i.proxies ? ' · proxies' : ''}${PB.loop.on ? ' · looping' : ''}`;
+    } else if (st === 'paused') { vw.dataset.playing = '0'; vw.dataset.buffering = '0'; playing = false; $('#vw-msg').textContent = `Paused · draft ${i.size}`; }
+    else if (st === 'scrub' && !V.frames.has(`${V.rev}:${fidx(V.t)}`) && vw.dataset.state !== 'rendering') { vMedia('stream'); $('#vw-msg').textContent = i.cached ? 'Draft frame (buffered)' : `Draft frame in ${i.ms} ms`; }
+  },
+  onError: m => { $('#vw-msg').textContent = m; },
+});
 function vState(s, busy) { vw.dataset.state = s; if (busy) $('#vw-busy-t').textContent = busy; }
 function vMedia(m) {
   vw.dataset.media = m;
   $('#vw-img').hidden = m !== 'image' || vw.dataset.view === 'before' || !$('#vw-img').getAttribute('src');
   video.hidden = m !== 'video' || vw.dataset.view === 'before';
+  $('#vw-canvas').hidden = m !== 'stream' || vw.dataset.view === 'before';
 }
 function vTime() {
   $('#vw-time').textContent = V.dur ? `${tc(V.t)} / ${tc(V.dur)}` : tc(V.t);
@@ -619,7 +635,7 @@ function vTime() {
   placePlayhead();
 }
 function inDraft(t) { const d = V.draft; return d && d.rev === V.rev && t >= d.start && t <= d.end - 1 / V.fps; }
-function dropDraft() { stopPlay(); V.draft = null; video.removeAttribute('src'); video.load(); vw.dataset.playing = '0'; vMedia('image'); }
+function dropDraft() { if (!PB.playing && !PB.buffering) stopPlay(); V.draft = null; video.removeAttribute('src'); video.load(); vw.dataset.playing = '0'; vMedia('image'); }
 function setView(v) {
   if (v === 'before' && !V.before) v = 'after';
   vw.dataset.view = v;
@@ -631,7 +647,7 @@ function setView(v) {
   vMedia(vw.dataset.media);
 }
 function applyShown(s) {
-  V.dur = s.duration; V.fps = s.fps || 30; V.rev = s.rev;
+  V.dur = s.duration; V.fps = s.fps || 30; V.rev = s.rev; V.w = s.width;
   scrub.max = String(Math.max(0, s.duration)); scrub.step = String(1 / V.fps);
   scrub.disabled = $('#vw-play').disabled = s.empty;
   V.before = s.before || null;
@@ -647,6 +663,7 @@ function applyShown(s) {
   V.frames.set(`${f.rev}:${f.index}`, f);
   if (V.frames.size > 300) V.frames.delete(V.frames.keys().next().value);
   $('#vw-img').src = f.url;
+  if (PB.playing || PB.buffering) return vState('ready'); // real-time playback keeps the screen; the frame stays cached for later
   vMedia(inDraft(V.t) && !V.draft.frame_urls?.length ? 'video' : 'image');
   $('#vw-rev').textContent = `${s.width}×${s.height}`;
   $('#vw-msg').textContent = (f.cached ? 'From cache' : `Rendered in ${f.ms} ms`) + (s.changed ? ' · updated after an edit' : '');
@@ -670,11 +687,11 @@ scrub.oninput = () => {
     return;
   }
   const hit = V.frames.get(`${V.rev}:${fidx(V.t)}`);
-  if (hit) { $('#vw-img').src = hit.url; vMedia('image'); }
+  if (hit) { $('#vw-img').src = hit.url; vMedia('image'); } else PB.scrub(V.t);
 };
 scrub.onchange = () => { V.t = +scrub.value; vTime(); if (!inDraft(V.t) && !V.frames.has(`${V.rev}:${fidx(V.t)}`)) viewerRefresh(); };
 function seqFrame(t) { const d = V.draft; return d.frame_urls[Math.min(d.frame_urls.length - 1, Math.max(0, Math.round((t - d.start) * (d.fps || V.fps))))]; }
-function stopPlay() { cancelAnimationFrame(V.raf); V.raf = 0; if (!video.paused) video.pause(); vw.dataset.playing = '0'; }
+function stopPlay() { cancelAnimationFrame(V.raf); V.raf = 0; if (!video.paused) video.pause(); if (PB.playing || PB.buffering) PB.pause(); vw.dataset.playing = '0'; }
 function playSeq() {
   const d = V.draft, t0 = performance.now(), from = V.t;
   vw.dataset.playing = '1'; vMedia('image');
@@ -692,10 +709,18 @@ function playSeq() {
   V.raf = requestAnimationFrame(tick);
 }
 let playing = false;
-async function play() {
-  if (V.t >= V.dur - 1 / V.fps) V.t = 0;
+async function play(rate = 1) {
+  if (rate > 0 && V.t >= V.dur - 1 / V.fps) V.t = PB.loop.on ? (PB.loop.in ?? 0) : 0;
   playing = true;
   setView('after');
+  // real-time playback with sound (the engine's preview stream); the draft clips below are the fallback
+  if (PB.supported !== false) {
+    vw.dataset.playing = '1';
+    if (await PB.play(V.t, rate)) return;
+    if (!playing) return;
+    vw.dataset.playing = '0';
+    if (rate !== 1) { playing = false; return; }
+  }
   if (!inDraft(V.t)) {
     const my = ++V.seq;
     vState('rendering', 'Rendering preview…');
@@ -717,6 +742,41 @@ function togglePlay() { if (vw.dataset.playing === '1' || playing && vw.dataset.
 video.ontimeupdate = () => { if (vw.dataset.playing === '1' && V.draft) { V.t = V.draft.start + video.currentTime; scrub.value = V.t; vTime(); } };
 video.onended = () => { vw.dataset.playing = '0'; if (playing && V.t < V.dur - 2 / V.fps) play(); };
 $('#vw-play').onclick = togglePlay;
+
+// ---------- transport: J / K / L shuttle, frame step, loop region, full screen ----------
+function shuttle(key) {
+  const r = KimoAV.shuttle(PB.playing || PB.buffering ? PB.rate : 0, key);
+  if (!r) { playing = false; return stopPlay(); }
+  playing = true; if (PB.playing || PB.buffering) PB.setRate(r); else play(r);
+}
+function stepFrame(n) { if (playing || PB.playing) { playing = false; stopPlay(); } seekTo(V.t + n / V.fps); }
+function loopLabel() {
+  const L = PB.loop, b = $('#vw-loop');
+  b.classList.toggle('on', L.on); b.setAttribute('aria-pressed', L.on ? 'true' : 'false');
+  const a = L.in ?? 0, z = L.out ?? V.dur;
+  b.title = `Loop ${L.in != null || L.out != null ? `${tc(a)}–${tc(z)}` : 'the whole timeline'} (Ctrl+L) · I / O set in and out, Ctrl+Shift+X clears`;
+  scrub.style.setProperty('--li', V.dur ? `${(100 * a / V.dur).toFixed(2)}%` : '0%');
+  scrub.style.setProperty('--lo', V.dur ? `${(100 * z / V.dur).toFixed(2)}%` : '100%');
+  vw.dataset.loop = L.on ? '1' : '0';
+}
+function setLoop(k) {
+  const L = PB.loop;
+  if (k === 'toggle') L.on = !L.on;
+  else if (k === 'in') { L.in = V.t; if (L.out != null && L.out <= L.in) L.out = null; L.on = true; }
+  else if (k === 'out') { L.out = V.t; if (L.in != null && L.in >= L.out) L.in = null; L.on = true; }
+  else if (k === 'clear') { L.in = L.out = null; L.on = false; }
+  loopLabel(); toast(L.on ? `Loop on · ${tc(L.in ?? 0)}–${tc(L.out ?? V.dur)}` : 'Loop off');
+}
+function fullScreen() {
+  const el = $('#viewer .vw-screen');
+  if (document.fullscreenElement) document.exitFullscreen?.(); else el.requestFullscreen?.().catch(e => toast(String(e), 'bad'));
+}
+// Space is the play key everywhere in Edit; a focused viewer button must not also click itself on key-up (play, then pause at once)
+$$('.vw-ctl button').forEach(b => b.addEventListener('keyup', e => { if (e.key === ' ') e.preventDefault(); }));
+$('#vw-loop').onclick = () => setLoop('toggle');
+$('#vw-full').onclick = fullScreen;
+$('#viewer .vw-screen').addEventListener('dblclick', fullScreen);
+loopLabel();
 $$('#vw-ab button').forEach(b => b.onclick = () => setView(b.dataset.v));
 $('#vw-retry').onclick = () => viewerRefresh();
 
@@ -1246,21 +1306,32 @@ addEventListener('keydown', e => {
   if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); call('project', 'redo', {}); return; }
   if (S.tab !== 'edit') return;
   if (mod && e.key.toLowerCase() === 'd') { e.preventDefault(); dupSel(); return; }
+  if (mod && e.shiftKey && e.key.toLowerCase() === 'x') { e.preventDefault(); setLoop('clear'); return; }
+  if (mod && e.key.toLowerCase() === 'l') { e.preventDefault(); setLoop('toggle'); return; }
   if (mod) return;
-  const k = e.key;
+  const k = e.key, kl = k.length === 1 ? k.toLowerCase() : k;
+  if (kl === 'k') { kHeld = true; if (!e.repeat) shuttle('k'); return; }
+  if (kl === 'j' || kl === 'l') { e.preventDefault(); if (kHeld) stepFrame(kl === 'l' ? 1 : -1); else if (!e.repeat) shuttle(kl); return; }
+  if (kl === 'i' && !e.shiftKey) return setLoop('in');
+  if (kl === 'o' && !e.shiftKey) return setLoop('out');
+  if (kl === 'f') return fullScreen();
   if (k === ' ') { e.preventDefault(); togglePlay(); }
   else if (k === 's' || k === 'S') splitSel();
   else if (k === 'Delete' || k === 'Backspace') delSel(e.shiftKey);
   else if (k === 't' || k === 'T') addText();
   else if (k === 'm' || k === 'M') $('#ed-marker').click();
-  else if (k === 'ArrowLeft') { e.preventDefault(); seekTo(V.t - (e.shiftKey ? 1 : 1 / P.fps)); }
-  else if (k === 'ArrowRight') { e.preventDefault(); seekTo(V.t + (e.shiftKey ? 1 : 1 / P.fps)); }
+  else if (k === 'ArrowLeft') { e.preventDefault(); if (e.shiftKey) seekTo(V.t - 1); else stepFrame(-1); }
+  else if (k === 'ArrowRight') { e.preventDefault(); if (e.shiftKey) seekTo(V.t + 1); else stepFrame(1); }
   else if (k === 'Home') seekTo(0);
   else if (k === 'End') seekTo(P.dur);
   else if (k === '+' || k === '=') setZoom(T.z * 1.4);
   else if (k === '-' || k === '_') setZoom(T.z / 1.4);
   else if (k === 'Escape') select(null);
 });
+
+let kHeld = false;
+addEventListener('keyup', e => { if (e.key === 'k' || e.key === 'K') kHeld = false; });
+addEventListener('blur', () => { kHeld = false; });
 
 // ================================================================================================================
 // FILE DROP (the OS drops files on the window; Tauri hands us their paths)
@@ -1341,5 +1412,5 @@ B.listen('update-progress', p => { if (p.total) $('#tb-update').textContent = `D
 B.listen('update-installing', () => { $('#tb-update').textContent = 'Installing…'; });
 showUpdate(S.app?.update);
 setInterval(() => { if (S.app?.engine?.state !== 'running') refresh().then(() => { if (S.app?.engine?.state === 'running') { loadProject(); viewerSoon(); } }); }, 2000);
-window.__kimo = { S, P, V, T, show, refresh, loadProject, sendAgent, importPaths, viewerRefresh };
+window.__kimo = { S, P, V, T, PB, show, refresh, loadProject, sendAgent, importPaths, viewerRefresh };
 document.body.dataset.ready = '1';

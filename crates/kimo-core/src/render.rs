@@ -18,15 +18,16 @@ impl Frames {
 impl std::ops::Index<usize> for Frames { type Output = [u8]; fn index(&self, i: usize) -> &[u8] { self.get(self.first+i).expect("no decoded frame") } }
 pub struct Cache { frames: HashMap<String, (String, std::sync::Arc<Frames>)>, /// Code clip frames per clip id: (signature, last slot asked for, slot -> canvas-size RGBA8). See codeclip.rs.
     code: HashMap<String, CodeSlots>, pub size: (u32, u32, f64), /// Export-only static layer cache (project is immutable for the cache's lifetime).
-    pub export_mode: bool, proxy_clips: std::collections::BTreeMap<String,String>, statics: std::sync::RwLock<HashMap<String, std::sync::Arc<StaticCrop>>> }
+    pub export_mode: bool, proxy_clips: std::collections::BTreeMap<String,String>, /// Decode cache byte budget for this cache (None = the default `decode_cache_limit`); the real-time preview raises it so playback decodes in full windows.
+    pub decode_budget: Option<usize>, statics: std::sync::RwLock<HashMap<String, std::sync::Arc<StaticCrop>>> }
 /// Rendered frames of one code clip: (signature, last slot prepared, slot -> canvas-size straight-alpha RGBA8).
 type CodeSlots = (String, usize, std::collections::BTreeMap<usize, std::sync::Arc<Vec<u8>>>);
 pub struct StaticCrop { x0: usize, y0: usize, x1: usize, y1: usize, d: Vec<f32> }
-impl Cache { pub fn new() -> Self { Cache { frames: HashMap::new(), code: HashMap::new(), size: (0, 0, 0.0), export_mode: false, proxy_clips: Default::default(), statics: std::sync::RwLock::new(HashMap::new()) } } pub fn new_export() -> Self { let mut c = Cache::new(); c.export_mode = true; c } pub fn frames_of(&self, id: &str) -> Option<&Frames> { self.frames.get(id).map(|x| x.1.as_ref()) }
+impl Cache { pub fn new() -> Self { Cache { frames: HashMap::new(), code: HashMap::new(), size: (0, 0, 0.0), export_mode: false, proxy_clips: Default::default(), decode_budget: None, statics: std::sync::RwLock::new(HashMap::new()) } } pub fn new_export() -> Self { let mut c = Cache::new(); c.export_mode = true; c } pub fn frames_of(&self, id: &str) -> Option<&Frames> { self.frames.get(id).map(|x| x.1.as_ref()) }
     /// A cheap point-in-time copy for overlapping export: shares every decoded frame/code-slot buffer by
     /// Arc (no pixel data is duplicated), so a prefetch thread can decode the next window into its own
     /// `Cache` instance without aliasing the one the current batch's compose threads are reading.
-    pub fn snapshot(&self) -> Cache { Cache { frames: self.frames.clone(), code: self.code.clone(), size: self.size, export_mode: self.export_mode, proxy_clips: self.proxy_clips.clone(), statics: std::sync::RwLock::new(self.statics.read().map(|g| g.clone()).unwrap_or_default()) } }
+    pub fn snapshot(&self) -> Cache { Cache { frames: self.frames.clone(), code: self.code.clone(), size: self.size, export_mode: self.export_mode, proxy_clips: self.proxy_clips.clone(), decode_budget: self.decode_budget, statics: std::sync::RwLock::new(self.statics.read().map(|g| g.clone()).unwrap_or_default()) } }
 }
 
 /// Still-image extensions the decoder holds as one looped frame (ffmpeg `-loop 1`). One list, read by
@@ -316,7 +317,25 @@ fn conform_fps_filter(p: &Project, c: &Clip, path: &str, speed: f64, is_img0: bo
 }
 
 /// Decode `n` frames starting at global clip frame `a` (windowed: memory stays bounded for any clip length).
-fn decode(p: &Project, c: &Clip, path: &str, a: usize, n: usize, seek_base: Option<(f64, i64)>) -> Result<Frames, String> {
+/// The real-time preview's decode transport: ffmpeg writes the window to a temp file that is read back whole. Several 1080p
+/// layers at playback rate are hundreds of MB/s, which an OS pipe (a few KB per transfer on Windows) cannot carry; the
+/// file goes through the OS cache. The command's last argument (`-`, stdout) is replaced by the file.
+fn decode_via_file(cmd: &mut Command, max: usize, deadline: std::time::Duration) -> Result<Vec<u8>, String> {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    struct Tmp(std::path::PathBuf);
+    impl Drop for Tmp { fn drop(&mut self) { let _ = std::fs::remove_file(&self.0); } }
+    let tmp = Tmp(std::env::temp_dir().join(format!("kimo-decode-{}-{}.rgba", std::process::id(), NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))));
+    let args: Vec<std::ffi::OsString> = cmd.get_args().map(|a| a.to_os_string()).collect();
+    let mut c = Command::new(cmd.get_program());
+    c.args(&args[..args.len().saturating_sub(1)]).arg("-y").arg(&tmp.0);
+    crate::guard::reserve(max + 1);
+    crate::color::process::wait_command(&mut c, deadline)?;
+    let len = std::fs::metadata(&tmp.0).map_err(|e| format!("decode output: {e}"))?.len() as usize;
+    if len > max { return Err("decode output larger than requested".into()); }
+    std::fs::read(&tmp.0).map_err(|e| format!("decode output: {e}"))
+}
+
+fn decode(p: &Project, c: &Clip, path: &str, a: usize, n: usize, seek_base: Option<(f64, i64)>, via_file: bool, limit: usize) -> Result<Frames, String> {
     let (w, h) = (p.width, p.height);
     check_decodable(path)?;
     if path.ends_with(".kimopx") {
@@ -401,7 +420,7 @@ fn decode(p: &Project, c: &Clip, path: &str, a: usize, n: usize, seek_base: Opti
     let (dw,dh)=if native_fit{let(q,r,_,_)=probe(path)?;(q as usize,r as usize)}else{(w as usize,h as usize)};
     let raw_fs=dw.checked_mul(dh).and_then(|v|v.checked_mul(4)).ok_or("source dimensions overflow")?;
     let estimate=raw_fs.max(fs).checked_mul(if p.color_pipeline.enabled{8}else{1}).ok_or("decode allocation overflow")?.checked_mul(n.max(1)).ok_or("decode allocation overflow")?;
-    if estimate>decode_cache_limit(){return Err("decode request exceeds bounded cache; reduce size/duration or use windowed timing".into())}
+    if estimate>limit{return Err("decode request exceeds bounded cache; reduce size/duration or use windowed timing".into())}
     crate::guard::reserve(estimate);
     let exr_args:Vec<&str>=if path.to_lowercase().ends_with(".exr"){vec!["-apply_trc","linear"]}else{vec![]};
     let vf=if native_fit{format!("setpts=PTS/{},{},trim=start_frame={a_rel}:end_frame={},setpts=PTS-STARTPTS,format={pix}",speed.max(0.01),fps_filter,a_rel+n)}else{vf};
@@ -425,7 +444,7 @@ fn decode(p: &Project, c: &Clip, path: &str, a: usize, n: usize, seek_base: Opti
     }else{
         let bytes_per_frame=fs.checked_mul(if p.color_pipeline.enabled{2}else{1}).ok_or("decode frame size overflow")?;
         let max=bytes_per_frame.checked_mul(n.max(1)).ok_or("decode output size overflow")?;
-        buf=crate::color::process::decode_capture(&mut command,max,crate::color::process::decode_deadline(n.max(1)))?;
+        buf=if via_file{decode_via_file(&mut command,max,crate::color::process::decode_deadline(n.max(1)))?}else{crate::color::process::decode_capture(&mut command,max,crate::color::process::decode_deadline(n.max(1)))?};
         if buf.len()%bytes_per_frame!=0{return Err("truncated project-sized decode output".into())}
         if p.color_pipeline.enabled{let values=buf.chunks_exact(2).map(|v|u16::from_le_bytes([v[0],v[1]]) as f32/65535.).collect();buf=Vec::new();Some(values)}else{None}
     };
@@ -468,6 +487,12 @@ pub fn analysis_prepare_call_count() -> usize { *ANALYSIS_PREPARE_CALLS.lock().u
 /// One frame for a draft look (observe, expect): the analysis path (short-GOP proxy when there is one) with a tiny
 /// decode window, so a single frame costs a seek and a few frames of decode instead of a 256-frame window.
 pub fn prepare_draft_at(p:&Project,cache:&mut Cache,t:f64)->Result<(),String>{prepare_window(p,cache,t,t,4,false,true)}
+/// Real-time preview (preview_stream.rs): the playback window ahead of the playhead with the usual sequential lookahead, preview
+/// proxies when enabled, else the short-GOP analysis proxies (never waited for: callers hold an `analysis_proxy::NonBlocking`).
+/// Decodes the usual 24-frame windows (capped by the cache's budget).
+pub fn prepare_stream_range(p:&Project,cache:&mut Cache,t0:f64,t1:f64)->Result<(),String>{prepare_window(p,cache,t0,t1,WINDOW,true,true)}
+/// One real-time-preview frame now (a scrub): the same proxies and direct seek, a one-frame window.
+pub fn prepare_stream_frame(p:&Project,cache:&mut Cache,t:f64)->Result<(),String>{prepare_window(p,cache,t,t,1,true,true)}
 pub fn prepare_analysis_range(p:&Project,cache:&mut Cache,t0:f64,t1:f64)->Result<(),String>{*ANALYSIS_PREPARE_CALLS.lock().unwrap().entry(std::thread::current().id()).or_insert(0)+=1;prepare_window(p,cache,t0,t1,256,false,true)}
 impl Cache {
     pub fn proxy_assets(&self)->Vec<String>{self.proxy_clips.values().cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect()}
@@ -478,8 +503,11 @@ impl Cache {
         ((h.finish() as u128)<<64)|0x70726f78795f7631
     }
 }
+/// One clip's decode window, collected by `prepare_window` and decoded after its loop (`alias`: same window as an earlier job).
+struct DecodeJob<'a> { c: &'a Clip, apath: String, orig: String, start: usize, count: usize, seek_base: Option<(f64, i64)>, sig: String, ia: usize, ib: usize, selected: bool, using_preview_proxy: bool, alias: Option<usize>, via_file: bool }
 fn prepare_window(p: &Project, cache: &mut Cache, t0: f64, t1: f64, window:usize, preview:bool, analysis:bool) -> Result<(), String> {
     cache.proxy_clips.clear();
+    let limit = cache.decode_budget.unwrap_or_else(decode_cache_limit);
     if !t0.is_finite()||!t1.is_finite()||t1<t0{return Err("decode range requires finite ordered times".into())}
     if cache.size != (p.width, p.height, p.fps) { cache.frames.clear(); cache.code.clear(); cache.size = (p.width, p.height, p.fps); }
     let all = t0 == f64::MIN;
@@ -496,7 +524,10 @@ fn prepare_window(p: &Project, cache: &mut Cache, t0: f64, t1: f64, window:usize
     for k in morph_t.keys() { active.insert(k.clone()); }
     if !all { cache.frames.retain(|k, _| active.contains(k)); cache.code.retain(|k, _| active.contains(k)); }
     let media_count=flat.iter().filter(|c|active.contains(&c.id)&&matches!(c.source,Source::Media{..})&&c.props.get("audio_only").map(|q|q.at(0.)).unwrap_or(0.)<0.5).count().max(1);
-    if !all{let budget=decode_cache_limit()/media_count;cache.frames.retain(|_,(_,fr)|fr.buf.len()+fr.linear_buf.as_ref().map(|b|b.len()*5).unwrap_or(0)<=budget);}
+    if !all{let budget=limit/media_count;cache.frames.retain(|_,(_,fr)|fr.buf.len()+fr.linear_buf.as_ref().map(|b|b.len()*5).unwrap_or(0)<=budget);}
+    // The windows to decode are collected first and decoded after the loop: one at a time as before, or in parallel (each its
+    // own ffmpeg) when several clips need one; results go into the cache in clip order, so the cache ends up exactly as before.
+    let mut jobs: Vec<DecodeJob> = Vec::new();
     for c in &flat {
         let c = pw_ext.get(&c.id).unwrap_or(c);
         let Source::Media { asset } = &c.source else { continue };
@@ -537,19 +568,43 @@ fn prepare_window(p: &Project, cache: &mut Cache, t0: f64, t1: f64, window:usize
         // Ramps cache source-frame windows; constant-speed clips cache output-frame windows.
         let (start, count) = if all { (0, total) } else { (ia, (ib - ia + 1).max(window).min(total - ia)) };
         let mut count=count;
-        if !all{let native=p.color_pipeline.enabled&&p.color_pipeline.linear_resample;let pixels=if native{let(dw,dh,_,_)=probe(&apath)?;(dw as usize*dh as usize).max(p.width as usize*p.height as usize)}else{p.width as usize*p.height as usize};let per=pixels*4*if p.color_pipeline.enabled{8}else{1};count=count.min((decode_cache_limit()/media_count/per.max(1)).max(1));if count<ib-ia+1{return Err("active decode range exceeds cache budget".into())}}
+        if !all{let native=p.color_pipeline.enabled&&p.color_pipeline.linear_resample;let pixels=if native{let(dw,dh,_,_)=probe(&apath)?;(dw as usize*dh as usize).max(p.width as usize*p.height as usize)}else{p.width as usize*p.height as usize};let per=pixels*4*if p.color_pipeline.enabled{8}else{1};count=count.min((limit/media_count/per.max(1)).max(1));if count<ib-ia+1{return Err("active decode range exceeds cache budget".into())}}
         cache.frames.remove(&c.id);
-        let seek_base = if using_analysis_proxy { analysis_proxy.as_ref().and_then(|ap| crate::analysis_proxy::seek_base_for(ap, c, start)) } else { None };
-        let (fr,sig) = match decode(p,c,&apath,start,count,seek_base) {
-            Ok(fr) if selected.is_some() && !fr.covers(ia,ib)=>{if using_preview_proxy{cache.proxy_clips.remove(&c.id);}(decode(p,c,&original_path,start,count,None)?,format!("{sig}|original-fallback"))},
-            Ok(fr)=>(fr,sig),
-            Err(_) if selected.is_some()=>{if using_preview_proxy{cache.proxy_clips.remove(&c.id);}(decode(p,c,&original_path,start,count,None)?,format!("{sig}|original-fallback"))},
-            Err(e)=>return Err(e),
-        };
+        // Real-time preview only (prepare_stream_range asks for both proxy kinds): a plain clip seeks straight to its window
+        // (1 ms early, so the seek lands on the window's first frame) instead of decoding from its in point and trimming, so a
+        // window deep into a clip costs its own frames, not everything before them. Every other caller decodes exactly as before.
+        let stream_seek = preview && analysis && !all && c.speed == 1.0 && !c.retimed() && matches!(c.time_mode, TimeMode::Normal) && !p.color_pipeline.enabled && !is_still_path(&apath);
+        let seek_base = if using_analysis_proxy { analysis_proxy.as_ref().and_then(|ap| crate::analysis_proxy::seek_base_for(ap, c, start)) }
+            else if stream_seek { Some(((c.in_point + start as f64 / p.fps - 0.001).max(0.0), start as i64)) } else { None };
+        // a clip with the very same window as one already queued shares its frames (what the cache lookup above did when decoding was in line)
+        let alias = jobs.iter().position(|j| j.sig == sig && j.start == start && j.count == count && j.ia == ia && j.ib == ib && j.apath == apath);
+        jobs.push(DecodeJob { c, apath, orig: original_path, start, count, seek_base, sig, ia, ib, selected: selected.is_some(), using_preview_proxy, alias, via_file: preview && analysis });
+    }
+    let run = |j: &DecodeJob| -> Result<(Frames, String, bool), String> {
+        match decode(p, j.c, &j.apath, j.start, j.count, j.seek_base, j.via_file, limit) {
+            Ok(fr) if j.selected && !fr.covers(j.ia, j.ib) => Ok((decode(p, j.c, &j.orig, j.start, j.count, None, j.via_file, limit)?, format!("{}|original-fallback", j.sig), j.using_preview_proxy)),
+            Ok(fr) => Ok((fr, j.sig.clone(), false)),
+            Err(_) if j.selected => Ok((decode(p, j.c, &j.orig, j.start, j.count, None, j.via_file, limit)?, format!("{}|original-fallback", j.sig), j.using_preview_proxy)),
+            Err(e) => Err(e),
+        }
+    };
+    let own = jobs.iter().filter(|j| j.alias.is_none()).count();
+    let mut results: Vec<Option<Result<(Frames, String, bool), String>>> = if own < 2 {
+        jobs.iter().map(|j| if j.alias.is_some() { None } else { Some(run(j)) }).collect()
+    } else {
+        let slots: Vec<std::sync::Mutex<Option<Result<(Frames, String, bool), String>>>> = jobs.iter().map(|_| std::sync::Mutex::new(None)).collect();
+        std::thread::scope(|sc| { for (j, slot) in jobs.iter().zip(&slots) { if j.alias.is_some() { continue; } let run = &run; crate::guard::scope_spawn(sc, move || { let r = run(j); *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(r); }); } });
+        slots.into_iter().map(|s| s.into_inner().unwrap_or_else(|e| e.into_inner())).collect()
+    };
+    for k in 0..jobs.len() {
+        let j = &jobs[k]; let (c, ia, ib) = (j.c, j.ia, j.ib);
+        if let Some(a) = j.alias { if let Some(x) = cache.frames.get(&jobs[a].c.id).cloned() { if x.1.covers(ia, ib) { cache.frames.insert(c.id.clone(), x); continue; } } results[k] = Some(run(j)); }
+        let (fr, sig, dropped) = results[k].take().unwrap_or_else(|| Err("decode job lost".into()))?;
+        if dropped { cache.proxy_clips.remove(&c.id); }
         if c.retimed()&&!fr.covers(ia,ib){return Err(format!("{} overrun for clip '{}': requested source frames {ia}..={ib}, decoded {} frame(s) starting at {}; shorten the ramp/clip or choose media with enough source duration",if c.time_remap.is_some(){"time remap"}else{"speed ramp"},c.id,fr.len(),fr.first))}
         let bytes=|fr:&Frames|fr.buf.len()+fr.linear_buf.as_ref().map(|b|b.len()*5).unwrap_or(0);
         let mut seen=std::collections::HashSet::new();
-        if cache.frames.values().filter(|(_,f)|seen.insert(std::sync::Arc::as_ptr(f))).map(|(_,f)|bytes(f)).sum::<usize>().saturating_add(bytes(&fr))>decode_cache_limit(){return Err("active media cache exceeds memory cap; reduce resolution or active clips".into())}
+        if cache.frames.values().filter(|(_,f)|seen.insert(std::sync::Arc::as_ptr(f))).map(|(_,f)|bytes(f)).sum::<usize>().saturating_add(bytes(&fr))>limit{return Err("active media cache exceeds memory cap; reduce resolution or active clips".into())}
         cache.frames.insert(c.id.clone(), (sig, std::sync::Arc::new(fr)));
     }
     // Code clips (codeclip.rs): the frame slots this range shows come from RAM, the disk cache or ONE headless-browser batch.
@@ -561,7 +616,7 @@ fn prepare_window(p: &Project, cache: &mut Cache, t0: f64, t1: f64, window:usize
         let (ka, kb) = if all { (0, n - 1) } else {
             let (a, b) = (c.display_time((t0 - c.start).clamp(0.0, c.duration)), c.display_time((t1 - c.start).clamp(0.0, c.duration)));
             (crate::codeclip::slot_of(a.min(b), p.fps).min(n - 1), crate::codeclip::slot_of(a.max(b), p.fps).min(n - 1)) };
-        let cap = (decode_cache_limit() / 2 / (p.width as usize * p.height as usize * 4).max(1)).max(1);
+        let cap = (limit / 2 / (p.width as usize * p.height as usize * 4).max(1)).max(1);
         if kb - ka + 1 > cap { return Err(format!("limit_exceeded: code clip '{}' needs {} frames at once for this range, over its {cap}-frame memory budget; render a shorter range", c.id, kb - ka + 1)); }
         let dir = crate::codeclip::resolve_dir(p, cc);
         let tree = crate::codeclip::tree_hash(&dir)?;

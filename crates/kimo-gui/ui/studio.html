@@ -122,15 +122,18 @@
               <img id="vw-img" alt="The engine's frame at the playhead" hidden>
               <img id="vw-before" alt="The frame before the last change" hidden>
               <video id="vw-video" muted playsinline preload="auto" hidden></video>
+              <canvas id="vw-canvas" role="img" aria-label="Real-time preview at the playhead" hidden></canvas>
               <div class="vw-empty" id="vw-empty"><svg class="km e" viewBox="0 0 1024 1024" aria-hidden="true"><use href="#km-sm"/></svg><div class="et">Nothing to show yet</div><div class="ed">Import media and drag it onto the timeline, or ask an agent to start the edit.</div></div>
               <div class="vw-busy" id="vw-busy"><span class="spin"></span><span id="vw-busy-t">Rendering frame…</span></div>
               <div class="vw-err" id="vw-err-box"><div class="et">The engine couldn't render this frame</div><div class="mono" id="vw-err"></div><button class="btn sm" id="vw-retry">Try again</button></div>
               <span class="vw-tag" id="vw-tag" hidden></span>
             </div>
             <div class="vw-ctl">
-              <button class="btn sm vw-play" id="vw-play" aria-label="Play a draft from the playhead (Space)" title="Play (Space)" disabled><svg class="i ip" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg><svg class="i ipa" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13M16 5.5v13"/></svg></button>
+              <button class="btn sm vw-play" id="vw-play" aria-label="Play from the playhead (Space; J / K / L shuttle)" title="Play (Space) · J / K / L shuttle · K+J / K+L or arrow keys step a frame" disabled><svg class="i ip" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg><svg class="i ipa" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13M16 5.5v13"/></svg></button>
               <input type="range" id="vw-scrub" min="0" max="0" step="0.0333" value="0" aria-label="Playhead" disabled>
               <span class="mono vw-time" id="vw-time">0:00.0</span>
+              <button class="btn sm ghost vw-ic" id="vw-loop" aria-label="Loop playback (Ctrl+L)" aria-pressed="false" title="Loop (Ctrl+L)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M17 2.5l3 3-3 3M4 11.5v-1a5 5 0 0 1 5-5h11M7 21.5l-3-3 3-3M20 12.5v1a5 5 0 0 1-5 5H4"/></svg></button>
+              <button class="btn sm ghost vw-ic" id="vw-full" aria-label="Full screen (F)" title="Full screen (F)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
             </div>
             <div class="note vw-msg" id="vw-msg">Frames come from the engine.</div>
           </div>
@@ -309,6 +312,7 @@
 <div class="dropcover" id="dropcover"><div><span data-icon="upload"></span><b>Drop to import</b><span>Video, audio and images go into Media</span></div></div>
 <div class="ctx" id="ctx" hidden></div>
 <div class="toast" id="toast"></div>
+<script defer src="playback.js"></script>
 <script type="module" src="studio.js"></script>
 </body>
 </html>

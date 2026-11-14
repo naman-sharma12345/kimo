@@ -52,6 +52,10 @@
     "allow-setup-pause",
     "allow-setup-skip",
     "allow-viewer-frame",
-    "allow-viewer-draft"
+    "allow-viewer-draft",
+    "allow-preview-start",
+    "allow-preview-update",
+    "allow-preview-frame",
+    "allow-preview-stop"
   ]
 }

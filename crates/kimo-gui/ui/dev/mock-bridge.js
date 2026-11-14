@@ -28,7 +28,9 @@ const M = {
   mcp: false, port: null, keys: {}, settings: { mcp_enabled: false, provider: 'openai', models: {}, base_urls: {}, remembered: [], setup_done: params.get('setup') !== 'show' },
   undo: [], cards: 0, snaps: [],
   edit: { caption: 54, warm: 0, cut: false, title: false, sat: 1 }, empty: params.get('project') === 'empty',
-  viewerCalls: { frame: 0, draft: 0 }, viewerDelay: 280, failViewer: null, draftNoFrames: false,
+  viewerCalls: { frame: 0, draft: 0, stream: 0 }, viewerDelay: 280, failViewer: null, draftNoFrames: false,
+  // ?stream=1: the real-time preview commands (preview_start / _update / _frame / _stop) answer; without it they are unknown, like an older app
+  stream: params.get('stream') === '1',
   parts: [
     { id: 'ffmpeg', name: 'FFmpeg', note: 'decodes, cuts and encodes video', size: 79_000_000, optional: false, pinned: true, installed: params.get('setup') !== 'show' },
     { id: 'ffprobe', name: 'FFprobe', note: 'reads media details', size: 3_100_000, optional: false, pinned: true, installed: params.get('setup') !== 'show' },
@@ -108,6 +110,30 @@ async function mockDraft({ start, seconds }) {
   await new Promise(r => rec.onstop = r);
   return { rev, start, end: Math.min(DUR, start + len), fps: FPS, frames: Math.round(len * FPS), width: 640, height: 360, url: URL.createObjectURL(new Blob(chunks, { type: 'video/webm' })), frame_urls: [], ms: 2400, first_frame_ms: 300, extract_ms: 0, cached: false };
 }
+// ---- real-time preview stand-in: the engine's preview_stream, frames painted at 320x180, a 1-second sine chunk per second ----
+const PS = { gen: 0, start: 0, t: 0, rate: 1, playing: false, rev: null, frames: new Map(), chunks: new Map() };
+const psRun = () => ({ start: PS.start, dir: PS.rate < 0 ? -1 : 1, stride: Math.max(1, Math.round(Math.abs(PS.rate))) });
+function psFrameUrl(i) {
+  const k = revOf() + ':' + i; let u = PS.frames.get(k); if (u) return u;
+  const c = document.createElement('canvas'); c.width = 320; c.height = 180; paint(c, M.edit, i / FPS);
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.font = '20px monospace'; g.fillText(String(i), 8, 24); // the frame number, for sync checks
+  u = c.toDataURL('image/png'); PS.frames.set(k, u); if (PS.frames.size > 600) PS.frames.delete(PS.frames.keys().next().value); return u;
+}
+function psChunkUrl(k) {
+  let u = PS.chunks.get(k); if (u) return u;
+  const n = 48000, b = new DataView(new ArrayBuffer(44 + n * 4)), w = (o, s) => [...s].forEach((ch, i) => b.setUint8(o + i, ch.charCodeAt(0)));
+  w(0, 'RIFF'); b.setUint32(4, 36 + n * 4, true); w(8, 'WAVEfmt '); b.setUint32(16, 16, true); b.setUint16(20, 1, true); b.setUint16(22, 2, true); b.setUint32(24, 48000, true); b.setUint32(28, 192000, true); b.setUint16(32, 4, true); b.setUint16(34, 16, true); w(36, 'data'); b.setUint32(40, n * 4, true);
+  for (let i = 0; i < n; i++) { const v = Math.round(Math.sin(2 * Math.PI * (220 + 20 * k) * i / 48000) * 3000); b.setInt16(44 + i * 4, v, true); b.setInt16(46 + i * 4, v, true); }
+  u = URL.createObjectURL(new Blob([b.buffer], { type: 'audio/wav' })); PS.chunks.set(k, u); return u;
+}
+function psReport() {
+  const run = psRun(), last = DUR * FPS - 1, f0 = Math.floor(PS.t * FPS + 1e-6), d = (f0 - run.start) * run.dir, q0 = Math.max(0, Math.floor(d / run.stride)), frames = [];
+  for (let q = q0; q < q0 + 40; q++) { const i = run.start + run.dir * run.stride * q; if (i < 0 || i > last) break; frames.push({ seq: q, index: i, time: i / FPS, name: `${PS.gen}-${i}`, url: psFrameUrl(i), ms: 20 }); }
+  const audio = PS.rate === 1 ? [0, 1, 2].map(j => Math.floor(PS.t) + j).filter(k => k < DUR).map(k => ({ chunk: k, start: k, end: k + 1, name: `a${revOf()}-${k}`, url: psChunkUrl(k), audible: true, ms: 30 })) : [];
+  return { gen: PS.gen, rev: revOf(), run, fps: FPS, duration: DUR, width: 320, height: 180, scale: 0.5, playing: PS.playing, frames, audio, audio_on: PS.rate === 1, ready_ahead: frames.length, ring: 96, render_fps: 60, skip: 1, rate: PS.rate, first_frame_ms: 40, proxies: [], error: null, audio_error: null };
+}
+const psNeed = () => { if (!M.stream) throw 'unknown command preview_start'; if (M.empty) throw 'out_of_range: the timeline is empty'; };
+const psRestart = (t, rate) => { PS.gen++; PS.t = t; PS.rate = rate ?? PS.rate; PS.start = Math.floor(t * FPS + 1e-6); PS.rev = revOf(); };
 let callN = 0;
 async function engineCall(src, name, action, args, change, ms = 260) {
   const id = 'c' + (++callN), t = Date.now();
@@ -118,6 +144,16 @@ async function engineCall(src, name, action, args, change, ms = 260) {
 const applyEdit = a => { const e = M.edit; if (a === 'set_caption_style') e.caption = 72; else if (a === 'ripple_delete') e.cut = true; else if (a === 'set_temperature') e.warm = .12; else e.title = true; };
 const handlers = {
   viewer_frame: mockFrame, viewer_draft: mockDraft,
+  preview_start: async ({ time, rate, playing }) => { psNeed(); M.viewerCalls.stream++; psRestart(time, rate || 1); PS.playing = !!playing; return psReport(); },
+  preview_update: async ({ time, rate, playing, seek }) => {
+    psNeed(); M.viewerCalls.stream++; await sleep(5);
+    if (playing != null) PS.playing = playing;
+    const r = rate ?? PS.rate;
+    if (seek || r !== PS.rate || PS.rev !== revOf()) psRestart(time, r); else PS.t = time;
+    return psReport();
+  },
+  preview_frame: async ({ time }) => { psNeed(); await sleep(40); const i = Math.min(DUR * FPS - 1, Math.floor(time * FPS + 1e-6)); return { index: i, time: i / FPS, name: `s-${i}`, url: psFrameUrl(i), cached: false, ms: 38, width: 320, height: 180 }; },
+  preview_stop: async () => ({ stopped: true }),
   app_state: () => ({
     version: '9.0.0', engine: { state: 'running', pid: 48213, version: '8.12.1', tools: 17, actions: 540, bin: BIN },
     mcp_enabled: M.mcp, external_port: M.port, snippets, settings: M.settings, providers,

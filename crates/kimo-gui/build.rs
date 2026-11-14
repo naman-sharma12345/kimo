@@ -6,6 +6,7 @@ const COMMANDS: &[&str] = &[
     "cli_register", "cli_models", "agent_select", "agent_send", "agent_stop", "agent_reset", "mcp_set", "mcp_probe", "key_set",
     "key_clear", "key_test", "settings_set", "onboarded_set", "recovery_status", "recovery_restore", "recovery_discard", "crash_pending", "crash_answer", "update_check", "update_install", "open_spectator", "setup_status", "setup_start",
     "setup_pause", "setup_skip", "viewer_frame", "viewer_draft",
+    "preview_start", "preview_update", "preview_frame", "preview_stop",
 ];
 
 fn main() {
