@@ -153,7 +153,7 @@ function renderAttached(att) {
 
 // ================================================================================================================
 // PROJECT MODEL
-const P = { proj: null, tracks: [], assets: [], markers: [], dur: 0, fps: 30, w: 1280, h: 720, clips: new Map(), prevIds: new Set(), thumbs: new Map(), loaded: false };
+const P = { proj: null, tracks: [], assets: [], markers: [], dur: 0, fps: 30, w: 1280, h: 720, clips: new Map(), prevIds: new Set(), thumbs: new Map(), proxy: new Map(), loaded: false };
 function clipEnd(c) { return c.start + c.duration / (c.speed || 1); }
 function clipKind(c) { return c.source?.type || 'media'; }
 const assetOf = c => c.source?.asset_id ?? c.source?.asset;
@@ -183,6 +183,7 @@ async function loadProject() {
   P.loaded = true;
   renderBin(); renderTimeline(); renderInspector();
   $('#tl-empty').hidden = P.clips.size > 0;
+  loadProxyJobs(my);
 }
 let loadTimer = 0;
 function loadSoon(ms = 120) { clearTimeout(loadTimer); loadTimer = setTimeout(loadProject, ms); }
@@ -213,13 +214,58 @@ function renderBin() {
   const el = $('#bin-list');
   if (!P.assets.length) { el.innerHTML = '<div class="bin-empty">No media yet.</div>'; return; }
   el.innerHTML = list.map(a => `<div class="asset" data-id="${esc(a.id)}" title="${esc(a.path)}">
-    <div class="th">${P.thumbs.get(a.path) ? `<img src="${esc(P.thumbs.get(a.path))}" alt="">` : ICON(assetIcon(a))}<span class="dur">${tc(a.duration)}</span>${a.used ? `<span class="used">${a.used}×</span>` : ''}
+    <div class="th">${P.thumbs.get(a.path) ? `<img src="${esc(P.thumbs.get(a.path))}" alt="">` : ICON(assetIcon(a))}<span class="dur">${tc(a.duration)}</span>${a.used ? `<span class="used">${a.used}×</span>` : ''}${proxyBadge(a.id)}
       <button class="add" title="Add to timeline at the playhead" aria-label="Add to timeline">${ICON('plus')}</button></div>
     <div class="nm">${esc(base(a.path))}</div><div class="mt">${a.width ? `${a.width}×${a.height}` : ''}${a.fps ? ` · ${Math.round(a.fps * 100) / 100}fps` : ''}</div></div>`).join('') || '<div class="bin-empty">No match.</div>';
   for (const a of list) if (!P.thumbs.has(a.path)) {
     P.thumbs.set(a.path, null);
     B.invoke('media_thumb', { path: a.path }).then(u => { if (u) { P.thumbs.set(a.path, u); const img = $(`.asset[data-id="${a.id}"] .th`); if (img && !img.querySelector('img')) { img.querySelector('svg')?.remove(); img.insertAdjacentHTML('afterbegin', `<img src="${esc(u)}" alt="">`); } } }).catch(() => {});
   }
+}
+// Background proxies (engine: kimo_core::auto_proxy). Heavy imports (4K, long, long-GOP phone footage) get a smaller
+// edit proxy for previews and an analysis proxy, built in the background; the engine streams `{type:'proxy'}` events
+// and `project.proxy_jobs` lists them. The badge says where each asset stands; export always uses the original.
+const PROXY_LABEL = { queued: 'Proxy queued', checking: 'Proxy queued', building: 'Proxy', ready: 'Proxy', unsupported: 'Original', failed: 'Proxy failed' };
+function proxyTitle(j) {
+  const why = (j.reasons || []).map(r => ({ '4k': '4K or larger', long: 'long file', long_gop: 'sparse keyframes', forced: 'always on' }[r] || r)).join(', ');
+  if (j.state === 'ready') return `Previews use a lighter copy${why ? ` (${why})` : ''}. Export always uses the original.${j.note ? ' ' + j.note + '.' : ''}`;
+  if (j.state === 'building') return `Building a lighter copy for smooth previews (${j.stage === 'analysis' ? 'analysis copy' : 'preview copy'}). You can keep editing; export always uses the original.`;
+  if (j.state === 'unsupported') return `Previews use the original: ${j.note || 'no proxy for this file'}.`;
+  if (j.state === 'failed') return `Previews use the original. ${j.error || 'The proxy could not be built.'}`;
+  return `Waiting to build a lighter copy${why ? ` (${why})` : ''}.`;
+}
+function proxyBadge(id) {
+  const j = P.proxy.get(id);
+  if (!j || j.state === 'skipped' || ((j.state === 'queued' || j.state === 'checking') && !(j.reasons || []).length)) return '';
+  const pct = Math.round((j.progress || 0) * 100);
+  const text = j.state === 'building' ? `${PROXY_LABEL.building} ${pct}%` : PROXY_LABEL[j.state] || '';
+  const icon = j.state === 'ready' ? ICON('check') : '';
+  const bar = j.state === 'building' ? `<i class="px-bar" style="width:${pct}%"></i>` : '';
+  return `<span class="px" data-state="${esc(j.state)}" title="${esc(proxyTitle(j))}" role="status" aria-label="${esc(text + (j.state === 'ready' ? ' ready' : ''))}">${icon}${esc(text)}</span>${bar}`;
+}
+function paintProxy(id) {
+  const th = $(`.asset[data-id="${CSS.escape(id)}"] .th`); if (!th) return;
+  th.querySelectorAll('.px, .px-bar').forEach(e => e.remove());
+  th.insertAdjacentHTML('beforeend', proxyBadge(id));
+}
+// an event's source path is resolved; a project may store it relative, so compare the tail, slashes and case folded
+const normPath = s => String(s || '').replace(/\\/g, '/').toLowerCase();
+function proxyMatches(a, j) { const ap = normPath(a.path).replace(/^\.?\//, ''), jp = normPath(j.path); return !!ap && (jp === ap || jp.endsWith('/' + ap)); }
+function onProxyJob(j) {
+  for (const id of j.asset_ids || []) {
+    const a = P.assets.find(x => x.id === id);
+    if (!a || !proxyMatches(a, j)) continue; // another project's asset with the same id
+    const was = P.proxy.get(id)?.state;
+    P.proxy.set(id, j); paintProxy(id);
+    if (j.state === 'ready' && was && was !== 'ready' && j.edit_proxy) toast(`Smooth previews ready for ${base(a.path)}`);
+  }
+}
+async function loadProxyJobs(my) {
+  const r = await read('project', 'proxy_jobs');
+  if (my !== loadSeq || !r || !Array.isArray(r.jobs)) return;
+  P.proxy.clear();
+  for (const j of r.jobs) for (const id of j.asset_ids || []) P.proxy.set(id, j);
+  P.assets.forEach(a => paintProxy(a.id));
 }
 $('#bin-list').addEventListener('dblclick', e => { const a = e.target.closest('.asset'); if (a) addAsset(a.dataset.id); });
 $('#bin-list').addEventListener('click', e => { const b = e.target.closest('.add'); if (b) { e.stopPropagation(); addAsset(b.closest('.asset').dataset.id); } });
@@ -1350,6 +1396,7 @@ B.listen('tauri://drag-drop', p => {
 // ================================================================================================================
 // WIRING
 B.listen('live-event', onLive);
+B.listen('engine-event', ev => { if (ev && ev.type === 'proxy') onProxyJob(ev); });
 B.listen('external-event', onExternal);
 B.listen('changes', list => { const flash = list.length > S.changes.length ? list[list.length - 1]?.id : null; S.changes = list; renderChanges(flash); });
 B.listen('project-changed', m => {

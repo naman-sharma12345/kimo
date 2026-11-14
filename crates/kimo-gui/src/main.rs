@@ -806,6 +806,9 @@ fn main() {
             let mut env = engine_env(fonts.as_deref(), &data_dir, &parts);
             env.push(("KIMO_SPECTATOR".into(), format!("tcp://127.0.0.1:{private}")));
             env.push(("KIMO_INLINE_IMAGES".into(), "0".into()));
+            // background proxies for heavy imports live in the app's data folder, so they survive restarts and project saves
+            env.push(("KIMO_PROXY_CACHE".into(), data_dir.join("proxy-cache").join("edit").display().to_string()));
+            env.push(("KIMO_ANALYSIS_PROXY_CACHE".into(), data_dir.join("proxy-cache").join("analysis").display().to_string()));
             let sup = Arc::new(Supervisor::new(bin, env, Some(data_dir.join("engine.log"))));
             let h3 = handle.clone();
             let ledger = Arc::new(Ledger::new(sup.clone(), Arc::new(move |kind, v| { let _ = h3.emit(kind, v); })));

@@ -11,6 +11,7 @@ pub mod deps;
 pub mod proxy;
 pub mod migrations;
 pub mod analysis_proxy;
+pub mod auto_proxy;
 pub mod transcript;
 pub mod transcript_parse;
 pub mod caption_validate;
