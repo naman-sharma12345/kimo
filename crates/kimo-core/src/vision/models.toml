@@ -1,0 +1,45 @@
+# On-device vision models, downloaded on first use into ~/.cache/kimo_models/vision (never at install).
+# Each file is pinned by SHA-512 and size; a file that does not match is refused and removed.
+# Hashes were taken from the files at these exact URLs on 2026-11-13 (URLs pinned to a commit or release tag).
+# Permissive licences only: no AGPL weights. Read by src/vision/models.rs (a small subset of TOML: [[model]] tables
+# of `key = "string"` and `key = integer` lines).
+
+[[model]]
+id = "yunet"
+file = "face_detection_yunet_2023mar.onnx"
+url = "https://github.com/opencv/opencv_zoo/raw/f12e12798e8314f7c074a6656816c048dcc95b7a/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
+size = 232589
+sha512 = "ffeec1ba6e45ad63bc10ad2e6d8af5d5a9b816ac1b0606e62f0d06fec611f1bfa23daea07cfd3934fad958ddb5de3042950103ea3066ce61d0a563f47cd4b2d9"
+license = "MIT"
+source = "YuNet face detector (Shiqi Yu et al.), OpenCV Zoo"
+use = "faces"
+
+[[model]]
+id = "yolox_nano"
+file = "yolox_nano.onnx"
+url = "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_nano.onnx"
+size = 3659407
+sha512 = "f69ec22ecdaf3a67d5c90e8e63599d8a05f9d8dbac462114a292162fbb14266e31bab2d0225dd4194f5dc89f2b4ab09ed66223f993951006cf2bd6534f898ac6"
+license = "Apache-2.0"
+source = "YOLOX-Nano (Megvii), COCO 80 classes"
+use = "people, objects"
+
+[[model]]
+id = "u2netp"
+file = "u2netp.onnx"
+url = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx"
+size = 4574861
+sha512 = "4552cd04b5eae18cdbf33d419c50524e2ffc8135ab8f4eea720a73be370b607fcf31af7ef2a031f6bee338ec649d7189dd2f89d5bdb625944651788c35188e08"
+license = "Apache-2.0"
+source = "U^2-Netp salient object detection (Xuebin Qin et al.), ONNX export from rembg (MIT)"
+use = "subject"
+
+[[model]]
+id = "modnet"
+file = "modnet_quantized.onnx"
+url = "https://huggingface.co/Xenova/modnet/resolve/fa2fa546052fba4c08921230a26cc69a333fca12/onnx/model_quantized.onnx"
+size = 6632188
+sha512 = "d62ef56e39bb3d6a7b06f862c9dd73646efcbe26eadce20d8939ecc88c1680804d18a07328060443fc586de53c39b29a97a36bf8f74596dcc9b3c60860a50d86"
+license = "Apache-2.0"
+source = "MODNet portrait matting (Zhanghan Ke et al.), 8-bit quantized ONNX from Xenova/modnet"
+use = "matte (fetched only when a person matte is asked for)"

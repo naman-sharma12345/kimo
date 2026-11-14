@@ -39,6 +39,14 @@ log only.
 
 ## Frontend (ui/)
 
+**Main window (`studio.html/.css/.js`)**: cream `#F5F1E7` / ink `#141210` / ember `#FF5A24`,
+light and dark themes from the system setting (`prefers-color-scheme`), motion off under
+`prefers-reduced-motion`. Type: Instrument Sans (UI), Instrument Serif (display headings only),
+Geist Mono (tool calls, data); all three are vendored in `ui/fonts/` as latin-subset woff2
+(148 KB together, OFL). UI checks: `python3 tests/studio_ui_test.py` (`KIMO_SCHEME=dark`,
+`KIMO_SHOTS=<dir>` for 1280x800 screenshots).
+
+The live graph window (`index.html`, below):
 Darkroom tokens (`--ink #0e0e12`, `--surface #15151b`, `--cream #f4f0e8`,
 `--orange #ff5c28`, plus mint/lavender/pink/brown/olive accents), three
 vendored OFL fonts (Instrument Serif, Bricolage Grotesque, Martian Mono),

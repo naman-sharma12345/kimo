@@ -42,7 +42,9 @@
 //! Engine-level events use the shell's plain `type` form, which the router passes through:
 //!   {"type":"session","width","height"} once at startup, {"type":"project_changed","rev","width","height"} after a
 //!   mutating call (project size in pixels, so the GUI can place x/y moves on the viewer),
-//!   {"type":"frame_rendered","png_b64"|"jpg_b64"} when a call writes a small frame image.
+//!   {"type":"frame_rendered","png_b64"|"jpg_b64"} when a call writes a small frame image,
+//!   {"type":"proxy","asset_ids","path","state","progress","stage","reasons","edit_proxy","analysis_proxy","note","error"}
+//!   as background proxies for heavy imports advance (kimo_core::auto_proxy; not tied to any call).
 use kimo_core::commands::Session;
 use kimo_core::toolgroups;
 use serde_json::{json, Map, Value};
@@ -147,6 +149,8 @@ fn init_with(dest: Option<Dest>) {
     let on = sink.is_some();
     if SINK.set(on).is_ok() && on {
         kimo_core::telemetry::set_progress_hook(Box::new(on_progress));
+        // engine-level events from outside any tool call (background proxy progress), passed through as plain `type` lines
+        kimo_core::telemetry::set_event_hook(Box::new(|v| emit(v)));
         since_start();
         let p0 = kimo_core::model::Project::default(); // the project Session::new() starts with
         emit(&json!({"type": "session", "reset": true, "width": p0.width, "height": p0.height, "agent": format!("kimo-mcp {}", kimo_core::buildinfo::VERSION), "read_only": true, "elapsed_s": 0, "ts_ms": ts_ms()}));

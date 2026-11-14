@@ -51,13 +51,14 @@ fn color_arg(a: &Value, k: &str, d: [f64; 3]) -> Result<[f64; 3], String> {
     }
 }
 
-fn models_dir() -> PathBuf { std::env::var_os("KIMO_MODELS").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".cache/kimo_models")) }
+fn models_dir() -> PathBuf { std::env::var_os("KIMO_MODELS").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).unwrap_or_default()).join(".cache").join("kimo_models")) }
 const FETCH_HINT: &str = "run tools/whisper/fetch.sh once (builds whisper.cpp's whisper-cli and downloads the multilingual small model, about 200 MB, into ~/.cache/kimo_models), or set KIMO_WHISPER_BIN and KIMO_WHISPER_MODEL";
 fn whisper_bin(a: &Value) -> Result<PathBuf, String> {
     if let Some(p) = a.get("whisper_bin").and_then(|v| v.as_str()) { return Ok(p.into()); }
     if let Some(p) = std::env::var_os("KIMO_WHISPER_BIN") { return Ok(p.into()); }
-    let local = models_dir().join("bin/whisper-cli"); if local.is_file() { return Ok(local); }
-    if let Some(path) = std::env::var_os("PATH") { for d in std::env::split_paths(&path) { let p = d.join("whisper-cli"); if p.is_file() { return Ok(p); } } }
+    let exe = if cfg!(windows) { "whisper-cli.exe" } else { "whisper-cli" };
+    let local = models_dir().join("bin").join(exe); if local.is_file() { return Ok(local); }
+    if let Some(path) = std::env::var_os("PATH") { for d in std::env::split_paths(&path) { let p = d.join(exe); if p.is_file() { return Ok(p); } } }
     // Director mode's own small-model caller has two real next steps right now, not a shell script
     // or an env var it cannot set itself: ship the edit without captions, or call caption_from_words
     // with words it already trusts (it best-effort flags any cue the audio makes hard to verify, the

@@ -21,13 +21,25 @@ use std::sync::{Arc, Mutex};
 static ALLOC: kimo_core::guard::Counting = kimo_core::guard::Counting;
 
 fn run_guarded(ss: &Arc<Mutex<Session>>, name: &str, args: &Value, out: &mut impl Write, id: &Option<Value>) -> Value {
-    let r = match kimo_core::guard::run_tool_guarded(ss, name, args) {
+    // observe/expect are the engine's, not the tool's: taken off here, applied after the tool ran (kimo_core::observe)
+    let (clean, meta) = kimo_core::observe::split_meta(args);
+    let edits_before = ss.lock().unwrap_or_else(|e| e.into_inner()).snap_n;
+    let r = match kimo_core::guard::run_tool_guarded(ss, name, &clean) {
         kimo_core::guard::Guarded::Done(r) => r,
         kimo_core::guard::Guarded::Hung { limit } => { // worker did not stop: report, then exit so the machine is never held hostage; the client restarts the server
             let text = format!("tool '{name}' hung past {limit}s and could not be cancelled; the server is exiting safely. Restart it.");
             spectator::call_abort(&text);
             let msg = json!({"jsonrpc":"2.0","id":id,"result":{"content":[{"type":"text","text":text}],"isError":true}});
             let _ = writeln!(out, "{msg}"); let _ = out.flush(); std::process::exit(124); }
+    };
+    // every edit comes back with what it did (before/after frames, measurements, findings); a failed expect rolls it back
+    let r = match r {
+        Ok(v) => { let mut g = ss.lock().unwrap_or_else(|e| e.into_inner());
+            match kimo_core::observe::finish(&mut g, edits_before, &meta, v) {
+                Ok(v) => Ok(v),
+                Err(m) => { g.media.clear(); drop(g); return json!({"content":[{"type":"text","text":m}],"isError":true,"structuredContent":{"code":"expect_failed","hint":"the edit was undone; read the failed expectations and what the edit did, then try again"}}); }
+            } }
+        Err(e) => Err(e),
     };
     match r {
         Ok(v) => { let media = { let mut g = ss.lock().unwrap_or_else(|e| e.into_inner()); std::mem::take(&mut g.media) };
@@ -58,7 +70,8 @@ fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     preview::configure_demo(demo_arg(&argv).as_deref()); // spectator demo mode: off unless asked for
     spectator::init(); // telemetry for the spectator GUI, on by default (KIMO_SPECTATOR); KIMO_SPECTATOR=off = no thread, no work
-    std::panic::set_hook(Box::new(|i| { if std::thread::current().name() == Some("kimo-preview") { return; } eprintln!("kimo: {i}"); })); // a cancelled live preview is not news
+    kimo_core::auto_proxy::set_enabled(true); // heavy imports build preview/analysis proxies in the background (KIMO_AUTO_PROXY=off to stop)
+    std::panic::set_hook(Box::new(|i| { if matches!(std::thread::current().name(), Some("kimo-preview" | "kimo-preview-stream" | "kimo-preview-audio")) { return; } eprintln!("kimo: {i}"); })); // a cancelled live preview is not news
     let ss = Arc::new(Mutex::new(Session::new()));
     let mut enabled: std::collections::HashSet<String> = std::collections::HashSet::new();
     let stdin = std::io::stdin();
@@ -71,7 +84,7 @@ fn main() {
         let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
         let params = req.get("params").cloned().unwrap_or(json!({}));
         let result: Option<Result<Value, (i64, String)>> = match method {
-            "initialize" => Some(Ok(json!({"protocolVersion":"2024-11-05","capabilities":{"tools":{"listChanged":true}},"serverInfo":{"name":"kimo","version":kimo_core::buildinfo::VERSION,"commit":kimo_core::buildinfo::COMMIT,"schema_version":kimo_core::buildinfo::SCHEMA_VERSION}}))),
+            "initialize" => Some(Ok(json!({"protocolVersion":"2024-11-05","instructions":kimo_core::observe::AGENT_GUIDE,"capabilities":{"tools":{"listChanged":true}},"serverInfo":{"name":"kimo","version":kimo_core::buildinfo::VERSION,"commit":kimo_core::buildinfo::COMMIT,"schema_version":kimo_core::buildinfo::SCHEMA_VERSION}}))),
             "ping" => Some(Ok(json!({}))),
             "tools/list" => {
                 // grouped by default (about 16 entry points); mode "flat" or KIMO_TOOLS=flat lists every tool. Every tool stays callable by name either way.
@@ -110,6 +123,7 @@ fn main() {
         }
         if method == "tools/call" { spectator::pace(); } // spectator demo mode only: this call's frame on screen before the next call
     }
+    kimo_core::auto_proxy::shutdown(); // no proxy encoder outlives the engine
     spectator::flush(std::time::Duration::from_millis(500));
 }
 

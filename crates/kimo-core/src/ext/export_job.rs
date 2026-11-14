@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 struct State {
     state: &'static str, frames_done: u64, frames_total: u64, started: std::time::Instant, current_range: Option<[u64; 2]>,
     chunks_done: u64, chunks_total: u64, chunks_reused: u64, warnings: Vec<Value>, rendered_secs: Vec<f64>, to_render: u64,
-    completed: Vec<[u64; 2]>, error: Option<String>, result: Option<Value>, chunks_at: String, out: String,
+    completed: Vec<[u64; 2]>, error: Option<String>, result: Option<Value>, chunks_at: String, out: String, stage: String, frames_rendered: u64,
 }
 struct Job { st: Mutex<State>, cancel: crate::guard::Cancel }
 fn jobs() -> &'static Mutex<BTreeMap<String, Arc<Job>>> { static J: std::sync::OnceLock<Mutex<BTreeMap<String, Arc<Job>>>> = std::sync::OnceLock::new(); J.get_or_init(Default::default) }
@@ -34,7 +34,9 @@ fn write_atomic(path: &std::path::Path, v: &Value) -> Result<(), String> {
     Ok(())
 }
 fn sync_dir(d: &std::path::Path) { if let Ok(f) = std::fs::File::open(d) { let _ = f.sync_all(); } }
-fn sync_file(p: &std::path::Path) -> Result<(), String> { std::fs::File::open(p).and_then(|f| f.sync_all()).map_err(|e| format!("cannot fsync {}: {e}", p.display())) }
+/// Flush a finished file to disk. Opened for writing (never truncated): Windows refuses FlushFileBuffers on a read-only
+/// handle ("Access is denied"), which used to fail every export right after its first chunk.
+fn sync_file(p: &std::path::Path) -> Result<(), String> { std::fs::OpenOptions::new().write(true).open(p).and_then(|f| f.sync_all()).map_err(|e| format!("cannot fsync {}: {e}", p.display())) }
 
 /// RV-20 job lock: `<dir>/job.lock` created O_EXCL with {pid, host, started_at, start_ticks}. A lock is live only when its host is this host, the pid
 /// exists AND the pid's /proc start time equals start_ticks (so a reused pid is not mistaken for the owner). Same-host only: a lock written by another
@@ -71,8 +73,9 @@ fn chunk_name(i: u64) -> String { format!("chunk_{i:05}.mp4") }
 
 fn status_json(j: &Job) -> Value {
     let s = j.st.lock().unwrap_or_else(|e| e.into_inner()); let remaining = s.to_render.saturating_sub(s.rendered_secs.len() as u64);
+    let fps_r = { let secs: f64 = s.rendered_secs.iter().sum(); let fr = s.frames_rendered; if secs > 0.0 && fr > 0 { Some((fr as f64 / secs * 10.0).round() / 10.0) } else { None } };
     json!({"state": s.state, "frames_done": s.frames_done, "frames_total": s.frames_total, "elapsed_s": s.started.elapsed().as_secs_f64(), "current_range": s.current_range,
-        "chunks": {"done": s.chunks_done, "total": s.chunks_total, "reused": s.chunks_reused}, "warnings": s.warnings, "eta": if s.state == "running" { eta(&s.rendered_secs, remaining) } else { Value::Null },
+        "chunks": {"done": s.chunks_done, "total": s.chunks_total, "reused": s.chunks_reused}, "stage": s.stage, "render_fps": fps_r, "warnings": s.warnings, "eta": if s.state == "running" { eta(&s.rendered_secs, remaining) } else { Value::Null },
         "completed_ranges": s.completed, "dir": s.chunks_at, "path": s.out, "error": s.error, "result": s.result})
 }
 fn set<F: FnOnce(&mut State)>(j: &Job, f: F) { f(&mut j.st.lock().unwrap_or_else(|e| e.into_inner())); }
@@ -195,7 +198,7 @@ fn run(j: Arc<Job>, p: crate::model::Project, dir: std::path::PathBuf, out: Stri
         for (c, why) in chunks.iter().zip(plan.iter()) {
             let idx = c["index"].as_u64().unwrap_or(0); let range = [c["range"][0].as_u64().unwrap_or(0), c["range"][1].as_u64().unwrap_or(0)]; let file = dir.join(chunk_name(idx));
             if j.cancel.load(std::sync::atomic::Ordering::Relaxed) { return Err("cancelled".into()); }
-            set(&j, |s| s.current_range = Some(range));
+            set(&j, |s| { s.current_range = Some(range); s.stage = format!("rendering chunk {} of {} (frames {}-{}, {:.1}-{:.1} s)", idx + 1, s.chunks_total, range[0], range[1], range[0] as f64 / fps, range[1] as f64 / fps); });
             let entry = match why {
                 None => { reused.push(idx); old.as_ref().and_then(|o| o["chunks"].get(idx.to_string()).cloned()).unwrap_or(Value::Null) }
                 Some(why) => {
@@ -207,14 +210,15 @@ fn run(j: Arc<Job>, p: crate::model::Project, dir: std::path::PathBuf, out: Stri
                     // token is restored when this block ends, and the loop checks it before the next chunk.
                     let _commit = crate::guard::install_token(&crate::guard::new_token());
                     match r { Ok(_) => { sync_file(&part)?; std::fs::rename(&part, &file).map_err(|e| e.to_string())?; sync_dir(&dir); }
-                        Err(e) => { let pf = dir.join(format!("{}.partial", chunk_name(idx))); let _ = std::fs::rename(&part, &pf); let _ = write_atomic(&dir.join(format!("{}.partial.marker", chunk_name(idx))), &json!({"range": range, "key": c["key"], "error": e})); return Err(e); } }
-                    rendered.push(json!({"index": idx, "reason": why})); set(&j, |s| s.rendered_secs.push(t0.elapsed().as_secs_f64()));
+                        Err(e) => { let e = format!("chunk {} ({:.1}-{:.1} s): {e}", idx + 1, range[0] as f64 / fps, range[1] as f64 / fps); let pf = dir.join(format!("{}.partial", chunk_name(idx))); let _ = std::fs::rename(&part, &pf); let _ = write_atomic(&dir.join(format!("{}.partial.marker", chunk_name(idx))), &json!({"range": range, "key": c["key"], "error": e})); return Err(e); } }
+                    rendered.push(json!({"index": idx, "reason": why})); set(&j, |s| { s.rendered_secs.push(t0.elapsed().as_secs_f64()); s.frames_rendered += range[1] - range[0]; });
                     json!({"file": chunk_name(idx), "frames": range[1] - range[0], "key": c["key"], "range": range, "crf": crf, "sha256": file_sha(&file), "bytes": std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0)}) }
             };
             index["chunks"][idx.to_string()] = entry; write_atomic(&dir.join("index.json"), &index)?;
             set(&j, |s| { s.chunks_done += 1; s.frames_done += range[1] - range[0]; if why.is_none() { s.chunks_reused += 1; } s.completed.push(range); });
         }
         let parts: Vec<String> = (0..chunks.len() as u64).map(|i| dir.join(chunk_name(i)).to_string_lossy().into_owned()).collect();
+        set(&j, |s| s.stage = "joining chunks and mixing audio".into());
         let joined = join_verified(&p, &parts, &out)?; let dur = joined["duration"].clone();
         let mut reasons = serde_json::Map::new(); let mut re = 0u64; for r in &rendered { let (i, why) = (r["index"].as_u64().unwrap_or(0), r["reason"].as_str().unwrap_or("")); if matches!(why, "no_previous" | "forced") || old.as_ref().map_or(true, |o| o["chunks"].get(i.to_string()).is_none()) { continue; } re += 1; let n = reasons.get(why).and_then(|v| v.as_u64()).unwrap_or(0); reasons.insert(why.to_string(), json!(n + 1)); }
         Ok(json!({"path": out, "duration": dur, "verified": joined["verified"], "verify": joined["verify"], "reverified": {"ok": reused.len(), "re_rendered": re, "reasons": reasons}, "quarantined": quarantined, "reused": reused, "rendered": rendered, "project_hash": m["project_hash"], "forced": force}))
@@ -224,9 +228,71 @@ fn run(j: Arc<Job>, p: crate::model::Project, dir: std::path::PathBuf, out: Stri
     // Release job.lock BEFORE publishing the terminal state: cancel_job and job_status report cancelled/done/failed only once the
     // directory is free, so a resume_job issued right after them never meets this job's own (live-pid) lock.
     drop(lock);
-    set(&j, |s| { s.current_range = None; match res { Ok(Ok(v)) => { s.state = "done"; s.result = Some(v); }
+    set(&j, |s| { s.current_range = None; s.stage = "finished".into(); match res { Ok(Ok(v)) => { s.state = "done"; s.result = Some(v); }
         Ok(Err(e)) => { if cancelled || e == "cancelled" { s.state = "cancelled"; } else { s.state = "failed"; s.error = Some(classify(&e)); } }
         Err(_) => { if cancelled { s.state = "cancelled"; } else { s.state = "failed"; s.error = Some("export job panicked".into()); } } } });
+}
+
+/// Fail in seconds, not after the first chunk (or 24 minutes): the output folder takes a written, flushed file; ffmpeg runs;
+/// and the first and a middle frame render. Any of these failing is reported by export_job_start itself.
+fn preflight(ss: &Session, dir: &std::path::Path) -> Result<(), String> {
+    let probe = dir.join(".kimo-preflight");
+    std::fs::write(&probe, b"ok").map_err(|e| format!("preflight: cannot write to {}: {e}", dir.display()))?;
+    let flushed = sync_file(&probe);
+    let _ = std::fs::remove_file(&probe);
+    flushed.map_err(|e| format!("preflight: {e}"))?;
+    let ff = std::process::Command::new("ffmpeg").arg("-version").stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
+    if !ff.map(|s| s.success()).unwrap_or(false) { return Err("preflight: ffmpeg is not installed or not on PATH; export needs it".into()); }
+    let end = em::project_end(&ss.project);
+    if end <= 0.0 { return Err("nothing to export: the timeline is empty".into()); }
+    for t in [0.0, (end / 2.0).max(0.0)] {
+        let t0 = std::time::Instant::now();
+        let mut cache = crate::render::Cache::new();
+        crate::render::prepare_at(&ss.project, &mut cache, Some(t)).and_then(|_| crate::render::render_frame(&ss.project, t, &cache).map(|_| ()))
+            .map_err(|e| format!("preflight: the frame at {t:.2} s does not render, so the export would fail there: {e}"))?;
+        let ms = t0.elapsed().as_millis();
+        if ms > 60_000 { return Err(format!("preflight: one frame at {t:.2} s took {:.0} s to render; the whole export would take far too long. Simplify that moment or lower the resolution.", ms as f64 / 1000.0)); }
+    }
+    Ok(())
+}
+
+/// The stream-copy export (export_fast): ffmpeg copies the video and mixes the audio; progress from `-progress pipe:1`.
+fn run_fast(j: Arc<Job>, pl: super::export_fast::Plan, fps: f64, out: String, lock: LockGuard) {
+    use std::io::BufRead;
+    let total = (pl.duration * fps).ceil() as u64;
+    set(&j, |s| { s.state = "running"; s.frames_total = total; s.chunks_total = 1; s.to_render = 1; s.stage = "copying the video stream and mixing the audio (no re-render needed)".into(); });
+    let t0 = std::time::Instant::now();
+    let part = format!("{out}.partial.mp4");
+    let res = (|| -> Result<Value, String> {
+        let mut c = std::process::Command::new("ffmpeg");
+        c.args(super::export_fast::argv(&pl, &part)).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+        #[cfg(windows)]
+        { use std::os::windows::process::CommandExt; c.creation_flags(0x0800_0000); }
+        let mut child = c.spawn().map_err(|e| format!("cannot start ffmpeg: {e}"))?;
+        let err_h = { let e = child.stderr.take(); std::thread::spawn(move || { let mut s = String::new(); if let Some(mut e) = e { use std::io::Read; let _ = e.read_to_string(&mut s); } s }) };
+        if let Some(o) = child.stdout.take() {
+            for line in std::io::BufReader::new(o).lines().map_while(Result::ok) {
+                if j.cancel.load(std::sync::atomic::Ordering::Relaxed) { let _ = child.kill(); let _ = child.wait(); let _ = std::fs::remove_file(&part); return Err("cancelled".into()); }
+                if let Some(us) = line.strip_prefix("out_time_us=").or_else(|| line.strip_prefix("out_time_ms=")).and_then(|v| v.trim().parse::<f64>().ok()) {
+                    let done = ((us / 1e6) * fps).min(total as f64) as u64; let el = t0.elapsed().as_secs_f64();
+                    set(&j, |s| { s.frames_done = done; s.frames_rendered = done; s.rendered_secs = vec![el]; s.current_range = Some([0, done]); });
+                }
+            }
+        }
+        let st = child.wait().map_err(|e| e.to_string())?;
+        let err = err_h.join().unwrap_or_default();
+        if !st.success() { let _ = std::fs::remove_file(&part); return Err(format!("ffmpeg stream copy failed: {}", err.lines().rev().take(3).collect::<Vec<_>>().join(" | "))); }
+        sync_file(std::path::Path::new(&part))?;
+        let _ = std::fs::remove_file(&out);
+        std::fs::rename(&part, &out).map_err(|e| format!("cannot move the export into place: {e}"))?;
+        let verify = verify_output(std::path::Path::new(&out), total, fps, if pl.audio.is_empty() { None } else { Some(pl.duration) });
+        Ok(json!({"path": out, "duration": pl.duration, "fast_path": super::export_fast::summary(&pl), "verify": verify, "seconds": t0.elapsed().as_secs_f64()}))
+    })();
+    let cancelled = j.cancel.load(std::sync::atomic::Ordering::Relaxed);
+    drop(lock);
+    set(&j, |s| { s.current_range = None; s.stage = "finished".into(); match res {
+        Ok(v) => { s.state = "done"; s.frames_done = total; s.chunks_done = 1; s.result = Some(v); }
+        Err(e) => { if cancelled || e == "cancelled" { s.state = "cancelled"; } else { s.state = "failed"; s.error = Some(classify(&e)); } } } });
 }
 
 fn start(ss: &Session, a: &Value, resume: bool) -> Result<Value, String> {
@@ -241,14 +307,22 @@ fn start(ss: &Session, a: &Value, resume: bool) -> Result<Value, String> {
             return Err(format!("resume_mismatch: the project changed since this job was started; first differing dependency: {first}. Start a new job (export_job_start) to reuse the chunks that are still valid.")); } }
     if !cs.is_finite() || cs <= 0.0 { return Err("chunk_s must be a positive number of seconds".into()); }
     let cf = ((cs * fps).round() as u64).max(1); let force = a.get("force").and_then(|v| v.as_bool()).unwrap_or(false); let wait = a.get("wait").and_then(|v| v.as_bool()).unwrap_or(false);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?; let lock = acquire(&dir)?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    preflight(ss, &dir)?;
+    let lock = acquire(&dir)?;
     let id = format!("job{}", NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
-    let j = Arc::new(Job { st: Mutex::new(State { state: "queued", frames_done: 0, frames_total: 0, started: std::time::Instant::now(), current_range: None, chunks_done: 0, chunks_total: 0, chunks_reused: 0, warnings: vec![], rendered_secs: vec![], to_render: 0, completed: vec![], error: None, result: None, chunks_at: dir.to_string_lossy().into_owned(), out: out.clone() }), cancel: crate::guard::new_token() });
+    // one untouched video + plain audio: copy the video stream instead of re-rendering it (fast: false turns this off)
+    let fast = if resume || a.get("fast").and_then(|v| v.as_bool()) == Some(false) { Err("off".to_string()) } else { super::export_fast::plan(&ss.project) };
+    let j = Arc::new(Job { st: Mutex::new(State { state: "queued", frames_done: 0, frames_total: 0, started: std::time::Instant::now(), current_range: None, chunks_done: 0, chunks_total: 0, chunks_reused: 0, warnings: vec![], rendered_secs: vec![], to_render: 0, completed: vec![], error: None, result: None, stage: "queued".into(), frames_rendered: 0, chunks_at: dir.to_string_lossy().into_owned(), out: out.clone() }), cancel: crate::guard::new_token() });
     jobs().lock().unwrap_or_else(|e| e.into_inner()).insert(id.clone(), j.clone());
     let (p, j2, tok) = (ss.project.clone(), j.clone(), j.cancel.clone());
-    let h = crate::guard::spawn_with_token(move || crate::guard::with_token(&tok, || run(j2, p, dir, out, cf, crf as u32, force, lock)));
+    let fast_note = match &fast { Ok(pl) => super::export_fast::summary(pl), Err(why) => json!({"mode": "render", "why_not_stream_copy": why}) };
+    let h = match fast {
+        Ok(pl) => crate::guard::spawn_with_token(move || crate::guard::with_token(&tok, || run_fast(j2, pl, fps, out, lock))),
+        Err(_) => crate::guard::spawn_with_token(move || crate::guard::with_token(&tok, || run(j2, p, dir, out, cf, crf as u32, force, lock))),
+    };
     if wait { let _ = h.join(); }
-    Ok(json!({"job_id": id, "status": status_json(&j)}))
+    Ok(json!({"job_id": id, "path_used": fast_note, "status": status_json(&j)}))
 }
 fn get(a: &Value) -> Result<Arc<Job>, String> { let id = str_arg(a, "job_id")?; jobs().lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned().ok_or_else(|| format!("no such job '{id}'")) }
 

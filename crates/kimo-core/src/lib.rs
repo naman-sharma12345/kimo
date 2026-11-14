@@ -2,10 +2,16 @@
 //! Every user-visible operation is a registered Command; the MCP server
 //! is generated from the registry, so nothing can exist without a tool.
 pub mod ext;
+pub mod critic;
+pub mod observe;
+pub mod vision;
+#[cfg(feature = "libav")]
+pub mod libav_decode;
 pub mod deps;
 pub mod proxy;
 pub mod migrations;
 pub mod analysis_proxy;
+pub mod auto_proxy;
 pub mod transcript;
 pub mod transcript_parse;
 pub mod caption_validate;
@@ -25,6 +31,8 @@ pub mod pushwipe;
 pub mod audiokeys;
 pub mod layerfx;
 pub mod paths;
+pub mod svgimport;
+pub mod numfmt;
 pub mod layerstyles;
 pub mod lighting;
 pub mod sfm;
@@ -50,6 +58,7 @@ pub mod model;
 pub mod commands;
 pub mod render;
 pub mod framecache;
+pub mod preview_stream;
 pub mod buildinfo;
 pub mod effects;
 pub mod text;
@@ -67,8 +76,11 @@ pub mod shader_ops;
 pub mod resource_limits;
 pub mod tracking; pub mod roto; pub mod robust_est; pub mod mask_track;
 pub mod stabilize;
+pub mod noise_est;
 pub mod edit;
 pub mod effects2;
+pub mod vfx_graph;
+pub mod vfx_look_library;
 pub mod color;
 pub mod keying;
 pub mod colortools;

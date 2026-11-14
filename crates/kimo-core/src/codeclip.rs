@@ -17,6 +17,26 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 const SIDECAR: &str = include_str!("codeclip_sidecar.py");
+
+/// The Python that runs the sidecar: $KIMO_PYTHON, else the first real interpreter on PATH. On Windows that is
+/// `python.exe` or the `py -3` launcher; the Microsoft Store placeholders under ...\WindowsApps\ (which only open the
+/// Store) are skipped, and `python3` is not assumed to exist.
+pub fn python_cmd() -> (String, Vec<String>) {
+    if let Ok(p) = std::env::var("KIMO_PYTHON") { if !p.trim().is_empty() { return (p, vec![]); } }
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let find = |name: &str| std::env::split_paths(&path).map(|d| d.join(name))
+        .find(|p| p.is_file() && !p.to_string_lossy().to_ascii_lowercase().contains("windowsapps"));
+    if cfg!(windows) {
+        if let Some(p) = find("python.exe") { return (p.display().to_string(), vec![]); }
+        if let Some(p) = find("py.exe") { return (p.display().to_string(), vec!["-3".into()]); }
+        if let Some(p) = find("python3.exe") { return (p.display().to_string(), vec![]); }
+        ("python".into(), vec![])
+    } else {
+        if let Some(p) = find("python3") { return (p.display().to_string(), vec![]); }
+        if let Some(p) = find("python") { return (p.display().to_string(), vec![]); }
+        ("python3".into(), vec![])
+    }
+}
 /// Most files / bytes a code clip folder may hold (the whole folder is hashed into every frame key).
 pub const MAX_FILES: usize = 4000;
 pub const MAX_BYTES: u64 = 256 * 1024 * 1024;
@@ -275,13 +295,15 @@ pub fn render_steps(dir: &Path, cc: &CodeClip, steps: &[Step]) -> Result<(Vec<Ve
     if let Err(e) = std::fs::write(&jf, job.to_string()) { return cleanup(Err(format!("renderer_failed: {e}"))); }
     let (so, se) = (job_dir.join("out.jsonl"), job_dir.join("err.log"));
     let (fo, fe) = match (std::fs::File::create(&so), std::fs::File::create(&se)) { (Ok(a), Ok(b)) => (a, b), _ => return cleanup(Err("renderer_failed: cannot create sidecar log files".into())) };
-    let py = std::env::var("KIMO_PYTHON").unwrap_or_else(|_| "python3".into());
+    let (py, py_args) = python_cmd();
     let mut cmd = std::process::Command::new(&py);
-    cmd.arg(&script).arg(&jf).stdin(std::process::Stdio::null()).stdout(fo).stderr(fe);
+    cmd.args(&py_args).arg(&script).arg(&jf).stdin(std::process::Stdio::null()).stdout(fo).stderr(fe);
     #[cfg(unix)]
     { use std::os::unix::process::CommandExt; cmd.process_group(0); }
+    #[cfg(windows)]
+    { use std::os::windows::process::CommandExt; cmd.creation_flags(0x0800_0000); } // CREATE_NO_WINDOW
     let t0 = std::time::Instant::now();
-    let mut child = match cmd.spawn() { Ok(c) => c, Err(e) => return cleanup(Err(format!("renderer_failed: cannot start the code clip renderer ({py}): {e}"))) };
+    let mut child = match cmd.spawn() { Ok(c) => c, Err(e) => return cleanup(Err(format!("renderer_failed: cannot start the code clip renderer ({py}): {e}. Install Python 3, then: python -m pip install playwright pillow && python -m playwright install chromium-headless-shell (or set KIMO_PYTHON)"))) };
     // Startup and every page load get the load timeout; each frame gets the frame timeout plus capture slack. Waiting on the
     // shared browser lock (KIMO_CODECLIP_LOCK) is extra and bounded by KIMO_CODECLIP_LOCK_WAIT_S (default 1 h).
     let lock_wait = if std::env::var("KIMO_CODECLIP_LOCK").is_ok() { std::env::var("KIMO_CODECLIP_LOCK_WAIT_S").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(3600) } else { 0 };
@@ -292,6 +314,8 @@ pub fn render_steps(dir: &Path, cc: &CodeClip, steps: &[Step]) -> Result<(Vec<Ve
             let pid = child.id();
             #[cfg(unix)]
             let _ = std::process::Command::new("kill").args(["-KILL", &format!("-{pid}")]).status();
+            #[cfg(windows)] // the whole tree: python and the Chromium it started
+            { use std::os::windows::process::CommandExt; let _ = std::process::Command::new("taskkill").args(["/T", "/F", "/PID", &pid.to_string()]).creation_flags(0x0800_0000).status(); }
             let _ = child.kill(); let _ = child.wait();
             return cleanup(Err(format!("renderer_failed: code clip render hung past {} s ({nframes} frames); killed the renderer (pid {pid})", deadline.as_secs())));
         }

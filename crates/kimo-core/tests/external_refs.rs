@@ -103,6 +103,7 @@ fn unregistered_path_fields_fail() {
         ("proxy.rs", "path", "REF Project.proxies.entries[].path; optional preview dependency"), ("deps.rs", "path", "OUTPUT: ExtRef.path / Resolved.path"), ("ext/auto_captions.rs", "path", "OUTPUT: Src.path, a clip's media path already resolved through deps, held for one call"), ("deps.rs", "rel_path", "OUTPUT: DepRecord.rel_path, informational"), ("text.rs", "font_file", "OUTPUT: TextMetrics.font_file, the font file a measurement resolved to, informational"), ("model.rs", "src", "NOT A FILE: OccSpec.src is a clip id"), ("codeclip.rs", "dir", "REF Source::Code dir (code clip project folder, a directory)"), ("planar.rs", "src", "NOT A FILE: Anchor.src is a clip id (runtime, not serialized in the project)"),
         ("color/bake.rs", "path", "NOT A PROJECT FIELD: bake step input, per call"), ("color/bake.rs", "config_path", "NOT A PROJECT FIELD: bake step input, per call"),
         ("color/mux.rs", "dir", "NOT A PROJECT FIELD: temp transaction dir"), ("audio.rs", "path", "NOT A PROJECT FIELD: temp wav"), ("commands.rs", "path", "OUTPUT: Media.path, an image a tool call produced (cleared every dispatch), not stored in the project"),
+        ("auto_proxy.rs", "path", "OUTPUT: Job.path / Task.path, a source path already resolved through Project::resolve, held in the background proxy queue's memory and reported in events; never stored in the project"),
         ("analysis_proxy.rs", "path", "OUTPUT: AnalysisProxy.path, a cached short-GOP analysis proxy file path (keyed by source path+size+mtime+fps), not stored in the project; analysis decode only, never export"),
         ("ext/export_edl.rs", "path", "NOT A PROJECT FIELD: ExEvent.path, a clip's media path already resolved through deps, held for one export call, never stored"),
     ];
@@ -141,6 +142,7 @@ fn unregistered_path_fields_fail() {
 fn open_sites_are_classified() {
     const SITES: &[(&str, usize, &str)] = &[
         ("proxy.rs", 3, "PROJECT-DERIVED: original and proxy paths resolved by Project::resolve before fingerprint/probe/transcode; output path resolved against project base"),
+        ("auto_proxy.rs", 3, "PROJECT-DERIVED: the source asset path resolved by Project::resolve at enqueue time, then ffmpeg -i for the edit proxy encode; 2 read_to_string: the cache-local edit proxy sidecar (never stored in the project) and the encoder's own stderr pipe (not a file)"),
         ("analysis_proxy.rs", 3, "PROJECT-DERIVED: the source asset path resolved by Project::resolve before ffprobe keyframe-gap check / ffmpeg transcode / cache-sidecar read; output proxy path is cache-local, never stored in the project"),
         ("audio.rs", 9, "7 PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site; 2 temp: level_master's own round-trip of the mixed PCM through ffmpeg speechnorm (temp in/out wav, not stored in the project)"),
         ("codeclip.rs", 7, "3 PROJECT-DERIVED, under resolve_dir (Source::Code.dir resolved through deps): kimo.json, the folder walk and hash; 4 temp: the frame cache, the renderer's output frames and logs"),
@@ -198,7 +200,7 @@ fn open_sites_are_classified() {
         ("motion.rs", 1, "caller path (tool argument / output / temp file / test), not stored in the project"),
         ("planar.rs", 2, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),
         ("reframe.rs", 1, "PROJECT-DERIVED, resolved through deps (Project::resolve -> deps::resolve_path) at the call site: the clip's media decoded by auto_reframe's subject analysis"),
-        ("render.rs", 17, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site; 1 caller path: check_still_path reads the first bytes of a still's output path so a still never overwrites a video"),
+        ("render.rs", 21, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site; 1 caller path: check_still_path reads the first bytes of a still's output path so a still never overwrites a video; V8.8.0: +1 is not a real open site, it's the literal \"-i\" inside x264_preset_none_is_byte_identical_to_before's own expected-argv test fixture; preview stream (2026-11): +2 caller path, not a project path: decode_via_file reads back the size and bytes of the temp file its own ffmpeg just wrote (the real-time preview's decode transport); the count was already 19 at 8126ebd, one more than classified"),
         ("shards.rs", 3, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),
         ("text.rs", 1, "PROJECT-DERIVED, resolved through deps (resolve / resolve_str) at the call site"),
         ("threed/csm.rs", 1, "no project path: an ffmpeg stdin pipe (-i -) fed with raw RGBA frames inside a #[cfg(test)] #[ignore] frame-dump harness; output goes to a test-supplied directory (KIMO_*_FRAMES env), nothing is read from or stored in the project (here: KIMO_CSM_FRAMES)"),
@@ -206,6 +208,7 @@ fn open_sites_are_classified() {
         ("threed/lit_raster.rs", 6, "no project path: an ffmpeg stdin pipe (-i -) fed with raw RGBA frames inside a #[cfg(test)] #[ignore] frame-dump harness; output goes to a test-supplied directory (KIMO_*_FRAMES env), nothing is read from or stored in the project (here: KIMO_PBR_FRAMES)"),
         ("threed/perspective.rs", 1, "no project path: an ffmpeg stdin pipe (-i -) fed with raw RGBA frames inside a #[cfg(test)] #[ignore] frame-dump harness; output goes to a test-supplied directory (KIMO_*_FRAMES env), nothing is read from or stored in the project (here: KIMO_PRIMITIVE_FRAMES)"),
         ("threed/textured_fixture.rs", 1, "no project path: an ffmpeg stdin pipe (-i -) fed with raw RGBA frames inside a #[cfg(test)] #[ignore] frame-dump harness; output goes to a test-supplied directory (KIMO_*_FRAMES env), nothing is read from or stored in the project (here: KIMO_TEXTURE_FRAMES)"),
+        ("preview_stream.rs", 1, "no project path: the lavfi test tone (-i sine=...) its windowed-mix unit test generates; the stream itself decodes through audio::decode_clip and writes only into the caller's dir"),
         ("ext/import_edl.rs", 1, "caller path (the EDL/OTIO file named by import_edl's own `path` argument), not resolved through Project::resolve and not stored in the project"),
     ];
     let pat = ["\"-i\"", "File::open", "fs::read(", "read_to_string", "fs::metadata", "image::open", "from_file("];

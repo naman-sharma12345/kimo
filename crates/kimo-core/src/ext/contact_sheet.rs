@@ -13,7 +13,7 @@ fn glyph(c: char) -> [u8; 7] { match c {
     '5' => [31, 16, 30, 1, 1, 17, 14], '6' => [6, 8, 16, 30, 17, 17, 14], '7' => [31, 1, 2, 4, 8, 8, 8], '8' => [14, 17, 17, 14, 17, 17, 14], '9' => [14, 17, 17, 15, 1, 2, 12],
     '.' => [0, 0, 0, 0, 0, 12, 12], '-' => [0, 0, 0, 31, 0, 0, 0], 's' => [0, 0, 15, 16, 14, 1, 30], 't' => [8, 8, 30, 8, 8, 9, 6], '=' => [0, 0, 31, 0, 31, 0, 0], ':' => [0, 12, 12, 0, 12, 12, 0],
     _ => [0; 7] } }
-fn draw_label(buf: &mut [u8], bw: usize, bh: usize, x0: usize, y0: usize, text: &str, sc: usize) {
+pub(crate) fn draw_label(buf: &mut [u8], bw: usize, bh: usize, x0: usize, y0: usize, text: &str, sc: usize) {
     let tw = text.chars().count() * 6 * sc + 2 * sc; let th = 7 * sc + 2 * sc;
     for y in 0..th { for x in 0..tw { let (px, py) = (x0 + x, y0 + y); if px < bw && py < bh { let i = (py * bw + px) * 4; buf[i] = 0; buf[i + 1] = 0; buf[i + 2] = 0; buf[i + 3] = 255; } } }
     for (k, ch) in text.chars().enumerate() { let g = glyph(ch); for (ry, row) in g.iter().enumerate() { for rx in 0..5 { if row >> (4 - rx) & 1 == 1 {

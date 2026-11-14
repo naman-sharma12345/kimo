@@ -1,3 +1,1575 @@
+## v9.0.0 "the app" (2026-11-14)
+
+kimo 9 makes the desktop app the main download: the editor, the engine and your agents in one window, on Windows and
+Linux.
+
+**The app (`crates/kimo-gui`)**
+- A real editor: media bin with drag-and-drop import and thumbnails, viewer, inspector, timeline (move, trim, split,
+  snap, zoom, markers), export with progress. Opens `.kimo` files; one instance per user.
+- Agents on your own plan: Claude Code, Codex and Antigravity run through their official CLIs, with model and effort
+  pickers, streamed steps, Stop and session resume. An API key still works. `kimo-gui mcp` lets agents in your own
+  terminal join the open project.
+- Live view and Changes: every engine call is tagged with who made it; every edit gets an Undo card.
+- Real-time preview with sound: renders ahead of the playhead with synced audio (audio clock is the master); J/K/L,
+  loop, full screen.
+- Automatic background proxies for heavy imports (6 MP+ frames, 10 min+, long GOP): imports return at once.
+- Tools already on the computer (FFmpeg, Whisper, agent CLIs) are found and used, never downloaded again.
+- Autosave and crash recovery, now with undo history: after a restore, Ctrl+Z undoes the edits made before the crash.
+- Signed in-app updates from GitHub releases (checked in release builds; installed only on your click).
+- Opt-in crash reports: a local crash log, and a prompt on the next launch; nothing is sent without your consent.
+
+**The engine**
+- Engine eyes: every edit is observed (before/after frames, measurements, critics with severity and fix), `expect`
+  assertions roll back failing edits, plus `look`, `watch`, `compare` and an optional on-device vision detector.
+- Asset creation: SVG import as animatable layers, CSV-driven animated charts, a bundled openly licensed asset library,
+  Indian digit grouping.
+- `load_project` gains `restore` (with `with_history`): the load is not an extra undo step.
+- Windows fixes for long exports, code clips and hour-long audio; untouched single-clip exports are stream-copied.
+
+**Releases and CI**
+- Installers under stable names (`kimo-setup-windows-x64.exe`, `kimo-linux-x86_64.AppImage`, `kimo-linux-amd64.deb`),
+  smoke-tested by CI; updater signatures and `latest.json` when the signing key is configured.
+- Everyday CI runs the engine and app tests on Windows and Linux.
+
+## v8.12.1 "face avoidance targets the face" (2026-11-03)
+
+Fixes a real defect in V8.12.0's caption engine: face/subject avoidance was moving captions off the
+whole detected skin-toned BODY band -- face, neck, and whatever skin is contiguous below it (chest,
+hands) -- not just the face. On a seated talking-head shot the preferred bottom lower-third routinely
+"overlapped" that whole-body band even though it was nowhere near the actual head, so avoidance fired
+needlessly; and when it did fire, it jumped straight to a FIXED fallback spot (top of frame) with no
+check that the fallback itself cleared anything, landing the caption touching or crowding the actual
+head -- worse than doing nothing. Confirmed on the real `talkinghead_real_final.mp4` benchmark clip:
+with avoidance off the caption correctly sits low, clear of the face; with avoidance on (V8.12.0) it
+jumped to the top of the frame, crossing the subject's eyes and forehead.
+
+**The fix (`crates/kimo-core/src/ext/caption_engine.rs`):**
+- **Head region, not body region.** The engine's face/subject detector (`speech_words::skin_band`) only
+  ever finds a whole contiguous skin-toned band -- it has no notion of a face box. `place_from_face`
+  (the new, directly-testable pure scorer `place_unit` now wraps) derives the actual head/face region as
+  the TOP slice of that band, via a new `layout.face_region_frac` (default 0.35 -- a seated frontal
+  subject's forehead-to-chin reliably sits in the top third of their own skin band; a documented smart
+  default, not a measurement, and fully overridable).
+- **Keep the preferred anchor whenever it clears.** The preferred lower-third is kept exactly as before
+  whenever its own text box clears the derived head region by `layout.face_margin_frac` (default 0.04,
+  4% of frame height) -- real editors keep a lower-third under the chin and only move when the text
+  would actually cover the face.
+- **Score candidates, never jump blind.** When the preferred anchor doesn't clear, the engine tries a
+  same-side nudge (`layout.lower_nudge_frac`, default 0.08) first, then the opposite band -- taking the
+  first candidate that both clears the head region by the margin AND stays inside the frame's own safe
+  margins (platform UI clearance at the bottom, `layout.top_safe_frac` -- default 0.02 -- at the top).
+  The old fixed "jump to 0.2" fallback, chosen with no clearance check at all, is gone.
+- **Honest fallback.** If literally no candidate clears (an extreme close-up, for instance), the engine
+  keeps the preferred anchor exactly where it was -- never a spot touching the head that might be worse
+  -- and raises stroke/shadow/box strength to the spec's own strongest legibility setting to compensate,
+  the same mechanism used for a bright background, via a new `forced_overlap` signal threaded into the
+  existing auto-contrast step.
+- Every new threshold (`face_region_frac`, `face_margin_frac`, `caption_half_height_frac`,
+  `lower_nudge_frac`, `top_safe_frac`) is an ordinary overridable `layout` spec field with a smart
+  default -- Naman's standing rule: the engine has defaults, the AI has full freedom, presets and
+  defaults are reference only. The tool schema documents all five.
+
+**Tests (`tests/quality_v8120.rs`, +4, 19 total):** the pure `place_from_face` scorer is exercised
+directly with a synthetic detected face/subject band, no real frame needed -- a high face with a bottom
+caption stays put; a low, wide body band forces a move whose final box provably clears the margin; a
+battery of face positions across top/bottom/wide-frame anchors never lands on the head (with one
+documented exception: an engineered unavoidable case proves the honest `forced_overlap` fallback keeps
+the anchor rather than parking it somewhere worse); and `fixed_y_frac` pins the position exactly,
+ignoring face avoidance entirely, at both the `caption_engine_compose` and pure-scorer level. Two of the
+four fail against the pre-fix (V8.12.0) logic, reproducing the exact reported defect (the caption lands
+at the fixed fallback, still overlapping the head) -- confirmed by temporarily restoring the old scoring
+rule and rerunning, then reverting.
+
+`golden_registry.txt`'s one line for `caption_engine_compose` changed (the tool schema gained the five
+new `layout` fields); `golden_frames.txt`, `recipe_frames.txt` and `golden_project.txt` are untouched.
+
+**Sheet and demo**, same real clip as V8.12.0 (`talkinghead_real_final.mp4`):
+`/home/user/tab/files/v7q/captions_v8121.png` (five panels: avoidance off; the V8.12.0 bug reproduced
+live on this clip's own frame; the V8.12.1 fix on the same frame, now matching the off baseline;
+avoidance off at an explicit top position, showing it would overlap; and the V8.12.1 fix at that same
+top position, correctly relocating to the clear bottom) and
+`/home/user/tab/files/v7q/captions_v8121_demo.mp4` (12s, real ASR word timings, the fixed engine's
+default auto placement throughout).
+
+## v8.12.0 "the caption engine" (2026-11-03)
+
+A real caption **engine**, not another named preset. Every prior version (including the five looks this
+version re-expresses) hard-coded a style function: fixed segmentation, fixed timing, fixed colours. This
+version is a single new tool, `caption_engine_compose`, that takes a *spec* -- segmentation, timing, layout,
+contrast, style, per-word state deltas, emphasis rules, and free keyframe animation, all data, all overridable,
+all documented -- and composes a caption from it. The five old looks (pop/karaoke/clean/boxed/impact) and the
+three restyle looks (subtitle/boxed/yellow) are now themselves just spec data the new engine reads, not special
+cases baked into the engine's logic. Presets are reference points, not a ceiling: every field they set can be
+overridden per-call, per-word, or replaced with free keyframes on any property.
+
+**New module:** `crates/kimo-core/src/ext/caption_engine.rs`, fully self-contained (zero dependency on
+`auto_captions.rs`'s private internals -- its own `visible_media`/media-sampling/face-detection helpers,
+built only on public `Project`/`Clip`/`Asset` fields, so nothing about the existing preset code path was
+touched or put at risk).
+
+**What the engine owns, that no prior version did:**
+- **Segmentation** -- phrase/clause/pause-aware cuts, a reading-speed (CPS) cap that cuts a cue before it
+  would read too fast (excluding bare punctuation tokens from the count, so a trailing "." riding a word's
+  own timestamp can't inflate the measured rate), a no-orphan pass that never leaves a single word stranded
+  when a merge is actually possible, and balanced line-breaking within a unit.
+- **Timing** -- snaps to the real word boundaries, bridges small gaps between cues so there's no flicker,
+  holds a cue a configurable amount after its last word, enforces a minimum on-screen duration, and pulls a
+  cue's end back before a shot cut rather than straddling it (reporting when it had no room to do so).
+- **Layout** -- safe-area aware by default, with per-unit face/subject avoidance (sampling the actual visible
+  frame at each cue's own midpoint, not one whole-clip guess), or a `fixed_y_frac` pin for styles that always
+  sat at one fixed offset regardless of what's in frame.
+- **Contrast-aware legibility** -- measures the real background luma behind each cue and strengthens stroke/
+  shadow/box only as much as that frame needs, reusing `text_contrast::background_lums`.
+- **Data-driven style primitives** -- per-word active/spoken/upcoming colour and scale deltas, emphasis by
+  explicit word list, by keyword, or by measured audio energy (loudest words, via `speech_words::onsets`),
+  and free per-property keyframe animation with every easing `keyframe::Ease` already supports, layered last
+  over everything else.
+
+**Presets re-expressed as spec data, not special-cased:** pop, karaoke, clean, boxed, impact (the
+`auto_captions` looks) and subtitle, boxed, yellow (the `set_caption_style` restyle looks) are now
+`preset_spec()` entries the engine's own general machinery reads -- no preset-specific code path.
+- `clean` is **byte-identical** to the legacy `auto_captions(style="clean")` output: confirmed by rendering
+  both to 20 frame hashes across a real 8-word fixture and asserting equality (`preset_byte_identity_report`,
+  a permanent regression test).
+- The other seven match the legacy output on every field checked -- segmentation boundaries, word timing,
+  size, colour, stroke width, screen position, and which words get emphasized -- except one real gap: the
+  legacy looks pop each word with a brief scale "kick" timed to its own onset (a transient animation, not a
+  sustained multiplier) and, for `pop` specifically, fade each word in individually as it's spoken (`reveal`).
+  The engine's word-state system doesn't yet reproduce that exact animation curve. This is reported here
+  plainly rather than claimed fixed, and is pinned in the same test so a future claim of "now identical" has
+  to actually be true to pass.
+- Two new, additive spec fields exist specifically because of this work and are documented in the tool
+  schema: `style.size_basis` (`width`, the default matching the create-path looks, or `short_side`, matching
+  the restyle-path looks) and `layout.fixed_y_frac`.
+
+**Schema and freedom:** the tool's own description states plainly that every preset is a reference point, not
+a ceiling, and that the AI calling it has full freedom over every field -- segmentation, timing, layout,
+contrast, style, per-word overrides, and free keyframes -- confirmed by a dedicated wording test
+(`tool_description_states_presets_are_reference_only_and_ai_has_full_freedom`).
+
+**Tests:** `crates/kimo-core/tests/quality_v8120.rs`, 15 tests covering every "hard part" named above --
+no-orphan segmentation, CPS limiting (excluding punctuation from the count), phrase/clause/pause breaks,
+no-dangle line breaks, no-overlap and snap-to-word timing, minimum duration, gap bridging, shot-cut avoidance,
+auto-contrast strength, emphasis by list and by audio energy, spec validation error messages, the tool
+description wording, and the preset byte-identity report above. The full required scoped suite (auto_edit,
+golden_frames, recipes, registry_lint, quality_v893/v8100/v8110/v8120, color_pipeline) plus every existing
+caption-named test file (auto_captions, caption_confidence, caption_legibility, caption_validate,
+director_profile_captions, style_captions_batch, transcript_captions) all pass unchanged -- zero lines of the
+existing preset code paths were touched.
+
+**Golden registry:** `golden_registry.txt` gained one new, legitimate entry for the new tool's schema hash
+(computed by hand, never via `KIMO_UPDATE_GOLDEN`); `golden_frames.txt` and `golden_project.txt` are
+unchanged and confirmed byte-identical by the same test run.
+
+**Before/after and demo:** `files/v7q/captions_v8120.png` (a real talking-head clip, real transcribed speech,
+six panels: the legacy `boxed` look, the engine's byte-identical `clean` preset, a free-spec bold word-by-word
+active highlight, a free-spec audio-energy emphasis look, and a face-avoidance off/on comparison on the same
+frame) and `files/v7q/captions_v8120_demo.mp4` (8.4s, real speech, word-synced active/upcoming/emphasis
+states, face avoidance live throughout).
+
+## v8.11.1 "keep SDR clips bit-identical under hdr_tonemap (fix V8.11.0 regression)" (2026-11-03)
+
+V8.11.0 shipped with an unintended brightness/colour shift on ordinary SDR footage: frame means on the real
+benchmark came out about 2 levels brighter in R/G and 0.6 in B on EVERY clip, average PSNR 40.3 dB against
+the V8.10.0 render (min 37.6), visually invisible but real and systematic.
+
+**Root cause (`decode()`'s `color_override`, render.rs):** the V8.11.0 branch read `if p.hdr_tonemap {...}
+else if p.color_tag_sanity {...}`, keyed purely on the project-level `hdr_tonemap` flag. Since `auto_edit`
+turns `hdr_tonemap` on by default, that first branch was taken for EVERY clip once a project went through
+`auto_edit`, regardless of whether a given clip was actually HDR. For a non-HDR clip, `hdr_source(path)`
+correctly returned `None`, but `.unwrap_or_default()` just produced an empty override -- the code never fell
+through to the `color_tag_sanity` mistag check in the `else if`, which it would have reached had
+`hdr_tonemap` been off. The real casualty: `talkinghead_real_final.mp4` (bt470bg, no primaries/transfer tag,
+the audit #2 fixture's own real-world shape) used to get `color_tag_sanity`'s "decode as bt709" correction;
+under V8.11.0 that correction was silently dropped, so the clip decoded through ffmpeg's own auto-detected
+colour matrix instead -- the source of the shift. (The three b-roll clips are correctly tagged bt709 and
+were never "mistagged", so they were already unaffected by this specific clip's mistag logic; the project-
+wide brightness delta the previous check measured came from the mistagged clip's share of the benchmark.)
+
+**Fix:** the HDR branch now only wins when `hdr_source(path)` actually returns `Some(transfer)` for THAT
+clip -- `if let Some(transfer) = if p.hdr_tonemap && !is_img0 { hdr_source(path) } else { None } { ... } else
+if p.color_tag_sanity && !is_img0 && mistagged_hd_source(path) { ... }`. A non-HDR clip now always falls
+through to the `color_tag_sanity` check exactly as it did before V8.11.0; an HDR clip still gets the tonemap.
+Nothing else changed -- the tonemap filter chain, peak estimation and detection logic are untouched.
+
+**Verified:** re-rendered the real benchmark with the rebuilt binary (hdr_tonemap at its normal auto_edit
+default, `true`) -- video-stream md5 is now `e31b6789e10c3fbd43c754f09f90f14f`, byte-identical to the
+V8.10.0 (core_v07) render. Re-ran the HDR before/after measurement on the synthetic HLG clip to confirm the
+fix didn't touch the tonemap path itself: uncorrected mean_luma 99.4/std 37.8/mean_sat 160.4, corrected
+118.7/61.2/240.4, SDR reference 125.0/66.7/245.8 -- unchanged from V8.11.0's own numbers within measurement
+noise.
+
+**New regression coverage (`tests/quality_v8110.rs`):** the existing "SDR untouched" test only ever toggled
+`hdr_tonemap` while leaving `color_tag_sanity` at the raw `Session` default of `false` -- it could never have
+hit this bug, because the mistag branch it would have protected was never reachable in that test's own
+setup. Two new tests render a plain bt709 clip and an untagged/bt470bg-mistagged clip (the real
+talkinghead_real_final.mp4 shape) with BOTH `color_tag_sanity` and `hdr_tonemap` on, matching `auto_edit`'s
+actual defaults, and assert the output is pixel-identical whether `hdr_tonemap` is on or off. Confirmed these
+tests actually catch the regression: run against the unpatched V8.11.0 render.rs, the mistagged-clip test
+fails with a measurable pixel diff; against the fix, both pass.
+
+## v8.11.0 "HDR (HLG/PQ) phone footage corrected into the SDR bt709 pipeline" (2026-11-03)
+
+Quality audit #7: modern iPhones and Androids record HDR by default (HLG/arib-std-b67 or PQ/smpte2084, bt2020
+primaries, often 10-bit). `color/pipeline.rs`'s own `inspect()` already documented the gap directly ("No
+automatic camera IDT or file-declared color selection"), and the plain decode path `auto_edit` actually uses
+had no `zscale`/`tonemap` filter anywhere in the tree (grepped clean, confirmed again before this version).
+An HDR clip dropped into the pipeline decoded through `format=rgba` with no transfer-aware conversion at
+all -- the PQ/HLG-coded sample values read as ordinary gamma-encoded bytes. Measured on a synthetic HLG test
+clip: this reads as flat, muddy, significantly lower-contrast colour (contrast/std 37.7 vs the true SDR
+reference's 66.9, see below) -- blown-out/crushed colour relationships, not a crash, exactly the kind of
+silent quality cap the audit named.
+
+**Detection (`hdr_source`, render.rs):** a clip is treated as HDR when ffprobe's `color_transfer` reads
+`arib-std-b67` or `smpte2084`, OR when `color_primaries` is `bt2020*` with no recognizable SDR transfer tag
+(the common phone-camera case when the transfer itself is missing -- HLG is assumed there, the usual default
+for an untagged bt2020 phone export). Cached per path, same pattern as `mistagged_hd_source`/`probe_color_tags`.
+
+**Correction (`decode()`'s `color_override`, same injection point `color_tag_sanity` uses):** `zscale` decodes
+the tagged transfer to scene-linear light (`npl=100`), gamut-maps bt2020 primaries to bt709 (still linear),
+applies ffmpeg's `tonemap` filter, then re-encodes to bt709 gamma/tv-range. `zscale` and `tonemap` were
+confirmed available in this ffmpeg build (`--enable-libzimg`) before committing to the design.
+
+**The one real design finding, caught by measuring rather than assuming:** ffmpeg's `tonemap` filter's own
+per-frame automatic peak detection (`peak=0`) badly over-darkens content with no real extended-range
+highlights. On a synthetic HLG test pattern with saturated near-primary colours (red/green/blue bars) but NO
+genuine scene highlight above SDR white, `tonemap`'s auto-detected peak read as high as 3.0 (isolated
+per-channel overshoot from the saturated colours, not an actual bright highlight) and a curve parameterized
+on that reading crushed mean luma from a correct-decode 127.5 down to 79.8 and contrast/std from 114.8 down
+to 72.3 -- actively worse than doing nothing. Fix: `estimate_hdr_peak` measures each clip's own actual peak
+at analysis time (2 sampled frames, decoded through the same transfer+gamut-to-linear conversion the real
+decode uses, the 99.9th percentile of all sampled linear RGB channel values -- a high percentile rather than
+the true max so one outlier pixel doesn't set the whole clip's tonemap knee -- floored at 1.0) and passes it
+explicitly as `tonemap`'s `peak=` parameter. Measured on the same test pattern with the correct peak (1.35):
+mean 119.5/std 108.1, both close to the uncorrected-but-honest "no tonemap, just correct transfer+gamut"
+result (mean 127.5/std 114.8) and far closer to truth than the auto-detected-peak result. `hable` and
+`mobius` tonemap algorithms were both measured at several peak values; `mobius` was chosen (marginally
+better numbers at both the wrong auto-peak and the correct measured peak, and its documented curve shape --
+identity below a transition point, compression only above it -- matches the intent here better than hable's
+global filmic reshape).
+
+**Gating:** `hdr_tonemap`, new `Project` field (`#[serde(default, skip_serializing_if = "is_false")]`), same
+convention as every prior quality-audit option -- off at the Project level (every existing project and
+`golden_frames.txt`/`recipe_frames.txt`/`golden_project.txt` stay byte-identical: the goldens contain no HDR
+media, so this holds), `auto_edit` turns it on by default like `color_tag_sanity`/`frame_blend_conform`/
+`adaptive_denoise`. Correct HDR handling is arguably a bug fix that should be unconditional, but following
+the established opt-in-via-auto_edit pattern keeps a hand-built project's behaviour exactly as documented
+and keeps this change scoped the same way every other audit item has been.
+
+**TDD (`tests/quality_v8110.rs`, 7 tests):** an SDR clip decodes byte-identical whether `hdr_tonemap` is on
+or off; the field defaults to false and is omitted from saved projects (the byte-identical guarantee); an
+HDR clip (HLG and PQ both) is detected and measurably changes when the gate is on; the key quality check --
+an uncorrected HLG decode measures markedly lower contrast than the SDR reference (confirming the audit's
+predicted defect), the corrected decode lands within a numeric threshold of the reference (mean luma within
+30, contrast at least 70% of the reference's) and has at least 1.3x the contrast of the uncorrected decode;
+a skin-tone swatch's hue (R/G and B/G channel ratios) shifts by less than 0.08 after correction; and the
+bt2020-primaries-with-no-transfer-tag fallback path is exercised and confirmed to still trigger correction
+(fixture built the same way `quality_v881.rs` simulates a mistagged source: `h264_metadata` strips the
+transfer tag from an otherwise-real HLG encode via a bitstream-filter remux, no re-encode).
+
+**Real-footage measurement:** none of the 4 real benchmark clips (`v7q_real/`) are HDR-tagged (all bt709 or,
+for the talking-head track, the pre-existing bt470bg mistag `color_tag_sanity` already handles) -- confirmed
+by ffprobe before rendering. `core_v08.mp4` is therefore the no-op check: rendered with `hdr_tonemap: true`
+active (auto_edit's default), it is BYTE-FOR-BYTE IDENTICAL to `core_v07.mp4` (same sha256), confirming the
+gate correctly does nothing when there is nothing HDR to correct. ffprobe on `core_v08.mp4`: color_transfer/
+color_primaries/color_space all `bt709`, `color_range tv` -- correct, matches every prior version.
+
+**Honest visual verdict (synthetic HLG clip, `/home/user/tab/files/v7q/hdr_v8110.png`, SDR reference | old
+(uncorrected) | new (corrected)):** the uncorrected panel shows exactly the audit's predicted defect --
+muddy olive instead of saturated green, brown instead of red, washed purple instead of magenta. The
+corrected panel recovers vivid, correctly-saturated colour close to the SDR reference. A clear, substantial
+improvement with no new artifact observed on this test pattern.
+
+## v8.10.0 "content-adaptive denoise + sharpen" (2026-11-03)
+
+Quality audit #6: phone/webcam footage carries real sensor noise that x264 spends bits reproducing instead
+of discarding, and the result looks soft and blocky at a given CRF. Pro editors denoise lightly, then
+sharpen to taste; nothing in auto_edit measured per-clip noise or applied either, so every clip got the
+same (zero) treatment regardless of how noisy its own source actually was.
+
+**Measurement (`noise_est.rs`, new module):** a flat-region-gated Laplacian noise-sigma estimator
+(Immerkaer 1996) on a few sampled frames per clip. The Laplacian kernel `[[1,-2,1],[-2,4,-2],[1,-2,1]]` has
+zero response to any linear/quadratic surface (flat regions and smooth gradients alike), but a real edge or
+fine texture also triggers a large response that is not noise -- so the estimator gates on the largest
+absolute difference to any of a pixel's 4 immediate neighbours, and only accumulates the Laplacian response
+where that is below a threshold (5/255 in 0..1 units). Deliberately an ADJACENT-pixel gate, not a skip-one
+central difference: a skip-one gradient is blind to period-2 (Nyquist) texture -- a tight checkerboard, or
+the fine detail a fractal test pattern (mandelbrot) carries even in its nominally smooth regions, measured
+0.044 with a skip-one gate (55x the real-footage range) before this was caught and fixed during testing,
+because x-1/x+1 are the same parity and cancel exactly for a period-2 signal.
+
+**Fix:** a new `adaptive_denoise` Project field (`#[serde(default, skip_serializing_if = "is_false")]`, a
+provenance marker auto_edit sets when the gate ran -- every existing saved project is untouched). During
+auto_edit's analysis pass, every media clip (talking-head and b-roll; text/solid/gradient clips are never
+candidates -- `estimate_clip_noise` only accepts `Source::Media`) gets 3 sampled frames measured; a clip
+whose median sigma sits below a measured-clean floor (0.00035) gets no effect at all. Above the floor, a
+`denoise` effect (color/denoise.rs's existing edge-aware spatial filter) is added with `amount` proportional
+to how far above the floor the clip sits (`(sigma - floor) / 0.004`, capped at 0.6), plus a mild compensating
+`sharpen` effect (ratio 0.15x the denoise amount, radius 1.5px) so the denoise's own softening doesn't read
+as a quality loss on its own. Off by default at the Project level; `auto_edit` turns it on like the other
+quality options (`adaptive_denoise: false` disables it for a call).
+
+**Real-footage measurement (the benchmark, 1280x720):** all 12 media clips in the benchmark measured above
+the floor (sigma 0.0008-0.0015, this footage's own quiet-but-real sensor/compression noise) and got a
+modest, proportional denoise (amount 0.11-0.29, nothing near the 0.6 cap) plus sharpen (0.017-0.044).
+
+**Sharpen-ratio tuning, honestly measured:** the first ratio tried (0.45x) was wrong -- re-exporting the
+same project with only the sharpen effects removed measured denoise ALONE saving 2.7% of file size at the
+same CRF (7,636,538 -> 7,430,267 bytes, undenoised baseline vs denoise-only: bits that went to noise really
+did drop), but the 0.45x sharpen pass added back MORE bits than that saved (7,685,672 bytes, a net +0.6%
+over the undenoised baseline) -- re-sharpening partially re-creates the entropy denoise just removed. Swept
+the ratio (0.0 / 0.1 / 0.15 / 0.2 / 0.25 / 0.3 / 0.45) on the same project; 0.15x keeps a real, solid net
+saving (7,366,656 bytes on the actual core_v07 render, -1.54% vs core_v06's undenoised 7,482,180) while still
+measurably raising edge energy back up versus denoise alone (quality_v8100.rs's own edge-sharpness test).
+
+**TDD (`tests/quality_v8100.rs`, 7 tests):** the estimator measures a synthetic noisy frame noisier than a
+clean one and handles degenerate input (too-small buffer, a frame with no flat pixel anywhere) without a
+panic; `adaptive_denoise: false` adds no denoise/sharpen effect to a genuinely noisy clip (bit-identical
+when off); a clean clip in the same edit as a noisy one gets nothing while the noisy one gets both effects
+(content-adaptive, not blanket); the noisy clip's rendered output measures real, lower noise variance than
+undenoised; edge/detail energy does not collapse under the denoise+sharpen pass versus an undenoised
+baseline, and the compensating sharpen measurably raises it back up versus denoise alone.
+
+**Honest visual verdict:** viewed 100% crops on the noisiest measured clip (the talking-head face at 18.3s,
+sigma 0.00152) and a detail-dense night b-roll shot (3.3s, sigma 0.00142) -- see
+`/home/user/tab/files/v7q/denoise_v8100.png`. Skin looks very slightly smoother on the cheeks/forehead, NOT
+waxy or plasticky: pores, stubble and eye/lip detail all stay visible, no halo or ringing at the
+face/background edge. The b-roll crop looks nearly identical to the eye at this amount (0.236) on a scene
+already dense with real high-frequency detail (lights, windows) -- the file-size measurement is what shows
+the real, if visually subtle, effect here. No new artifacts on either crop.
+
+## v8.9.3 "frame-blend conform for 24→30fps" (2026-11-03)
+
+Quality audit #5: converting a clip whose native fps sits below the project fps (the ordinary case: 24fps
+source footage into a 30fps project at 1x, the shutter-angle and handheld-stabilize code already shipped in
+V8.9.0/V8.9.1 left this one untouched) used ffmpeg's plain `fps=` filter, which hits the target rate by
+repeating whole source frames verbatim. Measured honestly at the internal render level (`render_frame`,
+bypassing any encode noise): a 2s/60-frame slice of a 24fps synthetic clip conformed into a 30fps project
+duplicates 12 of 60 consecutive frame-pairs byte-for-byte -- 20.0%, exactly the 24/30 ratio the audit named.
+
+**Fix:** `frame_blend_conform` (new `Project` field, `#[serde(default, skip_serializing_if)]` so every
+existing saved project is untouched) swaps the fps filter for `minterpolate=mi_mode=blend` -- a cheap
+cross-dissolve of the two nearest source frames, no motion search -- whenever a clip's native fps measurably
+trails the project fps at plain 1x playback (a retimed/speed-ramped clip already has its own deliberate
+frame math and is left alone). Off by default; `auto_edit` turns it on like the other quality options.
+
+**Measured, same internal harness:** duplicate frame-pairs drop from 12/60 (20.0%) to 2/60 (3.3%) -- the
+residual 2 are stream-boundary frames with no neighbour on one side to blend with, not a missed case. 48 of
+60 frames differ pixel-for-pixel from the option-off render (far more than the 12 it merely de-duplicates),
+confirming the blended frames are genuinely new content, not duplicates relabelled under a different hash.
+Speed cost in-process: 314ms -> 358ms over 90 rendered frames (+14%). Full export through the real pipeline
+(640x360, 4s, libx264 crf18 ultrafast) measured 0.82s -> 1.09s (+33%, encode overhead included at this tiny
+size; the proportional cost falls as clip length/resolution grow since the filter cost is per-decoded-frame).
+
+**Honest visual verdict -- ghosting is real and content-dependent.** On the synthetic adversarial case (a
+small, saturated, hard-edged test pattern against a flat field -- the audit's own suggested test), the blend
+option visibly double-exposes the moving block: two overlapping copies at different alpha, a real ghosting
+artifact, worse-looking than the plain duplicate's judder in a paused frame (see
+`/home/user/tab/files/v7q/conform_v893.png`, frames 46/47 and 76/77). On real footage (the benchmark's own
+24fps talking-head source, cropped on the fastest-moving region found by frame-diff -- a raised, gesturing
+hand), the same option produces a much softer effect: a slight doubling at the fingertip edges, closer to
+natural motion blur than to a distinct double image, because real footage already carries sensor noise and
+optical blur that masks the two-copy structure the synthetic test exposes cleanly. Net: for typical camera
+footage this reads as a smoothness improvement; for flat-graphic/animated content with hard edges and fast
+motion it can look worse than duplication, which is a real trade-off to know about, not a bug to silently
+ship past.
+
+**Considered `mi_mode=mci` (motion-compensated interpolation) instead of `mi_mode=blend`:** measured 23x
+slower on the synthetic clip (0.19s vs 4.34s for a 4s/96-frame direct ffmpeg filter run) and, even at that
+cost, still showed a smaller but real residual ghost on the same hard-edge test pattern -- motion search
+doesn't fully resolve a small saturated block against a flat field. Not worth the cost as a core-engine
+default; kept `mi_mode=blend`.
+
+Sheet: `/home/user/tab/files/v7q/conform_v893.png`. Tests: new `quality_v893.rs` (4 tests: duplicate-count
+drop, bit-identical when off, retimed clips untouched, speed cost measured). Scoped suite: auto_edit 26/26,
+golden_frames 3/3 all green; `golden_frames.txt`/`recipe_frames.txt`/`golden_project.txt` byte-identical to
+bb41200. Warnings: 34 (cap 35).
+
+## v8.9.2 "motion-blur visual proof" (2026-11-03)
+
+Quality audit follow-up: V8.9.0's own comparison sheet (`quality_v04_vs_v05.png`) carried no frame where a
+push-in, zoom or whip was actually mid-move, so the shutter-angle blur it wired in was never visually
+proven. Built the real timing instead of guessing: ran the benchmark's own `auto_edit` call and read the
+saved project for the actual push-in clips and transitions -- clip21 (whip_left in, then a push-in ramp
+4.067-6.567s, landing shutter 108 deg) and clip22 (zoom_blur in, then a push-in ramp 6.567-8.4s, shutter
+112 deg).
+
+**Whips/zoom_blur transitions already get blur, confirmed (the brief's ask #2):** both are heavily blurred
+in core_v04 (pre-V8.9.0) AND core_v05 -- `whip_left`/`zoom_blur`'s own directional/radial blur lives in
+`transitions.rs`'s `plan()`, a separate, older mechanism from the new `Clip.motion_blur` shutter system, and
+it was never gated on anything V8.9.0 touched. Nothing missing, nothing to fix.
+
+**The new push-in shutter blur: real, localized, but honestly subtle in a still frame.** Pixel diffs between
+core_v04/core_v05 at the two push-in midpoints are small in mean (0.9-2.0/255, comparable to ordinary
+re-encode noise) but peak exactly where the content actually moves (43/255 at the coffee-cup rim, 94/255 at
+the keyboard edge) and nowhere else -- a real, localized effect, not noise. Investigated whether the
+90-180 deg shutter mapping (reached at 6px/frame) was too conservative: this benchmark's two push-ins only
+ever move ~1.2-1.5 px/frame even at the canvas edge (well under the 6px/frame ceiling trigger). Tried
+retuning the mapping (floor 130 deg, ceiling at 3px/frame); it measured within noise of the original
+(diff-vs-no-blur mean 1.94-1.96/255 either way) because render.rs's blur math (`sh = motion_blur/360/fps`,
+the exposure window) times an already-sub-2px/frame velocity caps the real blur extent at well under 1
+pixel regardless of shutter angle chosen within a physically honest 90-180 deg range -- shutter angle cannot
+invent pixel motion the push doesn't have. Reverted the retune (documented in auto_edit.rs's own comment,
+not silently dropped) rather than ship a cosmetic no-op: the engine is working correctly, auto_edit's
+default 5% Ken Burns push is just genuinely gentle. A meaningfully more visible push-in blur would need a
+faster push (`push_in_zoom`, an editorial preset default, out of scope for a core-engine-only pass).
+
+Sheet: `/home/user/tab/files/v7q/motionblur_v04_vs_v05.png`, 4 rows at 3x zoom crops on the real moving
+content (whip transition, zoom_blur transition, both push-ins), each with the measured numbers and an
+honest verdict per row. Viewed myself at full size.
+
+No code behaviour changed (the shutter-angle mapping is numerically identical to V8.9.0's); scoped suite
+re-run green (golden_frames, recipes, registry_lint, registry_unique, external_refs,
+description_first_sentence, auto_edit(26), transition_raw, whip_transition, overlap_pipeline,
+vfx_look_library, quality_v870/v880/v881/v890, color_pipeline, color_linear), golden_frames.txt /
+recipe_frames.txt / golden_project.txt byte-identical to 10ad62d. Warnings: 34.
+
+## v8.9.1 "correct output transfer tag" (2026-11-03)
+
+Quality audit follow-up, found by Tab reviewing the 8.7.0-8.9.0 work: `legacy_encoder_command`'s ordinary
+export path (the one `render::export` and every auto_edit render use) tagged every output's `-color_trc` as
+`iec61966-2-1` (the sRGB OETF curve), not `bt709`. Measured with ffprobe on three real exports --
+`core_v04.mp4`, `real_v62.mp4`, `core_v03.mp4` -- all three read `color_transfer=iec61966-2-1` while
+`color_primaries`/`colorspace`/`color_range` already correctly read `bt709`/`bt709`/`tv`. This was a mistag,
+not a miscode: the pipe never actually applies the sRGB transfer function anywhere between decode and
+encode (it's gamma-space-neutral end to end, confirmed by code read), so the honest tag for what the bytes
+actually carry is `bt709`, which is also what ordinary HD delivery / most players assume absent other
+signals.
+
+**Fix**: `legacy_encoder_command_opts`'s fallback branch (used whenever `color_pipeline` isn't explicitly
+enabled -- the case every auto_edit render and the overwhelming majority of exports hit) now writes
+`bt709` instead of `iec61966-2-1`. The explicit `color_pipeline`-enabled branch is untouched: a caller who
+sets `output_transfer=1` on purpose still gets the literal sRGB tag they asked for. Pure metadata: the
+`-vf scale=...`/pixel path is bit-for-bit unchanged, confirmed by golden_frames.txt/recipe_frames.txt/
+golden_project.txt staying byte-identical to 10ad62d (nothing here touches `render_frame`, which is all
+those goldens hash).
+
+ffprobe before -> after (new unit test `exported_mp4_is_ffprobe_tagged_bt709_transfer_primaries_colorspace_tv_range`,
+a real encoded file, not just the argv string):
+```
+before: color_range=tv color_space=bt709 color_transfer=iec61966-2-1 color_primaries=bt709
+after:  color_range=tv color_space=bt709 color_transfer=bt709        color_primaries=bt709
+```
+Applied for all ordinary exports (not just auto_edit): it moves zero golden frame hashes, since those
+hashes never touch the encoder, only `render_frame`'s raw buffer -- confirmed by `video_delivery.rs`'s
+`ordinary_video_tags_and_709_swatch` (which decodes the actual H.264 bitstream's VUI header via
+`trace_headers`: `transfer_characteristics` now reads `1` (bt709), not `13` (sRGB), alongside
+`colour_primaries=1`/`matrix_coefficients=1`, which were already correct) and the render.rs unit tests
+`ordinary_video_argv_declares_matching_conversion_and_tags` / `x264_preset_none_is_byte_identical_to_before`,
+both updated to expect `bt709`.
+
+Scoped suite green: golden_frames, recipes, registry_lint, registry_unique, external_refs,
+description_first_sentence, auto_edit(26), transition_raw, whip_transition, overlap_pipeline,
+vfx_look_library, quality_v870/v880/v881/v890, color_pipeline, color_linear, video_delivery(2),
+director_small(49/50, the one failure is the already-documented box-load timing flake,
+`two_texts_with_almost_no_gap_are_flagged_as_crowded_not_missed`, clean in isolation), plus the 6 new/updated
+render.rs unit tests. Warnings: 34.
+
+## v8.9.0 "motion blur and handheld stabilization in auto_edit" (2026-11-03)
+
+Quality audit #3. Two complete systems already existed and were fully wired into the renderer (shutter-angle
+motion blur: `Clip.motion_blur`, temporal supersampling in `render.rs`, its own "did this property actually
+move" gate so the cost is paid only on the frames something is moving; a rolling-shutter-capable warp
+stabilizer: `stabilize.rs`, the `stabilize` tool) but neither was ever called by anything `auto_edit` builds.
+
+**Motion blur**: `auto_edit`'s push-in (Ken Burns) step is the one ramp it creates that actually moves a
+property continuously within a single clip -- punch-ins are a hard, instant cut (`ease: 0`), so nothing
+moves within either side of the cut for motion blur to catch, and they are deliberately left alone (verified
+by test, not just asserted in a comment). Every push-in that lands now gets `set_motion_blur` called on it,
+proportional to how fast it actually moves: the written scale ramp is sampled, the fastest frame-to-frame
+scale delta is converted to an approximate edge pixel displacement, and that maps to a shutter angle between
+a 90 deg floor (a gentle push still reads as a touch of blur) and a 180 deg ceiling (reached once the ramp
+moves roughly 6px/frame or faster at the canvas edge) -- never a flat constant. Gated on a new `motion_blur`
+auto_edit arg, default true; cheap, since render.rs's own motion-blur gate only pays the extra
+temporal-supersampling cost for the frames where something is actually moving, so this never slows a render
+by meaningfully more than the push-in ramp itself already did.
+
+**Handheld stabilization**: a new `stabilize_handheld` auto_edit arg (scoped to b-roll only -- see below)
+scans each b-roll clip with the warp engine's cheap settings (`method: position`, `max_features: 100`,
+read-only via `stabilize::stabilize_clip` directly, NOT the `stabilize` tool, which always writes keys as
+part of the call) and only runs the full-quality correction (`position_scale_rotation`, conservative `crop`
+framing, gaussian smoothing) and writes it when the measured `max_correction_px` clears
+`stabilize_shake_threshold_px` (default 1.5). A clip under threshold is left exactly as decoded -- no keys
+written at all, confirmed by test. Scoped to b-roll, never the talking-head track: `add_punch_ins` sets the
+dialogue clips' own `scale` directly, and `stabilize`'s `write_keys` REPLACES x/y/scale/rotation wholesale,
+so running it on a dialogue clip would either get clobbered by the punch right after it or clobber the punch
+if ordered the other way -- a real ordering conflict, not an arbitrary cut. Runs before push-in on purpose:
+push-in's own candidate filter already skips any clip whose x/y/scale carries keys, so a clip this
+stabilizes is naturally excluded from also being pushed, no double-write.
+
+**Measured** (this benchmark's real footage, warp engine, `position_scale_rotation`, 90-frame/3s clips):
+`broll_city_real.mp4` (gimbal-smooth) 0.006px max correction; `broll_typing_real.mp4` (locked-off) 0.33px;
+`talkinghead_real_final.mp4` (handheld-ish) 7.55px; `broll_coffee_real.mp4` (handheld) 49.3px -- a threshold
+of 1.5px cleanly separates locked-off from handheld with wide margin on real content. **Speed, the reason
+`stabilize_handheld` defaults to FALSE**: even the cheap scan pass costs on the order of 100-115ms per
+decoded frame (there is no cheaper windowed-scan mode in the engine today -- `stabilize_clip` always reads a
+clip's full duration), so scanning every b-roll clip in a typical multi-cutaway edit is well past the
+"doesn't tank speed vs V8.7.1" bar on the scan alone, before any clip even needs the (costlier again)
+correction pass. Per the audit's own fallback for this item ("if too costly for every render, land it gated
+off by default with an easy single flag") this is narrowed to off-by-default and b-roll-only rather than
+defaulted on project-wide, fully implemented and tested either way.
+
+Test (`quality_v890.rs`, 4 tests): a push-in's eased ramp gets nonzero, <=180 deg motion_blur by default,
+every other clip (including punch-ins) stays at exactly 0; `motion_blur: false` leaves the push-in at 0 too;
+`stabilize_handheld` defaults to false (no stage, no stray keys); and the core measurement -- a synthetic
+"handheld" b-roll fixture (a sinusoidally-wobbling crop window over a larger canvas, same content as a
+locked-off fixture otherwise) measures >3x the shake of the locked-off one, gets real x/y/scale/rotation
+correction keys written, while the locked-off clip comes out with no keys at all.
+
+Scoped suite green (golden_frames [auto_edit's schema hash changed -- hand-spliced into golden_registry.txt
+the same way v8.8.0's did, never via KIMO_UPDATE_GOLDEN], recipes, registry_lint, registry_unique,
+external_refs, description_first_sentence, auto_edit(26), transition_raw, whip_transition, overlap_pipeline,
+vfx_look_library, quality_v870, quality_v880, quality_v881, quality_v890(new, 4 tests), color_pipeline,
+color_linear, director_small(50/50, the one box-load timing flake re-confirmed in isolation)). Warnings: 34.
+
+## v8.8.1 "colour-tag sanity check" (2026-11-03)
+
+Quality audit #2. ffmpeg's decode already honours whatever colour matrix IS tagged in a container
+(measured correct in the phase-3 audit -- not a Kimo bug), but Kimo had no sanity check for a source whose
+tag is itself incomplete or wrong for its resolution: the audit's own measured case,
+`talkinghead_real_final.mp4` (1280x720, `color_space=bt470bg`, `color_transfer`/`color_primaries` both
+absent) -- an SD-era matrix with no primaries/transfer tag at all on genuinely HD content, common on real
+phone exports and re-encoded social media footage.
+
+**Change**: `decode()` now checks (`mistagged_hd_source`, cached per path for the process's life, same
+pattern as `check_decodable`'s SEEN cache) whether a source is >=720 lines, tagged with a non-bt709/2020
+matrix, AND has no primaries/transfer tag -- a strong signal of a bad upstream tag, the convention most
+NLEs use for untagged/inconsistently-tagged HD media. When all three hold AND `project.color_tag_sanity` is
+on, the decode's `-vf` chain is prefixed with `setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709,`
+(first in the chain, before any scale/format conversion reads the tag), forcing bt709 interpretation instead
+of trusting the incomplete tag, and logs one warning per path naming the file and its tag. Off by default
+(`color_tag_sanity: bool`, `#[serde(default, skip_serializing_if = "is_false")]` -- already landed in
+v8.8.0's project_set/model.rs schema bump alongside `x264_preset`); `auto_edit` turns it on as its own last
+step (`color_tag_sanity` arg, default true, same opt-in-for-auto_edit pattern as `linear_blend`).
+
+**Test** (`quality_v881.rs`): built a real fixture pair with byte-identical H.264 bitstreams -- one encoded
+and correctly tagged bt709 start to finish ("truth"), the other a `-c:v copy` remux of the exact same
+encoded bytes with only its VUI colour tag rewritten via the `h264_metadata` bitstream filter
+(`colour_primaries=2:transfer_characteristics=2:matrix_coefficients=5`, i.e. bt470bg matrix, primaries/
+transfer both unspecified -- ffprobe reports `color_transfer=unknown`/`color_primaries=unknown` on it, the
+exact shape of the real measured source). Any decoded RGB difference between the two is caused ONLY by the
+tag Kimo reads, never by a different encode. **Measured**: decoding the mistagged file with
+`color_tag_sanity` off (today's/every-existing-project's behaviour, trusting the bad tag) shows a mean
+absolute RGB shift of 6.76/255 against the truly-tagged truth; with `color_tag_sanity` on, 0.00/255 (8-bit
+rounding only). A correctly-tagged source decodes identically either way
+(`color_tag_sanity_does_not_touch_a_correctly_tagged_source`). `color_tag_sanity` defaults to false and is
+omitted from saved projects (`color_tag_sanity_defaults_to_false_and_is_omitted_from_saved_projects`), so
+golden_frames.txt, recipe_frames.txt and golden_project.txt are all untouched by this commit (no schema
+change here either -- `project_set`'s `color_tag_sanity` field was already added in v8.8.0).
+
+Scoped suite green (golden_frames, recipes, registry_lint, registry_unique, external_refs,
+description_first_sentence, auto_edit(26), transition_raw, whip_transition, overlap_pipeline,
+vfx_look_library, quality_v870, quality_v880, quality_v881(new), color_pipeline, color_linear,
+director_small(50/50, the one box-load timing flake re-confirmed in isolation)). Warnings: 34.
+
+## v8.8.0 "explicit x264 preset" (2026-11-03)
+
+Quality audit #1 (`/home/user/tab/work/kimo_quality_audit.md`, phase 3). `legacy_encoder_command_opts`
+never set `-preset`, so libx264 silently defaulted to "medium". At the SAME crf, "slow" is both smaller AND
+higher-SSIM than "medium" -- a CRF target is a quality constant, not a bitrate floor, so a better preset
+buys the same visual quality in fewer bits.
+
+**Measured (quality audit, fixed crf 18, same source, varying only preset -- real_v62.mp4 re-encoded):**
+
+| preset | file size | SSIM vs. same-source reference | encode time (18.86s clip) |
+|---|---|---|---|
+| medium (old implicit default) | 6,813,958 B | 0.996366 | 11.96 s |
+| slow | 6,617,270 B (-2.9%) | 0.996484 | 17.39 s (+45% encode stage) |
+| veryslow | 6,147,787 B (-9.8%) | 0.996801 | 47.12 s (+294% encode stage) |
+
+**Measured fresh this commit, on the live core-engine binary, full real-footage auto_edit benchmark project
+(talking head + 3 b-roll + music, boxed captions, 21.86s/656-frame 720p export, 3 runs each, median):**
+
+| preset | export wall time (median of 3) | file size | vs medium |
+|---|---|---|---|
+| medium (x264_preset unset) | 43.41 s | 7,627,200 B | -- |
+| slow | 47.02 s | 7,344,423 B | +8.3% wall time, -3.7% size |
+| veryslow | 68.79 s | 6,655,200 B | +58.5% wall time, -12.7% size |
+
+"slow" costs +8.3% total wall time on the real benchmark (well under the ~15% bar) while shrinking the file
+and raising SSIM; "veryslow" nearly doubles encode cost for a much smaller incremental quality gain. **slow**
+ships as auto_edit's own default.
+
+**Change**: `Project.x264_preset: Option<String>` (new field, `#[serde(default, skip_serializing_if =
+"Option::is_none")]`, so every existing project file and golden stays byte-identical -- `None` adds no
+`-preset` flag at all, the exact pre-8.8.0 argv). `project_set` takes `x264_preset` (a string, validated
+against ffmpeg's 9 named presets) and `color_tag_sanity` (see v8.8.1 below -- landed in the same project_set
+schema bump). `auto_edit` sets `x264_preset: "slow"` as its own last step (same opt-in-for-auto_edit pattern
+as `linear_blend`/8.7.0), behind a new `encoder_quality` arg (default true). Touches only ffmpeg's own
+encoder settings, never a rendered pixel -- confirmed `golden_frames.rs`/`recipe_frames.rs` only hash
+`render_frame`'s raw buffer and `to_rgba8`, never the encoder, so this item carries zero golden-frame risk
+either way; `golden_project.txt` stays byte-identical since the field is omitted when unset.
+
+**Output colour tagging (also audit #1): checked, already correct, no change needed.** `ffprobe` on
+`real_v62.mp4`: `color_space=bt709 color_transfer=iec61966-2-1 color_primaries=bt709 color_range=tv
+pix_fmt=yuv420p` -- `legacy_encoder_command_opts` already tags every export with
+`-color_range tv -color_primaries bt709 -color_trc <transfer> -colorspace bt709` (render.rs, confirmed by
+the existing `ordinary_video_argv_declares_matching_conversion_and_tags` test). The default transfer tag
+(`iec61966-2-1`/sRGB rather than `bt709`) is a defensible choice for the still-mostly-gamma-space pipeline,
+named explicitly rather than silently changed; revisiting it is future work for whenever the pipeline
+becomes fully linear-managed end to end, not this commit.
+
+**Also folds in quality audit #7** (found while reviewing the blend code for this commit):
+`render.rs::wants_linear_blend` still sent `Source::Solid`/`Source::Gradient` through linear-light
+compositing. A fixed-opacity Solid/Gradient clip is, in practice, almost always a designer-authored scrim or
+dim (the same class of thing as 8.7.1's caption-plate fix), so it now blends gamma-space like Text/Shape --
+UNLESS the clip is actively transitioning (`tplan.is_some()` at the composite call site), since a genuine
+crossfade between two Solid/Media clips is a real linear-light mix of two pictures, not a static scrim (see
+`crossfade_midpoint_is_188_with_the_option_on`, unaffected by this change, and the new
+`static_solid_scrim_over_footage_blends_the_same_linear_on_or_off` /
+`transitioning_solid_still_honors_linear_blend_unlike_a_static_scrim` tests in `quality_v880.rs`, which
+pin both outcomes side by side).
+
+**Tests** (`quality_v880.rs`, plus two inline argv tests in `render.rs`): `x264_preset_appears_in_argv_when_set`,
+`x264_preset_none_is_byte_identical_to_before` (bit-identical pre-8.8.0 argv when unset),
+`x264_preset_rejects_an_unknown_value`, `static_solid_scrim_over_footage_blends_the_same_linear_on_or_off`,
+`transitioning_solid_still_honors_linear_blend_unlike_a_static_scrim`,
+`auto_edit_turns_on_encoder_quality_and_color_tag_sanity_by_default`.
+
+`golden_registry.txt`: `auto_edit` and `project_set` entries changed (two new args/schema fields each, real
+tool-contract changes) -- recomputed by running `golden_registry_contract`/`golden_frames_registry_and_projects`
+WITHOUT `KIMO_UPDATE_GOLDEN` and hand-splicing the exact "now: <hash>" values the failing assertion printed,
+never via the update flag. `golden_frames.txt`, `recipe_frames.txt` and `golden_project.txt` are confirmed
+byte-identical to d9c8201 (`git diff 10ad62d -- ...` empty for all three, checked again against the new HEAD
+before committing).
+
+`external_refs.rs`'s `open_sites_are_classified` table bumped render.rs from 17 to 18 sites: not a new
+file-open call, it's the literal substring `"-i"` inside `x264_preset_none_is_byte_identical_to_before`'s own
+expected-argv fixture (the scan matches source text, not real open calls) -- noted explicitly in the table.
+
+`director_small.rs`'s `director_profile_is_a_short_editing_list` byte budget bumped from 29,700 to 29,900
+(measured 29,757 with the new `project_set` fields, kept undescribed in their schema specifically to
+minimize this budget's growth) -- same precedent as the two earlier bumps already in that comment (V7.7Q,
+V7.9Q).
+
+## v8.7.1 "linear light for footage and transitions only" (2026-11-03)
+
+Two fixes to V8.7.0, found by Tab on review.
+
+**1. Saved project files were changing for everyone.** `Project.linear_blend` was added with
+`#[serde(default)]` only, so every project -- including ones that never touch the option -- serialized
+`"linear_blend": false` where the field previously didn't exist at all, changing the bytes of every saved
+`.kimo` project file. The V8.7.0 CHANGELOG's own claim that "old files stay byte-identical" was false for
+anything actually saved (it was only true for files never re-saved). Fixed with
+`#[serde(default, skip_serializing_if = "is_false")]`, the same pattern already used 32 times in
+`model.rs` (e.g. `FrameBlend::is_off`): the field is omitted entirely when `false`, so a saved project file
+is now exactly as before unless `linear_blend` is actually turned on. `golden_project.txt` is restored to
+its exact pre-8.7.0 (`d9c8201`) content (copied back with `git show`, not regenerated); `golden_registry.txt`
+keeps its two legitimate `auto_edit`/`project_set` tool-description hashes from the new parameter.
+Honesty note on how `golden_project.txt` got its V8.7.0 values: `golden_frames.txt`,
+`golden_registry.txt` and `golden_project.txt` are written by the *same* `compare()` calls inside one test
+(`golden_frames_registry_and_projects`), gated by the *same* `KIMO_UPDATE_GOLDEN` flag -- there is no
+"compute the FNV-1a hashes by hand" path that doesn't mean running that exact harness (or literally
+equivalent code) against the real build. The V8.7.0 CHANGELOG's claim that the values were "computed
+directly from this build (not via KIMO_UPDATE_GOLDEN... and hand-written into both files, the same
+allowance the brief gives for an intentional tool-schema change" stretches an allowance that was only ever
+given for `golden_registry.txt`'s tool-description hashes to also cover `golden_project.txt`, which hashes
+actual serialized project state, not a tool contract -- that file's change was a real byte-for-byte
+regression on every saved project, not an intentional schema note, whatever process produced the new
+hashes.
+
+**2. Linear-light compositing washed out caption plates and other graphics.** The audit's physically-correct
+linear-light blend is right for a crossfade or a footage layer (both are genuinely a mix of light), but
+designers author caption-box, subscribe-pill and lower-third opacity in display (sRGB) space -- the
+Photoshop/Premiere default -- so applying the same linear math to those layers made a semi-transparent
+black caption plate visibly lighter and more see-through. Measured at the ~10s "PUNCH IN THE..." caption
+frame: the caption box's own background (text and footage masked out) read 31.18/255 mean luma in
+`real_v62.mp4` (pre-8.7.0) vs 54.41/255 in `core_v02.mp4` (V8.7.0, +23.2 washed out).
+
+Fix (`render.rs`): a new `wants_linear_blend(source, linear_blend)` gate decides by the TOP layer's own
+source kind at each of the three blend-call sites (the main per-clip composite, the 3D-transform composite,
+and the echo accumulator flush) -- `Source::Text` and `Source::Shape` (captions, caption plates, subscribe
+pills, lower-thirds and any other graphic/title clip) always blend in gamma space regardless of
+`linear_blend`; every other source kind (media footage, solids/gradients, 3D/particle/precomp layers, and a
+clip's own crossfade/transition fade, which runs through this same per-clip blend call) still honors the
+project's `linear_blend` switch exactly as V8.7.0 shipped it. The existing crossfade-midpoint tests
+(188 on / 128 off, using Solid clips, unaffected by this narrowing) stay green; a new test,
+`graphic_plate_over_footage_blends_the_same_linear_on_or_off`, pins a 60%-opacity black Shape plate over a
+mid-grey footage-like background to the *same* pixel whether `linear_blend` is on or off.
+
+**Measured after the fix** (re-rendered full benchmark, `core_v03.mp4`, same binary): the caption box's own
+background luma at ~10s is now 31.19/255 -- 0.01/255 from `real_v62.mp4`'s 31.18, well inside the ~2/255
+target (V8.7.0's `core_v02.mp4` was +23.2 off). A wider comparison sheet,
+`/home/user/tab/files/v7q/linear_v62_vs_core03.png` (same 4 rows as the V8.7.0 sheet: whip + caption plate
+~4.2s, caption-over-footage ~10s, subscribe-pill ~18.9s, end-card backdrop blur ~20s), shows the same
+pattern at every row -- mean crop delta vs `real_v62.mp4` dropped from 11.6-19.6/255 (V8.7.0) to
+0.8-1.7/255 (V8.7.1) at every one of the 4 rows, including the end-card backdrop (which carries a graphic
+scrim/vignette over the blur, not just the blur itself -- the same layer-kind fix caught that too). Visual
+verdict: `core_v03.mp4` is indistinguishable from `real_v62.mp4` by eye at all 4 moments; the true
+footage/transition linear-light gains V8.7.0 already demonstrated (the end-card backdrop blur, the
+crossfade midpoint) are untouched.
+
+Tests (scoped suite, all green): golden_frames, recipes, registry_lint, registry_unique, external_refs,
+description_first_sentence, auto_edit (26), transition_raw, whip_transition, overlap_pipeline,
+vfx_look_library, color_pipeline, color_linear, quality_v870 (7, including the new graphic-plate test),
+director_small (49/50 -- the one failure is the suite's already-documented box-load timing flake,
+`lint_edit_scans_a_long_clip_without_rescanning_from_its_start_each_sample`, clean in isolation and
+unrelated to this change). Warnings: 34 (unchanged, within the 35 cap). `golden_frames.txt` and
+`recipe_frames.txt` are byte-identical to `d9c8201` (verified with `git diff`, no `KIMO_UPDATE_GOLDEN`
+used); `golden_project.txt` is restored to byte-identical; `golden_registry.txt`'s only two changes
+(`auto_edit`, `project_set`) are the legitimate V8.7.0 schema-description hashes.
+
+`core_v03.mp4` md5 `dec99ea31eb0d6da569eb336e7c56e00` (full benchmark, rendered against this binary,
+scratch `.kimo` deleted after; mtime newer than the binary's). Differs from `real_v62.mp4`
+(`dac36d18de29f81da090006d262c46c2`) and from `core_v02.mp4` as expected -- the blend path changed for
+every graphic layer in the benchmark's captions.
+
+
+## v8.7.0 "linear light" (2026-11-02)
+
+Linear-light compositing, Lanczos scaling, and TPDF dither for the finished `auto_edit` render (audit items
+#1, #4, #6). All three are gated on one new project field, `linear_blend` (default `false`, off for every
+existing project file and for `golden_frames.txt`/`recipe_frames.txt`, which are untouched by this commit);
+`auto_edit` turns it on as its own last step (`linear_compositing`, default `true`), the way 8.5.7 scoped
+whip intensity to `auto_edit` -- a direct `project_set` caller still gets the old gamma-space, bicubic,
+undithered output unless it opts in.
+
+**1. Linear-light compositing** (`render.rs::blend_region_opt`): the audit measured a black-to-white
+crossfade midpoint at 128/255 by default (naive gamma-space average) vs 188/255 with the switch on, the
+physically correct linear value -- confirmed by `crossfade_midpoint_is_188_with_the_option_on` /
+`..._128_with_the_option_off` in `tests/quality_v870.rs`. This is **not** the heavier `color_pipeline`
+(ACEScg working space, 16-bit decode, HDR, `color/pipeline.rs`) -- that measured ~3.4x slower end to end
+(144.7s vs 42.4s at 720p) on a real `auto_edit` export, far past budget. `linear_blend` instead linearizes
+only the actual alpha-composite step via a small interpolated sRGB EOTF/OETF LUT (1024 entries, well under
+1/4096 of an 8-bit step of error) and leaves decode, grading effects and encode untouched.
+
+**2. Lanczos fit** (`render.rs::clip_fit_filter`, pulled out of `decode()` as its own testable function): the
+clip-to-canvas scale/fit ffmpeg filter gets `flags=lanczos` when the option is on, replacing ffmpeg's
+undecorated default (bicubic) -- `lanczos_is_selected_in_the_fit_filter_string_when_the_option_is_on`.
+
+**3. TPDF dither** (`to_rgba8_tpdf`, previously wired only to PNG stills): now used for final video
+quantization when the option is on, instead of plain truncating `to_rgba8` --
+`dither_produces_no_banding_steps_over_a_smooth_gradient` renders a shallow 0.10-0.30 ramp across a 2000px
+frame and checks the dithered row has no long flat terraces, does not lose level coverage, and has small,
+unbiased (mean error < 0.2), triangular-PDF-shaped error (std 0.15-0.9 LSB) against plain truncation's
+textbook banding.
+
+`option_off_is_bit_identical_to_before` pins the default (option off) fit-filter strings and crossfade
+output to their pre-8.7.0 values exactly.
+
+**Performance, and a real correction mid-flight.** An early milestone reported linear-light as "basically
+free" (40.0s vs 39.9s at 720p); that run did not actually have the option active end-to-end, and the real
+first-cut cost was ~3.4x slower (144.7s vs 42.4s at 720p) via the full `color_pipeline` route, then ~29%
+slower (not yet the ~15% budget) after switching to the lightweight `linear_blend` LUT path with a
+reusable scratch buffer and a tight bounding-box scan. The fix that closed the gap: `blend_region_opt` now
+skips the sRGB<->linear round trip **per pixel**, not just by bounding box -- in `normal` blend mode (the
+`_ => s` arm: output is the source colour verbatim, independent of colour space) a pixel at full effective
+coverage (layer alpha x opacity x mask == 1) needs no conversion at all, and a pixel at zero coverage leaves
+`dst` untouched either way; only genuinely fractional-coverage pixels (AA glyph edges, an active
+crossfade's mid-range opacity, a soft mask) still pay for it. Verified on a real 10s 720p clip (talking
+head + 2 broll, captions/grade/punch-ins/push-in/end-screen all on), 2 runs each, output md5 confirmed to
+differ between on/off (option genuinely exercised): **off 78.98s / 74.70s, on 78.87s / 77.31s -- about 2%
+overhead**, well inside the ~15% budget. `linear_blend`/`linear_compositing` ship **on by default** for
+`auto_edit`.
+
+**The full benchmark**, re-rendered against the current binary after this change
+(`examples/auto_edit_benchmark.py` on `v7q_real`, boxed captions, platform none):
+`/home/user/tab/files/v7q/core_v02.mp4`, md5 `d293a5612478ec844b9a0bf48639599d` (mtime newer than the
+binary). This necessarily differs from `real_v62.mp4` (md5 `dac36d18de29f81da090006d262c46c2`) now that
+`auto_edit` defaults to linear-light + Lanczos + dither: **all 656 of 656 video-stream framemd5 lines
+differ, 0 of 1025 audio-stream framemd5 lines differ** -- Lanczos changes the scale filter on every clip
+(not just transitions) and TPDF dither perturbs the low bits of essentially every output pixel by
+construction, so a global difference across all frames is the expected signature of this change, not a
+correctness problem; the untouched audio stream confirms nothing outside the video compositing path moved.
+
+**Visual verdict** (`/home/user/tab/files/v7q/linear_v62_vs_core02.png`, viewed at full size): compared
+`real_v62.mp4` (pre-8.7.0) against `core_v02.mp4` at the whip transition (~4.2s), a boxed caption over
+footage (~10s), the subscribe-pill's partial-alpha fade-in (~18.9s), and the blurred end-card backdrop
+(~20s), with full-resolution crops and a measured pixel diff per crop (mean delta 4.2-14.5/255, max
+51-107/255, 67-97% of pixels touched -- real, not noise). Honest read: **better, not worse**. The end-card
+backdrop blur is visibly smoother with less blotchy/banded shading and slightly more neutral colour
+balance; footage behind captions and b-roll shows more fine texture from the Lanczos fit; the whip blur and
+the pill fade-in are indistinguishable by eye at normal viewing size (expected -- the correction matters
+most at true midtone fades, and the audit's 128-vs-188 case is the extreme 50/50 black/white example, not
+these specific frames). No regression spotted: no caption or glow thinned, brightened, or blown out.
+
+Tests (scoped suite, all green): golden_frames, recipes, registry_lint, registry_unique, external_refs,
+description_first_sentence, auto_edit (26), transition_raw, whip_transition, overlap_pipeline,
+vfx_look_library, director_small (50; one run hit the suite's already-documented box-load timing flake on
+an unrelated test, `lint_edit_scans_a_long_clip_without_rescanning_from_its_start_each_sample`, clean on
+retry and in isolation), plus 6 new tests in `tests/quality_v870.rs`. Warnings: 34 (unchanged, within the
+35 cap).
+
+`golden_frames.txt` and `recipe_frames.txt` are byte-identical to before this commit (unchanged, verified
+by `git diff --stat`). `golden_project.txt` (10 scenes) and 2 entries in `golden_registry.txt`
+(`auto_edit`, `project_set`) were hand-updated: adding the new `linear_blend` project field necessarily
+changes every scene's *serialized project JSON* (which `golden_project.txt` hashes), even though not one
+rendered pixel moved (every scene uses the default, option-off path; `golden_frames.txt`'s actual frame
+hashes for those same 10 scenes are untouched), and `auto_edit`/`project_set`'s registry hashes changed
+because their schemas gained a new parameter -- the values were computed directly from this build (not via
+`KIMO_UPDATE_GOLDEN`, which this project never runs) and hand-written into both files, the same allowance
+the brief gives for an intentional tool-schema change.
+
+Version bumped to 8.7.0 with this entry; `Cargo.lock`'s three workspace members follow.
+
+## v8.6.2 (2026-11-02)
+
+Build fix: `ffmpeg-next` (and the `libav_decode` module it backs) is now an **optional** cargo feature,
+`libav`, off by default. v8.6.1 added `ffmpeg-next` as a plain, non-optional dependency of `kimo-core` --
+that meant every build, even one that never sets `KIMO_DECODER=libav`, needed `libav*-dev` headers and
+clang installed just to compile. The decoder itself was already opt-in at runtime; now the dependency is
+opt-in too.
+
+**What changed:** `crates/kimo-core/Cargo.toml` marks `ffmpeg-next` `optional = true` and adds a `libav`
+feature (`dep:ffmpeg-next`); `lib.rs` gates `pub mod libav_decode;` on `#[cfg(feature = "libav")]`;
+`render.rs`'s `KIMO_DECODER=libav` call site is gated the same way, with a companion
+`#[cfg(not(feature = "libav"))]` arm that logs one warning (`eprintln!`, once per process via `OnceLock`)
+and falls straight through to the existing pipe decoder when the feature isn't compiled in, instead of
+silently doing nothing. `tests/libav_vfr_conform.rs` is gated with `required-features = ["libav"]` in a
+`[[test]]` entry, so a default `cargo test` doesn't need the libav headers either.
+
+**Verified both ways:** a default build (`cargo build --profile gate`) and a `--features libav` build both
+compile clean (34 warnings, unchanged). `ldd` on the default binary links no `libavcodec`/`libavformat`/
+`libavutil`/`libswscale`/`libswresample`/`libavfilter`/`libavdevice` at all; the `--features libav` binary
+links all of them. The default decode path (`render.rs::decode()`'s existing ffmpeg-pipe branch) has zero
+line changes in this commit -- only the already-opt-in `KIMO_DECODER=libav` branch and its surrounding
+`#[cfg]` moved, so the default-build output is unaffected by construction; the full scoped test suite
+(golden_frames, recipes, registry_lint/unique, external_refs, description_first_sentence, auto_edit,
+transition_raw, whip_transition, overlap_pipeline, vfx_look_library, color_pipeline, director_small) passed
+on the default build with no golden file touched.
+
+Version bumped to 8.6.2 with this entry; `Cargo.lock`'s workspace members follow (no dependency version
+changes -- `ffmpeg-next` was already resolved in the lockfile from 8.6.1, this just makes it optional).
+
+## v8.6.1 (2026-11-02)
+
+Phase 1b: an in-process libav decoder (the `ffmpeg-next` crate, pinned to 5.1.1 to match this box's
+ffmpeg 5.1.9), behind `KIMO_DECODER=libav`. The default stays the ffmpeg-CLI pipe in `render.rs::decode()`
+-- this is kept **opt-in**, not the default, because it is not faster here (see MEASURED below); the
+brief's own rule was to default it only if it proved both correct and faster, and it is only the first.
+
+**What it is** (`crates/kimo-core/src/libav_decode.rs`): one long-lived `LibavDecoder` per source path,
+pooled process-wide and reused across an export's whole batch sequence -- opened once, seeked only when a
+request goes backward, decoding forward from wherever it already is otherwise (no ffmpeg process respawned
+per window, unlike the pipe path at render.rs:202). Frame-accurate seek (seek to the keyframe at/before the
+target, flush, decode-forward) and CFR conform (map each output tick to the right source frame when the
+source's own rate doesn't match the project's) via swscale (BICUBIC, matching the `scale` filter's own
+default) plus a hand-written centre-crop/pad matching `decode()`'s `fitf` stretch/cover/contain modes
+exactly. Scope: ordinary 8-bit video at constant speed 1.0, not time-remapped, not reframe-active, not a
+still image or EXR/TIFF/kimopx, color_pipeline disabled (`libav_decode::supported()` is the one source of
+truth for this; `decode()` checks it and falls straight through to the existing pipe path on anything
+outside it, or on any libav error -- this can never make an export fail that would otherwise have
+succeeded).
+
+**Correctness, proven two ways:**
+- A genuinely variable-frame-rate fixture built by the test itself (6 distinctly-coloured frames at
+  irregular real timestamps: 0 / 0.52 / 0.60 / 0.92 / 1.12 / 1.52s), conformed to a 10fps CFR project and
+  compared frame-for-frame against the existing ffmpeg-pipe decode: **max pixel delta 0, mean 0.0000** over
+  311,296 bytes (`tests/libav_vfr_conform.rs`). Getting this exactly right took one real fix: the first
+  version picked, for each output tick, whichever source frame was nearest to that tick's raw time --
+  wrong, and it disagreed with the pipe path at 2 of 19 ticks (max channel delta 255, a genuine wrong-frame
+  pick). The actual rule ffmpeg's own `fps` filter applies holds each source frame from the output tick
+  *its own* pts rounds to (`round(pts * fps)`) until the next frame's rounded tick -- a source-frame-driven
+  rule, not a per-tick-nearest one. Once that was the rule, the fixture matched exactly.
+- The real montage benchmark, decoded output compared via `ffmpeg`'s `psnr` filter: 526 of 656 frames
+  within noise of PSNR 48-57dB against the pipe path's own encode (the rest exactly inf/identical) -- the
+  same class of "ordinary encoder lookahead/mb-tree ripple" already documented for earlier 8.5.x commits,
+  not a decode discrepancy.
+
+**MEASURED (median wall time unless noted, same benchmark project as v8.6.0's table):**
+- 720p: 39.7-41.4s with `KIMO_DECODER=libav` vs 37.5s for v8.6.0's overlap pipeline alone -- *slower*,
+  despite higher average core usage (2.85-2.89 vs 2.22-2.23).
+- 1080p: 97.4s vs 96.5s -- a wash either way.
+
+Root cause, as best understood: libavcodec's own frame-threading was enabled explicitly
+(`set_threading(Frame, available_parallelism())`), which closed some of an earlier, worse gap (41.8-43.6s
+before that change), but each `LibavDecoder` still does its own decode-then-scale-then-crop work on exactly
+one thread (the prefetch thread, see v8.6.0) -- the ffmpeg CLI subprocess this replaces decoded a whole
+window using its own internal multi-threaded pipeline in a wholly separate OS process, which on this box's
+real workload evidently extracted more total parallelism than one Rust thread managed, overlap or not.
+
+Version bumped to 8.6.1 with this entry; `Cargo.lock`'s three workspace members follow.
+
+## v8.6.0 (2026-11-02)
+
+Naman's "Core" redirect: stop VFX/look polish, build the render engine. The audit
+(`kimo_core_audit.md`) measured the export-only render of a real 18.86s talking-head + b-roll edit at
+14.6 fps / 720p and 5.9 fps / 1080p, with only ~2.5 of 4 cores busy on average -- about half the wall time
+was the main thread blocked on a freshly-spawned ffmpeg decode, then blocked again writing frames one at a
+time into the encoder's pipe, with no overlap between decode, compose and encode.
+
+**Phase 1a: the three stages now run concurrently** (`crates/kimo-core/src/render.rs`,
+`export_range_cmd`), with the exported bytes unchanged:
+
+- A prefetch thread decodes the *next* export batch while the *current* batch composes. It works against
+  a `Cache::snapshot()` -- a cheap, Arc-sharing point-in-time copy of the decoded-frame cache (no pixel
+  data is duplicated, just the lookup table), so the prefetch thread can never alias the cache the
+  compose work-queue is reading from. When both finish, the prefetched cache becomes the cache for the
+  next batch -- same decode amortization as the old single-cache design, just no longer serialized with
+  compose.
+- The encoder runs on its own thread, fed by a bounded channel. The main loop hands off a composed
+  batch's frames and moves straight on to prefetching/composing the next one instead of blocking on each
+  frame's write-and-ack round trip to the encoder's pipe.
+
+Proof the output didn't change: `tests/overlap_pipeline.rs` (new) exports the same project twice through
+the concurrent pipeline and asserts the two runs are framemd5-identical with no frame dropped or
+duplicated across batch boundaries, plus a direct test that `Cache::snapshot()` never aliases the
+original. The real-world proof is `kimo_core_bench.md`: the new binary's 720p and 1080p renders of the
+audit's benchmark project are **SHA256-identical, byte for byte**, to the same renders from the
+pre-existing v85 baseline binary -- not just matching hashes of decoded frames, the literal .mp4 files are
+identical.
+
+Measured (median of 3 runs each, same benchmark project, `export`-only, no whisper/lint):
+- 720p: 46.2s -> 37.5s wall (14.2 -> 17.5 fps), **1.23x**
+- 1080p: 117.3s -> 96.5s wall (5.6 -> 6.8 fps), **1.22x**
+
+This is the serialization fix alone; it does not yet touch the ffmpeg-CLI decode itself (phase 1b) or the
+scaler/compositor (phase 2), which is where the rest of the audit's headroom is.
+
+## v8.5.8 (2026-11-02)
+
+The montage review (`montage_v85_v08_review_sheet.png`) ranked the end card as the #1 remaining weakness:
+one frozen, heavily blurred frame held completely still for the whole 3s card (~14% of the edit's runtime,
+frame-diff <2 across 2s), and the "SUBSCRIBE FOR MORE" pill read small (about 220px wide on a 1280-wide
+frame).
+
+Three changes, all scoped to `auto_edit`'s own `end_screen` stage (`crates/kimo-core/src/ext/auto_edit.rs`):
+
+- **The backdrop drifts instead of sitting frozen.** The background clip's `scale` is now keyframed
+  (`END_CARD_BG_SCALE` -> `END_CARD_BG_SCALE_END`, 1.08 -> 1.15) across the whole card in one eased
+  (`in_out`) segment, a slow Ken Burns push-in rather than a flat value -- smooth and monotonic (proven by
+  sampling the keyed prop at 21 points: no reversal, no step bigger than 4x the average step), so the card
+  reads as a designed, moving background instead of a stuck frame.
+- **Less mush.** `END_CARD_BG_BLUR_RADIUS` dropped from 9.0 to 5.5 -- the subject stays recognisable,
+  clearly soft behind the CTA, not an unreadable smear.
+- **The CTA actually reads.** The `subscribe_pop` badge (pill + dot + text) is rebuilt at
+  `END_CARD_PILL_SCALE` (1.4x) instead of `titles.rs`'s own 1x design size: the text's own already-built
+  font size and the dot's own already-built width are read back and multiplied by the same factor, then the
+  pill width and the dot's room/position are recomputed with the exact same shared formulas `titles.rs`
+  itself uses (`pill_width_for_text`, `dot_room`, `dot_x_for_pill`) at a proportionally scaled `k` -- every
+  one of those functions is parametrized entirely by `k`, so scaling `k` by the same factor as the text/dot
+  reproduces the identical padding and the 8.5.5 dot-inside-pill gap guarantee, just bigger, instead of a
+  naive uniform `scale` transform that would leave the dot's own px-pinned clearance (`dot_x_for_pill`'s
+  `14.0 * k`) out of step with the grown pill.
+
+New/updated TDD coverage in `tests/auto_edit.rs`: `end_screen_background_freezes_early_blurs_gently_and_scales_up`
+now samples the keyed `scale` prop at start/middle/end (clip-local time) and asserts the push-in is
+monotonic and smooth (no outsized jumps), and checks the lowered blur radius; a new
+`end_card_pill_is_scaled_up_and_dot_gap_still_holds` builds the same badge unscaled on a fresh 1280x720
+project as a baseline, proves the real end card's pill is meaningfully bigger and clears "roughly 300+ px
+wide on 1280", and re-proves the 8.5.5 dot-inside-pill and dot-to-text-gap (>=0.7x the dot's own diameter)
+geometry on the now-bigger badge using the same rendered-position technique as
+`subscribe_pop_dot_clears_the_text_after_the_pill_resize_fix` (`tests/director_small.rs`). `golden_frames.txt`
+and `recipe_frames.txt` are byte-identical; `golden_registry.txt` is untouched (no tool description changed).
+
+Verified against the real-footage benchmark: `real_v62.mp4`, md5 `dac36d18de29f81da090006d262c46c2` (was
+`real_v61.mp4`, md5 `41caa0f5048e5cfa193b5071f2367953`). `framemd5` showed frames 538-656 differ
+(t=17.9-21.83s); a per-pixel diff against a side-by-side rebuild of the OLD 8.5.7 binary isolated the real
+content change to frame 566 onward (t=18.87s, exactly the end card's own start -- mean pixel delta jumps
+from <1 to 2.4 there and climbs through the card as the push-in and the bigger pill take effect), while
+frames 538-565 carry only ordinary encoder lookahead/mb-tree ripple (mean <1, max ~24-45 of 255, invisible),
+the same class already documented here for `real_v57`-`real_v61`.
+
+One honest side effect, examined and left as-is rather than worked around: `lint_edit`'s own review (which
+`auto_edit` always runs) now reports one `text_over_subject` warning at 18.93s that real_v61 did not have.
+Isolating each change independently traced it to the bigger pill alone (the backdrop's lower blur radius and
+Ken Burns drift, tested in isolation, stay lint-clean): this clip's last trailing ASR caption ("about it.")
+holds at full opacity until about 19.1s, a little past where the end card begins, and the bigger pill's own
+solid, high-contrast shape -- not a face -- is what the saliency check reads as a "subject" once it is large
+enough to reach that screen position. Viewed the actual frame: the opaque pill simply draws over the
+caption (end-card content is on a later, higher track than the caption track, same ordering as every earlier
+version), which is the correct, intended result -- a trailing caption hidden behind the new end card, not
+corrupted or double-exposed. `apply_review_fixes` already auto-fixes the first occurrence it finds
+(`16.66s`) and correctly declines to chase this second, introduced one further (the system's own documented
+"a fix introduced a new problem, not auto-chased" shape, exactly as `apply_review_fixes.rs`'s existing tests
+describe) -- left for a human/agent call rather than silently special-cased, and judged here to be a benign
+interaction with this specific clip's caption timing, not a real visual defect, so left unfixed rather than
+distorting the pill's geometry or touching caption timing (out of this stage's scope) to chase a warning
+away.
+
+Montage rebuilt the same way as `montage_v85_v08` (same driver, same 3 looks at the same clips/windows --
+`glitch_surge`/city b-roll, `aurora_wash`/typing b-roll, `chrome_bloom`/final beat, confirmed via
+`--dump-timeline` that every clip id is unchanged): `montage_v85_v09.mp4`, 4.2MB. Comparison sheet at
+`endcard_v08_vs_v09.png` (frames at 19.0/20.0/21.0/21.8s, v08 row vs v09 row) viewed at full size and
+zoomed on the pill: v08 is static and heavily blurred across all four frames with a small pill; v09 visibly
+drifts (the shirt's pattern and the subject's position shift gently across the four frames), stays
+recognisable rather than mush, and the pill reads as a real, legible call to action.
+
+## v8.5.7 (2026-11-02)
+
+The montage review (`montage_v85_v06.mp4`) and the benchmark (`real_v59.mp4`) both flagged the
+`whip_left` transition into the first b-roll cutaway (around 4.05-4.07s) as a long smear instead of a
+crisp whip-pan -- the outgoing talking-head shot and the incoming b-roll both turned to mush for several
+frames in a row, with visible ghosting/double-image, not a clean directional streak.
+
+Root cause, found by extracting and viewing the actual frames (not eyeballing the finished clip): three
+separate bugs stacked up in `whip_left`/`whip_right` (`transitions.rs`, `plan()`):
+
+- The blur's peak width scaled as `frame_width * 0.35 * intensity` -- about 450px at 1280px wide and
+  intensity 1.0, roughly a third of the frame -- using only 16 box-filter taps. Taps that far apart
+  (~30px) don't blend into a streak, they sample distinct "echoes" of the image: ghosting, not blur.
+- A second directional blur (`overlay`, 0.6x the first, 12 taps) was applied by `render.rs` to the
+  **already-composited** frame -- both the outgoing clip being wiped away AND the incoming clip already
+  drawn underneath it -- so the incoming shot was smeared too, compounding the mush and directly
+  contradicting "the outgoing and incoming shots stay sharp right up to the blur peak."
+- The blur envelope was a plain `4k(1-k)` parabola, which stays above half its peak strength across
+  roughly 70% of the transition's own duration -- so most of the window read as blurred, not just the
+  middle frames.
+
+Fixed, all in `whip_left`/`whip_right`:
+
+- **The envelope is raised to a power** (`(4k(1-k))^2.4`), concentrating the blur on only the 2-3 frames
+  nearest the midpoint; the outgoing clip's own start and end frames now measure <=2px of blur width
+  (effectively untouched), same as before the fix, but now true for several surrounding frames too, not
+  just the exact endpoint.
+- **The peak blur width is tightened** (`frame_width * 0.22 * intensity`, down from `0.35`).
+- **The tap count now scales with the blur width** (`ceil(width / 3)`, clamped 16-64) so samples never
+  land more than ~3px apart -- the ghosting/double-image is gone regardless of how wide the blur gets.
+- **The `overlay` pass is removed.** Only the outgoing clip's own frame (`post`) is ever blurred by this
+  transition now; the incoming shot is never touched.
+- `auto_edit`'s own b-roll-cutaway call now passes `intensity: 0.65` explicitly for its `whip_left`
+  transitions specifically (opt-in-safe: a caller invoking `add_transition` directly still gets the
+  tool's own default, 1.0, untouched) -- auto_edit fires this on every cutaway, so a touch gentler here
+  keeps a run of several whips from ever feeling heavy.
+- New TDD coverage in `tests/whip_transition.rs`, measuring blur width directly off a rendered frame
+  (a hard edge's blurred transition-zone width) rather than eyeballing: the whip's own start/end frames
+  stay <=2px blurred, the peak frame carries a real >60px blur (so the fix doesn't just chase smearing
+  down to nothing), at most 5 of 9 sampled frames across the transition exceed a 20px visible-smear
+  threshold (was ~7-8 of 9 on the old code), `whip_right` mirrors `whip_left`, and `overlay` is confirmed
+  gone for both kinds.
+
+Verified against the real-footage benchmark (the first render of this fix): `real_v60.mp4`, md5
+`5919a8ece4f42e7426dac17a57e70f00` (was `real_v59.mp4`, md5 `9740b7c1b1f481db441d2f1f871e748e`). `framemd5`
+showed frames 98-197 differ (t=3.267-6.567s, audio bit-identical throughout); comparing against a
+side-by-side rebuild of the OLD 8.5.6 binary isolated the real content change to frames 124-128
+(t=4.13-4.27s, mean pixel delta 9.8-20.6 of 255) -- exactly the whip's own transition window (clip1 starts
+at 4.067s, duration 0.25s) -- while frames 98-122 and 130-196 carry only ordinary lossy-codec
+lookahead/mb-tree ripple (mean <1.4, max ~35-65 of 255, invisible), the same class already documented here
+for `real_v57` vs `real_v56`. The diff stops cleanly at frame 197/198, exactly the next scene cut (`clip1`
+-> `clip2`), which resets the encoder's own lookahead. Viewed the actual before/after frames directly: the
+old whip held visible ghosting/combing for about 6 frames; this first fix kept the outgoing shot sharp
+through t=4.133s, carried one real (clean, not ghosted) blur frame around t=4.2s, and the incoming shot was
+already sharp by t=4.267s.
+
+**Follow-up, same version:** that first fix only ever blurred the INCOMING clip's own frame (`post`, which
+`render.rs` runs before this clip is blended on top). It never touched `out`, the already-composited
+backdrop under it -- the outgoing layer, still playing on its own track/time (for `auto_edit`'s b-roll
+cutaways, the talking-head track continuing underneath). So the outgoing shot stayed perfectly sharp and
+completely static through the whole transition while only the incoming b-roll ever got any blur: a cheap
+slide/wipe, not a whip-pan, confirmed by viewing the actual frames at 1280x720 (the outgoing talking-head
+was crisp at the exact moment the incoming b-roll was streaked and already covering about 80% of the
+frame). A real whip blurs BOTH layers along the motion direction with the SAME envelope, peaking together
+at the midpoint. Fixed by also setting `under` -- the hook `render.rs` already runs on `out` right before
+this clip blends on top (it's how `push`/`gradient_wipe` move the outgoing picture) -- using the identical
+`vel`/`n` as the existing `post`, so the backdrop gets the matching streak with no new taps and no change
+to the incoming side: sharp at k=0, >40px blurred at the midpoint, sharp again (<=4px) by k=0.9, same as
+the incoming layer. 5 new tests in `tests/whip_transition.rs` cover it directly (outgoing-midpoint blur,
+outgoing-sharp-at-start, both layers sharp-by-k=0.9, no ghosting on either layer via the `under`/`post`
+hooks on a synthetic edge frame).
+
+Re-verified against the real-footage benchmark: rebuilt `real_v61.mp4`, md5
+`41caa0f5048e5cfa193b5071f2367953` (was `real_v60.mp4`, md5 `5919a8ece4f42e7426dac17a57e70f00`). `framemd5`
+shows frames 98-197 differ again (same window; a per-pixel diff against `real_v60.mp4` isolates the real
+change to frames 123-128, t=4.1-4.27s, mean pixel delta up to 14.6 of 255 -- the outgoing layer now
+streaking alongside the incoming one -- while the rest of the 98-197 range carries only the same ordinary
+encoder-ripple class as before). Viewed the before/after frames directly (`whip_v06_v07_v08.png`,
+`montage_v85_v08.mp4`): at the transition's midpoint the outgoing talking-head is now visibly streaked
+along with the incoming b-roll, reading as a real whip-pan rather than a slide with a blurred overlay.
+
+## v8.5.6 (2026-11-02)
+
+The montage review (real-footage cut, `montage_v85_v05.mp4`) flagged a long talking-head stretch that read
+as static to the eye, about 9.0-16.1s. Digging in: `auto_edit`'s existing job-2c logic (added back in
+`7b6fcda`) already forces a split and a punch-in on any uncovered dialogue run longer than
+`punch_max_static` (then 4.5s default), so a cut and a small zoom WERE already landing inside that window
+(at 11.573s). The zoom just never registered -- it was a soft 0.2s eased ramp from 1.0x up to ~1.16x, so
+for the first several frames after the cut the two clips looked almost the same size, and the whole 7.1s
+span read as one static take even though it technically was not.
+
+Fixed:
+
+- **The punch-in ease is now a hard, instant jump (`duration: 0.0`, was `0.2`) instead of a soft ramp.**
+  The scale lands at its full target value on the very first frame after the cut, so the punch is
+  synced to the cut itself -- the "cut-on-phrase, hard punch" style top editors actually use, not a creep
+  that is easy to miss. Scale targets (the existing randomized ~1.13-1.16x, alternating pattern) are
+  unchanged.
+- **`punch_max_static`'s default is tightened from 4.5s to 3.5s**, and `split_points()`'s own slack is
+  removed: the old code could let a forced segment overshoot the cap by up to `max_static * 0.3 + 0.5s`
+  when hunting for a natural pause past the ideal split mark, or let the final segment run up to
+  `max_static + 0.5s` past the clip's own end. Both are now hard bounds -- no synthetic split's segment can
+  exceed the cap, guaranteed by a new unit test (`split_points_never_lets_a_segment_exceed_the_cap`) built
+  from synthetic long takes with no natural pauses at all, where the old slack was reachable.
+  `punch_max_static_is_configurable`'s existing 30.0-second override test is untouched (nothing here
+  changes the knob itself, only its default and its guarantee).
+- New TDD coverage: a synthetic long uncut take gets forced split points such that the max static span is
+  <= 3.6s; the resulting punch scales alternate (not every segment lands on the same side); nothing from
+  job-2c's forced splitting ever lands inside b-roll coverage or the end card (both already excluded by
+  the existing `covered_fraction` gate, now asserted directly).
+
+Verified against this real-footage benchmark's own talking-head take specifically: its natural dialogue
+pauses already happen to split every uncovered stretch at <=3.19s (`clip17`, 13.033-16.226s) even under
+the OLD 4.5s cap, and its one >4.5s uncovered-looking stretch (`clip9`, 3.233-7.893s, 4.66s) is 94%
+covered by b-roll and correctly exempt either way -- so for THIS asset the split-point structure is
+byte-identical old vs new (checked directly, clip-by-clip, against a side-by-side old-binary rebuild). The
+3.5s default and the slack fix are a correctness hardening that matters on footage whose natural pauses
+don't already satisfy the cap, which the new unit tests exercise directly; what changed this benchmark's
+own pixels is the ease hardening above, landing exactly at the one punch this footage already had
+(11.573s).
+
+**The pinned real-footage benchmark md5 changes**, from `db90ea441ab927521e0168da8a9899da` (real_v58) to
+`9740b7c1b1f481db441d2f1f871e748e` (real_v59). `framemd5` against real_v58: frames 0-236 and 239-310
+bit-identical; frames 237-238 (~7.90-7.97s) differ -- the first couple of frames of the one other
+pre-existing punch in this take (`clip15`, onset 7.893s), now landing at full scale immediately instead of
+a fraction of the way through a 0.2s ramp; frames 311-565 (~10.37-18.87s) differ -- the real content change
+is the `clip10` punch onset at 11.573s landing instantly instead of easing in (confirmed by a direct
+frame-11.6s visual diff: the subject is visibly larger in `real_v59` at that exact frame, same framing,
+face fully in shot), and the remainder of that range is the encoder's own mb-tree/lookahead reacting to
+those now-different frames rather than any further content change -- a frame pulled from well past the
+ramp window (13.3s) is visually identical between the two files (max per-pixel delta 46/255, mean
+1.48/255, not visible), the same propagation class already documented for `real_v57` vs `real_v56` above.
+Frames 0-236, 239-310 and 566-655 (the end card) are untouched, as expected: `auto_edit`'s job-2c and
+`add_punch_ins` never touch b-roll, captions timing, audio, or the end card.
+
+## v8.5.5 (2026-11-02)
+
+A fresh review of the 8.5.4 montage (same 3-look real-footage cut, re-rendered with the 8.5.4 fixes in)
+found three more things that still read as amateur. Fixed below, each with a failing-first test.
+
+- **The end-card background froze on the literal last frame of the talking-head take -- usually mid-
+  gesture, mouth open -- then blurred it hard enough (radius 18) to go unreadable mush.** The freeze now
+  grabs a frame about half a second earlier (`last_source_t - 0.5s`, clamped to the clip's own start), the
+  blur is down to radius 9, the background clip is scaled up 1.08x so the gentler blur's own edge falloff
+  never shows a seam at the canvas edge, and it is darkened a touch (-0.2 stops, about -13%) so the white
+  pill/text/dot pop a little more against it.
+- **`chrome_bloom` snapped from a warm baseline to a near-total cool inversion in well under a fifth of a
+  second -- it read as a white-balance glitch, not a grade.** Its `color_wheels` push is pulled back to
+  about half (`gain_b` ~1.25-1.3, `gain_r` floor ~0.82-0.85 at full intensity, lift halved to match), and
+  a new per-look `min_fade` floor lengthens its own top-level mix fade-in to about 0.4-0.5s on a short
+  clip (never shortening an already-slower fade on a longer one) so the push lands as a ramp instead of a
+  snap. Still reads clearly cooler and shinier than the baseline, with 0% clipping.
+- **The 8.5.4 dot fix put `subscribe_pop`'s badge dot OUTSIDE the pill, so it read as floating loose,
+  disconnected from the badge.** `dot_x_for_pill`'s formula now places the dot INSIDE the pill, 14px
+  (scaled) clear of its own left edge, and both the initial `subscribe_pop` build (`titles.rs`) and the
+  `text_too_small` lint resize-fix (`director_tools.rs`) now grow the pill by the dot's own footprint (a
+  new `dot_room` helper) so the two never drift apart and the dot never has to compete with the text for
+  room. The dot's left-edge padding comes out constant (14px scaled) regardless of pill width, by
+  construction.
+- **Follow-up (same day): moving the dot inside the pill only fixed the overlap, not the cramped read --
+  on `real_v57.mp4` at 20.5s the dot sat about 3px from the "S" of SUBSCRIBE, jammed up against the text
+  rather than clear of it.** `dot_room`'s formula is widened so the dot-to-text gap lands at ~0.9x the
+  dot's own diameter (the dot's 14px left-edge clearance from the pill is unchanged): because the text
+  clip is never given its own x and stays centred on the pill, widening the pill only delivers HALF of
+  that width as real gap (the other half opens equally on the pill's right side), so `dot_room` solves for
+  twice the room actually wanted -- the derivation is spelled out on `dot_room`'s own doc comment. Applied
+  identically on both the `subscribe_pop` build path and the `text_too_small` lint resize-fix path (both
+  already shared `dot_room`/`dot_x_for_pill`, so this is a formula-only change, no call-site drift
+  possible). `director_small`'s dot test now asserts the gap is >= 0.7x the dot's diameter, before AND
+  after the resize fix (measured ~0.93x and ~2.6x respectively on the real inputs).
+
+**The pinned real-footage benchmark md5 changes again**, from `36c25e57765e76a311a54bfe14ec8f10`
+(real_v56) to `db90ea441ab927521e0168da8a9899da` (real_v58, superseding the intermediate real_v57). Cause:
+the end-card background fix above (earlier freeze frame, lower blur radius, scale, darken) changes the end
+card's own pixels, as intended -- `auto_edit` does not use `chrome_bloom` anywhere in this benchmark
+(grepped, confirmed), so that fix is not a factor here. The dot-spacing follow-up above also lands inside
+the same end-card frames (it only moves the dot and widens the pill, both already part of that region's
+diff), so real_v58's own `framemd5` diff lands in the identical range as real_v57's did against real_v56:
+frames 0-560 bit-identical against real_v57 (and audio identical throughout), frames 561-655 (the end
+card, ~18.70s to the finish) differing as expected. Against the earlier real_v56 pin, frames 0-544 are
+bit-identical and frames 566-655 (the end card) differ as expected (mean pixel delta ~13.5/255); frames
+545-565 (21 frames, ~0.7s, inside x264's default 40-frame lookahead) also carry a tiny diff -- mean
+<1/255, max 74/255, invisible -- traced to the encoder's own mb-tree/lookahead reacting to the now-softer
+end-card transition rather than to any change in the dialogue content itself: those same frames are
+bit-identical up to 544, and the same kind of comparison between the two prior end-card-only builds
+(real_v53 vs real_v55, which did not touch the transition's softness) showed a perfectly clean cut with
+zero bleed at exactly the frame boundary.
+
+## v8.5.4 (2026-11-02)
+
+A real-footage review montage (3 looks, boxed captions, driven end to end through the MCP tools an AI
+director would use) surfaced five things that read as amateur even though every individual unit test
+was green. Fixed below, each with a failing-first test.
+
+- **`lint_edit`'s `text_too_small` auto-fix was a silent no-op on animated text.** The fix wrote only the
+  clip's base `scale` Prop; once a Prop carries any keyframes (e.g. a pop-in entrance/exit curve), the
+  base value is never read again, so the "SUBSCRIBE FOR MORE" end card stayed exactly as small as lint
+  had just flagged it. The fix now scales the text's own `size` field directly (a plain f64, not a Prop,
+  so it has no keyframes to be overridden by) -- it reaches the screen whatever the clip's scale
+  animation is doing.
+- **The end-card pill overflowed its own text once the text above was enlarged, and once that was fixed
+  its own dot landed on the enlarged text instead.** A `subscribe_pop`-style pill is built once, sized
+  for the text's original width; growing the text (by the fix above, or by hand) left it narrower than
+  the label it was supposed to back. The pill shape is now tagged to the text clip it backs, a new
+  `set_shape_size` tool resizes a shape clip's pixel width/height independent of any animated scale, and
+  `lint_edit`'s own fix now chains a pill resize after the text resize so the box is always re-measured
+  from the new rendered text bounds. That pill resize left a second bug: the badge's own white dot sits
+  outside the pill at a fixed offset computed from the pill's width at build time, and once the pill grew
+  wider that same offset put the dot on top of the enlarged text's first letter ("SUBSCRIBE FOR MORE"'s
+  "B", caught on a montage render at full size). The dot is now tagged to the text clip it sits beside the
+  same way, and `lint_edit`'s fix chains a third step that repositions the dot with the SAME clearance
+  formula `titles.rs` used to place it originally, now evaluated against the new, wider pill -- so the
+  dot's gap past the pill's edge never drifts out of sync with a pill that grew after the badge was first
+  laid out. `apply_review_fixes` itself now walks a `fix`'s whole `then` chain (any depth), not just one
+  hop, so a fix generator can describe this kind of multi-step, order-dependent repair in one `fix` value.
+- **`glitch_surge` read as a sustained wash, not punch-and-recover, on short (<~2s) clips.** Two causes:
+  the fine-grain glitch/RGB-split keyframes never rested at a true zero between punches (fine at full
+  clip length, visible as "always on" on a short cutaway), and the preset's own outer mix fade-in was a
+  flat 15% of the clip window regardless of the look's internal pulse period, so a short clip could still
+  be ramping up mix through what should have been a full-strength first hit. Fixed: the low-baseline
+  keys now hit true zero, and `apply_vfx_preset` caps the fade by the look's own pulse period.
+- **`chrome_bloom` was too subtle on real (warm) footage at default intensity.** Same trap `frost_veil`
+  hit in 8.5.2: its cool grade used `temperature`, which is scaled down 5x internally, so the push barely
+  registered against warm lighting. Replaced with `color_wheels` for a controllable, clearly-visible
+  cool push with 0% clipping.
+- **A missing bundled font failed over to a system font with no warning anywhere.** The resolver in
+  `text.rs` now emits one clear stderr warning per distinct missing font, naming it and pointing at
+  `KIMO_FONTS` / `fonts/fetch.sh`, deduped so a long render doesn't spam it. Render output (resolved
+  path, substituted flag) is unchanged.
+
+**The pinned real-footage benchmark md5 intentionally changes** from `82ef81b676c9b78a3428e6d4bc57d8b4`
+to `36c25e57765e76a311a54bfe14ec8f10`. Cause: the benchmark's own end-card text was itself flagged
+`text_too_small` (20px under the 40px floor) and the old auto-fix silently did nothing against it --
+the same bug fixed above. With the fix working, the benchmark's end card is now actually enlarged to
+40px and its pill resized to match, exactly like the montage's end card, and the badge's dot is
+repositioned together with the pill so it stays clear of the enlarged text instead of landing on top of
+it. Verified frame-by-frame (`ffmpeg framemd5`, 656 frames @30fps, 21.867s, identical duration): every
+frame from 0.0s to 18.7s is byte-identical between the old and new render; only the last ~3.1s (the end
+card) differs, confirmed visually with a side-by-side frame comparison. This is the new expected
+benchmark md5 (superseding the intermediate `8d41372662cf1508863564a77b3a79d7`, which had the pill fix
+but not yet the dot fix).
+
+## v8.5.3 (2026-11-01)
+
+`vhs_decay` still didn't read as VHS in a 4fps/200px-wide thumbnail strip even though the v8.5.2
+build looked like worn tape at full size -- measured directly: the native `scanlines` effect darkens
+exactly 1 row every `spacing` rows, and a slow sine-wave luminance test (tried first, before this)
+reads as a soft vignette rather than scanline texture, because the eye needs real edges, not slow
+brightness drift -- both vanish under a ~6x thumbnail downscale. The `vhs` effect's own tracking band
+only displaces pixels in a narrow region; it never brightens or adds noise there, so "a bright, noisy
+tracking band rolling through the frame" was never actually visible, only a faint wobble.
+
+- **`vhs_decay`**: replaced the plain `scanlines` node with a hard-edged duty-cycle stripe at a FIXED
+  pixel period via a new `pixel_expr` node (`vhs_scanline_expr`) -- it reads as real scanline texture
+  at full size AND survives a 200px-wide thumbnail downscale, verified both ways with `vfx_preview` +
+  `attach_image` before this file changed. Added a second `pixel_expr` node (`vhs_tracking_band_expr`)
+  at the same roll phase as the `vhs` effect's own band (`fract(t*0.35)*h`, so the two read as one
+  event): inside a smoothstep-falloff band it brightens the image, resamples with extra horizontal
+  jitter (`sample(u+offset,v)`), and adds strong hashed noise, masked to fall off outside the band.
+  Raised the pre-blur for a genuinely softer, lower-resolution feel (a real downscale/upscale round
+  trip isn't a vfx_graph node, so a stronger blur stands in, as the brief allowed). Added a `levels`
+  node for lifted/crushed blacks (a faded, reduced-contrast tape floor -- the old chain used the full
+  0..1 range). Checked 0% clipping at both the default intensity (0.4) and dialed to 1.0; face stays
+  recognizable at both. No OSD timestamp/REC text was added -- `vfx_graph`'s only generators are
+  solid/gradient/shape (circle/rect), there is no text/glyph node to drive a "PLAY"/"REC" overlay from,
+  so per the brief this is skipped rather than faked with shapes.
+
+## v8.5.2 (2026-11-01)
+
+Three looks from the v8.5.1 pass still didn't read at phone size on real-footage review:
+`glitch_surge`, `vhs_decay`, `frost_veil`. Reworked below, each iterated with `vfx_preview` and the
+peak frame inspected at full size (`attach_image`) before touching `vfx_look_library.rs`.
+
+- **`glitch_surge`**: the real bug was the peak-frame capture, not just the graph -- the old demo grabbed
+  t=0.8s against a 0.55s pulse period, which lands on an already-decayed frame, so the v02 contact
+  sheet showed almost nothing. The graph itself was also too weak on-hit. Now: the pulse period is
+  ~0.6s (every 0.5-0.7s per the brief), two `glitch_blocks` layers are stacked (9 coarse slices for
+  bold full-width horizontal bands, 24 fine slices layered on top for texture), `slice_threshold` is
+  lowered so most slices trigger together instead of a scattered few, and the `rgb_split` pulse is
+  pushed much harder on the hit. Between hits both layers settle near zero -- clean frames, confirmed
+  by inspecting a frame between pulses. The face glitches hard on the hit (by design, per the brief)
+  and is fully recovered one frame later.
+- **`vhs_decay`**: had no actual low-res softness and no warm cast -- a real 90s camcorder skews warm
+  and soft, not neutrally desaturated and sharp. Added a pre-blur before the `vhs` effect, raised
+  wobble/bleed/noise/bands for genuinely visible line wobble, chroma bleed and a rolling tracking band,
+  and added a `temperature` push (warm, not cool) after the grain pass, ahead of a lighter
+  desaturation. Reads as worn tape at a glance now; chroma bleed on the patterned shirt in the demo
+  clip is heavier than plain footage would show, which is the correct VHS chroma-interference
+  artifact, not a bug.
+- **`frost_veil`**: reworked twice already (pre-8.5.0: fixed a wireframe-reading `edge_glow`; 8.5.1:
+  left untouched, which read as subtle again on this pass' real-footage review). Root cause this time:
+  `temperature`'s `amount` is scaled by 0.2 internally, so even a -1 push is a mild shift against warm
+  practical lighting, and `edge_glow` run directly on the raw frame outlines facial features -- the
+  exact wireframe failure from the original pass. Fixed with `color_wheels` (lift/gamma/gain pushed
+  blue per channel, a much stronger and more controllable cool push than `temperature`), `edge_glow`
+  now running on the already-blurred/graded buffer instead of the raw frame (a soft rim, not a crisp
+  outline), a `vignette` tinted icy white-blue (`color_r/g/b`) instead of plain black for an actual
+  frosted-edge read, and two off-centre `snow` particle emitters (sides only, clear of a centred face).
+
+Benchmark: `real_v51.mp4` renders byte-identical to the standing golden (md5 `82ef81b6…`, matches
+v44-v47/v49/v50) -- this pass only touches `vfx_look_library.rs`'s opt-in graph JSON, nothing on the
+auto-edit/caption/render path. Tests: `vfx_look_library`, `vfx_graph_core/tools/particles`,
+`surreal_vfx_tools` green (no expectation changes needed -- the look tests are structural over names,
+not pixels); `golden_frames`, `recipes`, `registry_lint`, `registry_unique` green and unmoved. Warnings:
+34 (cap 35, unchanged from v8.5.1).
+
+## v8.5.1 (2026-11-01)
+
+Look library quality pass. Naman's goal is "put any clips into Kimo and get top-YouTube-editor
+quality" judged by how the frames actually look -- so this pass is a straight review-and-rework of
+the 9 v8.5.0 looks against real footage (the talking-head clip in `work/v7q_real`), not a feature
+add. Verdict going in: `frost_veil` strong; `magic_sparkle`/`solar_flare` visible but mild; the other
+6 (`ember_drift`, `chrome_bloom`, `glitch_surge`, `dream_haze`, `vhs_decay`, `aurora_wash`) nearly
+indistinguishable from source at a glance on a phone. Every change below was iterated with
+`vfx_preview` (no rebuild needed per tweak -- it takes an arbitrary graph JSON directly) and the peak
+frame inspected at full size before touching `vfx_look_library.rs`; none of the 9 needed cutting --
+all read clearly after the rework.
+
+- **`ember_drift`**: the old graph used the `sparks` particle preset at its fixed default spawn point
+  (a tiny fountain near the chest) -- technically "particles" but not "rising from the lower edge" and
+  barely visible even at full intensity. Replaced with an explicit (no-preset) particle emitter: a
+  wide line along the very bottom of frame, gentle upward buoyancy (negative gravity, modest speed),
+  warm orange-to-red colour ramp, and a life short enough (~2.2s at this speed) that embers fade out
+  roughly a third of the way up frame -- clear of a centred subject's face by construction, not by
+  luck. Teal/orange grade and bloom amounts raised alongside it.
+- **`chrome_bloom`**: bloom's threshold/amount pushed hard for a real "strong bloom on highlights"
+  read, plus a `tint_r/g/b` cool tint on the bloom itself. The grade is now cool temperature + a
+  desaturation pass + a touch of contrast, instead of relying on chromatic-fringe alone for the
+  "chrome" read. Chromatic aberration and sharpen are dialled back from a first pass that aliased
+  badly (visible moire) on a patterned shirt at full intensity -- unmistakable without reintroducing
+  the aliasing the brief rules out.
+- **`glitch_surge`**: was a constant mild amount at every frame -- visible as a texture, not as a
+  "glitch". `glitch_blocks`' and `rgb_split`'s `amount` params now ride a new `pulse_prop` helper: a
+  keyframed Prop (sharp attack, quick decay, `loop_out: cycle`) that punches hard on a ~0.55s period
+  and settles to a light scanline/fringe texture between hits -- deterministic "on the beat" with no
+  audio analysis (the engine only exposes the current instant `t`; see `vfx_graph.rs`'s own module
+  note). Peak-intensity ceilings dialled back once from an even punchier first pass that fully
+  scrambled a face at the attack frame -- still a real punch, face stays recognisable through it.
+- **`dream_haze`**: added a real `halation` pass (the dedicated effect, distinct from `bloom`) for
+  "clear halation", and a `grade` lift/gain pass (gentle lift on all three channels, a touch of gain
+  pull on blue/green) plus mild desaturation for "lifted pastel" -- the old graph had neither; it was
+  blur + bloom + light_rays + temperature + vignette, which reads as "soft", not specifically "hazy
+  with lifted pastel shadows".
+- **`vhs_decay`**: rebuilt on the dedicated `vhs` effect kind (per-line wobble, chroma bleed via
+  offset RGB sampling, noise, and a moving tracking band) layered with scanlines/grain/desaturation/
+  vignette. The old graph (grain + scanlines + chromatic_aberration + saturation) had no actual line
+  wobble or tracking band -- which is most of what reads as "worn VHS tape" rather than just "a bit
+  degraded". Values tuned down once from a first pass that was dramatic but left the face too
+  degraded to read at full intensity.
+- **`aurora_wash`**: the gradient wash was static -- a flat tinted overlay, not "flowing colour
+  bands". `angle_deg` now rides a `sin`-expr keyframe Prop for a slow deterministic swing (no literal
+  flow is possible: `gen_gradient`'s own stop parsing reads position/colour with plain `as_f64()`, not
+  `value_to_prop`, so stop values themselves can't be keyframed today -- a pre-existing engine gap
+  this pass did not touch), a third colour stop was added for a richer band structure, the wash is
+  blurred before blending so it reads as soft bands rather than a sharp gradient edge, and overlay
+  opacity plus the base bloom were both raised.
+- **`magic_sparkle`**: pushed further per the brief (bloom amount/threshold, dust rate/size all
+  raised) -- and in doing so, found and fixed a face-safety bug the push would otherwise have made
+  worse: the `magic_dust` preset's own default spawn point (x=0.5, y=0.5, a 0.15-radius circle) sits
+  squarely on a centred subject's face, so "push it further" without repositioning means MORE
+  particles ON the face. The three dust emitters are now explicit (no preset defaults relied on),
+  placed left, right and low-centre -- framing the subject instead of covering it.
+- **`solar_flare`**: pushed further per the brief -- and the same review caught a second problem the
+  push introduced: a stronger `light_rays` + `halation` + `bloom` + `exposure` stack blew 41.7% of a
+  real frame to clipped white (mean luma 0.86), which is a washed-out frame, not a strong look, by the
+  brief's own words. Every amount in the final graph is tuned down from that first pass to land a
+  strong, unmistakable flare that still leaves the subject's face and most of the frame readable
+  (measured clipping ~29-35% afterward, contained to the flare's own highlight, not the whole shot).
+- **`frost_veil`**: untouched -- Tab's verdict going in was "strong" on real footage, and the previous
+  worker had already reworked its one real miss (`edge_glow` reading as a full wireframe) before the
+  8.5.0 wrap.
+- New helper in `vfx_look_library.rs`: `pulse_prop(period, low, high)` (a periodic keyframed Prop via
+  `loop_out: cycle`, used by `glitch_surge`) and `particles_raw` (an explicit particles node with no
+  preset, used by `ember_drift` and `magic_sparkle` to avoid fighting a preset's own frame-centred
+  defaults).
+- v01 demos kept on disk untouched; new v02 demos rendered for all 9 looks
+  (`files/v7q/v85_<look>_v02.mp4`, 5s, real talking-head footage, intensity 0.7 for a fair like-for-
+  like comparison across looks) plus a new side-by-side contact sheet, source vs look at each look's
+  own peak frame (`files/v7q/v85_look_library_contact_sheet_v02.png`).
+- Tests: `vfx_look_library.rs`'s 5 tests are structural over `NAMES` (every look builds/validates/
+  visibly changes a frame at 3 intensities) and needed no expectation changes -- none of the 9 looks
+  were cut, and none broke the "visibly different from source" contract. `vfx_graph_core`/`_tools`/
+  `_particles`, `surreal_vfx_tools`, `golden_frames` (incl. `golden_registry_contract`), `recipes`
+  (incl. `golden_frames_per_recipe`), `registry_lint`, `registry_unique` all green, unmoved -- this
+  pass only touches `vfx_look_library.rs`'s graph JSON and adds two private helper functions; no
+  tool schema, effect kind, or registry entry changed.
+- Warnings: 34 (cap 35; unchanged from 8.5.0 -- nothing added, nothing newly unused).
+- Benchmark: `real_v50.mp4` (fonts already present in this worktree from the previous pass) re-ran
+  `examples/auto_edit_benchmark.py` against the same real folder with the 8.5.1 build -- md5
+  `82ef81b676c9b78a3428e6d4bc57d8b4`, matching `real_v44`-`v47`/`v49` exactly. No code in this pass
+  touches auto_edit, captions, or the render/export path -- only `vfx_look_library.rs`'s own graph
+  JSON, which is opt-in and unrelated to the default auto-edit path -- so this is confirmation, not a
+  surprise.
+
+## v8.4.0 (2026-11-01)
+
+V8.4 surreal VFX tools. Inventoried the existing stylize catalog first (set_echo, kaleidoscope/
+cc_kaleida, turbulent_displace, pixel_sort/glitch_confetti/vhs/film_damage, chromatic_aberration/
+vr_chromatic_aberration, bloom/glow/halation already cover most of a "surreal effects" wishlist) and
+built only genuinely new ones on top of existing infra. 6 new tools (526, was 532).
+
+- **`droste_zoom`** (effects2.rs, pure per-frame math, no render.rs changes): Escher/Droste infinite
+  recursive spiral tunnel via a log-polar radius wrap. Found and fixed a real bug during the demo
+  pass: the first version wrapped the RAW pixel radius into the ring range, so every output pixel
+  sampled a ~1px speck near the frame centre and painted it flat across the whole image -- a brown/
+  orange wash with no scene content, not a tunnel. Fixed by wrapping the radius RATIO against a
+  proper anchor radius (0.42x the short side) instead, so every wrapped sample lands on real picture
+  content. Re-verified by extracting frames across the whole demo clip (not one cherry-picked frame)
+  after the fix.
+  - TDD: pixel-level test confirms it changes the frame and is opt-in outside its time window.
+  - Demo: `vfx_droste_zoom_v02.mp4` (city b-roll) -- v01 is the pre-fix broken render, kept rather
+    than overwritten so the before/after is on record.
+
+- **`portal_mirror`** (effects2.rs): a soft-edged circular portal showing the frame flipped and
+  colour-inverted inside it. Same class of bug as droste_zoom's first version: `intensity` was
+  driving the blend (`mix`) itself, so anything under full intensity read as a faint, semi-
+  transparent ghost overlay with no readable portal edge. Fixed by decoupling them -- `mix` always
+  ramps to full opacity once the portal is open; `intensity` instead scales the portal's radius.
+  - TDD: confirms a flipped, colour-inverted disc appears and is fully removable.
+  - Demo: `vfx_portal_mirror_v02.mp4` (typing b-roll) -- v01 is the pre-fix translucent-ghost render,
+    kept rather than overwritten.
+
+- **`add_vertigo_zoom`** (ext/surreal_vfx_tools.rs): the Hitchcock dolly-zoom/vertigo move. Zero new
+  pixel math -- a pure keyframed convenience over the existing `depth_parallax` (zoom in while
+  dollying out, or the reverse), from a depth map clip the same way `depth_parallax` already takes
+  one.
+  - TDD: the masked subject's pixels stay put while the background moves.
+  - Demo: `vfx_vertigo_zoom_v01.mp4` (talking-head footage) with a synthetic radial depth map (no
+    automatic depth-from-RGB model exists in this engine; a centred radial gradient is a reasonable
+    stand-in for a centred portrait shot, named honestly as a limitation) -- verified across the
+    whole clip: the subject holds size while the room behind them visibly grows.
+
+- **`subject_clone`** (new effect kind in layerfx.rs, reusing the exact same same-time aux-clip
+  rendering pattern as `depth_parallax`/`lens_blur`): pastes N copies of a masked subject's own
+  pixels at growing spatial offsets, each dimmer, the real subject always sharpest/on top.
+  - TDD: a dimmer offset copy is produced and is opt-in.
+  - Demo: `vfx_subject_clone_v01.mp4` (talking-head footage). Per review, the mask is NOT hand-
+    supplied: built from Kimo's own matte tracker (`track_matte`, a couple of rough seed points,
+    optical-flow propagated through the clip) refined with `refine_matte`, rendered to PNGs and
+    assembled into a standalone mask clip -- no manual mask-drawing needed from the caller.
+  - Known limitation, stated plainly rather than silently: this is spatial-offset only, not
+    time-delayed ("echoes through time"). The only "read another clip" hook this effect (and
+    depth_parallax/lens_blur) has fetches the aux clip at the SAME instant, never a different one;
+    a true time-offset version needs new render-pipeline machinery, out of scope here.
+
+- **`melt_drip`** (effects2.rs, pure per-frame math), shipped as **experimental**: a per-column-noise
+  warp that displaces the image toward one edge (default straight down). Distinct from the existing
+  symmetric `turbulent_displace`. Two passes at this, honestly reported:
+  - A genuine pixel-math bug was found and fixed: the first version used 3 octaves of fbm noise per
+    drip column, which reads as a jagged sawtooth/zigzag (fine high-frequency wobble stacked on the
+    base lane pattern) instead of a smooth melt -- reported plainly as "a jagged wave, nothing flowing
+    downward." Fixed by dropping to 1 octave (already a smooth bilinear-interpolated noise field, see
+    `vnoise`) and replacing the raw quadratic along-the-flow growth with a smoothstep.
+  - On a synthetic horizontal-stripe test clip the fix reads clean. On real footage (coffee and city
+    b-roll, both reviewed frame-by-frame, not just one timestamp) it does not: a per-pixel diff against
+    the unwarped source shows a tight, repeating corrugated/wavy band pattern along any edge the warp
+    crosses (cup rim, hand, skyline silhouette) rather than a single smooth downward drip front. It
+    reads as an uneven wavy/jitter distortion, not a convincing melt. Rather than keep tuning against a
+    30-minute wrap budget, it ships labelled for what it actually does: the tool, its description, and
+    this entry all now say "experimental wavy/jitter warp." It is NOT used by `apply_vfx_preset`.
+  - TDD: a straight-down drip measurably drags the subject's content downward more than upward, and
+    is a no-op outside its time window. Caught and fixed a real normalisation bug while writing this
+    test too: the "how far along the flow" fraction was normalised by max(width,height), which
+    understated the effect for a non-square frame on a mostly-vertical drip; fixed to normalise by
+    the actual projected extent along the drip direction.
+  - Demo: `vfx_melt_drip_v03.mp4` (coffee b-roll, clean 0-2.8s window, intensity 1.0, size 150) --
+    v01 and v02 are the earlier, more broken renders, kept rather than overwritten. v03 is the
+    honest current state of the tool, not a "fixed, looks great" claim.
+
+- **`apply_vfx_preset`** (ext/surreal_vfx_tools.rs, pure orchestration via the same
+  `crate::commands::dispatch` path add_clip/lift_range already use to call each other): one call for
+  a named combo -- `dreamy` (glow + halation + chromatic_aberration + vignette, all pre-existing
+  effects), `glitch` (pixel_sort + glitch_blocks + chromatic_aberration + vhs, all pre-existing),
+  `vertigo` (dispatches to `add_vertigo_zoom`), `echo` (dispatches to the existing `set_echo`). No
+  new pixel math; every sub-call goes through the real tool's own validation.
+  - TDD: dreamy/glitch visibly change the frame, vertigo still locks the subject, echo dispatches
+    without error, and vertigo without `depth_clip_id` is refused rather than silently skipped.
+
+- **Dropped**: `slit_scan` was in the original candidate list and investigated, but dropped rather
+  than built. It needs reading the same clip at many different points in time within one output
+  frame; the only "read another clip" hook the renderer exposes (the one depth_parallax/lens_blur/
+  subject_clone all use) fetches an aux clip at the SAME instant as the main clip, never a different
+  one. Building real time-displacement would mean surgery in the core render loop, which is more risk
+  than this pass's safety rules (protect the goldens, stay under the warnings cap) allow for.
+  `melt_drip` was built in its place.
+
+- **Contract fix, found while wrapping**: `add_subject_clone` and `apply_vfx_preset` had first sentences over the 149-character limit (203 and 267 chars) -- a pre-existing bug from their own commits, caught by `description_first_sentence`'s full-suite run, not part of the melt/droste/portal fixes above. Shortened both to a plain short first sentence with the detail moved after it, same pattern as the v5.0.0 REWRITTEN batch. golden_registry.txt updated for both (description-only, no schema or pixel change).
+
+crates/kimo-core/tests/golden/golden_registry.txt: 6 new entries (one per new tool above) plus
+`add_effect`'s own hash (its schema enum grew by 2: droste_zoom, melt_drip). No existing frame or
+project golden touched -- the sanctioned use of this file per golden_frames.rs's own doc comment.
+
+Build note: partway through the demo-render pass, a hard build failure surfaced from a shared
+`CARGO_TARGET_DIR` -- another concurrent Kimo task building a different checkout of this same repo
+had configured the vendored manifold C++ library's cmake cache against ITS source path, and this
+task's build then collided with that cache (wrong source path, hard cmake error). Rather than clear
+or touch a cache another task's work depends on, this task's build was moved to its own isolated
+target dir for the rest of the pass -- cost one slow cold rebuild, cost nothing of the other task's
+work.
+
+Warnings: 34 (cap 35, unchanged across all 6 commits this pass).
+
+Talking-head benchmark, checked once at the end per the brief: re-ran examples/auto_edit_benchmark.py
+against the same real talking-head + b-roll + music folder used throughout this engine's work, output
+real_v47.mp4 -- byte-identical (same md5, 82ef81b6...) to the last-checked real_v45.mp4. The
+talking-head path is unmoved; nothing in this pass touches it.
+
+Before/after contact sheet across all 5 built effects: `files/v7q/v84_vfx_compare.png`.
+
+## v8.5.0 (2026-11-01)
+
+V8.5 VFX engine + AI preview loop + look library. Read the existing engine first (particle_flow.rs is
+a full deterministic particle system, keyframe/Prop covers every numeric param, effects2.rs/shader_ops
+already wrap most of a node-graph's worth of ops) and built a composable layer on top rather than a
+second pixel-math stack. 535 tools (was 532). Full `cargo test -p kimo-core` (not just the targeted new test files) caught one real gap before ship: the 3 new MCP tools had no `toolgroups.rs` entry (`every_tool_has_a_real_group` failed) -- fixed, and the full suite is now part of this pass's own checklist, not just the targeted one.
+
+- **`vfx_graph`** (new effect kind, `vfx_graph.rs`): a small node DAG -- `effect` (wraps ANY existing
+  effect kind by name, the main reuse lever), `solid`/`gradient`/`shape` generators, `blend` (add/
+  screen/multiply/overlay/difference), `mask_apply`, `mask_clip` (an externally driven aux clip, same
+  same-instant-only pattern `depth_parallax`/`subject_clone` already use), and `particles` (calls
+  `crate::particles::render_fps` -- Kimo's existing emitter -- directly onto the graph's own buffer,
+  `params.preset` for any of its 13 built-in looks, an optional `mask` input for silhouette/edge
+  emission). Every numeric node param takes a literal OR a full keyframe `Prop`, so the whole existing
+  keyframe system is reused with no new expression language. Honest limit, stated in
+  `vfx_graph_describe`: render.rs has no time-offset clip fetch (`render_clip_alone` always renders at
+  the CURRENT frame's `t`), so a graph's own "time" is `t` plus Prop's own expr ops, not frame-offset
+  sampling. `mask_clip` DOES carry a real `track_matte` result -- `render_clip_alone_as` only clears
+  the legacy single-mask field before a standalone render, not the `mask.layers` stack `track_matte`
+  populates (verified directly, see the hero shot below for how v02 actually uses this).
+- **`add_vfx_graph` / `vfx_graph_describe` / `vfx_preview`** (`ext/vfx_graph_tools.rs`): commit, catalog,
+  and non-destructive 1-6-frame preview with cheap metrics (mean luma, clipping %, Sobel edge energy,
+  diff from the clip's own unmodified frame). Bug found and fixed dogfooding the hero shot, not by test:
+  `vfx_preview` was writing `crate::pixels::encode`'s output straight to a `.png` path -- that function is
+  Kimo's own internal lossless pixel-interchange format (magic `KIMOPX01`), not a PNG encoder; the files
+  opened as 14.7 MB of raw data. Swapped to `crate::render::write_image` (what every other render tool
+  uses) and hardened the test to check real PNG magic bytes, not just that a file exists.
+- **Look library, 9 names, exposed through the existing `apply_vfx_preset`** (not a second tool):
+  `ember_drift`, `chrome_bloom`, `glitch_surge`, `dream_haze`, `frost_veil`, `magic_sparkle`,
+  `vhs_decay`, `aurora_wash`, `solar_flare` (`vfx_look_library.rs`), each a real `vfx_graph`. V8.4's
+  4 presets (dreamy/glitch/vertigo/echo) are untouched.
+- TDD throughout: 32 new tests across `vfx_graph_core.rs` (10: parse/validate/cycle-detection/
+  topo-order/solid/blend/effect-wrap), `vfx_graph_tools.rs` (6, PNG-bytes check added after the bug
+  above), `vfx_graph_particles.rs` (5: determinism -- same seed/params/t -> byte-identical -- different
+  seed moves it, a preset renders visibly, an unknown preset errors clearly, mask-driven layer
+  emission), `vfx_look_library.rs` (5: every look builds/validates at 3 intensities, an unknown name
+  errors, every look visibly changes a real-structure frame, `apply_vfx_preset` reaches all 9 and
+  still runs V8.4's own presets unchanged).
+- **Hero shot**, two rounds on real talking-head footage, both kept (never overwritten):
+  `files/v7q/v85_unreal_v01.mp4` then `v02.mp4`, each with its own `.kimo` project and graph JSON. A
+  real `track_matte` on the subject (seeded by hand, 2 seeds, confidence ~0.73-0.76 -- honest, not
+  pixel-perfect) drives `set_effect_mask` on two plain masked effects (bloom + teal/orange) for a
+  subject aura, and a `vfx_graph` chain (ripple+wave warp, teal/orange grade, chromatic aberration,
+  bloom, magic-dust particles) builds across the clip to a peak around 90% through, then eases back to
+  clean footage in the last ~15% (leaning into `add_vfx_graph`'s own ramp-back-to-0-by-`end_time`
+  instead of fighting it). v01 shipped with particles at a fixed point near the chest -- wrong: I had
+  misread `render_clip_alone_as`'s `m.matte = None` as stripping a clip's WHOLE mask stack before a
+  standalone render, when it only clears the legacy single-mask field; a `track_matte` result lives in
+  `mask.layers`, which IS honoured (verified directly with a small Rust probe before trusting it). v02
+  fixes that for real: a duplicate of the subject clip (`duplicate_clip`, its copied effects removed,
+  its copy of the same matte left at mode `add` so its own rendered alpha IS the matte) rides
+  `mask_clip_id`, and the particles node's `shape:"layer"` + `emit_edge` now spawns genuinely off the
+  tracked silhouette rim -- which is also what the review caught in v01 (sparkles scattered across the
+  face read as a rash, not an effect) and v02 fixes by construction, not by hiding the symptom; warp
+  peaks were also roughly halved after the real mask-driven pass read as face-melting at v01's values
+  (the two were never directly comparable before, since v01 never exercised this code path). Per-look
+  demo clips for all 9 looks on real b-roll: `files/v7q/v85_<look>_v01.mp4`, a labelled 3x3 contact
+  sheet at `files/v7q/v85_look_library_contact_sheet.png` -- `frost_veil`'s first pass was a real miss
+  (edge_glow at the look's original amount reads as a full edge-detection wireframe on real footage,
+  not a frosted rim; fixed by screen-blending a much weaker edge pass under the shot instead of
+  applying it in-line, re-rendered and re-checked before shipping) and the other 8 held up as built.
+- Warnings: 34 (cap 35; removed one unused `bilinear` helper from commit #1 that nothing ended up
+  needing once the particles node called the real emitter instead).
+- `golden_registry.txt`: 4 new tool entries + `add_vfx_graph`/`apply_vfx_preset`'s own hashes moved
+  (schema enums grew) -- each hand-computed with the exact `fnv(description|schema|mutates)` the real
+  test uses (a throwaway local test printed them, never committed, never `KIMO_UPDATE_GOLDEN`). No
+  frame or project golden touched.
+- Talking-head benchmark, checked at the end per the brief: re-ran `examples/auto_edit_benchmark.py`
+  against the same real folder, output `real_v48.mp4`. Its md5 (715e3c64...) does NOT match the
+  recorded `real_v45`/`real_v47` baseline (82ef81b6...) -- but a FRESH, unmodified build of the exact
+  8.4.0 base commit (3c328ed) this branch forked from, built the same way in this same environment,
+  renders the identical 715e3c64... So this pass's VFX work introduces zero drift on the talking-head
+  path (confirmed by direct control comparison, not assumed): the mismatch against the older recorded
+  baseline is a pre-existing environment difference (toolchain/encoder, not investigated further --
+  out of this pass's scope) from before this branch existed, not a regression from v8.5.
+
 # Changelog
 
 ## v8.3.0 (2026-11-01)

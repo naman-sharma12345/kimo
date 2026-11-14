@@ -133,7 +133,11 @@ pub fn status(p: &Project, id: &str, deep: bool) -> Value {
         "source_bytes":q.source.stamp.bytes,"proxy_bytes":q.proxy.stamp.bytes})
 }
 /// Fast preview checks use stat fingerprints. Export and analysis never call this selector.
+/// An enabled, current, registered proxy wins; otherwise a ready automatic proxy (auto_proxy.rs) is used.
 pub fn preview_path(p: &Project, id: &str) -> Option<String> {
+    registered_preview_path(p, id).or_else(|| crate::auto_proxy::preview_path(p, id))
+}
+fn registered_preview_path(p: &Project, id: &str) -> Option<String> {
     if !p.proxies.enabled || p.color_pipeline.enabled {
         return None;
     }

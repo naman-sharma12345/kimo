@@ -10,6 +10,10 @@ pub const CATALOG2: &[(&str, &str, &[C])] = &[
     ("polar", "Polar coordinates (rect to polar, or back with inverse=1)", &[("inverse", 0.0, "0/1")]),
     ("kaleidoscope", "Kaleidoscope mirror segments", &[("segments", 6.0, "count"), ("angle", 0.0, "degrees"), ("cx", 0.5, "0..1"), ("cy", 0.5, "0..1")]),
     ("turbulent_displace", "Noise-driven displacement (heat haze, liquid, organic warp)", &[("amount", 20.0, "px"), ("size", 80.0, "noise px"), ("speed", 0.5, "evolution/s")]),
+    ("droste_zoom", "Droste/Escher infinite recursive zoom: the frame repeats into itself in a self-similar spiral tunnel (log-polar radius wrap, not a simple crop-zoom). mix fades the whole effect in/out (0 = untouched frame); drift spirals it inward over time; keyframe mix for a clean start/end window.", &[("cx", 0.5, "0..1"), ("cy", 0.5, "0..1"), ("zoom", 1.6, "recursion ratio per ring, >1.02"), ("twist", 12.0, "deg rotation added per ring, for a spiral rather than a plain tunnel"), ("drift", 0.12, "spiral inward speed, rings/s"), ("mix", 1.0, "0..1 blend with the untouched frame, 0 = off")]),
+    ("portal_mirror", "Portal into an inverted world: a soft-edged circular window shows the same frame flipped and colour-inverted, like a doorway into upside-down reality. Combine with set_effect_mask for a non-circular portal shape, or with another clip's mask for a subject-shaped portal.", &[("cx", 0.5, "0..1"), ("cy", 0.5, "0..1"), ("radius", 0.28, "portal radius, fraction of the short side"), ("feather", 0.08, "edge softness, fraction of the short side"), ("invert_color", 1.0, "0/1, invert colour inside the portal"), ("flip_vertical", 1.0, "0/1, flip the world vertically inside the portal"), ("mix", 1.0, "0..1 blend with the untouched frame, 0 = off")]),
+    ("melt_drip", "Directional dripping/melting warp: the image streaks downward (or any angle) with smear growing toward the far edge, driven by per-column noise -- a one-way melt, distinct from turbulent_displace's symmetric organic wobble.", &[("amount", 18.0, "px of maximum drip at the far edge"), ("size", 40.0, "noise feature width px, controls how wide each drip streak reads"), ("speed", 0.3, "drip animation speed"), ("angle", 90.0, "drip direction deg, 90 = straight down"), ("mix", 1.0, "0..1 blend with the untouched frame, 0 = off")]),
+    ("vfx_graph", "KIMO 8.5 VFX graph: a small JSON node DAG (strings.graph) combining sources, warps, stylize, colour and composite -- including the whole existing effect catalog as one generic node -- into one effect, with an optional driven mask/depth clip (strings.mask_clip_id). See vfx_graph_describe for the node catalog.", &[("mix", 1.0, "0..1 blend with the untouched frame, 0 = off")]),
     ("offset", "Offset with wrap-around", &[("dx", 0.0, "px"), ("dy", 0.0, "px")]),
     ("motion_tile", "Tile the frame (optionally mirrored)", &[("tiles", 2.0, "per axis"), ("mirror", 0.0, "0/1")]),
     ("spin_blur", "Rotational blur", &[("angle", 10.0, "degrees"), ("cx", 0.5, "0..1"), ("cy", 0.5, "0..1")]),
@@ -316,6 +320,37 @@ pub fn apply2(kind: &str, pr: &Params, f: &mut Frame, t: f64, seed: u64) -> Resu
                 for j in 0..3 { f.d[i + j] = f.d[i + j] * a_front + col[j] * ember; } f.d[i + 3] *= a_front;
             } }
         }
+        "droste_zoom" => { let (cx, cy) = (g("cx", 0.5) * wf, g("cy", 0.5) * hf); let zoom = g("zoom", 1.6).max(1.02); let twist = g("twist", 12.0).to_radians(); let drift = g("drift", 0.12); let mix = g("mix", 1.0).clamp(0.0, 1.0);
+            if mix > 0.001 {
+                // rmax anchors the "home ring": the radius from the centre whose wrapped copy always lands back on
+                // real picture content. BUG FIXED HERE: the original version wrapped the raw pixel radius r (which
+                // is tens to hundreds of px) straight into [0, ln(zoom)) and un-logged it, so r2 = exp(wrapped) was
+                // ALWAYS within about 1..zoom px of the centre -- every output pixel sampled the same ~1px speck,
+                // which is exactly the flat brown/orange wash with no scene content that was reported. Wrapping the
+                // *ratio* r/rmax instead, centred on 0, keeps every sampled radius within rmax/sqrt(zoom)..rmax*sqrt(zoom)
+                // of the centre -- real image content at every ring, nested self-similarly as zoom/twist repeat it.
+                let rmax = md * 0.42; let period = zoom.ln(); let half = period * 0.5; let prog = t as f32 * drift * period; let src = f.d.clone();
+                for y in 0..h { for x in 0..w { let (dx, dy) = (x as f32 - cx, y as f32 - cy); let r = (dx * dx + dy * dy).sqrt().max(0.5); let th = dy.atan2(dx);
+                    let lr = (r / rmax).ln() + prog; let wrapped = (lr + half).rem_euclid(period) - half; let k = ((lr - wrapped) / period).round();
+                    let th2 = th + k * twist; let r2 = rmax * wrapped.exp();
+                    let v = sample(&src, w, h, cx + r2 * th2.cos(), cy + r2 * th2.sin()); let i = (y * w + x) * 4; for j in 0..4 { f.d[i + j] = src[i + j] * (1.0 - mix) + v[j] * mix; } } } } }
+        "portal_mirror" => { let (cx, cy) = (g("cx", 0.5) * wf, g("cy", 0.5) * hf); let radius = g("radius", 0.28).max(0.01) * md; let feather = g("feather", 0.08).max(0.001) * md; let invert_color = g("invert_color", 1.0) > 0.5; let flip_v = g("flip_vertical", 1.0) > 0.5; let mix = g("mix", 1.0).clamp(0.0, 1.0);
+            if mix > 0.001 { let src = f.d.clone();
+                for y in 0..h { for x in 0..w { let (dx, dy) = (x as f32 - cx, y as f32 - cy); let d = (dx * dx + dy * dy).sqrt(); let inside = ((radius + feather - d) / feather).clamp(0.0, 1.0); if inside <= 0.0 { continue; }
+                    let (sx, sy) = if flip_v { (x as f32, cy - dy) } else { (x as f32, y as f32) }; let mut v = sample(&src, w, h, sx, sy); if invert_color { for j in 0..3 { v[j] = 1.0 - v[j]; } }
+                    let i = (y * w + x) * 4; let k = inside * mix; for j in 0..4 { f.d[i + j] = f.d[i + j] * (1.0 - k) + v[j] * k; } } } } }
+        "melt_drip" => { let amount = g("amount", 18.0); let size = g("size", 40.0).max(4.0); let speed = g("speed", 0.3); let angle = g("angle", 90.0).to_radians(); let mix = g("mix", 1.0).clamp(0.0, 1.0);
+            if mix > 0.001 { let (ux, uy) = (angle.cos(), angle.sin()); let tt = t as f32 * speed; let sd = seed as u32; let src = f.d.clone(); let span = (wf * ux.abs() + hf * uy.abs()).max(1.0);
+                for y in 0..h { for x in 0..w {
+                    // perp picks which noise "drip lane" this pixel falls under; along grows from 0 (the edge the drip flows from) to 1 (the
+                    // far edge). FIX: 3 octaves of fbm here read as a jagged sawtooth/zigzag (high-frequency wobble stacked on top of the base
+                    // lane pattern, reported as "a jagged wave, nothing flowing") instead of a smooth melt -- single-octave noise is already a
+                    // smooth bilinear field (see vnoise), so dropping to 1 octave gives broad, softly-varying lanes with no fine jitter. A
+                    // smoothstep on `along` (instead of a raw square) also keeps the acceleration gentle near the far edge instead of lurching.
+                    let perp = (x as f32 * -uy + y as f32 * ux) / size; let along = ((x as f32 * ux + y as f32 * uy) / span).clamp(0.0, 1.0);
+                    let smooth_along = along * along * (3.0 - 2.0 * along);
+                    let n = fbm(perp, tt, 1, sd); let drip = amount * smooth_along * n;
+                    let v = sample(&src, w, h, x as f32 - ux * drip, y as f32 - uy * drip); let i = (y * w + x) * 4; for j in 0..4 { f.d[i + j] = src[i + j] * (1.0 - mix) + v[j] * mix; } } } } }
         other => return crate::color::apply3(other, pr, f, t, seed),
     }
     Ok(())

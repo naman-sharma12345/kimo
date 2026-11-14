@@ -5,6 +5,8 @@ edition.workspace = true
 
 [dependencies]
 ab_glyph = "0.2.32"
+# OpenType shaping for Indic/complex scripts in text layout (text.rs): MIT, pure Rust, same ttf-parser 0.25 as ab_glyph.
+rustybuzz = "=0.20.1"
 serde = { version = "1", features = ["derive","rc"] }
 serde_json = "1"
 roxmltree = "0.21"
@@ -25,11 +27,28 @@ opensubdiv-rs = { version = "=0.1.3" }
 
 # v6 eyes audio_spectrum (2026-10-17): rustfft 6.4.1, MIT OR Apache-2.0.
 rustfft = "=6.4.1"
+# V8.6.2: libav decode is an opt-in cargo feature, off by default -- see libav_decode.rs and the
+# "libav" feature below. Without the feature, kimo-core needs no ffmpeg dev headers/clang to build.
+ffmpeg-next = { version = "5", default-features = false, features = ["codec", "format", "software-scaling"], optional = true }
+# Engine eyes layer 6 (src/vision, feature "vision"): on-device face/object/subject models, downloaded on first use.
+# tract-onnx: pure Rust ONNX runtime, MIT OR Apache-2.0, no native libraries. ureq + sha2 fetch and verify the models
+# (same crates as kimo-gui's download.rs), MIT OR Apache-2.0.
+tract-onnx = { version = "=0.23.10", optional = true }
+ureq = { version = "2", optional = true }
+sha2 = { version = "0.10", optional = true }
 
 [features]
-default = ["surface-contour"]
+default = ["surface-contour", "vision"]
+# On-device vision models (src/vision): faces (YuNet), people/objects (YOLOX-nano), subject mask (U^2-Netp), person matte
+# (MODNet). Off: the vision API stays, detections are empty and masks fall back to the saliency map.
+vision = ["dep:tract-onnx", "dep:ureq", "dep:sha2"]
 native-ocio = []
 mesh-import = ["dep:gltf", "dep:tobj"]
+# V8.6.2: in-process libav decoder (KIMO_DECODER=libav), off by default. 8.6.1 made ffmpeg-next a hard
+# dependency even though the decoder path is opt-in at runtime; this makes the dependency itself opt-in,
+# so a default build needs no libav*-dev headers or clang. Without this feature, KIMO_DECODER=libav logs
+# one warning and the pipe decoder is used, same as always.
+libav = ["dep:ffmpeg-next"]
 gpu3d = ["dep:wgpu"]
 # v7 GPU/2D pipeline (opt-in, default off): WGSL compute kernels for a couple of 2D effects (gaussian blur, color
 # matrix) run through wgpu on whatever adapter is present (lavapipe software Vulkan on this box). Independent of
@@ -43,6 +62,13 @@ material-textures = ["dep:mikktspace"]
 
 [dev-dependencies]
 criterion = "=0.5.1"
+
+# V8.6.2: this test exercises the libav decoder directly (KIMO_DECODER=libav); gate it on the feature so
+# a default `cargo test` doesn't need libav*-dev/clang either.
+[[test]]
+name = "libav_vfr_conform"
+path = "tests/libav_vfr_conform.rs"
+required-features = ["libav"]
 
 [build-dependencies]
 cc = "1"

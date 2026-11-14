@@ -1,0 +1,98 @@
+{
+  "_comment": "REFERENCE ONLY pins. The speech model pin is the real SHA-512 of ggml-small-q5_1.bin (190,085,487 bytes). Entries whose sha512 starts with PIN are not uploaded yet: the release workflow (packaging/gui/pin-parts.py) must upload the file and write its size and SHA-512 before the first-run window can fetch it.",
+  "parts": [
+    {
+      "id": "ffmpeg",
+      "os": "linux",
+      "name": "FFmpeg",
+      "note": "decodes, cuts and encodes video",
+      "urls": [
+        "https://github.com/naman-sharma12345/kimo/releases/download/v8.12.1/ffmpeg-linux-x86_64",
+        "https://downloads.getkimo.tech/parts/ffmpeg-linux-x86_64"
+      ],
+      "sha512": "PIN-AT-RELEASE",
+      "size": 0,
+      "dest": "tools/ffmpeg",
+      "executable": true
+    },
+    {
+      "id": "ffprobe",
+      "os": "linux",
+      "name": "FFprobe",
+      "note": "reads media details",
+      "urls": [
+        "https://github.com/naman-sharma12345/kimo/releases/download/v8.12.1/ffprobe-linux-x86_64"
+      ],
+      "sha512": "PIN-AT-RELEASE",
+      "size": 0,
+      "dest": "tools/ffprobe",
+      "executable": true
+    },
+    {
+      "id": "ffmpeg",
+      "os": "windows",
+      "name": "FFmpeg",
+      "note": "decodes, cuts and encodes video",
+      "urls": [
+        "https://github.com/naman-sharma12345/kimo/releases/download/v8.12.1/ffmpeg-windows-x86_64.exe",
+        "https://downloads.getkimo.tech/parts/ffmpeg-windows-x86_64.exe"
+      ],
+      "sha512": "PIN-AT-RELEASE",
+      "size": 0,
+      "dest": "tools/ffmpeg.exe"
+    },
+    {
+      "id": "ffprobe",
+      "os": "windows",
+      "name": "FFprobe",
+      "note": "reads media details",
+      "urls": [
+        "https://github.com/naman-sharma12345/kimo/releases/download/v8.12.1/ffprobe-windows-x86_64.exe"
+      ],
+      "sha512": "PIN-AT-RELEASE",
+      "size": 0,
+      "dest": "tools/ffprobe.exe"
+    },
+    {
+      "id": "whisper",
+      "os": "linux",
+      "name": "Whisper (speech to text)",
+      "note": "makes captions, offline",
+      "urls": [
+        "https://github.com/naman-sharma12345/kimo/releases/download/v8.12.1/whisper-cli-linux-x86_64"
+      ],
+      "sha512": "PIN-AT-RELEASE",
+      "size": 0,
+      "dest": "tools/whisper-cli",
+      "executable": true,
+      "optional": true
+    },
+    {
+      "id": "whisper",
+      "os": "windows",
+      "name": "Whisper (speech to text)",
+      "note": "makes captions, offline",
+      "urls": [
+        "https://github.com/naman-sharma12345/kimo/releases/download/v8.12.1/whisper-cli-windows-x86_64.exe"
+      ],
+      "sha512": "PIN-AT-RELEASE",
+      "size": 0,
+      "dest": "tools/whisper-cli.exe",
+      "optional": true
+    },
+    {
+      "id": "model",
+      "os": "",
+      "name": "Speech model (whisper small, multilingual)",
+      "note": "captions offline, on this computer",
+      "urls": [
+        "https://downloads.getkimo.tech/parts/ggml-small-q5_1.bin",
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin"
+      ],
+      "sha512": "e2be6b2094d2a24524c4ca928faef4756382dbdd168f1229609040e66cf8928f54d96a3ac2b287cd2c6cf731577738400eaa6868da3fb1dc9ec2c151e71ebb79",
+      "size": 190085487,
+      "dest": "models/ggml-small-q5_1.bin",
+      "optional": true
+    }
+  ]
+}

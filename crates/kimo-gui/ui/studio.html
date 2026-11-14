@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>kimo</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/InstrumentSans-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="studio.css">
+<link rel="stylesheet" href="editor.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="km" viewBox="0 0 1024 1024"><rect width="1024" height="1024" fill="#0D0D10"/><g fill="#F3EFE7"><rect x="148" y="212" width="56" height="624" rx="12"/><rect x="232" y="212" width="56" height="624" rx="12"/><rect x="316" y="312" width="56" height="524" rx="12"/><rect x="400" y="412" width="56" height="424" rx="12"/><rect x="484" y="512" width="56" height="324" rx="12"/><rect x="568" y="412" width="56" height="424" rx="12"/><rect x="652" y="312" width="56" height="524" rx="12"/><rect x="736" y="212" width="56" height="624" rx="12"/><rect x="820" y="212" width="56" height="624" rx="12"/></g><g fill="#FF5A23"><rect x="506" y="140" width="12" height="776"/><path d="M480 107H544L512 145Z"/></g></symbol>
+  <symbol id="km-sm" viewBox="0 0 1024 1024"><rect width="1024" height="1024" fill="#0D0D10"/><g fill="#F3EFE7"><rect x="148" y="212" width="56" height="624" rx="12"/><rect x="232" y="212" width="56" height="624" rx="12"/><rect x="316" y="312" width="56" height="524" rx="12"/><rect x="400" y="412" width="56" height="424" rx="12"/><rect x="484" y="512" width="56" height="324" rx="12"/><rect x="568" y="412" width="56" height="424" rx="12"/><rect x="652" y="312" width="56" height="524" rx="12"/><rect x="736" y="212" width="56" height="624" rx="12"/><rect x="820" y="212" width="56" height="624" rx="12"/></g><g fill="#FF5A23"><rect x="484.5" y="140" width="55" height="776"/><path d="M446 71.6H578L512 150Z"/></g></symbol>
+</svg>
+
+<div id="app">
+  <!-- the rail: pages -->
+  <aside id="rail">
+    <button class="rail-brand" id="brand" title="About kimo"><svg class="km mark" viewBox="0 0 1024 1024" role="img" aria-label="kimo"><use href="#km-sm"/></svg></button>
+    <nav id="nav">
+      <a data-tab="home" class="on" title="Home (Ctrl+1)"><span class="ic" data-icon="home"></span><span class="lb">Home</span></a>
+      <a data-tab="edit" title="Edit (Ctrl+2)"><span class="ic" data-icon="film"></span><span class="lb">Edit</span></a>
+      <a data-tab="agent" title="Agent (Ctrl+3)"><span class="ic" data-icon="spark"></span><span class="lb">Agent</span><span class="dot" id="nav-agent" hidden></span></a>
+      <a data-tab="live" title="Live (Ctrl+4)"><span class="ic" data-icon="live"></span><span class="lb">Live</span><span class="dot" id="nav-live" hidden></span></a>
+      <a data-tab="connections" title="Connections (Ctrl+5)"><span class="ic" data-icon="plug"></span><span class="lb">Connect</span><span class="dot warn" id="nav-conn" hidden></span></a>
+    </nav>
+    <div class="rail-foot">
+      <div class="rail-pill" id="pill-engine" title="Engine"><span class="d"></span><span class="lb">Engine</span></div>
+      <div class="rail-pill" id="pill-agent" title="Agent"><span class="d"></span><span class="lb" id="pill-agent-t">Agent</span></div>
+    </div>
+  </aside>
+
+  <main>
+    <header id="topbar">
+      <div class="crumb"><span class="word sm">kimo</span><span class="sep">/</span><span id="tb-title">Home</span></div>
+      <button class="tb-proj" id="tb-proj" title="Project"><span data-icon="folder"></span><span id="tb-proj-t">Untitled project</span><span class="dirty" id="tb-dirty" hidden title="Unsaved changes">●</span></button>
+      <span class="tb-auto" id="tb-auto" hidden></span>
+      <div class="tb-right">
+        <button class="tb-update" id="tb-update" hidden title="A newer kimo is available"></button>
+        <span class="attached" id="tb-attached" hidden></span>
+        <button class="tb-live" id="tb-live" data-go="live"><span class="d"></span><span id="tb-live-t">Idle</span></button>
+      </div>
+    </header>
+
+    <div class="page">
+    <!-- ================= HOME ================= -->
+    <section class="tab on" id="tab-home">
+      <div class="home">
+        <div class="hero">
+          <div class="hero-copy">
+            <div class="eyebrow">AI video editor · runs on this computer</div>
+            <h1 class="serif">Make it with <em>kimo</em>.</h1>
+            <p class="sub">Edit by hand on a real timeline, or tell Claude Code, Codex or Antigravity what you want, using the plan you already pay for. Every change lands in the same project, live, with its own Undo.</p>
+            <div class="row cta">
+              <button class="btn acc lg" id="home-import"><span data-icon="plus"></span>Import media</button>
+              <button class="btn lg" id="home-open"><span data-icon="folder"></span>Open project</button>
+              <button class="btn lg ghost" data-go="agent"><span data-icon="spark"></span>Ask an agent</button>
+            </div>
+          </div>
+          <div class="hero-art" aria-hidden="true"><div class="glow"></div><div class="ring r1"></div><div class="ring r2"></div><svg class="km hero-km" viewBox="0 0 1024 1024"><use href="#km"/></svg></div>
+        </div>
+        <div class="sec-h"><h2>Your agents</h2><span class="note muted">Runs on your own subscription. No API key needed.</span><a class="lnk" data-go="connections" style="margin-left:auto">Manage <span data-icon="arrow"></span></a></div>
+        <div class="grid g3" id="home-agents"></div>
+        <div class="grid g2 sec">
+          <div class="card"><div class="ch"><h2>Recent projects</h2></div><div id="home-recent" class="recent"></div></div>
+          <div class="card"><div class="ch"><h2>This computer</h2></div>
+            <div class="kv home-kv">
+              <span>Engine</span><b id="h-engine">…</b>
+              <span>Video tools</span><b id="h-parts">…</b>
+              <span>Agents attached</span><b id="h-attached">none</b>
+              <span>Data folder</span><b class="mono" id="h-data">…</b>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= EDIT ================= -->
+    <section class="tab" id="tab-edit">
+      <div class="editor" id="editor">
+        <div class="ed-toolbar">
+          <div class="tgroup">
+            <button class="ib" id="ed-undo" title="Undo (Ctrl+Z)" aria-label="Undo"><span data-icon="undo"></span></button>
+            <button class="ib" id="ed-redo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo"><span data-icon="redo"></span></button>
+          </div>
+          <div class="tgroup">
+            <button class="ib" id="ed-split" title="Split at playhead (S)" aria-label="Split"><span data-icon="scissors"></span></button>
+            <button class="ib" id="ed-delete" title="Delete clip (Del) · Shift+Del ripple" aria-label="Delete"><span data-icon="trash"></span></button>
+            <button class="ib" id="ed-dup" title="Duplicate clip (Ctrl+D)" aria-label="Duplicate"><span data-icon="copy"></span></button>
+          </div>
+          <div class="tgroup">
+            <button class="btn sm" id="ed-text" title="Add a text clip at the playhead (T)"><span data-icon="type"></span>Text</button>
+            <button class="btn sm" id="ed-track" title="Add a track"><span data-icon="layers"></span>Track</button>
+            <button class="btn sm" id="ed-marker" title="Add a marker at the playhead (M)"><span data-icon="flag"></span>Marker</button>
+          </div>
+          <div class="tgroup grow"></div>
+          <div class="tgroup">
+            <button class="btn sm ghost" id="ed-new" title="New empty project">New</button>
+            <button class="btn sm ghost" id="ed-open" title="Open a project (Ctrl+O)">Open</button>
+            <button class="btn sm" id="ed-save" title="Save (Ctrl+S)"><span data-icon="save"></span>Save</button>
+            <button class="btn sm acc" id="ed-export" title="Export a video (Ctrl+E)"><span data-icon="export"></span>Export</button>
+          </div>
+        </div>
+
+        <!-- media bin -->
+        <aside class="ed-bin" id="bin">
+          <div class="pane-h"><h3>Media</h3><span class="chip" id="bin-count">0</span><button class="ib sm" id="bin-import" title="Import media" aria-label="Import media" style="margin-left:auto"><span data-icon="plus"></span></button></div>
+          <div class="bin-search"><span data-icon="search"></span><input id="bin-q" type="search" placeholder="Search media" spellcheck="false"></div>
+          <div class="bin-list" id="bin-list"></div>
+          <div class="bin-drop" id="bin-drop"><span data-icon="upload"></span><b>Drop video, audio or images</b><span>or <a class="lnk" id="bin-drop-pick">browse</a></span></div>
+        </aside>
+
+        <!-- the viewer lives here on Edit and moves to the Agent page when that is open -->
+        <div class="ed-view" id="slot-edit">
+          <div class="viewer" id="viewer" data-state="empty" data-view="after" data-media="image" data-playing="0">
+            <div class="vw-hd"><h2>Viewer</h2><span class="chip" id="vw-rev" title="Project revision">no frame</span>
+              <div class="seg vw-ab" id="vw-ab" role="group" aria-label="Compare with the frame before the last change"><button data-v="before" disabled>Before</button><button data-v="after" class="on">After</button></div></div>
+            <div class="vw-screen">
+              <img id="vw-img" alt="The engine's frame at the playhead" hidden>
+              <img id="vw-before" alt="The frame before the last change" hidden>
+              <video id="vw-video" muted playsinline preload="auto" hidden></video>
+              <canvas id="vw-canvas" role="img" aria-label="Real-time preview at the playhead" hidden></canvas>
+              <div class="vw-empty" id="vw-empty"><svg class="km e" viewBox="0 0 1024 1024" aria-hidden="true"><use href="#km-sm"/></svg><div class="et">Nothing to show yet</div><div class="ed">Import media and drag it onto the timeline, or ask an agent to start the edit.</div></div>
+              <div class="vw-busy" id="vw-busy"><span class="spin"></span><span id="vw-busy-t">Rendering frame…</span></div>
+              <div class="vw-err" id="vw-err-box"><div class="et">The engine couldn't render this frame</div><div class="mono" id="vw-err"></div><button class="btn sm" id="vw-retry">Try again</button></div>
+              <span class="vw-tag" id="vw-tag" hidden></span>
+            </div>
+            <div class="vw-ctl">
+              <button class="btn sm vw-play" id="vw-play" aria-label="Play from the playhead (Space; J / K / L shuttle)" title="Play (Space) · J / K / L shuttle · K+J / K+L or arrow keys step a frame" disabled><svg class="i ip" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg><svg class="i ipa" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13M16 5.5v13"/></svg></button>
+              <input type="range" id="vw-scrub" min="0" max="0" step="0.0333" value="0" aria-label="Playhead" disabled>
+              <span class="mono vw-time" id="vw-time">0:00.0</span>
+              <button class="btn sm ghost vw-ic" id="vw-loop" aria-label="Loop playback (Ctrl+L)" aria-pressed="false" title="Loop (Ctrl+L)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M17 2.5l3 3-3 3M4 11.5v-1a5 5 0 0 1 5-5h11M7 21.5l-3-3 3-3M20 12.5v1a5 5 0 0 1-5 5H4"/></svg></button>
+              <button class="btn sm ghost vw-ic" id="vw-full" aria-label="Full screen (F)" title="Full screen (F)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+            </div>
+            <div class="note vw-msg" id="vw-msg">Frames come from the engine.</div>
+          </div>
+          <form class="askbar" id="askbar">
+            <span class="ask-agent" id="ask-agent" title="Change agent in the Agent tab"><span class="d"></span><span id="ask-agent-t">Claude Code</span></span>
+            <input id="ask-in" placeholder="Ask your agent to edit… e.g. “cut the silences”, “add a title”" autocomplete="off" spellcheck="false">
+            <button class="btn sm acc" id="ask-send" type="submit"><span data-icon="send"></span></button>
+          </form>
+        </div>
+
+        <!-- inspector -->
+        <aside class="ed-insp" id="insp">
+          <div class="pane-h"><h3 id="insp-title">Project</h3></div>
+          <div class="insp-body" id="insp-body"></div>
+        </aside>
+
+        <!-- timeline -->
+        <div class="ed-tl" id="tl">
+          <div class="tl-bar">
+            <span class="mono tl-tc" id="tl-tc">0:00.00</span>
+            <label class="check note"><input type="checkbox" id="tl-snap" checked><span>Snap</span></label>
+            <span class="note muted" id="tl-hint">Drag media here · drag clips to move · drag edges to trim</span>
+            <div class="tl-zoom"><button class="ib sm" id="tl-zout" aria-label="Zoom out" title="Zoom out (-)"><span data-icon="minus"></span></button><input type="range" id="tl-zoom" min="10" max="400" value="80" aria-label="Zoom"><button class="ib sm" id="tl-zin" aria-label="Zoom in" title="Zoom in (+)"><span data-icon="plus"></span></button><button class="btn sm ghost" id="tl-fit" title="Fit the whole edit">Fit</button></div>
+          </div>
+          <div class="tl-main" id="tl-main">
+            <div class="tl-heads" id="tl-heads"></div>
+            <div class="tl-scroll" id="tl-scroll">
+              <div class="tl-canvas" id="tl-canvas">
+                <div class="tl-ruler" id="tl-ruler"></div>
+                <div class="tl-tracks" id="tl-tracks"></div>
+                <div class="tl-playhead" id="tl-playhead"><i></i></div>
+                <div class="tl-snapline" id="tl-snapline" hidden></div>
+              </div>
+            </div>
+          </div>
+          <div class="tl-empty" id="tl-empty"><b>Your timeline is empty</b><span>Drag a clip from Media, double-click one, or ask an agent to lay out a first cut.</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= AGENT ================= -->
+    <section class="tab" id="tab-agent">
+      <div class="agentwrap">
+        <div class="convo">
+          <div class="convo-hd">
+            <div class="agent-pick" id="agent-pick" role="radiogroup" aria-label="Agent"></div>
+            <button class="btn sm ghost" id="agent-new" title="Start a new conversation" style="margin-left:auto"><span data-icon="plus"></span>New chat</button>
+          </div>
+          <div class="model-bar" id="model-bar"></div>
+          <div class="msgs" id="msgs">
+            <div class="msg agent hello" id="chat-hello"><b>Tell me what to change.</b> I'll edit your project with kimo's tools: cut, trim, titles, captions, colour, effects, audio, export. You'll see every step here and in the timeline, and each change gets its own Undo.</div>
+          </div>
+          <div class="composer">
+            <div class="sugg" id="sugg"><button>Lay out a first cut from my media</button><button>Cut the silences</button><button>Add a title at the start</button><button>Add captions</button><button>Make it warmer</button><button>Export a 1080p MP4</button></div>
+            <div class="in"><textarea id="chat-in" placeholder="Tell kimo what to change…" rows="1"></textarea>
+              <button class="btn" id="chat-stop" hidden><span data-icon="stop"></span>Stop</button>
+              <button class="btn acc" id="chat-send" aria-label="Send"><span data-icon="send"></span><span>Send</span></button></div>
+            <div class="hint" id="chat-hint">Enter to send · Shift+Enter for a new line</div>
+          </div>
+        </div>
+        <aside class="chgcol">
+          <div id="slot-agent" class="slot"></div>
+          <div class="col-hd"><h2>Changes</h2><span class="chip" id="chg-count">0</span></div>
+          <div class="changes" id="changes"></div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ================= LIVE ================= -->
+    <section class="tab" id="tab-live">
+      <div class="live-top">
+        <h1 class="serif title">Live</h1>
+        <span class="chip acc" id="live-state">waiting</span>
+        <div class="seg" id="live-filter"></div>
+        <span class="note muted" id="live-count" style="margin-left:auto"></span>
+        <button class="btn sm ghost" id="live-clear">Clear</button>
+        <button class="btn sm" id="live-graph"><span data-icon="graph"></span>Live graph window</button>
+      </div>
+      <div class="livewrap">
+        <div class="feed"><table><thead><tr><th style="width:84px">Time</th><th style="width:130px">Who</th><th>Action</th><th style="width:96px">Status</th><th style="width:200px">Result</th></tr></thead><tbody id="live-rows"></tbody></table>
+          <div class="empty" id="live-empty"><svg class="km e" viewBox="0 0 1024 1024" aria-hidden="true"><use href="#km-sm"/></svg><div class="et">Waiting for the first action</div><div class="ed">Every edit — yours, Claude Code's, Codex's or Antigravity's — appears here the moment it starts.</div></div></div>
+        <div class="side-cards">
+          <div class="card"><div class="k">Who's connected</div><div id="live-who" class="who"></div></div>
+          <div class="card"><div class="k">Just changed</div><div id="live-last" class="note muted">—</div></div>
+          <div class="card note quiet"><span data-icon="info"></span><div>Agents you run here, and agents you run yourself with kimo added to them, join <b>this</b> project through the app while it is open. Only an old setup that launches the engine directly shows up as an <b>external engine</b> (a separate project).</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= CONNECTIONS ================= -->
+    <section class="tab" id="tab-connections">
+      <div class="conn">
+        <h1 class="serif title">Connections</h1>
+        <p class="sub">kimo runs Claude Code, Codex and Antigravity on your computer, signed in with <b>your own subscription</b>. kimo never sees your password or tokens: each one signs in with its own login.</p>
+        <div class="grid g3" id="cli-cards"></div>
+        <div class="row" style="margin:10px 0 0"><button class="btn sm ghost" id="cli-refresh"><span data-icon="refresh"></span>Check again</button><span class="note muted" id="cli-msg"></span></div>
+
+        <details class="card sec more" id="more-api">
+          <summary><span data-icon="key"></span><div><h2>Use an API key instead</h2><div class="note">For people without one of the plans above. Billed per token by the provider.</div></div><span class="chip" id="key-state" style="margin-left:auto">no key</span></summary>
+          <div class="grid g2 fields">
+            <div><label class="f">Provider</label><select id="key-provider"></select></div>
+            <div><label class="f">Model <span class="muted" id="key-model-hint"></span></label><input type="text" id="key-model" spellcheck="false"></div>
+          </div>
+          <label class="f">API key</label>
+          <div class="row"><input type="password" id="key-input" placeholder="Paste your key" autocomplete="off" spellcheck="false"><a class="lnk" id="key-page">Get a key ↗</a></div>
+          <details class="adv"><summary class="note">Advanced: base URL</summary><input type="text" id="key-base" spellcheck="false"></details>
+          <label class="check note"><input type="checkbox" id="key-remember"><span>Remember on this computer (<span id="key-store">OS keychain</span>)</span></label>
+          <div class="row actions"><button class="btn pri" id="key-save">Save</button><button class="btn" id="key-test">Test connection</button><button class="btn ghost" id="key-clear">Forget key</button><button class="btn ghost" id="key-use">Use in Agent tab</button><span class="note" id="key-msg"></span></div>
+        </details>
+
+        <details class="card sec more" id="more-mcp">
+          <summary><span data-icon="plug"></span><div><h2>Other MCP apps</h2><div class="note">Claude Desktop, Cursor, Windsurf, VS Code… point them at kimo and their edits join this project too.</div></div></summary>
+          <p class="note">Add this server to any MCP app. While kimo is open it joins this project; otherwise it starts its own engine.</p>
+          <pre class="codebox mono" id="cfg-json"></pre>
+          <div class="row"><button class="btn sm" id="cfg-copy">Copy</button></div>
+          <div class="row" style="margin-top:16px"><div><b>Watch older setups</b><div class="note">Listen on 127.0.0.1:7421 for engines started directly (kimo-mcp), and show them in Live.</div></div><button class="switch" id="mcp-switch" aria-label="Listen for external engines" role="switch" style="margin-left:auto"></button></div>
+          <div class="note" id="mcp-err" style="color:var(--bad)"></div>
+        </details>
+      </div>
+    </section>
+    </div>
+  </main>
+</div>
+
+<!-- export -->
+<div class="overlay" id="export"><div class="modal">
+  <h2>Export video</h2>
+  <p class="note muted" id="ex-sum">—</p>
+  <label class="f">Save as</label>
+  <div class="row"><input type="text" id="ex-path" spellcheck="false"><button class="btn" id="ex-browse">Browse…</button></div>
+  <label class="f">Quality</label>
+  <div class="seg" id="ex-q"><button data-crf="28">Draft</button><button data-crf="20" class="on">Good</button><button data-crf="16">Best</button></div>
+  <div class="ex-prog" id="ex-prog" hidden><div class="bar"><i id="ex-bar"></i></div><div class="row"><span class="note" id="ex-status">Starting…</span><span class="note muted mono" id="ex-eta" style="margin-left:auto"></span></div></div>
+  <div class="note" id="ex-err" style="color:var(--bad)"></div>
+  <div class="row" style="margin-top:18px;justify-content:flex-end"><button class="btn ghost" id="ex-close">Close</button><button class="btn" id="ex-reveal" hidden>Show in folder</button><button class="btn acc" id="ex-go"><span data-icon="export"></span>Export</button></div>
+</div></div>
+
+<!-- first-run downloads -->
+<div class="overlay" id="setup">
+  <div class="modal setup">
+    <div class="setup-hero">
+      <div class="hero-mark"><svg class="km xl" viewBox="0 0 1024 1024" role="img" aria-label="kimo"><use href="#km"/></svg><div><div class="word lg">kimo</div><div class="eyebrow">First start · one time</div></div></div>
+      <h1 class="serif title">A few tools and <em>kimo</em> is ready.</h1>
+      <p class="sub">kimo needs FFmpeg to read and write video. If this computer already has it, kimo uses that. Downloads are checked against their SHA-512 fingerprint before use, and a dropped connection resumes.</p>
+    </div>
+    <div class="setup-body">
+      <div id="parts"></div>
+      <div class="total"><div class="top"><span class="nm">Total</span><span class="sz" id="tot-t"></span></div><div class="bar totalbar"><i id="tot-bar"></i></div></div>
+      <div class="note" id="setup-err" style="color:var(--bad);margin-top:10px"></div>
+      <div class="row setup-actions"><label class="check note"><input type="checkbox" id="skip-opt" checked><span>Skip the optional speech model for now</span></label>
+        <button class="btn ghost" id="setup-later" style="margin-left:auto">Later</button><button class="btn" id="setup-pause" hidden>Pause</button><button class="btn acc" id="setup-go">Get ready</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- welcome (once) -->
+<div class="overlay" id="welcome"><div class="modal welcome">
+  <svg class="km xl" viewBox="0 0 1024 1024" role="img" aria-label="kimo"><use href="#km"/></svg>
+  <h1 class="serif title">Welcome to <em>kimo</em>.</h1>
+  <ol class="wsteps">
+    <li><b>Bring your footage.</b> Import or drop video, audio and images into Media.</li>
+    <li><b>Pick your agent.</b> Claude Code, Codex or Antigravity, signed in with the plan you already have.</li>
+    <li><b>Say what you want.</b> Watch every edit land on the timeline, live. Undo anything.</li>
+  </ol>
+  <div class="row" style="justify-content:flex-end;margin-top:18px"><button class="btn ghost" id="wel-skip">Skip</button><button class="btn" id="wel-connect">Connect an agent</button><button class="btn acc" id="wel-import">Import media</button></div>
+</div></div>
+
+<div class="overlay" id="confirm"><div class="modal small"><h2 id="cf-title"></h2><p class="note" id="cf-body"></p><pre class="codebox mono" id="cf-code" hidden></pre><div class="row" style="margin-top:18px;justify-content:flex-end"><button class="btn ghost" id="cf-no">Cancel</button><button class="btn pri" id="cf-yes">OK</button></div></div></div>
+<div class="overlay" id="about"><div class="modal small about">
+  <svg class="km xxl" viewBox="0 0 1024 1024" role="img" aria-label="kimo"><use href="#km"/></svg>
+  <div class="word xl">kimo</div>
+  <p class="note" style="margin:6px 0 18px">AI video editor. The engine runs on this computer; your agents run on your own subscription.</p>
+  <div class="kv"><span>App</span><b class="mono" id="ab-ver">—</b><span>Engine</span><b class="mono" id="ab-eng">—</b><span>License</span><b>MIT</b></div>
+  <div class="row" style="margin-top:20px;justify-content:flex-end"><button class="btn" id="ab-close">Close</button></div>
+</div></div>
+<div class="dropcover" id="dropcover"><div><span data-icon="upload"></span><b>Drop to import</b><span>Video, audio and images go into Media</span></div></div>
+<div class="ctx" id="ctx" hidden></div>
+<div class="toast" id="toast"></div>
+<script defer src="playback.js"></script>
+<script type="module" src="studio.js"></script>
+</body>
+</html>

@@ -70,6 +70,32 @@ fn proj() -> Session { let mut ss = Session::new(); call(&mut ss, "project_set",
     }
 }
 
+/// 8.5.6: job 2's forced splits must not touch a long single take that b-roll already covers -- the same
+/// "nobody sees the zoom anyway" reasoning the punch-visibility filter uses, but one step earlier: there is
+/// no point cutting a clip into pieces whose scale change the viewer never sees because b-roll is on top.
+#[test] fn job2_forced_splits_skip_a_long_take_broll_fully_covers() {
+    let mut ss = proj();
+    // one continuous 9s take with no internal pause, well past the ~3.5s cap, entirely covered by b-roll.
+    let a = sid(&call(&mut ss, "import_media", json!({"path": talk("job2_broll_covered_th.mp4", &[(0.0, 9.0)], 0.0)})), "asset_id");
+    let b = sid(&call(&mut ss, "import_media", json!({"path": broll("job2_broll_covered_b.mp4", 9.0)})), "asset_id");
+    let r = call(&mut ss, "auto_edit", json!({"talking_head_asset_ids": [a], "broll_asset_ids": [b], "captions": false, "grade": false, "push_in": false, "broll_color_match": false, "end_screen": false, "pacing": false}));
+    assert!(r["ok"] == json!(true), "{r}");
+    let broll_ranges: Vec<(f64, f64)> = r["stages"]["broll"]["clips"].as_array().unwrap().iter()
+        .map(|c| (c["start"].as_f64().unwrap(), c["end"].as_f64().unwrap())).collect();
+    assert!(!broll_ranges.is_empty(), "test needs b-roll actually placed: {r}");
+    let track_id = r["track_id"].as_str().unwrap();
+    let tl = call(&mut ss, "timeline_summary", json!({}));
+    let track = tl["tracks_bottom_to_top"].as_array().unwrap().iter().find(|t| t["track_id"] == *track_id).unwrap();
+    let dialogue: Vec<&Value> = track["clips"].as_array().unwrap().iter().filter(|c| c["src"].as_str() != Some("job2_broll_covered_b.mp4")).collect();
+    for c in &dialogue {
+        let (s, e) = (c["start"].as_f64().unwrap(), c["end"].as_f64().unwrap());
+        let covered: f64 = broll_ranges.iter().map(|(bs, be)| (e.min(*be) - s.max(*bs)).max(0.0)).sum::<f64>() / (e - s).max(1e-6);
+        if covered >= 0.5 {
+            assert!(e - s > 3.6, "clip {} ({:.2}s, {:.0}% b-roll covered) was split by job 2 even though b-roll already hides it: {r}", c["clip_id"], e - s, covered * 100.0);
+        }
+    }
+}
+
 /// With no broll_asset_ids at all, every dialogue clip is visible, so punch-ins should still have >=2
 /// candidates and actually alternate -- the covered-clip exclusion must not also eat the normal case.
 #[test] fn punch_ins_still_apply_with_no_broll() {
@@ -389,23 +415,30 @@ fn proj() -> Session { let mut ss = Session::new(); call(&mut ss, "project_set",
 }
 
 
-/// V8.2V job 2: a single long uncut talking-head take (no internal pause for rough_cut/tighten_pauses to
-/// split on) must still end up broken into pieces no longer than punch_max_static, so add_punch_ins has
-/// real wide/tight variation to alternate -- the actual "never static past ~4-5s" promise, not just a
-/// single clip sitting there the whole time.
+/// V8.2V job 2 / V8.5.6: a single long uncut talking-head take (no internal pause for rough_cut/
+/// tighten_pauses to split on) must still end up broken into pieces no longer than punch_max_static, so
+/// add_punch_ins has real wide/tight variation to alternate -- the actual "never static past ~3-4s" promise
+/// (tightened from ~4-5s in 8.5.6: a montage review found a 7.1s stretch that read as static even with the
+/// old 4.5s/eased default), not just a single clip sitting there the whole time. Also checks that the
+/// resulting pieces actually alternate wide/punched (not just "at least one punched somewhere") and that the
+/// punch itself is a hard cut (ease 0), per the review's "cut-on-phrase, not a soft push" ask.
 #[test] fn job2_splits_a_long_uncut_dialogue_take_for_punch_ins() {
     let mut ss = proj();
     let a = sid(&call(&mut ss, "import_media", json!({"path": talk("longtake_th.mp4", &[(0.0, 10.0)], 0.0)})), "asset_id");
     let r = call(&mut ss, "auto_edit", json!({"talking_head_asset_ids": [a], "captions": false, "grade": false, "push_in": false, "broll_color_match": false, "end_screen": false, "pacing": false}));
     assert!(r["ok"] == json!(true), "{r}");
     let pin = r["stages"]["punch_ins"]["clips"].as_array().unwrap_or_else(|| panic!("punch_ins stage missing for a 10s single take: {r}"));
-    assert!(pin.len() >= 2, "a 10s single take should have been split into multiple pieces for punch-ins, got {}: {r}", pin.len());
+    assert!(pin.len() >= 3, "a 10s single take at the new ~3.5s cap should split into at least 3 pieces for punch-ins, got {}: {r}", pin.len());
     for cp in pin {
         let cid = sid(cp, "clip_id");
         let c = ss.project.find_clip(&cid).unwrap();
-        assert!(c.duration <= 4.5 + 1e-6, "clip {cid} is {:.2}s, should never exceed punch_max_static (4.5s default): {r}", c.duration);
+        assert!(c.duration <= 3.6, "clip {cid} is {:.2}s, should never exceed the ~3.5s punch_max_static default (8.5.6): {r}", c.duration);
     }
-    assert!(pin.iter().any(|c| c["punched"] == json!(true)), "expected at least one punched segment among the split pieces: {r}");
+    let flags: Vec<bool> = pin.iter().map(|c| c["punched"] == json!(true)).collect();
+    assert!(flags.iter().any(|&p| p), "expected at least one punched segment among the split pieces: {r}");
+    assert!(flags.iter().any(|&p| !p), "expected at least one wide segment too -- a real alternation, not every piece punched: {r}");
+    assert!(flags.windows(2).any(|w| w[0] != w[1]), "expected the punched flag to actually alternate somewhere along the split pieces: {flags:?}: {r}");
+    assert_eq!(r["stages"]["punch_ins"]["ease"], json!(0.0), "8.5.6: the talking-head punch should be a hard cut (ease 0), not an eased push-in: {r}");
 }
 
 /// punch_max_static is a real, respected knob: set high enough, a short single take is left exactly as
@@ -476,4 +509,119 @@ fn proj() -> Session { let mut ss = Session::new(); call(&mut ss, "project_set",
     let broll_clip_id2 = sid(&r2["stages"]["broll"]["clips"][0], "clip_id");
     let c2 = ss2.project.find_clip(&broll_clip_id2).unwrap();
     assert!(c2.transition_in.is_none(), "broll_transitions:false should leave the clip with no transition: {r2}");
+}
+
+
+/// V8.5.5: the end-card background used to freeze on the literal last frame of the dialogue (often a
+/// mid-gesture, mouth-open frame) and blur it hard enough to go unreadable. This proves the freeze now
+/// grabs an earlier frame (about half a second before the clip's own end), the blur is gentler, and the
+/// clip is scaled up so a hard blur's edge falloff never shows a seam.
+#[test] fn end_screen_background_freezes_early_blurs_gently_and_scales_up() {
+    let mut ss = proj();
+    let a = sid(&call(&mut ss, "import_media", json!({"path": talk("esbg2.mp4", &[(0.0, 2.0)], 0.3)})), "asset_id");
+    let r = call(&mut ss, "auto_edit", json!({"talking_head_asset_ids": [a], "captions": false, "grade": false, "punch_ins": false}));
+    let dur = r["duration"].as_f64().unwrap();
+    let total = r["total_duration"].as_f64().unwrap();
+    let dialogue_last = ss.project.tracks.iter().flat_map(|t| t.clips.iter())
+        .filter(|c| matches!(c.source, Source::Media { .. }) && c.start < dur - 0.01)
+        .max_by(|x, y| (x.start + x.duration).partial_cmp(&(y.start + y.duration)).unwrap())
+        .cloned().expect("expected a dialogue clip before the end card");
+    let bg = ss.project.tracks.iter().flat_map(|t| t.clips.iter())
+        .find(|c| matches!(c.source, Source::Media { .. }) && c.start >= dur - 0.05 && c.start + c.duration >= total - 0.05)
+        .expect("expected a media background clip covering the end screen").clone();
+
+    let proj_fps = 30.0;
+    let literal_last = dialogue_last.in_point + dialogue_last.duration - 1.0 / proj_fps;
+    assert!(bg.in_point < literal_last - 0.2, "end-card freeze should grab an earlier frame than the literal last one; literal last {literal_last}, got in_point {}", bg.in_point);
+    assert!(bg.in_point >= dialogue_last.in_point - 1e-6, "freeze time should not go before the clip's own start: {} < {}", bg.in_point, dialogue_last.in_point);
+
+    let blur = bg.effects.iter().find(|e| e.kind == "blur").expect("expected a blur effect on the end-card background");
+    let radius = blur.params.get("radius").map(|p| p.base).unwrap_or(0.0);
+    assert!((4.5..=6.5).contains(&radius), "V8.5.8: blur radius should be lowered to about 5..6 so the subject stays recognisable, not mush, got {radius}");
+    assert!(radius < 9.0, "V8.5.8: backdrop sharpness should be above the old (8.5.5) radius-9 level -- a lower radius is a sharper image, got {radius}");
+
+    // V8.5.8: the backdrop is no longer a flat frozen scale -- it's a slow, eased Ken Burns push-in across
+    // the whole card. Sample the keyed `scale` prop at the start, middle and end (clip-local time): it must
+    // differ monotonically (a real push-in, not a stuck frame) and move smoothly (no frame-to-frame jump
+    // much bigger than the average step -- the "no jumps" requirement).
+    let scale_prop = bg.props.get("scale").expect("expected a scale prop on the end-card backdrop");
+    assert!(scale_prop.keys.len() >= 2, "expected the end-card backdrop's scale to be keyframed (a Ken Burns drift), got {} key(s)", scale_prop.keys.len());
+    let n = 20usize;
+    let samples: Vec<f64> = (0..=n).map(|i| scale_prop.raw(bg.duration * i as f64 / n as f64)).collect();
+    let (start, mid, end) = (samples[0], samples[n / 2], samples[n]);
+    assert!((1.06..=1.1).contains(&start), "backdrop should still start around 1.06..1.1 (END_CARD_BG_SCALE), got {start}");
+    assert!((1.12..=1.18).contains(&end), "backdrop should push in to about 1.14..1.16 by the card's end (END_CARD_BG_SCALE_END), got {end}");
+    assert!(end > mid && mid > start, "the push-in should be monotonic across start/middle/end: start {start}, mid {mid}, end {end}");
+    for w in samples.windows(2) { assert!(w[1] >= w[0] - 1e-9, "scale should never go backwards frame to frame: {w:?}"); }
+    let steps: Vec<f64> = samples.windows(2).map(|w| w[1] - w[0]).collect();
+    let avg_step = steps.iter().sum::<f64>() / steps.len() as f64;
+    for (i, s) in steps.iter().enumerate() {
+        assert!(*s < avg_step * 4.0 + 1e-6, "scale step {i} ({s}) is a much bigger jump than the average step ({avg_step}) -- the drift should read smooth and continuous, not jumpy");
+    }
+}
+
+/// V8.5.8: the subscribe_pop CTA badge (pill + dot + text) auto_edit builds for the end card used to come
+/// out at titles.rs's own design-time 1x size -- about 220px wide on a 1280-wide frame, too small to read
+/// as a confident call to action in a montage review. Proves the end card's own pill is now meaningfully
+/// bigger than the unscaled badge the same style/text would build on its own (roughly 1.3-1.5x), AND that
+/// the 8.5.5 dot-inside-pill geometry (dot clear of the pill's left edge, clear of the text by at least
+/// 0.7x the dot's own diameter) still holds at the new size -- the whole point of reusing dot_room/
+/// dot_x_for_pill at a scaled k instead of a naive uniform `scale` transform.
+#[test] fn end_card_pill_is_scaled_up_and_dot_gap_still_holds() {
+    // A real 1280-wide project (not the file's usual 640x360 helper) -- the brief's own "about 220px wide
+    // on 1280" / "roughly 300+ px wide on 1280" are both stated at this resolution, and at the file's usual
+    // tiny 640x360 test canvas the subscribe_pop text renders at ~10px, small enough that font-hinting
+    // rounding alone (not the real V8.5.8 scale factor) swings the measured ratio. 1280x720 is still 16:9
+    // like the file's own helper, so every other default (end_screen-on for platform none, etc.) matches.
+    let mut ss = Session::new(); call(&mut ss, "project_set", json!({"width": 1280, "height": 720, "fps": 30}));
+    let a = sid(&call(&mut ss, "import_media", json!({"path": talk("espill.mp4", &[(0.0, 2.0)], 0.3)})), "asset_id");
+    let r = call(&mut ss, "auto_edit", json!({"talking_head_asset_ids": [a], "captions": false, "grade": false, "punch_ins": false}));
+    let es = r["stages"]["end_screen"].clone();
+    let ids: Vec<String> = es["clip_ids"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
+    let (pill_id, dot_id, text_id) = (ids[0].clone(), ids[1].clone(), ids[2].clone()); // subscribe_pop pushes [pill, dot, text]
+
+    fn shape_w(ss: &Session, id: &str) -> f64 { match &ss.project.find_clip(id).unwrap().source { Source::Shape { width, .. } => *width, s => panic!("not a shape: {s:?}") } }
+    let pill_w = shape_w(&ss, &pill_id);
+    let dot_w = shape_w(&ss, &dot_id);
+
+    // Baseline: the exact same style/text built directly (unscaled k) on a fresh 1280x720 project, nothing
+    // else in common with the real end card other than the style/text/canvas -- the only variable is
+    // auto_edit's own V8.5.8 scale-up.
+    let mut base_ss = Session::new(); call(&mut base_ss, "project_set", json!({"width": 1280, "height": 720, "fps": 30}));
+    let bt = sid(&call(&mut base_ss, "add_track", json!({})), "track_id");
+    let base = call(&mut base_ss, "add_title", json!({"track_id": bt, "style": "subscribe_pop", "text": "SUBSCRIBE FOR MORE", "start": 0.0, "duration": 3.0}));
+    let base_pill_id = base["clip_ids"][0].as_str().unwrap().to_string();
+    let base_pill_w = shape_w(&base_ss, &base_pill_id);
+
+    // V8.5.8 sets a deliberate ~1.4x scale-up on the badge's own build (END_CARD_PILL_SCALE); the real end
+    // card then runs through auto_edit's own built-in review pass same as everything else in the edit, and
+    // lint_edit's pre-existing text_too_small fix (director_tools.rs, unrelated to this change, a safety
+    // net for ANY text under min(h,w)/18 px) can grow it further still if our scaled text is itself under
+    // that floor -- so the real, final measured ratio can run above the raw 1.3-1.5x build-time factor. The
+    // meaningful, stable claims are: it grew substantially over the unscaled badge, and it clears the
+    // "roughly 300+ px wide on 1280" bar the brief asked for.
+    let ratio = pill_w / base_pill_w;
+    assert!(ratio > 1.2, "V8.5.8: end-card pill should be meaningfully bigger than the unscaled badge, got ratio {ratio} ({pill_w}px vs {base_pill_w}px unscaled)");
+    assert!(pill_w >= 300.0, "V8.5.8: pill should be roughly 300+px wide on a 1280-wide frame, got {pill_w}px");
+
+    // dot-inside-pill geometry (8.5.5), unchanged by the scale-up: read actual rendered positions at
+    // mid-clip, same technique as subscribe_pop_dot_clears_the_text_after_the_pill_resize_fix (director_small.rs).
+    let cw = ss.project.width as f64;
+    let pill = ss.project.find_clip(&pill_id).unwrap();
+    let dot = ss.project.find_clip(&dot_id).unwrap();
+    let pill_x = kimo_core::render::resolve_xform(&ss.project, pill, pill.duration / 2.0).x;
+    let dot_x = kimo_core::render::resolve_xform(&ss.project, dot, dot.duration / 2.0).x;
+    let dot_left_pad = (dot_x - dot_w / 2.0) - (pill_x - pill_w / 2.0);
+    assert!(dot_left_pad > 0.0, "the dot must still sit INSIDE the pill after the scale-up, not floating outside it: left_pad {dot_left_pad}px");
+    let dot_right_clearance = (pill_x + pill_w / 2.0) - (dot_x + dot_w / 2.0);
+    assert!(dot_right_clearance > 0.0, "the dot must still not poke out the pill's right edge after the scale-up");
+
+    let dot_right_canvas = cw / 2.0 + dot_x + dot_w / 2.0;
+    let text_dur = ss.project.find_clip(&text_id).unwrap().duration;
+    let bounds = call(&mut ss, "compute_text_bounds", json!({"clip_id": text_id, "t": text_dur / 2.0}));
+    let rect = bounds["canvas_rect"].as_array().unwrap_or_else(|| panic!("no canvas_rect: {bounds}"));
+    let text_left_canvas = rect[0].as_f64().unwrap();
+    assert!(dot_right_canvas <= text_left_canvas + 0.5, "the dot (right edge at {dot_right_canvas}px) must sit clear, left of the text (starting at {text_left_canvas}px) after the scale-up");
+    let gap = text_left_canvas - dot_right_canvas;
+    assert!(gap >= 0.7 * dot_w, "V8.5.8: the dot-to-text gap must still be at least 0.7x the dot's own diameter ({dot_w}px) after the scale-up, got {gap}px");
 }

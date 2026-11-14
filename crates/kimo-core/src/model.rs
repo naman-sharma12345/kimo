@@ -174,6 +174,7 @@ fn ser_pan<S: serde::Serializer>(p: &Prop, s: S) -> Result<S::Ok, S::Error> {
 fn is_zero_f64(v: &f64) -> bool { *v == 0.0 }
 fn one_f64() -> f64 { 1.0 }
 fn is_one_f64(v: &f64) -> bool { *v == 1.0 }
+fn is_false(v: &bool) -> bool { !*v }
 impl Default for Audio { fn default() -> Self { Audio { lead: 0.0, tail: 0.0, effects: vec![], pan: Prop::new(0.0), duck_gain: Prop::new(1.0), mute: false, volume: Prop::new(1.0), fade_in: 0.0, fade_out: 0.0, pitch: 0.0, highpass: 0.0, lowpass: 0.0, denoise: 0.0, compress: false, echo: 0.0, reverse: false, speech_level: 0.0, compress_amount: 1.0 } } }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -239,6 +240,51 @@ pub struct Project {
     #[serde(default)] pub occluders: BTreeMap<String, OccSpec>,
     #[serde(default)] pub ocio_view_delivery: Option<crate::color::view_video::Selection>,
     #[serde(default)] pub color_pipeline: crate::color::pipeline::Pipeline,
+    /// V8.7.0: lightweight linear-light compositing option, independent of the full managed color_pipeline
+    /// above (ACEScg working space, 16-bit decode, HDR) -- that path measured ~3.4x slower on a real
+    /// auto_edit export (144.7s vs 42.4s at 720p, see CHANGELOG v8.7.0), far past the "doesn't tank speed"
+    /// bar, because it reroutes decode/effects/output through 16-bit float scene-linear end to end. This
+    /// flag instead linearizes only the actual alpha-composite step (render.rs's blend/blend_region, via a
+    /// small interpolated sRGB EOTF/OETF LUT) and nothing else -- decode, grading effects (auto_grade,
+    /// match_shot_look) and encode stay exactly as they are today, so this is both fast and leaves existing
+    /// grading math undisturbed. Also gates the lanczos clip-to-canvas fit and TPDF dithered output (the
+    /// audit's #4 and #6), the same switch for all three. Absent/false for every existing project file, so
+    /// old files and golden_frames.txt / recipe_frames.txt stay byte-identical.
+    #[serde(default, skip_serializing_if = "is_false")] pub linear_blend: bool,
+    /// V8.8.0: explicit x264 encoder preset for the legacy H.264 export (legacy_encoder_command). Absent
+    /// (None) keeps ffmpeg's own default ("medium"), so every existing project and golden stays byte-
+    /// identical -- this only changes final encoder settings, never a rendered pixel, so it does not
+    /// touch golden_frames.txt/recipe_frames.txt either way. Set by auto_edit as its own default (see
+    /// ext/auto_edit.rs), the same opt-in-for-auto_edit pattern as linear_blend above.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub x264_preset: Option<String>,
+    /// V8.8.1: when true, decode treats HD (>=720 lines) source footage that is mistagged or incompletely
+    /// tagged (an SD matrix such as bt470bg/smpte170m with no primaries/transfer at all) as bt709 instead
+    /// of trusting the lone incomplete tag -- the convention most NLEs use, and the audit's measured case
+    /// (talkinghead_real_final.mp4: bt470bg, no primaries/transfer, at 1280x720). False (default, every
+    /// existing project) decodes exactly as before: ffmpeg's swscale honours whatever is tagged. See
+    /// render.rs::color_tag_override and decode().
+    #[serde(default, skip_serializing_if = "is_false")] pub color_tag_sanity: bool,
+    /// V8.9.3 (quality audit #5): when true and a clip's native media fps is lower than the project fps
+    /// (e.g. a 24fps source in a 30fps project), decode uses ffmpeg's `minterpolate=mi_mode=blend` (a
+    /// cheap cross-dissolve of the two nearest source frames, no motion search) instead of the plain
+    /// `fps=` filter's frame duplication. Off by default: existing projects/goldens render byte-identical.
+    #[serde(default, skip_serializing_if = "is_false")] pub frame_blend_conform: bool,
+    /// V8.10.0 (quality audit #6): when true, auto_edit's own analysis pass measured at least one media
+    /// clip's sensor/compression noise above its flat-region threshold (noise_est.rs) and added a
+    /// proportional `denoise` + mild compensating `sharpen` effect to that clip only -- clean clips and
+    /// every text/solid/gradient clip are left with no effect added. This field is a provenance marker
+    /// (auto_edit sets it after deciding; render never reads it to change decode): the actual gate is the
+    /// per-clip effects list, which is empty for every clip when the feature finds nothing noisy or never
+    /// runs. False (default, every existing project) leaves every clip's effects list exactly as before.
+    #[serde(default, skip_serializing_if = "is_false")] pub adaptive_denoise: bool,
+    /// V8.11.0 (quality audit #7): when true, decode treats a media clip tagged HLG (arib-std-b67) or PQ
+    /// (smpte2084) -- or carrying bt2020 primaries with no recognizable SDR transfer tag, the common
+    /// phone-camera case when the transfer itself is missing -- by converting it to bt709 SDR with a
+    /// tonemap (zscale to scene-linear at the clip's own measured peak, gamut-map bt2020->bt709, `tonemap`
+    /// filter, re-encode bt709) instead of decoding the HLG/PQ-coded bytes as if they were ordinary
+    /// gamma-encoded bt709 (the untreated result: flat, grey, washed-out -- audit item #7). False (default,
+    /// every existing project) decodes exactly as before. See render.rs::hdr_source/estimate_hdr_peak.
+    #[serde(default, skip_serializing_if = "is_false")] pub hdr_tonemap: bool,
     #[serde(default)] pub camera: BTreeMap<String, crate::keyframe::Prop>,
     /// 3D compositor (comp3d.rs, set_3d_compositor): depth sorting, intersections, shadows, depth of field. None (absent from the
     /// file) or enabled = false renders exactly as before.
@@ -302,7 +348,7 @@ pub struct Project {
 
 impl Default for Project {
     fn default() -> Self {
-        Project { links: vec![], proxies: Default::default(), grade_scopes: Default::default(), lights: BTreeMap::new(), materials: BTreeMap::new(), editorial: Default::default(), ocio_view_delivery: None, occluders: BTreeMap::new(), color_pipeline: Default::default(), camera: BTreeMap::new(), comp3d: None, hooks: BTreeMap::new(), expr_scripts: vec![], name: "untitled".into(), width: 1280, height: 720, fps: 30.0, assets: BTreeMap::new(), bins: vec![], subclips: BTreeMap::new(), tracks: vec![], next_id: 1, markers: vec![], deps: None, templates: vec![], base_dir: None, master_speech_level: 0.0, master_speech_level_scope_end: 0.0 }
+        Project { links: vec![], proxies: Default::default(), grade_scopes: Default::default(), lights: BTreeMap::new(), materials: BTreeMap::new(), editorial: Default::default(), ocio_view_delivery: None, occluders: BTreeMap::new(), color_pipeline: Default::default(), linear_blend: false, x264_preset: None, color_tag_sanity: false, frame_blend_conform: false, adaptive_denoise: false, hdr_tonemap: false, camera: BTreeMap::new(), comp3d: None, hooks: BTreeMap::new(), expr_scripts: vec![], name: "untitled".into(), width: 1280, height: 720, fps: 30.0, assets: BTreeMap::new(), bins: vec![], subclips: BTreeMap::new(), tracks: vec![], next_id: 1, markers: vec![], deps: None, templates: vec![], base_dir: None, master_speech_level: 0.0, master_speech_level_scope_end: 0.0 }
     }
 }
 

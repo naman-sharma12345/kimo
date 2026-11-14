@@ -40,19 +40,35 @@ fn add_clip_place(ss: &mut Session, a: &Value, mode: Option<&str>, ripple_tracks
 
 pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
     vec![
-    Command { name: "project_set", description: "Set project canvas size and frame rate (and optional name).", mutates: true,
-        schema: obj(vec![("width", n("pixels")), ("height", n("pixels")), ("fps", n("frames per second")), ("name", s("project name"))], &[]),
+    Command { name: "project_set", description: "Set project canvas size and frame rate (name, linear quality option).", mutates: true,
+        schema: obj(vec![("width", n("pixels")), ("height", n("pixels")), ("fps", n("frames per second")), ("name", s("project name")),
+            ("linear_blend", json!({"type":"boolean"})),
+            ("x264_preset", json!({"type":"string"})),
+            ("color_tag_sanity", json!({"type":"boolean"})),
+            ("frame_blend_conform", json!({"type":"boolean"})),
+            ("adaptive_denoise", json!({"type":"boolean"})),
+            ("hdr_tonemap", json!({"type":"boolean"}))],
+            &[]),
         run: |ss, a| { let p = &mut ss.project;
             if let Some(v) = a.get("width").and_then(|v| v.as_u64()) { if !(16..=16384).contains(&v) { return Err(format!("width {v} out of range 16..16384")); } p.width = v as u32; }
             if let Some(v) = a.get("height").and_then(|v| v.as_u64()) { if !(16..=16384).contains(&v) { return Err(format!("height {v} out of range 16..16384")); } p.height = v as u32; }
             if let Some(v) = a.get("fps").and_then(|v| v.as_f64()) { if !(1.0..=480.0).contains(&v) { return Err(format!("fps {v} out of range 1..480")); } p.fps = v; }
             if let Some(v) = a.get("name").and_then(|v| v.as_str()) { p.name = v.into(); }
-            Ok(json!({"width":p.width,"height":p.height,"fps":p.fps})) } },
+            if let Some(v) = a.get("linear_blend").and_then(|v| v.as_bool()) { p.linear_blend = v; }
+            if let Some(v) = a.get("x264_preset") { match v { Value::Null => p.x264_preset = None, Value::String(s) => { const OK: [&str; 9] = ["ultrafast","superfast","veryfast","faster","fast","medium","slow","slower","veryslow"]; if !OK.contains(&s.as_str()) { return Err(format!("x264_preset must be one of {OK:?}, got '{s}'")); } p.x264_preset = Some(s.clone()); }, _ => return Err("x264_preset must be a string or null".into()) } }
+            if let Some(v) = a.get("color_tag_sanity").and_then(|v| v.as_bool()) { p.color_tag_sanity = v; }
+            if let Some(v) = a.get("frame_blend_conform").and_then(|v| v.as_bool()) { p.frame_blend_conform = v; }
+            if let Some(v) = a.get("adaptive_denoise").and_then(|v| v.as_bool()) { p.adaptive_denoise = v; }
+            if let Some(v) = a.get("hdr_tonemap").and_then(|v| v.as_bool()) { p.hdr_tonemap = v; }
+            Ok(json!({"width":p.width,"height":p.height,"fps":p.fps,"linear_blend":p.linear_blend,"x264_preset":p.x264_preset,"color_tag_sanity":p.color_tag_sanity,"frame_blend_conform":p.frame_blend_conform,"adaptive_denoise":p.adaptive_denoise,"hdr_tonemap":p.hdr_tonemap})) } },
     Command { name: "import_media", description: "Import a video file as an asset (probes size/duration). Returns asset id.", mutates: true,
         schema: obj(vec![("path", s("absolute path to media file"))], &["path"]),
         run: |ss, a| { let path = str_arg(a, "path")?; let (w, h, d, fps) = render::probe(path)?; render::check_importable(path)?;
             let id = ss.project.gen_id("asset"); ss.project.assets.insert(id.clone(), Asset { origin:None,hash:None,kind:None,id: id.clone(), path: path.into(), width: w, height: h, duration: d, fps, bin: None });
-            Ok(json!({"asset_id":id,"width":w,"height":h,"duration":d,"fps":fps})) } },
+            let mut out = json!({"asset_id":id,"width":w,"height":h,"duration":d,"fps":fps});
+            // heavy video: proxies build in the background (auto_proxy.rs); this call does not wait for them
+            if let Some(job) = crate::auto_proxy::on_import(&ss.project, &id) { out["proxy"] = job; }
+            Ok(out) } },
     Command { name: "add_track", description: "Add a track on top of the stack. Higher tracks composite over lower ones.", mutates: true,
         schema: obj(vec![], &[]),
         run: |ss, _| { let id = ss.project.gen_id("track"); ss.project.tracks.push(Track { id: id.clone(), clips: vec![], locked: false, muted: false, solo: false, name: String::new() }); Ok(json!({"track_id":id})) } },
@@ -95,6 +111,11 @@ pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
         run: |ss, a| { let c = clip(&mut ss.project, a)?; if let Source::Text { text, size, color: col, .. } = &mut c.source {
             if let Some(t) = a.get("text").and_then(|v| v.as_str()) { *text = t.replace("\\n", "\n"); } if let Some(v) = a.get("size").and_then(|v| v.as_f64()) { *size = v; }
             if a.get("color").is_some() { *col = color(a, "color", *col)?; } Ok(json!({"ok":true})) } else { Err("not a text clip".into()) } } },
+    Command { name: "set_shape_size", description: "Set a shape clip's own width and height in pixels. This is the shape's size field (rect/ellipse/polygon/line), independent of its animated scale -- not a Prop, so it has no keyframes of its own to fight. Use this to resize a box/pill that backs a text label (e.g. a subscribe_pop pill) after the text it hugs changes size, so the box keeps matching the rendered text bounds instead of staying the width it was first built for.", mutates: true,
+        schema: obj(vec![("clip_id", s("shape clip")), ("width", n("pixels")), ("height", n("pixels"))], &["clip_id"]),
+        run: |ss, a| { let c = clip(&mut ss.project, a)?; if let Source::Shape { width, height, .. } = &mut c.source {
+            if let Some(v) = a.get("width").and_then(|v| v.as_f64()) { *width = v; } if let Some(v) = a.get("height").and_then(|v| v.as_f64()) { *height = v; }
+            Ok(json!({"ok":true})) } else { Err("not a shape clip".into()) } } },
     Command { name: "set_mask", description: "Set a mask on a clip: shape rect|ellipse|linear, normalized cx,cy,w,h (0..1), feather (0..1), rotation (deg), invert. Mask params are keyframable via set_mask_keyframe.", mutates: true,
         schema: obj(vec![("clip_id", s("clip")), ("shape", json!({"type":"string","enum":["rect","ellipse","linear"]})), ("cx", n("0..1")), ("cy", n("0..1")), ("w", n("0..1")), ("h", n("0..1")), ("feather", n("0..1")), ("rotation", n("degrees")), ("invert", json!({"type":"boolean"}))], &["clip_id","shape"]),
         run: |ss, a| { let shape = str_arg(a, "shape")?.to_string(); let mut props = std::collections::BTreeMap::new();

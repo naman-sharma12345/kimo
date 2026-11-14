@@ -1,3 +1,34 @@
+New in v8.5.1: a look-library quality pass on real footage, not just technical correctness. 6 of the 9 looks read as barely-there on a phone screen at a glance (`ember_drift`, `chrome_bloom`, `dream_haze`, `vhs_decay`, `aurora_wash`, `glitch_surge`) -- each reworked and re-verified against real footage with `vfx_preview` before shipping (see CHANGELOG for the per-look before/after). `magic_sparkle` and `solar_flare` were visible but mild and are pushed further; `frost_veil` was already strong and is untouched. All 9 names, schemas and the `apply_vfx_preset` tool are unchanged -- this is graph/parameter work inside the existing look library, not a new surface.
+
+New in v8.5.0: a composable VFX node-graph engine (`vfx_graph` effect kind: `effect` nodes wrap any
+existing effect by name, `solid`/`gradient`/`shape` generators, `blend`, `mask_apply`, `mask_clip`,
+and a `particles` node that calls Kimo's existing deterministic emitter directly), `add_vfx_graph` /
+`vfx_graph_describe` / `vfx_preview` (a non-destructive 1-6-frame AI preview loop with cheap metrics),
+and a 9-name look library (`ember_drift`, `chrome_bloom`, `glitch_surge`, `dream_haze`, `frost_veil`,
+`magic_sparkle`, `vhs_decay`, `aurora_wash`, `solar_flare`) exposed through the existing
+`apply_vfx_preset` alongside V8.4's own 4. Honest limit stated in `vfx_graph_describe`: no frame-
+offset clip sampling anywhere in render.rs, so a graph's own "time" is `t` plus Prop's own expr ops,
+not true frame-offset sampling. `mask_clip_id` DOES carry a real `track_matte` result (verified
+directly) -- a duplicate of the matted clip with its own mask left un-cut rides it, which is how the
+hero shot's real edge-driven particle emission is wired. No voice/audio-leveling or caption work this
+pass (out of scope). Tools: 532 -> 535.
+
+New in v8.4.0: surreal VFX tools -- `droste_zoom` (Escher-style infinite recursive spiral tunnel,
+log-polar), `portal_mirror` (a solid circular doorway into a flipped, colour-inverted world),
+`add_vertigo_zoom` (the Hitchcock dolly-zoom, a pure keyframe wrapper over the existing
+`depth_parallax`), `subject_clone` (dimmer offset copies of a masked subject, new aux-clip effect
+kind reusing the same same-time-clip plumbing as `depth_parallax`/`lens_blur`), `melt_drip`
+(experimental wavy/jitter warp -- on real footage it reads as uneven jitter rather than a clean melt,
+not used by apply_vfx_preset -- distinct from the existing symmetric `turbulent_displace`), and
+`apply_vfx_preset` (one call for a named combo -- dreamy, glitch, vertigo, echo -- built entirely on
+these and existing effects, no new pixel math of its own). `slit_scan` was scoped but dropped: it
+needs sampling the same clip at many different times in one output frame, and the only "read another
+clip" hook in the renderer (depth_parallax/lens_blur/subject_clone's own aux-clip path) fetches it at
+the SAME instant, not a different one -- doing it for real needs new render-pipeline machinery, out of
+scope for this pass. `subject_clone` is spatial-offset only for the same reason (no cheap path to a
+true time-delayed clone). No voice/audio-leveling or caption work this pass (steered off); the
+talking-head path and its benchmark are untouched. Tools: 526 -> 532.
+
 # kimo features
 
 New in v8.3.0: montage mode for non-dialogue footage (travel, sports, pets, raw phone clips) --

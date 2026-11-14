@@ -54,16 +54,35 @@ pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
     Command { name: "trim_clip", description: "Set a clip's source in-point and/or duration.", mutates: true,
         schema: obj(vec![("clip_id", s("clip")), ("in_point", n("seconds")), ("duration", n("seconds"))], &["clip_id"]),
         run: |ss, a| { let ip = if a.get("in_point").map_or(false, |v| !v.is_null()) { Some(num_arg(a, "in_point")?) } else { None }; let du = if a.get("duration").map_or(false, |v| !v.is_null()) { Some(num_arg(a, "duration")?) } else { None }; if let Some(v) = ip { if !v.is_finite() || v < 0.0 { return Err("in_point must be a finite time >= 0".into()); } } if let Some(v) = du { if !v.is_finite() || v <= 0.0 || v > 1.0e6 { return Err("duration must be > 0 and at most 1e6 seconds".into()); } } let c = clip(&mut ss.project, a)?; if let Some(v) = ip { c.in_point = v; } if let Some(v) = du { c.duration = v; } Ok(json!({"in_point":c.in_point,"duration":c.duration})) } },
-    Command { name: "replace_clip_media", description: "Replace footage: swap a media clip's source asset. The clip keeps its position, duration, in_point (unless a new one is given), effects, keyframes, mask and every other property -- only which file it decodes changes. Only applies to a clip whose source is media (`source_type: \"media\"` on add_clip); use import_media first to get the new asset_id.", mutates: true,
-        schema: obj(vec![("clip_id", s("clip")), ("asset_id", s("the already-imported asset to point this clip at")), ("in_point", n("optional: new source in-point, seconds; omitted keeps the current in_point"))], &["clip_id","asset_id"]),
+    Command { name: "replace_clip_media", description: "Replace footage: swap a media clip's source asset. The clip keeps its position, duration, in_point (unless a new one is given), effects, keyframes, mask and every other property -- only which file it decodes changes. When the new file's length differs, the result says so (`length_note`); pass `length: \"match\"` to size the clip to the new file (from in_point to its end), or `length: \"keep\"` (default) to keep the clip's duration. Only applies to a clip whose source is media (`source_type: \"media\"` on add_clip); use import_media first to get the new asset_id.", mutates: true,
+        schema: obj(vec![("clip_id", s("clip")), ("asset_id", s("the already-imported asset to point this clip at")), ("in_point", n("optional: new source in-point, seconds; omitted keeps the current in_point")), ("length", s("keep (default: the clip keeps its duration) | match (the clip runs to the end of the new file)"))], &["clip_id","asset_id"]),
         run: |ss, a| { let new_asset = str_arg(a, "asset_id")?.to_string();
             if !ss.project.assets.contains_key(&new_asset) { return Err(format!("no such asset '{new_asset}'; import it first with import_media")); }
             let new_ip = if a.get("in_point").map_or(false, |v| !v.is_null()) { let v = num_arg(a, "in_point")?; if !v.is_finite() || v < 0.0 { return Err("in_point must be a finite time >= 0".into()); } Some(v) } else { None };
+            let mode = a.get("length").and_then(|v| v.as_str()).unwrap_or("keep").to_string();
+            if mode != "keep" && mode != "match" { return Err(format!("length must be keep or match, not {mode:?}")); }
+            let new_len = ss.project.assets.get(&new_asset).map(|x| x.duration).unwrap_or(0.0);
+            let old_len = match clip(&mut ss.project, a)?.source { Source::Media { ref asset } => asset.clone(), ref other => return Err(format!("replace_clip_media only applies to a media clip; this clip's source is {other:?}")) };
+            let old_len = ss.project.assets.get(&old_len).map(|x| x.duration).unwrap_or(0.0);
             let c = clip(&mut ss.project, a)?;
-            match &c.source { Source::Media { .. } => {}, other => return Err(format!("replace_clip_media only applies to a media clip; this clip's source is {other:?}")) }
             c.source = Source::Media { asset: new_asset.clone() };
             if let Some(v) = new_ip { c.in_point = v; }
-            Ok(json!({"clip_id": c.id, "asset_id": new_asset, "in_point": c.in_point, "duration": c.duration})) } },
+            let speed = if c.speed.is_finite() && c.speed > 0.0 { c.speed } else { 1.0 };
+            // what the new file can fill from in_point, in timeline seconds (0 = unknown length, e.g. a still)
+            let fits = if new_len > 0.0 { ((new_len - c.in_point) / speed).max(0.0) } else { 0.0 };
+            let before = c.duration;
+            if mode == "match" && fits > 0.0 { c.duration = fits; }
+            let mut out = json!({"clip_id": c.id, "asset_id": new_asset, "in_point": c.in_point, "duration": c.duration, "old_file_s": old_len, "new_file_s": new_len});
+            if new_len > 0.0 && (new_len - old_len).abs() > 0.5 / 30.0 {
+                out["length_note"] = json!(if mode == "match" {
+                    format!("the new file is {new_len:.2} s (the old one was {old_len:.2} s); the clip now runs {:.2} s (was {before:.2} s)", c.duration)
+                } else if fits + 1e-6 < c.duration {
+                    format!("the new file is {new_len:.2} s, shorter than this {:.2} s clip needs from in_point {:.2}: the last {:.2} s would have no picture. Call again with length: \"match\" to end the clip with the file", c.duration, c.in_point, c.duration - fits)
+                } else {
+                    format!("the new file is {new_len:.2} s (the old one was {old_len:.2} s); the clip kept its {:.2} s, so {:.2} s of the new file is not used. Call again with length: \"match\" to use all of it", c.duration, fits - c.duration)
+                });
+            }
+            Ok(out) } },
     Command { name: "split_clip", description: "Split a clip at a timeline time into two clips. Returns the new right-hand clip id.", mutates: true,
         schema: obj(vec![("clip_id", s("clip")), ("at", n("timeline seconds"))], &["clip_id","at"]),
         run: |ss, a| { let at = num_arg(a, "at")?; let id = str_arg(a, "clip_id")?.to_string(); let nid = ss.project.gen_id("clip");

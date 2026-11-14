@@ -1,6 +1,5 @@
 //! kimo: command-line front end over the same core dispatch as the MCP server (no second dispatch path).
 //! Exit codes: 0 ok, 1 tool error, 2 usage, 3 preflight failed. Results go to stdout, errors and progress to stderr.
-mod gui;
 use kimo_core::commands::{registry_ref, Session};
 use kimo_core::toolgroups;
 use serde_json::{json, Value};
@@ -18,7 +17,6 @@ const EXIT_PREFLIGHT: i32 = 3;
 const USAGE: &str = "usage: kimo [--json] [--quiet|-q] <command> ...
   call <tool> [--args '{...}'|-] [--project p.kimo] [--no-save]
   export <project.kimo> <out> [--preset name] [--range a:b | --start s --end e] [--crf n]
-  gui [--project p.kimo] [--port 4567] [--bind 127.0.0.1]
   preflight [--project p.kimo] [--args '{...}']
   validate [--project p.kimo] [--args '{...}']
   render-job <sub> [--project p.kimo] [--args '{...}']
@@ -152,14 +150,6 @@ fn run(p: Parsed, o: &Opts) -> Result<(i32, Value), Fail> {
                 Err(f) if cmd == "preflight" && f.body.get("code") == Some(&json!("preflight_failed")) => Err(Fail { code: EXIT_PREFLIGHT, body: f.body }),
                 Err(f) => Err(f),
             }
-        }
-        "gui" => {
-            if let Some(p) = &project { load(&ss, p, o)?; }
-            let bind = p.val("--bind").unwrap_or_else(|| "127.0.0.1".to_string());
-            let port: u16 = p.val("--port").map(|s| s.parse::<u16>().map_err(|_| usage_err("--port needs a number 0..65535"))).transpose()?.unwrap_or(4567);
-            progress(o, &format!("gui listening on http://{bind}:{port}"));
-            gui::serve(ss.clone(), &bind, port).map_err(|e| Fail { code: EXIT_TOOL, body: json!({"code":"io_error","message":format!("gui server: {e}")}) })?;
-            Ok((EXIT_OK, json!({"ok": true})))
         }
         "info" => Ok((EXIT_OK, call(&ss, "kimo_info", json!({}), None, false, o)?)),
         "tools" => match p.pos.get(1).map(|s| s.as_str()) {

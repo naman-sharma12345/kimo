@@ -1,36 +1,45 @@
 <div align="center">
 
-<a href="https://getkimo.tech"><img src="docs/assets/kimo-logo.png" alt="kimo" width="120"></a>
+<a href="https://getkimo.tech"><img src="docs/assets/kimo-logo.png" alt="kimo" width="128"></a>
 
 # kimo
 
 ### The video editor your AI drives.
 
-A headless Rust engine where every cut, keyframe, grade and export is an MCP tool call.<br>
-Plug it into Claude Code, Codex, Cursor or any MCP client and watch the edit happen live.
-
-<a href="https://getkimo.tech"><img alt="Website" src="https://img.shields.io/badge/getkimo.tech-FF5C28?style=for-the-badge&labelColor=0E0E12"></a>
-<a href="https://github.com/naman-sharma12345/kimo/releases/latest"><img alt="Download" src="https://img.shields.io/github/v/release/naman-sharma12345/kimo?style=for-the-badge&label=download&labelColor=0E0E12&color=F4F0E8"></a>
-<a href="#-connect-your-ai"><img alt="MCP" src="https://img.shields.io/badge/MCP-526%20tools-F4F0E8?style=for-the-badge&labelColor=0E0E12"></a>
-
-<a href="https://github.com/naman-sharma12345/kimo/actions/workflows/kimo-validation.yml"><img alt="CI" src="https://github.com/naman-sharma12345/kimo/actions/workflows/kimo-validation.yml/badge.svg"></a>
-<a href="https://github.com/naman-sharma12345/kimo/actions/workflows/release.yml"><img alt="release build" src="https://github.com/naman-sharma12345/kimo/actions/workflows/release.yml/badge.svg"></a>
-<a href="LICENSE"><img alt="license" src="https://img.shields.io/github/license/naman-sharma12345/kimo?labelColor=0E0E12&color=F4F0E8"></a>
-<img alt="Rust" src="https://img.shields.io/badge/built%20with-Rust-F4F0E8?labelColor=0E0E12&logo=rust&logoColor=white">
+A real desktop video editor with an engine where every cut, keyframe, grade and export is a tool call.<br>
+Bring Claude Code, Codex or Antigravity on the plan you already pay for, and watch every edit land on the timeline.
 
 <br>
 
-<a href="docs/media/kimo_brand_reveal.mp4"><img src="docs/media/kimo_brand_reveal.gif" alt="A brand reveal rendered entirely by kimo" width="520"></a>
+<a href="https://github.com/naman-sharma12345/kimo/releases/latest"><img alt="Download kimo" src="https://img.shields.io/badge/Download-kimo%209-FF5C28?style=for-the-badge&labelColor=0E0E12"></a>
+<a href="https://getkimo.tech"><img alt="getkimo.tech" src="https://img.shields.io/badge/getkimo.tech-F4F0E8?style=for-the-badge&labelColor=0E0E12"></a>
+<a href="#-connect-your-ai"><img alt="MCP tools" src="https://img.shields.io/badge/MCP-550%2B%20tools-F4F0E8?style=for-the-badge&labelColor=0E0E12"></a>
 
-<sub><b>Made with kimo.</b> A 33-second brand reveal, rendered by the engine from MCP tool calls. <a href="docs/media/kimo_brand_reveal.mp4">Watch with sound ▶</a></sub>
+<a href="https://github.com/naman-sharma12345/kimo/releases/latest"><img alt="latest release" src="https://img.shields.io/github/v/release/naman-sharma12345/kimo?labelColor=0E0E12&color=F4F0E8&label=release"></a>
+<a href="https://github.com/naman-sharma12345/kimo/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/naman-sharma12345/kimo/actions/workflows/ci.yml/badge.svg"></a>
+<a href="https://github.com/naman-sharma12345/kimo/actions/workflows/release.yml"><img alt="release build" src="https://github.com/naman-sharma12345/kimo/actions/workflows/release.yml/badge.svg"></a>
+<img alt="Windows and Linux" src="https://img.shields.io/badge/Windows%20%C2%B7%20Linux-F4F0E8?labelColor=0E0E12&logo=windows&logoColor=white">
+<img alt="Rust" src="https://img.shields.io/badge/built%20with-Rust-F4F0E8?labelColor=0E0E12&logo=rust&logoColor=white">
+<a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/naman-sharma12345/kimo?labelColor=0E0E12&color=F4F0E8"></a>
 
 <br><br>
 
-**[Quickstart](#-quickstart)** · **[Connect your AI](#-connect-your-ai)** · **[What it can do](#-what-it-can-do)** · **[Gallery](#-made-with-kimo)** · **[How it works](#-how-it-works)** · **[Docs](#-docs)**
+<a href="docs/media/kimo_brand_reveal.mp4"><img src="docs/media/kimo_brand_reveal.gif" alt="A brand reveal rendered entirely by kimo" width="560"></a>
+
+<sub><b>Made with kimo.</b> A 33-second brand reveal, rendered by the engine from tool calls an agent made. <a href="docs/media/kimo_brand_reveal.mp4">Watch with sound ▶</a></sub>
+
+<br><br>
+
+**[Download](#-get-kimo)** · **[What's new in 9](#-whats-new-in-kimo-9)** · **[Connect your AI](#-connect-your-ai)** · **[What it can do](#-what-it-can-do)** · **[Gallery](#-made-with-kimo)** · **[How it works](#-how-it-works)** · **[Docs](#-docs)**
 
 </div>
 
 <br>
+
+> **“Cut out the silences, add a title and captions, grade it warm, and export a 9:16 short.”**
+>
+> Type that into kimo's Agent tab. Your agent plans it, calls the engine tool by tool, and every change appears on the
+> timeline as it happens, each with its own Undo. Take over by hand at any moment: it is one project, one history.
 
 ## ✦ Why kimo
 
@@ -38,118 +47,134 @@ Plug it into Claude Code, Codex, Cursor or any MCP client and watch the edit hap
 <tr>
 <td width="33%" valign="top">
 
-**🤖 AI-native, not AI-bolted-on**
-
-kimo has no editing GUI. Every feature is a registered command, and the MCP tool list is generated from that same registry. If a human could do it, your agent can too.
-
-</td>
-<td width="33%" valign="top">
-
-**🎬 One engine, the whole stack**
-
-Editing, motion graphics, VFX, tracking, 3D and pro color: the surface of CapCut, After Effects, Premiere and Resolve, aimed at one engine.
+### 🤖 AI-native
+Every feature is a registered engine command, and the MCP tool list is generated from that same registry. Whatever you can do in the editor, your agent can do too, on the same project.
 
 </td>
 <td width="33%" valign="top">
 
-**👀 Watch it work**
+### 💳 Your plan, not ours
+kimo runs the official Claude Code, Codex or Antigravity CLI you are already signed in to. No new subscription, no API key needed, and kimo never sees your password or tokens.
 
-The Kimo Spectator app streams every tool call, the timeline and live preview frames while the agent edits. Read-only, out of band, zero setup.
+</td>
+<td width="33%" valign="top">
+
+### 👀 Watch every edit
+The Live view shows each agent action as it lands, who made it, what the engine thought of it, and a one-click Undo. Several agents can share the open project at once.
 
 </td>
 </tr>
 <tr>
 <td valign="top">
 
-**⚡ Small and fast**
-
-A CPU renderer tuned for a 2 GB machine. No GPU needed. Headless, so it runs on a laptop, a server or CI.
-
-</td>
-<td valign="top">
-
-**📏 Measured, not claimed**
-
-Every "better than X" line in [FEATURES.md](FEATURES.md) has a stated baseline and a measured number, losses included. Tiers are honest: solid, beta or not built.
+### 🎬 The whole stack
+Editing, motion graphics, text and captions, VFX, tracking, 3D and pro color: the reach of CapCut, Premiere, After Effects and Resolve, in one engine.
 
 </td>
 <td valign="top">
 
-**🔓 Open source, MIT**
+### ⚡ Runs anywhere
+A CPU renderer tuned for a 2 GB machine, no GPU needed. The same engine runs headless on a laptop, a server or in CI.
 
-Free to use, fork and ship. Linux and Windows builds on every release.
+</td>
+<td valign="top">
+
+### 📏 Measured, not claimed
+Every "better than X" line in [FEATURES.md](FEATURES.md) has a stated baseline and a measured number, losses included. Open source under MIT.
 
 </td>
 </tr>
 </table>
 
-## ✦ What's new in v8
+## ✦ What's new in kimo 9
 
+kimo 9 is the first release where **the desktop app is the product**: one download with the editor, the engine and your agents in one window.
+
+<table>
+<tr><td width="50%" valign="top">
+
+#### The app
+- 🎞️ **A real editor.** Media bin with drag-and-drop, viewer, inspector, a timeline with move, trim, split, snap and markers, and export with progress.
+- ▶️ **Real-time preview with sound.** Plays ahead of the playhead with synced audio. J/K/L shuttle, loop and full screen.
+- 🐢➡️⚡ **Background proxies.** Heavy 4K or long-GOP imports return at once; light edit proxies build in the background.
+- 🧠 **Your agents, your plan.** Claude Code, Codex and Antigravity with model and effort pickers, streamed steps, Stop and resume.
+
+</td><td width="50%" valign="top">
+
+#### The engine
+- 👁️ **Engine eyes.** Every edit is observed: before and after frames, measured, and judged by critics (black gaps, unreadable text, jitter, clipped highlights), each finding with its fix.
+- 🧩 **Asset creation.** SVGs as animatable layers, CSV-driven animated charts, a searchable library of openly licensed icons and figures, Indian number grouping (1,00,000).
+- 🪟 **Windows-solid.** Long exports, code clips and audio on hour-long edits fixed on Windows; an untouched clip exports by stream copy in seconds.
+
+</td></tr>
+</table>
+
+#### Safe by design
 | | |
 |---|---|
-| 🎵 **End-card music** | The bed keeps playing, and swells, once dialogue ends instead of cutting to silence over a frozen frame |
-| 🎨 **`match_shot_look`** | B-roll auto-matched to the talking head's colour and exposure, so cutaways read as one shoot |
-| 🗣️ **Scoped speech levelling** | Loudness levelling now stays inside the dialogue span, leaving the end card's music untouched |
-| 🔎 **Auto push-ins** | Slow Ken Burns push-ins on static b-roll cutaways |
-| ✂️ **Smarter punch-ins** | A long uncut dialogue take now forces a punch-in split so pacing never goes dead |
-| 💬 **Face-aware captions** | Captions move off the bottom band when a face sits there |
-| 🌀 **B-roll whip transitions** | A short zoom-blur whip into every b-roll cutaway |
-| 🎬 **Montage mode** *(new)* | `best_segments` drops the blurry/dark/shaky footage, `beat_sync_montage` cuts on the beat with shot length that varies with the music's energy and ends on a phrase-aligned fade, `montage_color_match` keeps every clip's colour consistent — for footage with no talking at all |
+| 💾 **Autosave and crash recovery** | Your project is saved in the background. After a crash, kimo offers it back on the next start, **with its undo history**, so Ctrl+Z still works. |
+| 🔄 **Signed in-app updates** | kimo checks GitHub releases and shows *Update to x.y.z*. Nothing installs until you click; every update is verified against kimo's signing key first. |
+| 🩹 **Opt-in crash reports** | A crash writes a log on your computer. Next time kimo asks whether to send it, and you review and submit it yourself. Nothing is sent otherwise. |
 
-Full list in [CHANGELOG.md](CHANGELOG.md).
+Full list in [CHANGELOG.md](CHANGELOG.md). Details: [updates and crash reports](docs/UPDATES_AND_CRASH_REPORTS.md).
 
-## ✦ Quickstart
+## ✦ Get kimo
 
-**1. Download** the engine from the [latest release](https://github.com/naman-sharma12345/kimo/releases/latest), or build it:
+**1. Download kimo 9** from the [latest release](https://github.com/naman-sharma12345/kimo/releases/latest) or [getkimo.tech](https://getkimo.tech):
 
-```bash
-git clone https://github.com/naman-sharma12345/kimo.git && cd kimo
-cargo build --release --workspace --bins      # 2 GB box? add CARGO_BUILD_JOBS=1
-```
+| System | File |
+|---|---|
+| 🪟 Windows 10/11 (64-bit) | **`kimo-setup-windows-x64.exe`** |
+| 🐧 Linux x86_64 | **`kimo-linux-x86_64.AppImage`** or **`kimo-linux-amd64.deb`** |
 
-**2. Add it to your AI client:**
+One app: a video editor with the kimo engine inside. Media bin, viewer, timeline, inspector and export, plus an **Agent** tab and a **Live** view.
 
-```bash
-claude mcp add --transport stdio kimo -- /path/to/kimo-mcp
-```
+**2. Pick your agent, on the plan you already have.** No API key needed: kimo runs the official CLI you are signed in to.
 
-**3. Ask for an edit:**
+| Agent | Plan | Install once |
+|---|---|---|
+| Claude Code | Claude Pro or Max | `npm install -g @anthropic-ai/claude-code` |
+| Codex | ChatGPT Plus, Pro, Business or Enterprise | `npm install -g @openai/codex` |
+| Antigravity | Google account | [antigravity.google/download](https://antigravity.google/download) |
 
-> *"Use kimo to import ~/clip.mp4, cut out the silences, add a title and captions, and export a 9:16 short."*
+The **Connections** tab finds them, shows whether each is signed in, and opens the CLI's own sign-in in a terminal when it is not. kimo never sees your password or tokens. An API key (OpenAI, Anthropic, Gemini, OpenRouter, Groq or any OpenAI-compatible server) still works for people without a plan.
 
-You'll need `ffmpeg` and `ffprobe` on your `PATH`. Optional: open the **Kimo Spectator** app to watch the edit live.
+**3. Ask for an edit** in the Agent tab, or in the bar under the viewer:
+
+> *"Cut out the silences, add a title and captions, and export a 9:16 short."*
+
+Every step streams into the chat, every change lands on the timeline as it happens, and each one gets its own Undo.
+
+**Your own terminal or IDE too.** Press *Add kimo to Claude Code / Codex / Antigravity* in Connections (or point any MCP app at `kimo-gui mcp`). While the app is open, those sessions join the project you are looking at; when it is closed they get their own engine.
+
+kimo needs FFmpeg; it uses the copy already on your computer, or offers to download it on first start.
 
 <details>
-<summary><b>📦 Release downloads (Linux & Windows)</b></summary>
+<summary><b>📦 Release files and checksums</b></summary>
 
 <br>
 
-Installers are built by the [release workflow](.github/workflows/release.yml) on GitHub-hosted runners, with a `SHA256SUMS` file. The builds are **unsigned**. macOS is coming later.
+Installers are built by the [release workflow](.github/workflows/release.yml) on GitHub-hosted runners, with a `SHA256SUMS` file. CI installs each one, starts it, checks that the engine runs and that an agent can attach to the open app, then uninstalls it. Installers carry an updater signature (`.sig`) that the app checks before installing an update; they are not yet Authenticode code-signed on Windows. macOS is coming later.
 
 | | Linux x86_64 | Windows x64 |
 |---|---|---|
-| **Engine (CLI + MCP server)** | `kimo-v8.3.0-linux-x86_64-glibc.tar.gz` (glibc 2.35+) | `kimo-8.3.0-windows-x86_64-setup.exe` or `.zip` |
-| **Spectator app** | `Kimo-Spectator_8.3.0_amd64.deb` or `.AppImage` | `Kimo-Spectator_8.3.0_x64_en-US.msi` |
-
-Check every download against the release's [`SHA256SUMS`](https://github.com/naman-sharma12345/kimo/releases/tag/v8.3.0):
+| **kimo app (editor + engine)** | `kimo-linux-x86_64.AppImage`, `kimo-linux-amd64.deb` | `kimo-setup-windows-x64.exe` |
+| Engine only (CLI + MCP server) | `kimo-v<version>-linux-x86_64-glibc.tar.gz` | `kimo-<version>-windows-x86_64-setup.exe` or `.zip` |
 
 ```bash
 sha256sum -c SHA256SUMS --ignore-missing                                   # Linux
-Get-FileHash .\Kimo-Spectator_8.3.0_x64_en-US.msi -Algorithm SHA256        # Windows PowerShell
+Get-FileHash .\kimo-setup-windows-x64.exe -Algorithm SHA256                # Windows PowerShell
 ```
 
 **Linux**
 
 ```bash
-sudo apt install ./Kimo-Spectator_8.3.0_amd64.deb      # remove with: sudo apt remove kimo-spectator
+sudo apt install ./kimo-linux-amd64.deb        # remove with: sudo apt remove kimo
 # or, no install:
-chmod +x Kimo-Spectator_8.3.0_amd64.AppImage
-./Kimo-Spectator_8.3.0_amd64.AppImage                  # no FUSE? add --appimage-extract-and-run
+chmod +x kimo-linux-x86_64.AppImage && ./kimo-linux-x86_64.AppImage   # no FUSE? add --appimage-extract-and-run
 ```
 
-**Windows.** Run the `.msi`. SmartScreen says "Windows protected your PC": click **More info**, then **Run anyway**. It uses Microsoft Edge WebView2 (already on Windows 11). The engine installer goes per user, no admin, into `%LOCALAPPDATA%\Programs\kimo\bin\kimo-mcp.exe`. See the [Windows guide](packaging/windows/WINDOWS.md).
-
-Status: the Linux `.deb` and AppImage were smoke-tested on Debian 12; Windows packages are installed, launched and uninstalled by CI on a GitHub Windows runner but not yet on a real Windows PC.
+**Windows.** Run `kimo-setup-windows-x64.exe` (per user, no admin). SmartScreen says "Windows protected your PC": click **More info**, then **Run anyway**. It uses Microsoft Edge WebView2 (already on Windows 11).
 
 </details>
 
@@ -229,25 +254,29 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | target/relea
 
 The check prints `"serverInfo":{"commit":"...","name":"kimo",...,"version":"..."}`. `--demo-pace-ms <50..100>` sets the demo pace; `KIMO_TOOLS` picks the tool list profile.
 
-#### 4. Build the spectator app (optional)
+#### 4. Build the kimo app
 
-The spectator is its own Cargo workspace in `crates/kimo-gui`. Build it with the Tauri CLI; `npx` fetches it, no global install needed:
+The app is its own Cargo workspace in `crates/kimo-gui`. For a quick run from the checkout (it finds the engine in `target/release` and the fonts in `fonts/`):
 
 ```
 cd crates/kimo-gui
-npx --yes @tauri-apps/cli@2.12.3 build --bundles deb,appimage     # Linux
-npx --yes @tauri-apps/cli@2.12.3 build --bundles msi              # Windows
-npx --yes @tauri-apps/cli@2.12.3 build --bundles app              # macOS (untested): Kimo Spectator.app
+cargo build --release --features custom-protocol
+./target/release/kimo-gui
 ```
 
-The installers land in `crates/kimo-gui/target/release/bundle/`. With Rust only, `cargo install tauri-cli --version 2.12.3 --locked` then `cargo tauri build` is the same CLI.
-
-Then start the spectator first and the engine second:
+Installers, with the engine inside as a sidecar and the fonts as resources (what the release workflow does):
 
 ```
-./target/release/kimo-gui &                                          # from crates/kimo-gui; listens on the first free port of 127.0.0.1:7421-7430
-../../target/release/kimo-mcp                                        # every tool call now shows up live (no KIMO_SPECTATOR needed)
+cargo build --release -p kimo-mcp && bash fonts/fetch.sh             # from the repo root
+mkdir -p crates/kimo-gui/binaries
+cp target/release/kimo-mcp crates/kimo-gui/binaries/kimo-mcp-$(rustc -vV | sed -n 's/host: //p')
+cd crates/kimo-gui
+echo '{"bundle":{"externalBin":["binaries/kimo-mcp"],"resources":{"../../fonts/":"fonts/"}}}' > tauri.release.json
+npx --yes @tauri-apps/cli@2.12.3 build --bundles nsis --config tauri.release.json            # Windows
+npx --yes @tauri-apps/cli@2.12.3 build --bundles deb,appimage --config tauri.release.json    # Linux
 ```
+
+The installers land in `crates/kimo-gui/target/release/bundle/`.
 
 #### 5. Connect a client
 
@@ -397,7 +426,7 @@ Put this in `opencode.json` in your project, or in `~/.config/opencode/opencode.
 #### Any other MCP client
 kimo is a standard MCP stdio server (protocol 2024-11-05, `initialize`, `tools/list`, `tools/call`). Any client that can register a stdio server by command works: give it the absolute path to `kimo-mcp` and no arguments. Many clients use the `mcpServers` JSON shape shown for Cursor; some (for example Zed) use a different key, so check your client's MCP docs for the exact file and format. Only the four clients above were checked against their docs.
 
-Windows: use the path to `kimo-mcp.exe` (the Windows engine installer `kimo-8.3.0-windows-x86_64-setup.exe` installs per user, no admin rights, into `%LOCALAPPDATA%\Programs\kimo` by default, so the binary is `%LOCALAPPDATA%\Programs\kimo\bin\kimo-mcp.exe` ([kimo.iss](packaging/windows/kimo.iss)); in JSON write backslashes doubled, see the [Windows guide](packaging/windows/WINDOWS.md)). The configs above are the same except for the path; the Claude Code, Codex, Cursor and OpenCode formats were checked on their docs, not tested on Windows here.
+Windows: use the path to `kimo-mcp.exe` (the Windows engine installer `kimo-6.0.0-windows-x86_64-setup.exe` installs per user, no admin rights, into `%LOCALAPPDATA%\Programs\kimo` by default, so the binary is `%LOCALAPPDATA%\Programs\kimo\bin\kimo-mcp.exe` ([kimo.iss](packaging/windows/kimo.iss)); in JSON write backslashes doubled, see the [Windows guide](packaging/windows/WINDOWS.md)). The configs above are the same except for the path; the Claude Code, Codex, Cursor and OpenCode formats were checked on their docs, not tested on Windows here.
 
 **3. Try it.** Ask your assistant: "Use kimo to import /path/to/clip.mp4, add a title, and render a frame." Or drive it yourself with the Python client in `examples/mcp_client.py`.
 
@@ -426,7 +455,7 @@ Set it like this: `claude mcp add --transport stdio --env KIMO_TOOLS=core kimo -
 
 ## ✦ What it can do
 
-526 registered tools sit in 14 groups. 438 are live in the default build; 16 more are feature-gated (OCIO, mesh import) and answer with a clear refusal until built in.
+**452 tools in 14 groups.** 438 are live in the default build; 16 more are feature-gated (OCIO, mesh import) and answer with a clear refusal until built in.
 
 | Area | Groups | Examples |
 |---|---|---|
@@ -509,7 +538,7 @@ flowchart LR
         reg --> core --> prev
     end
     ff[("ffmpeg / ffprobe")]
-    gui["Kimo Spectator (kimo-gui)<br/>read-only, never calls render_frame"]
+    gui["kimo app (kimo-gui)<br/>editor + agents, owns the engine"]
     agent -- "JSON-RPC over stdio<br/>tools/call is the only way to edit" --> reg
     core <-- "decode / encode / probe" --> ff
     engine -. "telemetry JSONL on 127.0.0.1:7421<br/>call events, frame_rendered, frame_skipped" .-> gui
@@ -517,7 +546,7 @@ flowchart LR
 
 - **Headless engine.** `crates/kimo-core` holds the project model, keyframes, the command registry, tool groups, the CPU renderer, effects, text, audio, tracking and color. `crates/kimo-mcp` is the MCP stdio server; `kimo` (`crates/kimo-cli`) is a command line client for the same tools. Decode, encode and probing go through `ffmpeg` and `ffprobe`. The renderer is CPU only; GPU code is off by default.
 - **Edits only through MCP tool calls.** Add a tool to the registry and it appears in the MCP server, the CLI, the fuzz test and the schema. There is no side door.
-- **The GUI is a pure telemetry spectator.** `crates/kimo-gui` (a Tauri app, its own Cargo workspace) registers zero IPC commands and only listens on loopback. It shows each call, the timeline and the preview frames the engine pushes. It never calls `render_frame` and has no code path back to the engine. Close it and the engine carries on; open it mid-session and it catches up.
+- **The app owns the engine, and every agent shares it.** `crates/kimo-gui` (a Tauri app, its own Cargo workspace) launches kimo-mcp as a sidecar and opens a loopback bridge. `kimo-gui mcp`, which Claude Code, Codex and Antigravity launch, attaches to that bridge while the app is open, so you, the agents you run from the Agent tab and the agents in your own terminal all edit one project with one undo history. Every call is tagged with who made it (Live tab) and every change gets an Undo card. With the app closed, `kimo-gui mcp` runs a standalone engine exactly like `kimo-mcp`.
 
 More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/EXTENDING.md](docs/EXTENDING.md), [crates/kimo-gui/README.md](crates/kimo-gui/README.md). An agent editing phone footage into a 9:16 short, call by call: [docs/DIRECTOR_QUICKSTART.md](docs/DIRECTOR_QUICKSTART.md).
 
@@ -609,6 +638,8 @@ and carry no reason. Details: `crates/kimo-mcp/src/preview.rs` ("Headless skips"
 | 🎞️ [Director quickstart](docs/DIRECTOR_QUICKSTART.md) | An agent cutting phone footage into a 9:16 short, call by call |
 | ✂️ [Transcript editing](docs/TRANSCRIPT_EDITING.md) | Edit video by editing words |
 | 🪶 [Preview proxies](docs/PROXY_WORKFLOW.md) | Lighter editing media, original-quality exports |
+| 🔄 [Updates and crash reports](docs/UPDATES_AND_CRASH_REPORTS.md) | Signed in-app updates, opt-in crash reports, crash recovery with Undo |
+| 🧪 [Testing](docs/TESTING.md) | The test suites and what CI runs |
 | 🏷️ [Feature tiers](FEATURES.md) | What's solid, beta and not built |
 | 🗺️ [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) · [Dev notes](docs/DEV_NOTES.md) | Where it's going and what changed |
 

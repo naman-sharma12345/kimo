@@ -1,3 +1,5 @@
+// Unix-only: fakes the encoder with shell-script shims and kills process groups with kill -9.
+#![cfg(unix)]
 //! RV-20 (e): classified failures. A fake `ffmpeg` first on PATH fails the encode of chunk 1 (then chunk 2 with a disk-full message); the job fails with a
 //! classified error, keeps the finished chunk and its index entry, and resume_job completes once the fault is gone. One test: it owns PATH.
 use kimo_core::commands::{dispatch, Session};
