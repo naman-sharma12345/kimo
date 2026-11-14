@@ -1,3 +1,36 @@
+## v9.0.0 "the app" (2026-11-14)
+
+kimo 9 makes the desktop app the main download: the editor, the engine and your agents in one window, on Windows and
+Linux.
+
+**The app (`crates/kimo-gui`)**
+- A real editor: media bin with drag-and-drop import and thumbnails, viewer, inspector, timeline (move, trim, split,
+  snap, zoom, markers), export with progress. Opens `.kimo` files; one instance per user.
+- Agents on your own plan: Claude Code, Codex and Antigravity run through their official CLIs, with model and effort
+  pickers, streamed steps, Stop and session resume. An API key still works. `kimo-gui mcp` lets agents in your own
+  terminal join the open project.
+- Live view and Changes: every engine call is tagged with who made it; every edit gets an Undo card.
+- Real-time preview with sound: renders ahead of the playhead with synced audio (audio clock is the master); J/K/L,
+  loop, full screen.
+- Automatic background proxies for heavy imports (6 MP+ frames, 10 min+, long GOP): imports return at once.
+- Tools already on the computer (FFmpeg, Whisper, agent CLIs) are found and used, never downloaded again.
+- Autosave and crash recovery, now with undo history: after a restore, Ctrl+Z undoes the edits made before the crash.
+- Signed in-app updates from GitHub releases (checked in release builds; installed only on your click).
+- Opt-in crash reports: a local crash log, and a prompt on the next launch; nothing is sent without your consent.
+
+**The engine**
+- Engine eyes: every edit is observed (before/after frames, measurements, critics with severity and fix), `expect`
+  assertions roll back failing edits, plus `look`, `watch`, `compare` and an optional on-device vision detector.
+- Asset creation: SVG import as animatable layers, CSV-driven animated charts, a bundled openly licensed asset library,
+  Indian digit grouping.
+- `load_project` gains `restore` (with `with_history`): the load is not an extra undo step.
+- Windows fixes for long exports, code clips and hour-long audio; untouched single-clip exports are stream-copied.
+
+**Releases and CI**
+- Installers under stable names (`kimo-setup-windows-x64.exe`, `kimo-linux-x86_64.AppImage`, `kimo-linux-amd64.deb`),
+  smoke-tested by CI; updater signatures and `latest.json` when the signing key is configured.
+- Everyday CI runs the engine and app tests on Windows and Linux.
+
 ## v8.12.1 "face avoidance targets the face" (2026-11-03)
 
 Fixes a real defect in V8.12.0's caption engine: face/subject avoidance was moving captions off the

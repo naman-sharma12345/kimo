@@ -1,36 +1,45 @@
 <div align="center">
 
-<a href="https://getkimo.tech"><img src="docs/assets/kimo-logo.png" alt="kimo" width="120"></a>
+<a href="https://getkimo.tech"><img src="docs/assets/kimo-logo.png" alt="kimo" width="128"></a>
 
 # kimo
 
 ### The video editor your AI drives.
 
-A headless Rust engine where every cut, keyframe, grade and export is an MCP tool call.<br>
-Plug it into Claude Code, Codex, Cursor or any MCP client and watch the edit happen live.
-
-<a href="https://getkimo.tech"><img alt="Website" src="https://img.shields.io/badge/getkimo.tech-FF5C28?style=for-the-badge&labelColor=0E0E12"></a>
-<a href="https://github.com/naman-sharma12345/kimo/releases/latest"><img alt="Download" src="https://img.shields.io/github/v/release/naman-sharma12345/kimo?style=for-the-badge&label=download&labelColor=0E0E12&color=F4F0E8"></a>
-<a href="#-connect-your-ai"><img alt="MCP" src="https://img.shields.io/badge/MCP-452%20tools-F4F0E8?style=for-the-badge&labelColor=0E0E12"></a>
-
-<a href="https://github.com/naman-sharma12345/kimo/actions/workflows/kimo-validation.yml"><img alt="CI" src="https://github.com/naman-sharma12345/kimo/actions/workflows/kimo-validation.yml/badge.svg"></a>
-<a href="https://github.com/naman-sharma12345/kimo/actions/workflows/release.yml"><img alt="release build" src="https://github.com/naman-sharma12345/kimo/actions/workflows/release.yml/badge.svg"></a>
-<a href="LICENSE"><img alt="license" src="https://img.shields.io/github/license/naman-sharma12345/kimo?labelColor=0E0E12&color=F4F0E8"></a>
-<img alt="Rust" src="https://img.shields.io/badge/built%20with-Rust-F4F0E8?labelColor=0E0E12&logo=rust&logoColor=white">
+A real desktop video editor with an engine where every cut, keyframe, grade and export is a tool call.<br>
+Bring Claude Code, Codex or Antigravity on the plan you already pay for, and watch every edit land on the timeline.
 
 <br>
 
-<a href="docs/media/kimo_brand_reveal.mp4"><img src="docs/media/kimo_brand_reveal.gif" alt="A brand reveal rendered entirely by kimo" width="520"></a>
+<a href="https://github.com/naman-sharma12345/kimo/releases/latest"><img alt="Download kimo" src="https://img.shields.io/badge/Download-kimo%209-FF5C28?style=for-the-badge&labelColor=0E0E12"></a>
+<a href="https://getkimo.tech"><img alt="getkimo.tech" src="https://img.shields.io/badge/getkimo.tech-F4F0E8?style=for-the-badge&labelColor=0E0E12"></a>
+<a href="#-connect-your-ai"><img alt="MCP tools" src="https://img.shields.io/badge/MCP-550%2B%20tools-F4F0E8?style=for-the-badge&labelColor=0E0E12"></a>
 
-<sub><b>Made with kimo.</b> A 33-second brand reveal, rendered by the engine from MCP tool calls. <a href="docs/media/kimo_brand_reveal.mp4">Watch with sound ▶</a></sub>
+<a href="https://github.com/naman-sharma12345/kimo/releases/latest"><img alt="latest release" src="https://img.shields.io/github/v/release/naman-sharma12345/kimo?labelColor=0E0E12&color=F4F0E8&label=release"></a>
+<a href="https://github.com/naman-sharma12345/kimo/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/naman-sharma12345/kimo/actions/workflows/ci.yml/badge.svg"></a>
+<a href="https://github.com/naman-sharma12345/kimo/actions/workflows/release.yml"><img alt="release build" src="https://github.com/naman-sharma12345/kimo/actions/workflows/release.yml/badge.svg"></a>
+<img alt="Windows and Linux" src="https://img.shields.io/badge/Windows%20%C2%B7%20Linux-F4F0E8?labelColor=0E0E12&logo=windows&logoColor=white">
+<img alt="Rust" src="https://img.shields.io/badge/built%20with-Rust-F4F0E8?labelColor=0E0E12&logo=rust&logoColor=white">
+<a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/naman-sharma12345/kimo?labelColor=0E0E12&color=F4F0E8"></a>
 
 <br><br>
 
-**[Quickstart](#-quickstart)** · **[Connect your AI](#-connect-your-ai)** · **[What it can do](#-what-it-can-do)** · **[Gallery](#-made-with-kimo)** · **[How it works](#-how-it-works)** · **[Docs](#-docs)**
+<img src="docs/media/kimo_brand_reveal.gif" alt="A brand reveal rendered entirely by kimo" width="560">
+
+<sub><b>Made with kimo.</b> A 33-second brand reveal, rendered by the engine from tool calls an agent made.</sub>
+
+<br><br>
+
+**[Download](#-get-kimo)** · **[What's new in 9](#-whats-new-in-kimo-9)** · **[Connect your AI](#-connect-your-ai)** · **[What it can do](#-what-it-can-do)** · **[Gallery](#-made-with-kimo)** · **[How it works](#-how-it-works)** · **[Docs](#-docs)**
 
 </div>
 
 <br>
+
+> **“Cut out the silences, add a title and captions, grade it warm, and export a 9:16 short.”**
+>
+> Type that into kimo's Agent tab. Your agent plans it, calls the engine tool by tool, and every change appears on the
+> timeline as it happens, each with its own Undo. Take over by hand at any moment: it is one project, one history.
 
 ## ✦ Why kimo
 
@@ -38,74 +47,87 @@ Plug it into Claude Code, Codex, Cursor or any MCP client and watch the edit hap
 <tr>
 <td width="33%" valign="top">
 
-**🤖 AI-native, not AI-bolted-on**
-
-Every feature is a registered command, and the MCP tool list is generated from that same registry. If a human could do it in the editor, your agent can too, and both edit the same project.
-
-</td>
-<td width="33%" valign="top">
-
-**🎬 One engine, the whole stack**
-
-Editing, motion graphics, VFX, tracking, 3D and pro color: the surface of CapCut, After Effects, Premiere and Resolve, aimed at one engine.
+### 🤖 AI-native
+Every feature is a registered engine command, and the MCP tool list is generated from that same registry. Whatever you can do in the editor, your agent can do too, on the same project.
 
 </td>
 <td width="33%" valign="top">
 
-**👀 Watch it work**
+### 💳 Your plan, not ours
+kimo runs the official Claude Code, Codex or Antigravity CLI you are already signed in to. No new subscription, no API key needed, and kimo never sees your password or tokens.
 
-The kimo app shows every agent edit land on a real timeline, live, with its own Undo. Edit by hand in the same window whenever you like.
+</td>
+<td width="33%" valign="top">
+
+### 👀 Watch every edit
+The Live view shows each agent action as it lands, who made it, what the engine thought of it, and a one-click Undo. Several agents can share the open project at once.
 
 </td>
 </tr>
 <tr>
 <td valign="top">
 
-**⚡ Small and fast**
-
-A CPU renderer tuned for a 2 GB machine. No GPU needed. Headless, so it runs on a laptop, a server or CI.
-
-</td>
-<td valign="top">
-
-**📏 Measured, not claimed**
-
-Every "better than X" line in [FEATURES.md](FEATURES.md) has a stated baseline and a measured number, losses included. Tiers are honest: solid, beta or not built.
+### 🎬 The whole stack
+Editing, motion graphics, text and captions, VFX, tracking, 3D and pro color: the reach of CapCut, Premiere, After Effects and Resolve, in one engine.
 
 </td>
 <td valign="top">
 
-**🔓 Open source, MIT**
+### ⚡ Runs anywhere
+A CPU renderer tuned for a 2 GB machine, no GPU needed. The same engine runs headless on a laptop, a server or in CI.
 
-Free to use, fork and ship. Linux and Windows builds on every release.
+</td>
+<td valign="top">
+
+### 📏 Measured, not claimed
+Every "better than X" line in [FEATURES.md](FEATURES.md) has a stated baseline and a measured number, losses included. Open source under MIT.
 
 </td>
 </tr>
 </table>
 
-## ✦ What's new in v6.0.0 "eyes"
+## ✦ What's new in kimo 9
 
+kimo 9 is the first release where **the desktop app is the product**: one download with the editor, the engine and your agents in one window.
+
+<table>
+<tr><td width="50%" valign="top">
+
+#### The app
+- 🎞️ **A real editor.** Media bin with drag-and-drop, viewer, inspector, a timeline with move, trim, split, snap and markers, and export with progress.
+- ▶️ **Real-time preview with sound.** Plays ahead of the playhead with synced audio. J/K/L shuttle, loop and full screen.
+- 🐢➡️⚡ **Background proxies.** Heavy 4K or long-GOP imports return at once; light edit proxies build in the background.
+- 🧠 **Your agents, your plan.** Claude Code, Codex and Antigravity with model and effort pickers, streamed steps, Stop and resume.
+
+</td><td width="50%" valign="top">
+
+#### The engine
+- 👁️ **Engine eyes.** Every edit is observed: before and after frames, measured, and judged by critics (black gaps, unreadable text, jitter, clipped highlights), each finding with its fix.
+- 🧩 **Asset creation.** SVGs as animatable layers, CSV-driven animated charts, a searchable library of openly licensed icons and figures, Indian number grouping (1,00,000).
+- 🪟 **Windows-solid.** Long exports, code clips and audio on hour-long edits fixed on Windows; an untouched clip exports by stream copy in seconds.
+
+</td></tr>
+</table>
+
+#### Safe by design
 | | |
 |---|---|
-| 🖼️ **`add_pip`** | One-call picture-in-picture: circle or rounded crop, border ring, shadow, pop-in |
-| 💬 **`add_keyword_pops`** | Emphasised words pop on screen as they're spoken, picked by you or from the transcript |
-| ➡️ **`add_arrow`** | Animated "look here" callouts with an auto start point and optional label |
-| ✂️ **Transcript editing** | `transcript_search` + `transcript_edit_apply`: cut by phrase, atomic ripple deletes, full undo. [Guide](docs/TRANSCRIPT_EDITING.md) |
-| 🎯 **Trackable `vignette`** | Roundness, size, aspect, edge tint, and a centre that follows a tracked point or mask |
-| 🔥 **`film_burn` + new metrics** | A new transition, plus `flash_series`, `audio_spectrum`, loudness curves and PSNR / SSIM / MS-SSIM comparisons |
+| 💾 **Autosave and crash recovery** | Your project is saved in the background. After a crash, kimo offers it back on the next start, **with its undo history**, so Ctrl+Z still works. |
+| 🔄 **Signed in-app updates** | kimo checks GitHub releases and shows *Update to x.y.z*. Nothing installs until you click; every update is verified against kimo's signing key first. |
+| 🩹 **Opt-in crash reports** | A crash writes a log on your computer. Next time kimo asks whether to send it, and you review and submit it yourself. Nothing is sent otherwise. |
 
-Full list in [CHANGELOG.md](CHANGELOG.md).
+Full list in [CHANGELOG.md](CHANGELOG.md). Details: [updates and crash reports](docs/UPDATES_AND_CRASH_REPORTS.md).
 
-## ✦ Quickstart
+## ✦ Get kimo
 
-**1. Download kimo** from the [latest release](https://github.com/naman-sharma12345/kimo/releases/latest) or [getkimo.tech](https://getkimo.tech):
+**1. Download kimo 9** from the [latest release](https://github.com/naman-sharma12345/kimo/releases/latest) or [getkimo.tech](https://getkimo.tech):
 
 | System | File |
 |---|---|
-| Windows 10/11 (64-bit) | `kimo-setup-windows-x64.exe` |
-| Linux x86_64 | `kimo-linux-x86_64.AppImage` or `kimo-linux-amd64.deb` |
+| 🪟 Windows 10/11 (64-bit) | **`kimo-setup-windows-x64.exe`** |
+| 🐧 Linux x86_64 | **`kimo-linux-x86_64.AppImage`** or **`kimo-linux-amd64.deb`** |
 
-It is one app: a video editor with the kimo engine inside. Media bin, viewer, timeline, inspector and export, plus an **Agent** tab.
+One app: a video editor with the kimo engine inside. Media bin, viewer, timeline, inspector and export, plus an **Agent** tab and a **Live** view.
 
 **2. Pick your agent, on the plan you already have.** No API key needed: kimo runs the official CLI you are signed in to.
 
@@ -132,7 +154,7 @@ kimo needs FFmpeg; it uses the copy already on your computer, or offers to downl
 
 <br>
 
-Installers are built by the [release workflow](.github/workflows/release.yml) on GitHub-hosted runners, with a `SHA256SUMS` file. CI installs each one, starts it, checks that the engine runs and that an agent can attach to the open app, then uninstalls it. The builds are **unsigned**. macOS is coming later.
+Installers are built by the [release workflow](.github/workflows/release.yml) on GitHub-hosted runners, with a `SHA256SUMS` file. CI installs each one, starts it, checks that the engine runs and that an agent can attach to the open app, then uninstalls it. Installers carry an updater signature (`.sig`) that the app checks before installing an update; they are not yet Authenticode code-signed on Windows. macOS is coming later.
 
 | | Linux x86_64 | Windows x64 |
 |---|---|---|
@@ -616,6 +638,8 @@ and carry no reason. Details: `crates/kimo-mcp/src/preview.rs` ("Headless skips"
 | 🎞️ [Director quickstart](docs/DIRECTOR_QUICKSTART.md) | An agent cutting phone footage into a 9:16 short, call by call |
 | ✂️ [Transcript editing](docs/TRANSCRIPT_EDITING.md) | Edit video by editing words |
 | 🪶 [Preview proxies](docs/PROXY_WORKFLOW.md) | Lighter editing media, original-quality exports |
+| 🔄 [Updates and crash reports](docs/UPDATES_AND_CRASH_REPORTS.md) | Signed in-app updates, opt-in crash reports, crash recovery with Undo |
+| 🧪 [Testing](docs/TESTING.md) | The test suites and what CI runs |
 | 🏷️ [Feature tiers](FEATURES.md) | What's solid, beta and not built |
 | 🗺️ [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) · [Dev notes](docs/DEV_NOTES.md) | Where it's going and what changed |
 
