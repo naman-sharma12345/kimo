@@ -49,7 +49,15 @@ fn run_guarded(ss: &Arc<Mutex<Session>>, name: &str, args: &Value, out: &mut imp
             if !notes.is_empty() { content.push(json!({"type":"text","text":notes.join("; ")})); }
             let mut sc = ent[0].clone(); sc["time"] = args.get("time").cloned().unwrap_or(Value::Null); if ent.len() > 1 { sc = json!({"images": ent}); }
             json!({"content":content,"structuredContent":sc,"isError":false}) }
-        Err(e) => json!({"content":[{"type":"text","text":e.message}],"isError":true,"structuredContent":{"code":e.code,"param":e.param,"hint":e.hint}}),
+        Err(e) => {
+            // a call that failed on its arguments comes back with the tool's argument list, so the retry is right the first time
+            let about_args = e.param.is_some() || matches!(e.code, "missing_arg" | "out_of_range" | "invalid_name" | "name_not_found" | "ambiguous_name")
+                || ["argument", "expected", "must ", "missing", "unknown", "invalid", "ignored", "required"].iter().any(|w| e.message.to_lowercase().contains(w));
+            let sig = if about_args { kimo_core::tool_index::signature_of(name) } else { None };
+            let mut text = e.message.clone();
+            if let Some(s) = &sig { if !s.is_empty() { let line = s.join("; "); text.push_str(&format!("\narguments of {name}: {}", if line.len() > 900 { format!("{}…", &line[..line.char_indices().map(|c| c.0).take_while(|&i| i <= 900).last().unwrap_or(0)]) } else { line })); } }
+            json!({"content":[{"type":"text","text":text}],"isError":true,"structuredContent":{"code":e.code,"param":e.param,"hint":e.hint,"args":sig}})
+        }
     }
 }
 

@@ -75,12 +75,30 @@ fn short(d: &str, max: usize) -> String { if d.len() <= max { return d.to_string
 /// 300-700 bytes per group: once in the description, once as the schema enum). The AI finds actions with search_tools or kimo_describe(group).
 pub fn grouped_list() -> Vec<Value> { profile_list("grouped", &std::collections::HashSet::new()) }
 
+/// The everyday actions of each group, named in its tools/list entry so the usual calls need no search or describe first.
+pub const COMMON: &[(&str, &[&str])] = &[
+    ("project", &["import_media", "project_set", "timeline_summary", "save_project", "undo"]),
+    ("timeline", &["add_clip", "trim_clip", "split_clip", "move_clip", "ripple_delete", "auto_rough_cut"]),
+    ("animate", &["set_property", "set_keyframe", "apply_motion_preset", "add_punch_ins"]),
+    ("effects", &["add_effect", "add_transition", "list_effects", "add_adjustment_layer"]),
+    ("masks", &["add_mask", "set_track_matte", "roto_propagate", "refine_matte"]),
+    ("text", &["add_text", "add_title", "auto_captions", "set_caption_style"]),
+    ("graphics", &["add_shape", "add_arrow", "add_asset", "add_chart"]),
+    ("vfx3d", &["add_particles", "add_scene3d", "add_code_clip", "light_rig"]),
+    ("tracking", &["stabilize", "track_point", "track_planar", "auto_reframe"]),
+    ("color_grade", &["auto_grade", "match_shots", "set_color_wheels", "pick_white_balance"]),
+    ("color_science", &["set_color_pipeline", "inspect_color_pipeline", "set_hdr_mastering"]),
+    ("scopes", &["get_scopes", "render_scope", "measure_loudness", "analyze_exposure"]),
+    ("audio", &["set_audio", "finish_audio", "auto_duck", "normalize_loudness"]),
+    ("output", &["export", "render_frame", "review", "look", "export_preset"]),
+];
 fn group_entry(g: &Group) -> Value { let n = members(g.name).len();
-    json!({"name": g.name, "description": format!("{} [{} actions]", short(g.about, 100), n), "inputSchema": {"type":"object","properties":{"action":{"type":"string"},"args":{"type":"object"}},"required":["action"]}}) }
+    let common = COMMON.iter().find(|(x, _)| *x == g.name).map(|(_, a)| format!(" e.g. {}.", a.join(", "))).unwrap_or_default();
+    json!({"name": g.name, "description": format!("{} [{} actions]{common}", short(g.about, 100), n), "inputSchema": {"type":"object","properties":{"action":{"type":"string","description":"the action (tool) name"},"args":{"type":"object","description":"its arguments; may also be given flat next to action"}},"required":["action"]}}) }
 fn tool_entry(c: &Command) -> Value { json!({"name": c.name, "description": c.description, "inputSchema": c.schema}) }
 fn meta_tools(with_enable: bool) -> Vec<Value> {
-    let mut v = vec![json!({"name":"search_tools","description":"Find a tool, effect or transition by keywords. Returns ranked matches with required args and how to call each. Call any listed name directly.","inputSchema":{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer"},"group":{"type":"string"}},"required":["query"]}}),
-        json!({"name":"kimo_describe","description":"Full description and argument schema of one action (action) or the action list of a group (group).","inputSchema":{"type":"object","properties":{"action":{"type":"string"},"group":{"type":"string"}}}})];
+    let mut v = vec![json!({"name":"search_tools","description":"Find the tool for a need, in plain words (\"make the music quieter when people talk\", \"slow motion\"; typos are fine). Ranked tools, effects and transitions; the top tools come with their argument list, so you can call one straight away.","inputSchema":{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer"},"group":{"type":"string"}},"required":["query"]}}),
+        json!({"name":"kimo_describe","description":"Full description and argument schema of one action (action), the argument lists of several at once (actions: [..]), or the action list of a group (group).","inputSchema":{"type":"object","properties":{"action":{"type":"string"},"actions":{"type":"array","items":{"type":"string"}},"group":{"type":"string"}}}})];
     if with_enable { v.push(json!({"name":"kimo_enable_group","description":"List every tool of a group individually from now on (the server sends notifications/tools/list_changed).","inputSchema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}})); }
     v }
 
@@ -150,59 +168,76 @@ pub fn profile_list(profile: &str, enabled: &std::collections::HashSet<String>) 
 
 fn required_args(c: &Command) -> Vec<String> { c.schema.get("required").and_then(|r| r.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default() }
 
-/// search_tools: one call from a plain-language need to a callable tool. Ranked tool hits plus effect/transition catalog hits (those are reached through add_effect / add_transition).
+/// search_tools: one call from a plain-language need to a callable tool. Tools, effects and transitions are ranked on one
+/// scale (tool_index); the first few tools carry their argument signature, so the usual next step is the call itself.
 pub fn search_tools(q: &str, limit: usize, group: Option<&str>, effects: &Value, transitions: &Value) -> Value {
-    let limit = limit.clamp(1, 25); let r = search(q, 50); let total = r["total"].as_u64().unwrap_or(0);
-    let mut tools: Vec<Value> = vec![];
-    for m in r["matches"].as_array().into_iter().flatten() { let name = m["action"].as_str().unwrap_or(""); let Some(c) = reg().iter().find(|c| c.name == name) else { continue }; if let Some(g) = group { if group_of(name) != g { continue; } }
-        let req = required_args(c); tools.push(json!({"type":"tool","name":name,"group":group_of(name),"summary":m["summary"],"required":req,"call_as":format!("{}({})", name, req.join(", "))})); }
-    let words: Vec<String> = q.split(|c: char| !c.is_alphanumeric()).filter(|w| w.len() > 2).map(|w| w.to_lowercase()).collect();
-    let mut cat: Vec<Value> = vec![]; if group.map_or(true, |g| g == "effects") { for h in search_catalog(q, effects, transitions, 8) { let ty = h["type"].as_str().unwrap_or(""); let kind = h["kind"].as_str().unwrap_or("");
-        let (tool, extra) = if ty == "transition" { ("add_transition", ", duration") } else { ("add_effect", "") };
-        cat.push(json!({"type":ty,"name":kind,"group":"effects","summary":h["summary"],"call_as":format!("{tool}(clip_id{extra}, kind=\"{kind}\")")})); } }
-    let matches_all = |h: &Value| { let t = format!("{} {}", h["name"].as_str().unwrap_or(""), h["summary"].as_str().unwrap_or("")).to_lowercase(); !words.is_empty() && words.iter().all(|w| t.contains(w.as_str())) };
-    let mut out: Vec<Value> = vec![]; let mut rest: Vec<Value> = vec![];
-    for (i, h) in cat.into_iter().enumerate() { if i == 0 && matches_all(&h) { out.push(h); } else { rest.push(h); } }
-    out.extend(tools); out.extend(rest); out.truncate(limit);
-    json!({"matches": out, "total": total, "note": "call any listed name directly as a tool; effects and transitions are used through add_effect / add_transition"})
+    use crate::tool_index as ti;
+    let limit = limit.clamp(1, 25);
+    let ranked = ti::rank(q); let total = ranked.len();
+    let mut items: Vec<(f64, Value)> = vec![];
+    for (name, sc) in ranked.iter().take(60) {
+        if let Some(g) = group { if group_of(name) != g { continue; } }
+        let Some(c) = reg().iter().find(|c| c.name == *name) else { continue };
+        let req = required_args(c);
+        items.push((*sc, json!({"type":"tool","name":name,"group":group_of(name),"summary":first_sentence(c.description),"required":req,"call_as":format!("{}({})", name, req.join(", "))})));
+    }
+    if group.map_or(true, |g| g == "effects") {
+        // a catalog entry is one step further away (it is used through add_effect / add_transition), so it ranks a little below an equal tool
+        for (ty, kind, d, sc) in ti::rank_catalog(q, effects, transitions).into_iter().take(8) {
+            let (tool, extra) = if ty == "transition" { ("add_transition", ", duration") } else { ("add_effect", "") };
+            items.push((sc * 0.85, json!({"type":ty,"name":kind,"group":"effects","summary":first_sentence(&d),"call_as":format!("{tool}(clip_id{extra}, kind=\"{kind}\")")})));
+        }
+    }
+    items.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let mut out: Vec<Value> = items.into_iter().take(limit).map(|x| x.1).collect();
+    let mut shown = 0;
+    for m in out.iter_mut() { if shown < 3 && m["type"] == "tool" { if let Some(sig) = ti::signature_of(m["name"].as_str().unwrap_or("")) { m["args"] = json!(sig); } shown += 1; } }
+    json!({"matches": out, "total": total, "how": "call a group tool with {action: name, args: {...}} (args may also sit flat next to action), or the name directly; effects and transitions go through add_effect / add_transition with kind"})
 }
 
 /// Resolve a grouped call to (tool name, args). Err carries a message for the client.
+/// Forgiving on purpose: an agent's call means one thing even when its shape is a little off, so it runs instead of
+/// costing a round trip. Action names are unique across groups, so a call sent to the wrong group still resolves; args may
+/// sit under "args", flat next to "action", or both (args wins), or arrive as a JSON string. Only a call that cannot be
+/// understood fails, and its error names the closest actions with the argument list of the best one.
 pub fn resolve_group_call(group: &str, args: &Value) -> Result<(String, Value), String> {
-    let Some(action) = args.get("action").and_then(|v| v.as_str()) else { return Err(format!("group '{group}' needs 'action' (one of: {})", members(group).iter().map(|c| c.name).collect::<Vec<_>>().join(", "))); };
-    let Some(c) = reg().iter().find(|c| c.name == action) else { return Err(format!("unknown action '{action}' in group '{group}'")); };
-    if group_of(c.name) != group { return Err(format!("action '{action}' belongs to group '{}', not '{group}'", group_of(c.name))); }
-    Ok((action.to_string(), args.get("args").cloned().unwrap_or(json!({}))))
+    let Some(action) = args.get("action").and_then(|v| v.as_str()) else {
+        let common = COMMON.iter().find(|(g, _)| *g == group).map(|(_, a)| a.join(", ")).unwrap_or_default();
+        return Err(format!("group '{group}' needs 'action', the tool to run (common: {common}). kimo_describe {{group: \"{group}\"}} lists all {}, search_tools finds one by need.", members(group).len()));
+    };
+    if reg().iter().all(|c| c.name != action) {
+        let near = crate::tool_index::near_names(action, 3);
+        let sig = near.first().and_then(|n| crate::tool_index::signature_of(n)).map(|s| format!(" {}({})", near[0], s.join("; "))).unwrap_or_default();
+        return Err(format!("unknown action '{action}'. Closest: {}.{sig}", near.join(", ")));
+    }
+    let mut a = match args.get("args") {
+        Some(Value::String(t)) => serde_json::from_str::<Value>(t).ok().filter(|v| v.is_object()).unwrap_or_else(|| json!({})),
+        Some(v) if v.is_object() => v.clone(),
+        _ => json!({}),
+    };
+    if let (Some(top), Some(inner)) = (args.as_object(), a.as_object_mut()) { for (k, v) in top { if k != "action" && k != "args" && !inner.contains_key(k) { inner.insert(k.clone(), v.clone()); } } }
+    Ok((action.to_string(), a))
 }
 
 pub fn is_group(n: &str) -> bool { GROUPS.iter().any(|g| g.name == n && !members(n).is_empty()) }
 
 pub fn search(q: &str, limit: usize) -> Value {
-    // OR search ranked by how many query words match: name (3), argument names (2), description (1). Words are lowercased and lightly stemmed.
-    const STOP: &[&str] = &["a", "an", "the", "to", "of", "for", "and", "or", "in", "on", "with", "add", "set", "make", "create"];
-    let stem = |w: &str| -> String { let w = w.to_lowercase(); for suf in ["ing", "es", "s"] { if w.len() > suf.len() + 3 && w.ends_with(suf) { return w[..w.len() - suf.len()].to_string(); } } w };
-    let mut words: Vec<String> = q.split(|c: char| !c.is_alphanumeric() && c != '_').filter(|w| !w.is_empty()).map(|w| w.to_string()).collect();
-    let kept: Vec<String> = words.iter().filter(|w| !STOP.contains(&w.to_lowercase().as_str())).cloned().collect(); if !kept.is_empty() { words = kept; }
-    let words: Vec<String> = words.iter().map(|w| stem(w)).collect();
-    // two-word phrases: "slow motion" is about speed, "green screen key" is about chroma keying; the second word would otherwise outrank the intent
-    let has = |x: &[&str]| words.iter().any(|w| x.contains(&w.to_lowercase().as_str()));
-    let words: Vec<String> = { let sp = has(&["slow", "slowmo", "fast"]); let gs = has(&["green", "greenscreen", "screen", "chroma"]); words.iter().filter(|w| !(sp && w.as_str() == "motion") && !(gs && w.as_str() == "key")).cloned().collect() };
-    fn alts<'a>(w: &'a str) -> Vec<&'a str> { let mut v = vec![w]; match w { "slow" | "slowmo" | "fast" => v.push("speed"), "shatter" | "break" | "smash" => { v.push("fracture"); v.push("shard"); } "speech" | "spoken" | "voice" => { v.push("transcribe"); v.push("caption"); } "green" | "greenscreen" | "screen" => { v.push("chroma"); } "shake" | "shaky" => { v.push("stabilize"); v.push("shake"); } "fade" => { v.push("volume"); v.push("opacity"); } "subtitle" => v.push("caption"), "cover" => v.push("thumbnail"), "cut" => { v.push("split"); v.push("trim"); } "um" | "uh" | "ums" | "uhs" | "stutter" | "disfluency" => v.push("filler"), "tiny" | "stray" | "false" => v.push("short"), "point" | "pointing" | "callout" | "annotate" | "annotation" => v.push("arrow"), _ => {} } v }
-    let mut hits: Vec<(usize, usize, &Command)> = reg().iter().filter_map(|c| {
-        let nm = c.name.to_lowercase(); let ds = c.description.to_lowercase();
-        let args: String = c.schema.get("properties").and_then(|p| p.as_object()).map(|o| o.iter().map(|(k, v)| format!("{} {}", k, v.get("description").and_then(|d| d.as_str()).unwrap_or(""))).collect::<Vec<_>>().join(" ").to_lowercase()).unwrap_or_default();
-        let arg_names: String = c.schema.get("properties").and_then(|p| p.as_object()).map(|o| o.keys().cloned().collect::<Vec<_>>().join(" ").to_lowercase()).unwrap_or_default();
-        let (mut sc, mut matched) = (0usize, 0usize);
-        let toks: Vec<&str> = nm.split('_').collect();
-        for w in &words { let mut m = 0; for a in alts(w.as_str()) { let v = if toks.iter().any(|t| *t == a || stem(t) == a) { 4 } else if nm.contains(a) { 3 } else if arg_names.contains(a) { 2 } else if ds.contains(a) || args.contains(a) { 1 } else { 0 }; m = m.max(v); } if m > 0 { sc += m; matched += 1; } }
-        if matched > 0 { Some((matched, sc, c)) } else { None } }).collect();
-    hits.sort_by(|a, b| b.1.cmp(&a.1).then(b.0.cmp(&a.0)).then(a.2.name.cmp(b.2.name)));
-    json!({"matches": hits.iter().take(limit.clamp(1, 50)).map(|(_, _, c)| json!({"group": group_of(c.name), "action": c.name, "summary": first_sentence(c.description)})).collect::<Vec<_>>(), "total": hits.len()})
+    // ranked by tool_index (BM25F over name, argument names and description, read with the editing vocabulary)
+    let hits = crate::tool_index::rank(q);
+    json!({"matches": hits.iter().take(limit.clamp(1, 50)).filter_map(|(n, _)| reg().iter().find(|c| c.name == *n)).map(|c| json!({"group": group_of(c.name), "action": c.name, "summary": first_sentence(c.description)})).collect::<Vec<_>>(), "total": hits.len()})
 }
 
 pub fn describe(args: &Value) -> Result<Value, String> {
+    // several at once: plan a multi-step edit with one call instead of one per tool
+    if let Some(list) = args.get("actions").and_then(|v| v.as_array()) {
+        let out: Vec<Value> = list.iter().filter_map(|x| x.as_str()).map(|a| match reg().iter().find(|c| c.name == a) {
+            Some(c) => json!({"action": c.name, "group": group_of(c.name), "summary": first_sentence(c.description), "mutates": c.mutates, "args": crate::tool_index::signature(c)}),
+            None => json!({"action": a, "error": format!("unknown; closest: {}", crate::tool_index::near_names(a, 3).join(", "))}),
+        }).collect();
+        return Ok(json!({"actions": out}));
+    }
     if let Some(a) = args.get("action").and_then(|v| v.as_str()) {
-        let c = reg().iter().find(|c| c.name == a).ok_or_else(|| format!("unknown action '{a}'; try kimo_search"))?;
+        let c = reg().iter().find(|c| c.name == a).ok_or_else(|| format!("unknown action '{a}'; closest: {}", crate::tool_index::near_names(a, 3).join(", ")))?;
         return Ok(json!({"group": group_of(c.name), "action": c.name, "description": c.description, "mutates": c.mutates, "args_schema": enrich(c.name, c.schema.clone()), "call": {"tool": group_of(c.name), "arguments": {"action": c.name, "args": "{...per args_schema}"}}}));
     }
     if let Some(g) = args.get("group").and_then(|v| v.as_str()) {
@@ -217,10 +252,22 @@ mod tests {
     use super::*;
     #[test] fn every_tool_has_a_real_group() { let bad: Vec<_> = reg().iter().filter(|c| group_of(c.name) == "extras").map(|c| c.name).collect(); assert!(bad.is_empty(), "tools without a group, add them to toolgroups.rs: {bad:?}"); }
     #[test] fn groups_partition_the_reg() { let n: usize = GROUPS.iter().map(|g| members(g.name).len()).sum(); assert_eq!(n, reg().len()); }
-    #[test] fn group_call_resolves_and_rejects_wrong_group() {
+    #[test] fn group_call_resolves_forgivingly() {
         let (n, a) = resolve_group_call("project", &json!({"action":"project_set","args":{"width":640}})).unwrap(); assert_eq!(n, "project_set"); assert_eq!(a["width"], 640);
-        assert!(resolve_group_call("audio", &json!({"action":"project_set"})).is_err()); assert!(resolve_group_call("audio", &json!({})).is_err()); }
-    #[test] fn grouped_list_is_small() { let l = grouped_list(); assert!(l.len() <= 20, "{}", l.len()); let bytes = serde_json::to_string(&l).unwrap().len(); assert!(bytes <= 6144, "default tools/list is {bytes} bytes, ceiling 6144"); }
+        // wrong group: names are unique, so it still means project_set
+        assert_eq!(resolve_group_call("audio", &json!({"action":"project_set","args":{}})).unwrap().0, "project_set");
+        // flat args, and both (args wins)
+        let (_, a) = resolve_group_call("project", &json!({"action":"project_set","width":640})).unwrap(); assert_eq!(a["width"], 640);
+        let (_, a) = resolve_group_call("project", &json!({"action":"project_set","width":1,"args":{"width":2,"height":3}})).unwrap(); assert_eq!(a["width"], 2); assert_eq!(a["height"], 3);
+        // args as a JSON string
+        let (_, a) = resolve_group_call("project", &json!({"action":"project_set","args":"{\"fps\":25}"})).unwrap(); assert_eq!(a["fps"], 25);
+        // what cannot be understood fails with the way forward
+        assert!(resolve_group_call("audio", &json!({})).unwrap_err().contains("set_audio"));
+        let e = resolve_group_call("timeline", &json!({"action":"spilt_clip"})).unwrap_err(); assert!(e.contains("split_clip"), "{e}"); }
+    #[test] fn common_actions_are_in_their_group() { for (g, a) in COMMON { for n in *a { assert_eq!(group_of(n), *g, "{n}"); assert!(reg().iter().any(|c| c.name == *n), "{n} missing"); } } }
+    #[test] fn describe_many() { let r = describe(&json!({"actions":["split_clip","nope_clip"]})).unwrap(); assert!(r["actions"][0]["args"].as_array().is_some_and(|a| !a.is_empty())); assert!(r["actions"][1]["error"].is_string()); }
+    // ceiling 7168 bytes (was 6144): each group now names its everyday actions, which saves a search_tools round trip on most calls
+    #[test] fn grouped_list_is_small() { let l = grouped_list(); assert!(l.len() <= 20, "{}", l.len()); let bytes = serde_json::to_string(&l).unwrap().len(); assert!(bytes <= 7168, "default tools/list is {bytes} bytes, ceiling 7168"); }
     #[test] fn core_tools_exist() { for n in CORE { assert!(reg().iter().any(|c| c.name == *n), "core tool {n} missing"); } assert!(CORE.len() <= 26); }
 }
 

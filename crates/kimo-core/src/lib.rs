@@ -24,6 +24,7 @@ pub mod reframe;
 pub mod lens;
 pub mod telemetry;
 pub mod toolgroups;
+pub mod tool_index;
 pub mod trackmath;
 pub mod shapemods;
 pub mod pathops;
