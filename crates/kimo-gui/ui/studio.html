@@ -3,12 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="color-scheme" content="light dark">
+<meta name="color-scheme" content="dark">
 <title>kimo</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
-<link rel="preload" href="fonts/InstrumentSans-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="studio.css">
 <link rel="stylesheet" href="editor.css">
+<link rel="stylesheet" href="theme.css">
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -22,10 +23,9 @@
     <button class="rail-brand" id="brand" title="About kimo"><svg class="km mark" viewBox="0 0 1024 1024" role="img" aria-label="kimo"><use href="#km-sm"/></svg></button>
     <nav id="nav">
       <a data-tab="home" class="on" title="Home (Ctrl+1)"><span class="ic" data-icon="home"></span><span class="lb">Home</span></a>
-      <a data-tab="edit" title="Edit (Ctrl+2)"><span class="ic" data-icon="film"></span><span class="lb">Edit</span></a>
-      <a data-tab="agent" title="Agent (Ctrl+3)"><span class="ic" data-icon="spark"></span><span class="lb">Agent</span><span class="dot" id="nav-agent" hidden></span></a>
-      <a data-tab="live" title="Live (Ctrl+4)"><span class="ic" data-icon="live"></span><span class="lb">Live</span><span class="dot" id="nav-live" hidden></span></a>
-      <a data-tab="connections" title="Connections (Ctrl+5)"><span class="ic" data-icon="plug"></span><span class="lb">Connect</span><span class="dot warn" id="nav-conn" hidden></span></a>
+      <a data-tab="edit" title="Studio (Ctrl+2)"><span class="ic" data-icon="film"></span><span class="lb">Studio</span><span class="dot" id="nav-agent" hidden></span></a>
+      <a data-tab="live" title="Activity (Ctrl+3)"><span class="ic" data-icon="live"></span><span class="lb">Activity</span><span class="dot" id="nav-live" hidden></span></a>
+      <a data-tab="connections" title="Connections (Ctrl+4)"><span class="ic" data-icon="plug"></span><span class="lb">Connect</span><span class="dot warn" id="nav-conn" hidden></span></a>
     </nav>
     <div class="rail-foot">
       <div class="rail-pill" id="pill-engine" title="Engine"><span class="d"></span><span class="lb">Engine</span></div>
@@ -42,6 +42,7 @@
         <button class="tb-update" id="tb-update" hidden title="A newer kimo is available"></button>
         <span class="attached" id="tb-attached" hidden></span>
         <button class="tb-live" id="tb-live" data-go="live"><span class="d"></span><span id="tb-live-t">Idle</span></button>
+        <button class="ib sm" id="tb-keys" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"><span data-icon="keyboard"></span></button>
       </div>
     </header>
 
@@ -51,34 +52,43 @@
       <div class="home">
         <div class="hero">
           <div class="hero-copy">
-            <div class="eyebrow">AI video editor · runs on this computer</div>
-            <h1 class="serif">Make it with <em>kimo</em>.</h1>
-            <p class="sub">Edit by hand on a real timeline, or tell Claude Code, Codex or Antigravity what you want, using the plan you already pay for. Every change lands in the same project, live, with its own Undo.</p>
+            <h1>Edit by hand, or just say what you want.</h1>
+            <p class="sub">kimo is a video editor where Claude Code, Codex and Antigravity work on the same timeline as you, on the plan you already pay for. Every change shows up as it happens, and every change can be undone.</p>
             <div class="row cta">
               <button class="btn acc lg" id="home-import"><span data-icon="plus"></span>Import media</button>
               <button class="btn lg" id="home-open"><span data-icon="folder"></span>Open project</button>
               <button class="btn lg ghost" data-go="agent"><span data-icon="spark"></span>Ask an agent</button>
             </div>
           </div>
-          <div class="hero-art" aria-hidden="true"><div class="glow"></div><div class="ring r1"></div><div class="ring r2"></div><svg class="km hero-km" viewBox="0 0 1024 1024"><use href="#km"/></svg></div>
-        </div>
-        <div class="sec-h"><h2>Your agents</h2><span class="note muted">Runs on your own subscription. No API key needed.</span><a class="lnk" data-go="connections" style="margin-left:auto">Manage <span data-icon="arrow"></span></a></div>
-        <div class="grid g3" id="home-agents"></div>
-        <div class="grid g2 sec">
-          <div class="card"><div class="ch"><h2>Recent projects</h2></div><div id="home-recent" class="recent"></div></div>
-          <div class="card"><div class="ch"><h2>This computer</h2></div>
-            <div class="kv home-kv">
-              <span>Engine</span><b id="h-engine">…</b>
-              <span>Video tools</span><b id="h-parts">…</b>
-              <span>Agents attached</span><b id="h-attached">none</b>
-              <span>Data folder</span><b class="mono" id="h-data">…</b>
+          <div class="reel" aria-hidden="true">
+            <div class="reel-hd"><span class="reel-tc">00:00:12:18</span><span>1080p · 30 fps</span><div class="who"><span><i></i>You</span><span class="ag"><i></i>Agent</span></div></div>
+            <div class="reel-body">
+              <div class="reel-ruler"><span style="left:0">0:00</span><span style="left:25%">0:05</span><span style="left:50%">0:10</span><span style="left:75%">0:15</span></div>
+              <div class="reel-tracks">
+                <div class="reel-row"><b>Titles</b><div class="reel-lane"><span class="reel-clip t" style="left:2%;width:17%">Golden hour</span><span class="reel-clip t ag new" style="left:76%;width:20%">getkimo.tech</span></div></div>
+                <div class="reel-row"><b>Main</b><div class="reel-lane"><span class="reel-clip" style="left:0;width:30%">golden-hour-wide</span><span class="reel-clip ag" style="left:30%;width:27%">interview-a</span><span class="reel-clip ag new" style="left:57%;width:20%">interview-b</span><span class="reel-clip" style="left:77%;width:23%">logo</span></div></div>
+                <div class="reel-row"><b>Music</b><div class="reel-lane"><span class="reel-clip a" style="left:0;width:96%">warm-tape-loop</span></div></div>
+              </div>
+              <div class="reel-ph"></div>
             </div>
+            <div class="reel-say"><span class="d"></span><span><b>Agent:</b> cut the 0.8 s pause at 0:12 and closed the gap</span><span class="mono">Undo</span></div>
           </div>
+        </div>
+        <div class="sec-h"><h2>Projects</h2><span class="note muted">Pick up where you left off.</span><a class="lnk" id="home-open2" style="margin-left:auto">Open another <span data-icon="arrow"></span></a></div>
+        <div class="proj-grid" id="home-recent"></div>
+        <div class="sec-h"><h2>Your agents</h2><span class="note muted">They run on your own subscription. No API key needed.</span><a class="lnk" data-go="connections" style="margin-left:auto">Manage <span data-icon="arrow"></span></a></div>
+        <div class="grid g3" id="home-agents"></div>
+        <div class="sec-h"><h2>This computer</h2></div>
+        <div class="kv home-kv sys">
+          <span>Engine</span><b id="h-engine">…</b>
+          <span>Video tools</span><b id="h-parts">…</b>
+          <span>Agents attached</span><b id="h-attached">none</b>
+          <span>Data folder</span><b class="mono" id="h-data">…</b>
         </div>
       </div>
     </section>
 
-    <!-- ================= EDIT ================= -->
+    <!-- ================= STUDIO: media · viewer · agent/inspector/history · timeline, in one place ================= -->
     <section class="tab" id="tab-edit">
       <div class="editor" id="editor">
         <div class="ed-toolbar">
@@ -92,10 +102,12 @@
             <button class="ib" id="ed-dup" title="Duplicate clip (Ctrl+D)" aria-label="Duplicate"><span data-icon="copy"></span></button>
           </div>
           <div class="tgroup">
-            <button class="btn sm" id="ed-text" title="Add a text clip at the playhead (T)"><span data-icon="type"></span>Text</button>
-            <button class="btn sm" id="ed-track" title="Add a track"><span data-icon="layers"></span>Track</button>
-            <button class="btn sm" id="ed-marker" title="Add a marker at the playhead (M)"><span data-icon="flag"></span>Marker</button>
+            <button class="btn sm ghost" id="ed-text" title="Add a text clip at the playhead (T)"><span data-icon="type"></span>Text</button>
+            <button class="btn sm ghost" id="ed-track" title="Add a track"><span data-icon="layers"></span>Track</button>
+            <button class="btn sm ghost" id="ed-marker" title="Add a marker at the playhead (M)"><span data-icon="flag"></span>Marker</button>
           </div>
+          <div class="tgroup grow"></div>
+          <button class="cmdk" id="cmdk-open" title="Search actions or ask your agent (Ctrl+K)"><span data-icon="search"></span><span class="ph">Search actions or ask your agent</span><kbd>Ctrl K</kbd></button>
           <div class="tgroup grow"></div>
           <div class="tgroup">
             <button class="btn sm ghost" id="ed-new" title="New empty project">New</button>
@@ -107,56 +119,88 @@
 
         <!-- media bin -->
         <aside class="ed-bin" id="bin">
-          <div class="pane-h"><h3>Media</h3><span class="chip" id="bin-count">0</span><button class="ib sm" id="bin-import" title="Import media" aria-label="Import media" style="margin-left:auto"><span data-icon="plus"></span></button></div>
+          <div class="pane-h"><h3>Media</h3><span class="chip" id="bin-count">0</span><button class="ib sm" id="bin-import" title="Import media (Ctrl+I)" aria-label="Import media" style="margin-left:auto"><span data-icon="plus"></span></button></div>
           <div class="bin-search"><span data-icon="search"></span><input id="bin-q" type="search" placeholder="Search media" spellcheck="false"></div>
           <div class="bin-list" id="bin-list"></div>
           <div class="bin-drop" id="bin-drop"><span data-icon="upload"></span><b>Drop video, audio or images</b><span>or <a class="lnk" id="bin-drop-pick">browse</a></span></div>
         </aside>
 
-        <!-- the viewer lives here on Edit and moves to the Agent page when that is open -->
+        <!-- program monitor -->
         <div class="ed-view" id="slot-edit">
-          <div class="viewer" id="viewer" data-state="empty" data-view="after" data-media="image" data-playing="0">
-            <div class="vw-hd"><h2>Viewer</h2><span class="chip" id="vw-rev" title="Project revision">no frame</span>
+          <div class="viewer" id="viewer" data-state="empty" data-view="after" data-media="image" data-playing="0" data-guides="">
+            <div class="vw-hd"><h2>Program</h2><span class="chip" id="vw-rev" title="Frame size">no frame</span>
+              <div class="vw-tools">
+                <button class="ib sm" id="vw-safe" title="Safe areas (')" aria-label="Show safe areas" aria-pressed="false"><span data-icon="safe"></span></button>
+                <button class="ib sm" id="vw-grid" title="Rule-of-thirds grid (G)" aria-label="Show grid" aria-pressed="false"><span data-icon="grid"></span></button>
+                <button class="ib sm" id="vw-full" title="Full screen (F)" aria-label="Full screen"><span data-icon="expand"></span></button>
+              </div>
               <div class="seg vw-ab" id="vw-ab" role="group" aria-label="Compare with the frame before the last change"><button data-v="before" disabled>Before</button><button data-v="after" class="on">After</button></div></div>
             <div class="vw-screen">
               <img id="vw-img" alt="The engine's frame at the playhead" hidden>
               <img id="vw-before" alt="The frame before the last change" hidden>
               <video id="vw-video" muted playsinline preload="auto" hidden></video>
               <canvas id="vw-canvas" role="img" aria-label="Real-time preview at the playhead" hidden></canvas>
-              <div class="vw-empty" id="vw-empty"><svg class="km e" viewBox="0 0 1024 1024" aria-hidden="true"><use href="#km-sm"/></svg><div class="et">Nothing to show yet</div><div class="ed">Import media and drag it onto the timeline, or ask an agent to start the edit.</div></div>
+              <div class="vw-guides" aria-hidden="true"><i class="g-action"></i><i class="g-title"></i><i class="g-thirds"></i></div>
+              <div class="vw-empty" id="vw-empty"><svg class="km e" viewBox="0 0 1024 1024" aria-hidden="true"><use href="#km-sm"/></svg><div class="et">Nothing on the timeline yet</div><div class="ed">Drag media onto the timeline, or ask your agent to lay out a first cut.</div></div>
               <div class="vw-busy" id="vw-busy"><span class="spin"></span><span id="vw-busy-t">Rendering frame…</span></div>
               <div class="vw-err" id="vw-err-box"><div class="et">The engine couldn't render this frame</div><div class="mono" id="vw-err"></div><button class="btn sm" id="vw-retry">Try again</button></div>
               <span class="vw-tag" id="vw-tag" hidden></span>
             </div>
             <div class="vw-ctl">
-              <button class="btn sm vw-play" id="vw-play" aria-label="Play from the playhead (Space; J / K / L shuttle)" title="Play (Space) · J / K / L shuttle · K+J / K+L or arrow keys step a frame" disabled><svg class="i ip" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg><svg class="i ipa" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13M16 5.5v13"/></svg></button>
+              <button class="ib sm" id="vw-prev" title="Previous frame (Left arrow)" aria-label="Previous frame"><span data-icon="stepb"></span></button>
+              <button class="btn sm vw-play" id="vw-play" aria-label="Play from the playhead (Space; J / K / L shuttle)" title="Play (Space) · J / K / L shuttle · K+J / K+L step a frame" disabled><svg class="i ip" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg><svg class="i ipa" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13M16 5.5v13"/></svg></button>
+              <button class="ib sm" id="vw-next" title="Next frame (Right arrow)" aria-label="Next frame"><span data-icon="stepf"></span></button>
               <input type="range" id="vw-scrub" min="0" max="0" step="0.0333" value="0" aria-label="Playhead" disabled>
-              <span class="mono vw-time" id="vw-time">0:00.0</span>
+              <span class="mono vw-time" id="vw-time">00:00:00:00</span>
               <button class="btn sm ghost vw-ic" id="vw-loop" aria-label="Loop playback (Ctrl+L)" aria-pressed="false" title="Loop (Ctrl+L)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M17 2.5l3 3-3 3M4 11.5v-1a5 5 0 0 1 5-5h11M7 21.5l-3-3 3-3M20 12.5v1a5 5 0 0 1-5 5H4"/></svg></button>
-              <button class="btn sm ghost vw-ic" id="vw-full" aria-label="Full screen (F)" title="Full screen (F)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
             </div>
             <div class="note vw-msg" id="vw-msg">Frames come from the engine.</div>
           </div>
-          <form class="askbar" id="askbar">
-            <span class="ask-agent" id="ask-agent" title="Change agent in the Agent tab"><span class="d"></span><span id="ask-agent-t">Claude Code</span></span>
-            <input id="ask-in" placeholder="Ask your agent to edit… e.g. “cut the silences”, “add a title”" autocomplete="off" spellcheck="false">
-            <button class="btn sm acc" id="ask-send" type="submit"><span data-icon="send"></span></button>
-          </form>
         </div>
 
-        <!-- inspector -->
-        <aside class="ed-insp" id="insp">
-          <div class="pane-h"><h3 id="insp-title">Project</h3></div>
-          <div class="insp-body" id="insp-body"></div>
+        <!-- the side panel: talk to the agent, inspect a clip, review every change -->
+        <aside class="ed-side" id="side">
+          <div class="side-tabs" role="tablist" aria-label="Side panel">
+            <button role="tab" data-pane="agent" class="on" aria-selected="true"><span data-icon="spark"></span>Agent<span class="tdot" id="side-agent-dot" hidden></span></button>
+            <button role="tab" data-pane="insp" aria-selected="false"><span data-icon="sliders"></span>Inspector</button>
+            <button role="tab" data-pane="hist" aria-selected="false"><span data-icon="history"></span>History<span class="tcount" id="chg-count">0</span></button>
+          </div>
+          <div class="pane on" id="pane-agent" role="tabpanel">
+            <div class="convo">
+              <div class="convo-hd">
+                <div class="agent-pick" id="agent-pick" role="radiogroup" aria-label="Agent"></div>
+                <button class="ib sm" id="agent-new" title="New conversation" aria-label="New conversation" style="margin-left:auto"><span data-icon="plus"></span></button>
+              </div>
+              <div class="model-bar" id="model-bar"></div>
+              <div class="msgs" id="msgs">
+                <div class="msg agent hello" id="chat-hello"><b>Tell me what to change.</b> I edit this project with kimo's tools: cuts, trims, titles, captions, colour, effects, audio and export. Every step shows up here and on the timeline, and each change gets its own Undo in History.</div>
+              </div>
+              <div class="composer">
+                <div class="sugg" id="sugg"><button>Lay out a first cut from my media</button><button>Cut the silences</button><button>Add a title at the start</button><button>Add captions</button><button>Make it warmer</button><button>Export a 1080p MP4</button></div>
+                <div class="in"><textarea id="chat-in" placeholder="Tell kimo what to change…" rows="1"></textarea>
+                  <button class="btn" id="chat-stop" hidden><span data-icon="stop"></span>Stop</button>
+                  <button class="btn acc" id="chat-send" aria-label="Send"><span data-icon="send"></span></button></div>
+                <div class="hint" id="chat-hint">Enter to send · Shift+Enter for a new line · / to focus</div>
+              </div>
+            </div>
+          </div>
+          <div class="pane" id="pane-insp" role="tabpanel">
+            <div class="pane-h"><h3 id="insp-title">Project</h3></div>
+            <div class="insp-body" id="insp-body"></div>
+          </div>
+          <div class="pane" id="pane-hist" role="tabpanel">
+            <div class="hist-hd note muted">Every edit, yours or an agent's. Undoing one change also undoes the ones after it.</div>
+            <div class="changes" id="changes"></div>
+          </div>
         </aside>
 
         <!-- timeline -->
         <div class="ed-tl" id="tl">
           <div class="tl-bar">
-            <span class="mono tl-tc" id="tl-tc">0:00.00</span>
+            <span class="mono tl-tc" id="tl-tc">00:00:00:00</span>
             <label class="check note"><input type="checkbox" id="tl-snap" checked><span>Snap</span></label>
             <span class="note muted" id="tl-hint">Drag media here · drag clips to move · drag edges to trim</span>
-            <div class="tl-zoom"><button class="ib sm" id="tl-zout" aria-label="Zoom out" title="Zoom out (-)"><span data-icon="minus"></span></button><input type="range" id="tl-zoom" min="10" max="400" value="80" aria-label="Zoom"><button class="ib sm" id="tl-zin" aria-label="Zoom in" title="Zoom in (+)"><span data-icon="plus"></span></button><button class="btn sm ghost" id="tl-fit" title="Fit the whole edit">Fit</button></div>
+            <div class="tl-zoom"><button class="ib sm" id="tl-zout" aria-label="Zoom out" title="Zoom out (-)"><span data-icon="minus"></span></button><input type="range" id="tl-zoom" min="6" max="400" value="80" aria-label="Zoom"><button class="ib sm" id="tl-zin" aria-label="Zoom in" title="Zoom in (+)"><span data-icon="plus"></span></button><button class="btn sm ghost" id="tl-fit" title="Fit the whole edit (Backslash)">Fit</button></div>
           </div>
           <div class="tl-main" id="tl-main">
             <div class="tl-heads" id="tl-heads"></div>
@@ -169,44 +213,16 @@
               </div>
             </div>
           </div>
-          <div class="tl-empty" id="tl-empty"><b>Your timeline is empty</b><span>Drag a clip from Media, double-click one, or ask an agent to lay out a first cut.</span></div>
+          <div class="tl-empty" id="tl-empty"><b>Your timeline is empty</b><span>Drag a clip from Media, double-click one, or ask your agent to lay out a first cut.</span></div>
         </div>
-      </div>
-    </section>
-
-    <!-- ================= AGENT ================= -->
-    <section class="tab" id="tab-agent">
-      <div class="agentwrap">
-        <div class="convo">
-          <div class="convo-hd">
-            <div class="agent-pick" id="agent-pick" role="radiogroup" aria-label="Agent"></div>
-            <button class="btn sm ghost" id="agent-new" title="Start a new conversation" style="margin-left:auto"><span data-icon="plus"></span>New chat</button>
-          </div>
-          <div class="model-bar" id="model-bar"></div>
-          <div class="msgs" id="msgs">
-            <div class="msg agent hello" id="chat-hello"><b>Tell me what to change.</b> I'll edit your project with kimo's tools: cut, trim, titles, captions, colour, effects, audio, export. You'll see every step here and in the timeline, and each change gets its own Undo.</div>
-          </div>
-          <div class="composer">
-            <div class="sugg" id="sugg"><button>Lay out a first cut from my media</button><button>Cut the silences</button><button>Add a title at the start</button><button>Add captions</button><button>Make it warmer</button><button>Export a 1080p MP4</button></div>
-            <div class="in"><textarea id="chat-in" placeholder="Tell kimo what to change…" rows="1"></textarea>
-              <button class="btn" id="chat-stop" hidden><span data-icon="stop"></span>Stop</button>
-              <button class="btn acc" id="chat-send" aria-label="Send"><span data-icon="send"></span><span>Send</span></button></div>
-            <div class="hint" id="chat-hint">Enter to send · Shift+Enter for a new line</div>
-          </div>
-        </div>
-        <aside class="chgcol">
-          <div id="slot-agent" class="slot"></div>
-          <div class="col-hd"><h2>Changes</h2><span class="chip" id="chg-count">0</span></div>
-          <div class="changes" id="changes"></div>
-        </aside>
       </div>
     </section>
 
     <!-- ================= LIVE ================= -->
     <section class="tab" id="tab-live">
       <div class="live-top">
-        <h1 class="serif title">Live</h1>
-        <span class="chip acc" id="live-state">waiting</span>
+        <h1 class="title">Activity</h1>
+        <span class="chip" id="live-state">waiting</span>
         <div class="seg" id="live-filter"></div>
         <span class="note muted" id="live-count" style="margin-left:auto"></span>
         <button class="btn sm ghost" id="live-clear">Clear</button>
@@ -226,7 +242,7 @@
     <!-- ================= CONNECTIONS ================= -->
     <section class="tab" id="tab-connections">
       <div class="conn">
-        <h1 class="serif title">Connections</h1>
+        <h1 class="title">Connections</h1>
         <p class="sub">kimo runs Claude Code, Codex and Antigravity on your computer, signed in with <b>your own subscription</b>. kimo never sees your password or tokens: each one signs in with its own login.</p>
         <div class="grid g3" id="cli-cards"></div>
         <div class="row" style="margin:10px 0 0"><button class="btn sm ghost" id="cli-refresh"><span data-icon="refresh"></span>Check again</button><span class="note muted" id="cli-msg"></span></div>
@@ -275,8 +291,8 @@
 <div class="overlay" id="setup">
   <div class="modal setup">
     <div class="setup-hero">
-      <div class="hero-mark"><svg class="km xl" viewBox="0 0 1024 1024" role="img" aria-label="kimo"><use href="#km"/></svg><div><div class="word lg">kimo</div><div class="eyebrow">First start · one time</div></div></div>
-      <h1 class="serif title">A few tools and <em>kimo</em> is ready.</h1>
+      <div class="hero-mark"><svg class="km xl" viewBox="0 0 1024 1024" role="img" aria-label="kimo"><use href="#km"/></svg><div><div class="word lg">kimo</div><div class="note muted">First start, one time</div></div></div>
+      <h1 class="title">Getting kimo ready</h1>
       <p class="sub">kimo needs FFmpeg to read and write video. If this computer already has it, kimo uses that. Downloads are checked against their SHA-512 fingerprint before use, and a dropped connection resumes.</p>
     </div>
     <div class="setup-body">
@@ -292,7 +308,7 @@
 <!-- welcome (once) -->
 <div class="overlay" id="welcome"><div class="modal welcome">
   <svg class="km xl" viewBox="0 0 1024 1024" role="img" aria-label="kimo"><use href="#km"/></svg>
-  <h1 class="serif title">Welcome to <em>kimo</em>.</h1>
+  <h1 class="title">Welcome to kimo</h1>
   <ol class="wsteps">
     <li><b>Bring your footage.</b> Import or drop video, audio and images into Media.</li>
     <li><b>Pick your agent.</b> Claude Code, Codex or Antigravity, signed in with the plan you already have.</li>
@@ -309,10 +325,32 @@
   <div class="kv"><span>App</span><b class="mono" id="ab-ver">—</b><span>Engine</span><b class="mono" id="ab-eng">—</b><span>License</span><b>MIT</b></div>
   <div class="row" style="margin-top:20px;justify-content:flex-end"><button class="btn" id="ab-close">Close</button></div>
 </div></div>
+<!-- command palette (Ctrl+K) -->
+<div class="overlay cmdk-ov" id="cmdk"><div class="modal cmdk-box" role="dialog" aria-label="Search actions or ask your agent">
+  <div class="cmdk-in"><span data-icon="search"></span><input id="cmdk-q" placeholder="Search actions, or say what you want changed" autocomplete="off" spellcheck="false" role="combobox" aria-controls="cmdk-list" aria-expanded="true"><kbd>Esc</kbd></div>
+  <div class="cmdk-list" id="cmdk-list" role="listbox"></div>
+  <div class="cmdk-ft"><span><kbd>↑</kbd><kbd>↓</kbd> move</span><span><kbd>Enter</kbd> run</span><span>Anything that isn't an action goes to your agent</span></div>
+</div></div>
+<!-- keyboard shortcuts (?) -->
+<div class="overlay" id="keys"><div class="modal keys-box" role="dialog" aria-label="Keyboard shortcuts">
+  <h2>Keyboard shortcuts</h2>
+  <div class="keys-grid" id="keys-grid"></div>
+  <div class="row" style="justify-content:flex-end;margin-top:18px"><button class="btn" id="keys-close">Close</button></div>
+</div></div>
 <div class="dropcover" id="dropcover"><div><span data-icon="upload"></span><b>Drop to import</b><span>Video, audio and images go into Media</span></div></div>
 <div class="ctx" id="ctx" hidden></div>
 <div class="toast" id="toast"></div>
 <script defer src="playback.js"></script>
-<script type="module" src="studio.js"></script>
+<script defer src="studio/core.js"></script>
+<script defer src="studio/media.js"></script>
+<script defer src="studio/timeline.js"></script>
+<script defer src="studio/inspector.js"></script>
+<script defer src="studio/viewer.js"></script>
+<script defer src="studio/agent.js"></script>
+<script defer src="studio/live.js"></script>
+<script defer src="studio/connections.js"></script>
+<script defer src="studio/project.js"></script>
+<script defer src="studio/palette.js"></script>
+<script type="module" src="studio/main.js"></script>
 </body>
 </html>
