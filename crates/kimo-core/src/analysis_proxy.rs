@@ -238,14 +238,16 @@ fn build(original_path: &str, duration: f64, fps: f64, s: &Slot, known_gap: Opti
     // Hardware decode/encode when the GPU answers; the software branch below is the historical argv.
     let hw_decode = crate::hw::nvdec_for(original_path);
     let nvenc = crate::hw::nvenc_available();
+    // `hw`: use the GPU at all. The retry after a failed hardware attempt is fully software (decode AND
+    // encode): NVENC itself can be what failed (consumer GPUs cap concurrent encode sessions).
     let command = |hw: bool| -> Command {
         let mut cmd = Command::new("ffmpeg");
         cmd.args(["-y", "-v", "error", "-nostdin"]);
-        if hw {
+        if hw && hw_decode {
             cmd.args(["-hwaccel", "cuda"]);
         }
         cmd.args(["-i", original_path, "-vf", &format!("fps={fps}")]);
-        if nvenc {
+        if hw && nvenc {
             // `-g 0` on NVENC means every frame intra (SDK semantics); a computed GOP of 1 maps to
             // it, because `-g 1` is rejected by SDK 12.2+ ("Gop Length should be greater than
             // number of B frames + 1").
@@ -257,8 +259,8 @@ fn build(original_path: &str, duration: f64, fps: f64, s: &Slot, known_gap: Opti
         cmd.args(["-an", "-f", "mp4"]).arg(&tmp);
         cmd
     };
-    let attempt = crate::auto_proxy::run_ffmpeg(&mut command(hw_decode), crate::auto_proxy::Measure::Seconds(duration), progress);
-    if attempt.is_err() && hw_decode {
+    let attempt = crate::auto_proxy::run_ffmpeg(&mut command(true), crate::auto_proxy::Measure::Seconds(duration), progress);
+    if attempt.is_err() && (hw_decode || nvenc) {
         // The hardware attempt failed (GPU busy, session limit, driver state): once, all-software.
         if crate::auto_proxy::run_ffmpeg(&mut command(false), crate::auto_proxy::Measure::Seconds(duration), progress).is_err() {
             let _ = std::fs::remove_file(&tmp);

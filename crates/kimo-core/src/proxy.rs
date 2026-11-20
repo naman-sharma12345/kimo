@@ -521,9 +521,10 @@ pub fn generate(
     }
     cmd.args(["-f", "mp4"]).arg(&tmp.0);
     let attempt = crate::color::process::wait_command(&mut cmd, remaining());
-    if attempt.is_err() && hw_decode {
-        // The hardware attempt failed (GPU busy, session limit, driver state): retry once,
-        // all-software. The temp file may hold a partial encode; -y rewrites it.
+    if attempt.is_err() && (hw_decode || nvenc) {
+        // The hardware attempt failed (GPU busy, NVENC session limit, driver state): retry once,
+        // all-software -- also when only the encoder was on the GPU. The temp file may hold a partial
+        // encode; -y rewrites it.
         let mut cmd = Command::new("ffmpeg");
         cmd.args(["-v", "error", "-nostdin", "-y", "-noautorotate", "-i"])
             .arg(&source_path)

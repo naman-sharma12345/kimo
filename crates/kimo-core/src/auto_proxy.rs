@@ -485,14 +485,14 @@ fn build_edit(t: &Task, progress: &mut dyn FnMut(f64)) -> Result<String, EditErr
     let command = |hw: bool| -> Command {
         let mut cmd = Command::new("ffmpeg");
         cmd.args(["-v", "error", "-nostdin", "-y"]).args(PROGRESS_ARGS);
-        if hw {
+        if hw && hw_decode {
             cmd.args(["-hwaccel", "cuda"]);
         }
         cmd.args(["-noautorotate", "-i"]).arg(src).args([
             "-map", "0:v:0", "-an", "-sn", "-dn", "-map_metadata", "-1",
             "-vf", &format!("scale={w}:{h}:flags=fast_bilinear,setsar=1"),
         ]);
-        if nvenc {
+        if hw && nvenc {
             // NVENC all-intra is `-g 0` (gopLength 0 = every frame intra; `-g 1` is rejected by
             // SDK 12.2+: "Gop Length should be greater than number of B frames + 1").
             cmd.args(["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "23", "-b:v", "0", "-g", "0", "-bf", "0", "-pix_fmt", "yuv420p"]);
@@ -510,8 +510,9 @@ fn build_edit(t: &Task, progress: &mut dyn FnMut(f64)) -> Result<String, EditErr
         cmd
     };
     let done = (|| -> Result<(), String> {
-        let attempt = run_ffmpeg(&mut command(hw_decode), Measure::Frames(v.frames as u64), progress);
-        if attempt.is_err() && hw_decode {
+        // `hw`: use the GPU at all; the retry is fully software (NVENC itself can be what failed).
+        let attempt = run_ffmpeg(&mut command(true), Measure::Frames(v.frames as u64), progress);
+        if attempt.is_err() && (hw_decode || nvenc) {
             run_ffmpeg(&mut command(false), Measure::Frames(v.frames as u64), progress)?;
         } else {
             attempt?;
