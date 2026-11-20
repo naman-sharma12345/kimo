@@ -306,10 +306,20 @@ jobs:
           if (-not $exe) { throw "installed kimo-gui.exe not found" }
           if (-not (Test-Path (Join-Path $exe.DirectoryName 'kimo-mcp.exe'))) { throw "engine sidecar kimo-mcp.exe not installed next to the app" }
           Write-Output "installed: $($exe.FullName)"
-          $app = Start-Process $exe.FullName -PassThru
+          $app = Start-Process $exe.FullName -PassThru -RedirectStandardError "$env:RUNNER_TEMP\kimo-app.err" -RedirectStandardOutput "$env:RUNNER_TEMP\kimo-app.out"
           $bridge = "$env:APPDATA\dev.kimo.app\bridge.json"
-          for ($i = 0; $i -lt 60 -and -not (Test-Path $bridge); $i++) { Start-Sleep -Milliseconds 500 }
-          if (-not (Test-Path $bridge)) { throw "the app did not open its bridge" }
+          for ($i = 0; $i -lt 120 -and -not (Test-Path $bridge) -and -not $app.HasExited; $i++) { Start-Sleep -Milliseconds 500 }
+          if (-not (Test-Path $bridge)) {
+            # say why, so a failure here can be fixed without guessing
+            Write-Output "app still running: $(-not $app.HasExited)$(if ($app.HasExited) { " (exit code $($app.ExitCode))" })"
+            Write-Output "--- data folder $env:APPDATA\dev.kimo.app"; Get-ChildItem "$env:APPDATA\dev.kimo.app" -ErrorAction SilentlyContinue | Format-Table Name, Length -AutoSize | Out-String | Write-Output
+            Write-Output "--- engine.log"; Get-Content "$env:APPDATA\dev.kimo.app\engine.log" -Tail 40 -ErrorAction SilentlyContinue
+            Write-Output "--- app stderr"; Get-Content "$env:RUNNER_TEMP\kimo-app.err" -Tail 60 -ErrorAction SilentlyContinue
+            Write-Output "--- app stdout"; Get-Content "$env:RUNNER_TEMP\kimo-app.out" -Tail 20 -ErrorAction SilentlyContinue
+            Write-Output "--- processes"; Get-Process kimo-gui, kimo-mcp, msedgewebview2 -ErrorAction SilentlyContinue | Format-Table Name, Id, StartTime -AutoSize | Out-String | Write-Output
+            Write-Output "--- Windows application errors"; Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Level = 2; StartTime = (Get-Date).AddMinutes(-10) } -MaxEvents 5 -ErrorAction SilentlyContinue | Format-List TimeCreated, ProviderName, Message | Out-String -Width 300 | Write-Output
+            throw "the app did not open its bridge"
+          }
           Start-Sleep -Seconds 4
           if (-not (Get-Process kimo-mcp -ErrorAction SilentlyContinue)) { throw "the engine sidecar did not start" }
           python attach_check.py $exe.FullName
