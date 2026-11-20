@@ -1,4 +1,41 @@
-## Unreleased
+## 9.1.0 (2026-11-20)
+
+**Desktop app**
+- A new home page built to start work or get back to it: describe the video you want (or pick a
+  starter such as "Cut the silences", "Add captions", "Make a 9:16 short") and kimo opens the
+  Studio and hands it to your agent; a Continue card for the last project; a drop tile for footage;
+  recent projects; agents, this computer and what's new below.
+- The Studio redesign: media, viewer, timeline and the agent on one screen, with Agent, Inspector
+  and History side panes, a Ctrl+K command palette, a keyboard sheet (?), frame-accurate timecode,
+  safe-area and thirds guides, filmstrip clips and foldable inspector sections. Real-time playback
+  with sound, J / K / L shuttle, loop in and out, background proxy badges, crash reports and
+  in-app updates all carry over into it.
+
+**Export and rendering**
+- Cut-only edits export through FFmpeg alone: whole matching files are joined by stream copy
+  (audio copied too when untouched) and anything else is decoded, conformed and encoded in one
+  FFmpeg pass with the renderer's own filters and x264 settings. Measured: 6 x 20 s 1080p clips in
+  0.9 s (was 22 s); a trimmed five-clip edit with mixed sizes and frame rates in 12 s (was 202 s).
+- Hybrid export: chunks that hold only plain clips are encoded by FFmpeg beside the renderer, and
+  only the chunks with effects, titles or transitions are rendered. The join also checks codec
+  headers now and falls back to rendering if they ever differ.
+- The renderer reads decoded frames from FFmpeg in 64 KB pieces; one huge pipe read was about ten
+  times slower on Windows (a 720p export went from 42 s to 17 s). Deep decode windows seek near the
+  window instead of decoding from the clip's in-point, plain frames and a plain bottom layer skip
+  the float compositor, frame buffers are reused, and the blend and conversion loops are tighter.
+  Output is byte-identical to before in every check. `KIMO_STAGES=1` prints a per-chunk timing
+  breakdown.
+
+**Agents**
+- Tool discovery: a ranked search over all ~550 actions with editing vocabulary, typo correction
+  and argument signatures, so agents find the right tool in fewer calls; group calls accept flat
+  arguments and suggest the closest action on a typo.
+
+**Engine**
+- Proxies: a failed GPU attempt now retries fully in software, also when only the NVENC encoder
+  failed (consumer GPUs cap concurrent encode sessions).
+
+### Also in 9.1.0
 
 **Engine**
 - Proxies accept real phone footage. Rate tags are validated by value (a VFR file's `avg_frame_rate`

@@ -47,45 +47,90 @@
     </header>
 
     <div class="page">
-    <!-- ================= HOME ================= -->
+    <!-- ================= HOME: start something, or get back to it ================= -->
     <section class="tab on" id="tab-home">
       <div class="home">
-        <div class="hero">
-          <div class="hero-copy">
-            <h1>Edit by hand, or just say what you want.</h1>
-            <p class="sub">kimo is a video editor where Claude Code, Codex and Antigravity work on the same timeline as you, on the plan you already pay for. Every change shows up as it happens, and every change can be undone.</p>
-            <div class="row cta">
-              <button class="btn acc lg" id="home-import"><span data-icon="plus"></span>Import media</button>
-              <button class="btn lg" id="home-open"><span data-icon="folder"></span>Open project</button>
-              <button class="btn lg ghost" data-go="agent"><span data-icon="spark"></span>Ask an agent</button>
-            </div>
+        <header class="home-top">
+          <div>
+            <p class="home-greet" id="home-greet">Welcome back</p>
+            <h1>What are we making?</h1>
           </div>
-          <div class="reel" aria-hidden="true">
-            <div class="reel-hd"><span class="reel-tc">00:00:12:18</span><span>1080p · 30 fps</span><div class="who"><span><i></i>You</span><span class="ag"><i></i>Agent</span></div></div>
-            <div class="reel-body">
-              <div class="reel-ruler"><span style="left:0">0:00</span><span style="left:25%">0:05</span><span style="left:50%">0:10</span><span style="left:75%">0:15</span></div>
-              <div class="reel-tracks">
-                <div class="reel-row"><b>Titles</b><div class="reel-lane"><span class="reel-clip t" style="left:2%;width:17%">Golden hour</span><span class="reel-clip t ag new" style="left:76%;width:20%">getkimo.tech</span></div></div>
-                <div class="reel-row"><b>Main</b><div class="reel-lane"><span class="reel-clip" style="left:0;width:30%">golden-hour-wide</span><span class="reel-clip ag" style="left:30%;width:27%">interview-a</span><span class="reel-clip ag new" style="left:57%;width:20%">interview-b</span><span class="reel-clip" style="left:77%;width:23%">logo</span></div></div>
-                <div class="reel-row"><b>Music</b><div class="reel-lane"><span class="reel-clip a" style="left:0;width:96%">warm-tape-loop</span></div></div>
-              </div>
-              <div class="reel-ph"></div>
+          <button class="home-k" id="home-cmdk" title="Search every action (Ctrl+K)"><span data-icon="search"></span><span>Search actions</span><span class="kk"><kbd>Ctrl</kbd><kbd>K</kbd></span></button>
+        </header>
+
+        <form class="ask" id="home-ask" autocomplete="off">
+          <label class="ask-box" for="home-ask-t">
+            <span class="ask-ic" data-icon="spark"></span>
+            <textarea id="home-ask-t" rows="2" placeholder="Describe the video you want: “turn my interview into a 30-second teaser with captions”"></textarea>
+          </label>
+          <div class="ask-bar">
+            <div class="ask-chips" id="home-chips" role="list" aria-label="Ideas to start from"></div>
+            <span class="ask-who" id="home-ask-who"></span>
+            <button class="btn acc" type="submit" id="home-ask-go">Start<span class="kk"><kbd>Enter</kbd></span></button>
+          </div>
+        </form>
+
+        <div class="home-start">
+          <section class="cont" id="home-continue" aria-label="Continue"></section>
+          <div class="home-side">
+            <button class="drop-tile" id="home-import" type="button">
+              <span class="dt-ic" data-icon="upload"></span>
+              <span class="dt-t">Drop footage here</span>
+              <span class="dt-s">or click to browse · video, audio and images</span>
+            </button>
+            <div class="side-row">
+              <button class="btn lg" id="home-new2"><span data-icon="plus"></span>New project</button>
+              <button class="btn lg" id="home-open"><span data-icon="folder"></span>Open…</button>
             </div>
-            <div class="reel-say"><span class="d"></span><span><b>Agent:</b> cut the 0.8 s pause at 0:12 and closed the gap</span><span class="mono">Undo</span></div>
           </div>
         </div>
-        <div class="sec-h"><h2>Projects</h2><span class="note muted">Pick up where you left off.</span><a class="lnk" id="home-open2" style="margin-left:auto">Open another <span data-icon="arrow"></span></a></div>
+
+        <div class="sec-h"><h2>Recent projects</h2><a class="lnk" id="home-open2" style="margin-left:auto">Open another <span data-icon="arrow"></span></a></div>
         <div class="proj-grid" id="home-recent"></div>
-        <div class="sec-h"><h2>Your agents</h2><span class="note muted">They run on your own subscription. No API key needed.</span><a class="lnk" data-go="connections" style="margin-left:auto">Manage <span data-icon="arrow"></span></a></div>
-        <div class="grid g3" id="home-agents"></div>
-        <div class="sec-h"><h2>This computer</h2></div>
-        <div class="kv home-kv sys">
-          <span>Engine</span><b id="h-engine">…</b>
-          <span>Video tools</span><b id="h-parts">…</b>
-          <span>Agents attached</span><b id="h-attached">none</b>
-          <span>Data folder</span><b class="mono" id="h-data">…</b>
+
+        <div class="home-foot">
+          <section class="foot-col">
+            <div class="sec-h"><h2>Your agents</h2><span class="note muted">On the plan you already pay for. No API key.</span><a class="lnk" data-go="connections" style="margin-left:auto">Manage <span data-icon="arrow"></span></a></div>
+            <div class="grid g3" id="home-agents"></div>
+          </section>
+          <section class="foot-row">
+            <div class="news" id="home-news">
+              <div class="news-h"><span class="pill-new">New</span><h2 id="home-news-t">What’s new in kimo</h2></div>
+              <ul>
+                <li><b>One screen for everything.</b> Media, viewer, timeline and your agent side by side in the Studio.</li>
+                <li><b>Much faster exports.</b> Cut-only edits skip the renderer entirely, and edits with effects render only the parts that need it.</li>
+                <li><b>Real-time playback with sound.</b> J / K / L shuttle, frame steps and loop in and out.</li>
+                <li><b>NVIDIA acceleration.</b> Footage decodes and proxies build on the graphics card when one is present.</li>
+                <li><b>Agents find the right tool first.</b> Smarter search across all 550 editing actions.</li>
+              </ul>
+            </div>
+            <div class="sys-card">
+              <h2>This computer</h2>
+              <div class="kv home-kv sys">
+                <span>Engine</span><b id="h-engine">…</b>
+                <span>Video tools</span><b id="h-parts">…</b>
+                <span>Agents attached</span><b id="h-attached">none</b>
+                <span>Data folder</span><b class="mono" id="h-data">…</b>
+              </div>
+            </div>
+          </section>
         </div>
       </div>
+      <template id="home-reel">
+      <div class="reel" aria-hidden="true">
+        <div class="reel-hd"><span class="reel-tc">00:00:12:18</span><span>1080p · 30 fps</span><div class="who"><span><i></i>You</span><span class="ag"><i></i>Agent</span></div></div>
+        <div class="reel-body">
+          <div class="reel-ruler"><span style="left:0">0:00</span><span style="left:25%">0:05</span><span style="left:50%">0:10</span><span style="left:75%">0:15</span></div>
+          <div class="reel-tracks">
+            <div class="reel-row"><b>Titles</b><div class="reel-lane"><span class="reel-clip t" style="left:2%;width:17%">Golden hour</span><span class="reel-clip t ag new" style="left:76%;width:20%">getkimo.tech</span></div></div>
+            <div class="reel-row"><b>Main</b><div class="reel-lane"><span class="reel-clip" style="left:0;width:30%">golden-hour-wide</span><span class="reel-clip ag" style="left:30%;width:27%">interview-a</span><span class="reel-clip ag new" style="left:57%;width:20%">interview-b</span><span class="reel-clip" style="left:77%;width:23%">logo</span></div></div>
+            <div class="reel-row"><b>Music</b><div class="reel-lane"><span class="reel-clip a" style="left:0;width:96%">warm-tape-loop</span></div></div>
+          </div>
+          <div class="reel-ph"></div>
+        </div>
+        <div class="reel-say"><span class="d"></span><span><b>Agent:</b> cut the 0.8 s pause at 0:12 and closed the gap</span><span class="mono">Undo</span></div>
+      </div>
+      </template>
     </section>
 
     <!-- ================= STUDIO: media · viewer · agent/inspector/history · timeline, in one place ================= -->

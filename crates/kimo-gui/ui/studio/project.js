@@ -5,18 +5,71 @@
 
 // ================================================================================================================
 // HOME
+// Starters for the prompt: each fills the box (you can edit it) and says what the agent will do.
+const HOME_IDEAS = [
+  ['Cut the silences', 'Cut the silences and long pauses, and close the gaps.'],
+  ['Add captions', 'Add word-by-word captions in a clean, readable style.'],
+  ['Make a 9:16 short', 'Make a 9:16 vertical short from the best 30 seconds, with captions.'],
+  ['Cut to the beat', 'Cut the footage to the beat of the music.'],
+  ['Match the colour', 'Match the colour of every shot to the first one.'],
+  ['Clean up the audio', 'Clean up the audio: remove noise and even out the loudness.'],
+];
+const projName = p => base(p).replace(/\.(kimo|json)$/, '');
+const projDir = p => String(p).replace(/[\\/][^\\/]*$/, '');
+const projHue = p => { let h = 0; for (const ch of String(p)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h % 360; };
 function renderRecent() {
-  const r = S.app?.settings?.recent || [];
-  const poster = p => { let h = 0; for (const ch of p) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h % 360; };
-  const name = p => base(p).replace(/\.(kimo|json)$/, '');
-  const dir = p => String(p).replace(/[\\/][^\\/]*$/, '');
-  $('#home-recent').innerHTML = `<button class="pcard new" id="home-new"><span class="poster">${ICON('plus')}</span><span class="pn">New project</span><span class="pp">Start from an empty timeline</span></button>`
-    + r.slice(0, 7).map(p => `<a class="pcard" data-open="${esc(p)}" title="${esc(p)}" tabindex="0"><span class="poster" style="--h:${poster(p)}"><b>${esc(name(p).slice(0, 2))}</b></span><span class="pn">${esc(name(p))}</span><span class="pp">${esc(dir(p))}</span></a>`).join('')
-    + (r.length ? '' : '<div class="pcard-note note muted">Projects you save or open show up here.</div>');
-  $('#home-new').onclick = async () => { await newProject(); show('edit'); };
-  icons($('#home-recent'));
-  $$('[data-open]').forEach(a => { a.onclick = () => openProject(a.dataset.open); a.onkeydown = e => { if (e.key === 'Enter') a.click(); }; });
+  const r = S.app?.settings?.recent || [], cur = S.app?.project_path || null;
+  const hr = new Date().getHours();
+  $('#home-greet').textContent = hr < 5 ? 'Working late' : hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
+  if (S.app?.version) $('#home-news-t').textContent = `What’s new in kimo ${S.app.version}`;
+  // continue: the most recent project, or (first run) what kimo does
+  const c = $('#home-continue');
+  if (r.length) {
+    const p = r[0], open = cur && normPath(cur) === normPath(p);
+    c.className = 'cont'; c.style.removeProperty('--h');
+    c.innerHTML = `<div class="c-poster" style="--h:${projHue(p)}" aria-hidden="true"><b>${esc(projName(p).slice(0, 2))}</b><span class="c-ph"></span><div class="c-strip"><i></i><i></i><i></i></div></div>
+      <div class="c-body"><span class="c-k">${open ? 'Open now' : 'Last opened'}</span><span class="c-n" title="${esc(p)}">${esc(projName(p))}</span><span class="c-p" title="${esc(p)}">${esc(projDir(p))}</span>
+      <div class="c-act"><button class="btn acc" id="home-resume">${ICON(open ? 'film' : 'arrow')}${open ? 'Back to the Studio' : 'Continue editing'}</button></div></div>`;
+    $('#home-resume').onclick = () => open ? show('edit') : openProject(p);
+  } else {
+    c.className = 'cont empty-first';
+    c.innerHTML = `<span class="c-k">How it works</span><p class="c-lead">Edit by hand, or say what you want. Your agent works on the same timeline as you, every change shows up as it happens, and every change can be undone.</p>`;
+    c.appendChild($('#home-reel').content.cloneNode(true));
+  }
+  // recent: everything after the one above
+  const rest = r.slice(1, 9);
+  $('#home-recent').innerHTML = rest.length
+    ? rest.map((p, i) => { const open = cur && normPath(cur) === normPath(p); return `<a class="pcard${open ? ' cur' : ''}" data-open="${esc(p)}" title="${esc(p)}" tabindex="0"><span class="poster" style="--h:${projHue(p)}"><b>${esc(projName(p).slice(0, 2))}</b></span><span class="pn">${esc(projName(p))}</span><span class="pp">${esc(projDir(p))}</span><span class="pt">${open ? 'Open now' : ''}</span></a>`; }).join('')
+    : `<div class="recent-empty">${r.length ? 'Projects you open or save show up here.' : 'No projects yet. Drop footage above or describe a video to start your first one.'}</div>`;
+  icons(c); icons($('#home-recent'));
+  $$('#home-recent [data-open]').forEach(a => { a.onclick = () => openProject(a.dataset.open); a.onkeydown = e => { if (e.key === 'Enter') a.click(); }; });
+  renderAskWho();
 }
+function renderAskWho() {
+  const who = $('#home-ask-who'); if (!who) return;
+  const a = currentAgent();
+  who.innerHTML = `with <b>${esc(actorName(a))}</b> · <a id="home-ask-change">change</a>`;
+  $('#home-ask-change').onclick = () => show('agent');
+}
+$('#home-chips').innerHTML = HOME_IDEAS.map(([t, say]) => `<button type="button" class="chip" role="listitem" data-say="${esc(say)}">${esc(t)}</button>`).join('');
+$('#home-chips').onclick = e => { const b = e.target.closest('.chip'); if (!b) return; const t = $('#home-ask-t'); t.value = b.dataset.say; t.focus(); t.setSelectionRange(t.value.length, t.value.length); };
+$('#home-ask-t').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#home-ask').requestSubmit(); } });
+$('#home-ask-t').addEventListener('input', e => { const t = e.target; t.style.height = 'auto'; t.style.height = Math.min(180, t.scrollHeight) + 'px'; });
+$('#home-ask').onsubmit = async e => {
+  e.preventDefault();
+  const t = $('#home-ask-t'), text = t.value.trim();
+  if (!text) { t.focus(); return toast('Describe the video you want, or pick an idea.'); }
+  if (S.app?.engine?.state !== 'running') return toast('The engine is still starting. Try again in a moment.', 'bad');
+  t.value = ''; t.style.height = '';
+  show('agent');
+  await sendAgent(text);
+};
+$('#home-import').onclick = async () => { const p = await B.invoke('pick', { kind: 'media' }).catch(e => { toast(String(e), 'bad'); return []; }); if (p?.length) { show('edit'); importPaths(p); } };
+$('#home-new2').onclick = async () => { await newProject(); show('edit'); };
+$('#home-cmdk').onclick = () => openPalette();
+// dropping files on the home page highlights the drop tile (the window-wide drop itself is handled in main.js)
+for (const ev of ['dragenter', 'dragover']) $('#tab-home').addEventListener(ev, () => $('#home-import').classList.add('hot'));
+for (const ev of ['dragleave', 'drop']) $('#tab-home').addEventListener(ev, () => $('#home-import').classList.remove('hot'));
 
 // ================================================================================================================
 // PROJECT FILES
