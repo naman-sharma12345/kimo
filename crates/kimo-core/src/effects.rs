@@ -10,9 +10,25 @@ impl Frame {
         let n = w.checked_mul(h).and_then(|v| v.checked_mul(4)).ok_or_else(|| format!("frame {w}x{h} overflows"))?;
         let b = n.saturating_mul(4); let (budget, live) = (crate::guard::BUDGET.load(std::sync::atomic::Ordering::Relaxed), crate::guard::LIVE.load(std::sync::atomic::Ordering::Relaxed));
         if budget != usize::MAX && live.saturating_add(b) > budget { return Err(format!("memory budget exceeded: a {w}x{h} frame needs {} MB, {} MB of the {} MB budget is in use", b >> 20, live >> 20, budget >> 20)); }
+        if let Some(mut d) = pool_take(n) { d.fill(0.0); return Ok(Frame { w, h, d }); }
         let mut d: Vec<f32> = Vec::new(); d.try_reserve_exact(n).map_err(|e| format!("cannot allocate a {w}x{h} frame ({} MB): {e}", b >> 20))?; d.resize(n, 0.0); Ok(Frame { w, h, d })
     }
 }
+
+/// Recycled frame buffers. A fresh frame-sized allocation (14.7 MB at 720p) comes from the OS as untouched pages, and
+/// on Windows every page then faults on first write: the renderer's per-frame canvas and layer frames spent about as
+/// long faulting as computing. Buffers handed back with `recycle` are reused (zeroed) by Frame::new instead. Capped at
+/// POOL_BYTES so an idle process holds little, and emptied by `pool_clear` when an export ends.
+static FRAME_POOL: std::sync::Mutex<Vec<Vec<f32>>> = std::sync::Mutex::new(Vec::new());
+const POOL_BYTES: usize = 128 << 20;
+fn pool_take(n: usize) -> Option<Vec<f32>> { let mut p = FRAME_POOL.lock().ok()?; let i = p.iter().position(|v| v.len() == n)?; Some(p.swap_remove(i)) }
+/// Hand a frame's pixels back for reuse (dropped instead when the pool is full).
+pub fn recycle(d: Vec<f32>) {
+    if d.is_empty() { return; }
+    if let Ok(mut p) = FRAME_POOL.lock() { let used: usize = p.iter().map(|v| v.capacity() * 4).sum(); if used + d.capacity() * 4 <= POOL_BYTES { p.push(d); } }
+}
+/// Free every pooled buffer (end of an export).
+pub fn pool_clear() { if let Ok(mut p) = FRAME_POOL.lock() { p.clear(); p.shrink_to_fit(); } }
 
 pub type Params = BTreeMap<String, Prop>;
 pub(crate) fn p(m: &Params, k: &str, def: f64, t: f64) -> f32 { m.get(k).map(|x| x.at(t)).unwrap_or(def) as f32 }
@@ -361,4 +377,15 @@ pub(crate) fn rgb2hsl(c: [f32; 3]) -> (f32, f32, f32) {
 pub(crate) fn hsl2rgb(h: f32, s: f32, l: f32) -> [f32; 3] {
     let c = (1.0 - (2.0*l-1.0).abs()) * s; let x = c * (1.0 - ((h/60.0).rem_euclid(2.0) - 1.0).abs()); let m = l - c/2.0;
     let (r, g, b) = match (h/60.0) as u32 { 0 => (c,x,0.0), 1 => (x,c,0.0), 2 => (0.0,c,x), 3 => (0.0,x,c), 4 => (x,0.0,c), _ => (c,0.0,x) }; [r+m, g+m, b+m]
+}
+
+#[cfg(test)]
+mod frame_pool_tests {
+    use super::*;
+    #[test]
+    fn a_recycled_buffer_comes_back_zeroed() {
+        let mut f = Frame::new(7, 3); f.d.fill(0.5); recycle(f.d);
+        let g = Frame::new(7, 3); assert!(g.d.iter().all(|v| *v == 0.0), "Frame::new always starts transparent black");
+        assert_eq!(g.d.len(), 7 * 3 * 4); pool_clear();
+    }
 }

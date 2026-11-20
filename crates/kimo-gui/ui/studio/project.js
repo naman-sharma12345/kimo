@@ -68,10 +68,13 @@ $('#ex-go').onclick = async () => {
   const r = await call('output', 'export_job_start', { path, crf, force: true });
   if (!r?.job_id) return $('#ex-err').textContent = 'The export did not start.';
   EX.job = r.job_id; EX.path = path; $('#ex-go').disabled = true;
-  $('#ex-prog').hidden = false; $('#ex-bar').style.width = '0%'; $('#ex-status').textContent = 'Rendering…';
+  EX.mode = r.path_used?.mode; EX.t0 = Date.now();
+  $('#ex-prog').hidden = false; $('#ex-bar').style.width = '0%'; $('#ex-status').textContent = EX_MODE[EX.mode]?.[0] || 'Rendering…';
   clearInterval(EX.timer);
   EX.timer = setInterval(pollExport, 700);
 };
+// what the export is doing: cut-only edits skip the renderer (export_fast in kimo-core)
+const EX_MODE = { stream_copy: ['Joining clips without re-encoding…', 'copied, no quality loss'], direct_encode: ['Joining and encoding clips in one pass…', 'one-pass encode'] };
 async function pollExport() {
   if (!EX.job) return;
   const s = await read('output', 'job_status', { job_id: EX.job });
@@ -82,7 +85,7 @@ async function pollExport() {
   $('#ex-eta').textContent = s.eta?.seconds != null ? `~${Math.ceil(s.eta.seconds)} s left` : '';
   if (['done', 'failed', 'cancelled'].includes(s.state)) {
     clearInterval(EX.timer); const job = EX.job; EX.job = null; $('#ex-go').disabled = false;
-    if (s.state === 'done') { $('#ex-bar').style.width = '100%'; $('#ex-status').textContent = 'Done · ' + base(s.result?.path || EX.path); $('#ex-reveal').hidden = false; toast('Export finished'); }
+    if (s.state === 'done') { $('#ex-bar').style.width = '100%'; $('#ex-status').textContent = `Done in ${((Date.now() - EX.t0) / 1000).toFixed(1)} s · ${base(s.result?.path || EX.path)}${EX_MODE[EX.mode] ? ' · ' + EX_MODE[EX.mode][1] : ''}`; $('#ex-reveal').hidden = false; toast('Export finished'); }
     else { $('#ex-err').textContent = (s.error || s.warnings?.join(' ') || s.state) + ''; }
     void job;
   }

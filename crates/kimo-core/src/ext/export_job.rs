@@ -130,15 +130,19 @@ pub fn chunk_contract(parts: &[String]) -> Result<(), String> {
         let (fr, _) = ffprobe(&["-select_streams", "v:0", "-read_intervals", "%+#1", "-show_entries", "frame=key_frame,pict_type", "-of", "csv=p=0"], pth)?;
         let l = fr.lines().next().unwrap_or("").trim().to_string();
         match parse_first_frame(&l) { Ok((true, pt)) if pt == "I" => {}, Ok(_) => return Err(format!("join_contract: chunk {i} ({f}) does not start with a key frame (first frame is '{l}'); it cannot be stream-copied into the join")), Err(e) => return Err(format!("join_contract: chunk {i} ({f}): {e}")) }
-        let (par, _) = ffprobe(&["-select_streams", "v:0", "-show_entries", "stream=codec_name,profile,width,height,pix_fmt,r_frame_rate", "-of", "csv=p=0"], pth)?; let par = par.trim().to_string();
+        let (par, _) = ffprobe(&["-show_data_hash", "sha256", "-select_streams", "v:0", "-show_entries", "stream=codec_name,profile,width,height,pix_fmt,r_frame_rate,extradata_hash", "-of", "csv=p=0"], pth)?; let par = par.trim().to_string();
         match &first { None => first = Some(par), Some(f0) if *f0 != par => return Err(format!("join_contract: chunk {i} has codec parameters '{par}' but chunk 0 has '{f0}'")), _ => {} }
     }
     Ok(())
 }
 /// Final verification of a joined file: decoded frame count, video and audio duration, monotonic timestamps. `verified` is true only when all hold.
-pub fn verify_output(path: &std::path::Path, frames_total: u64, fps: f64, audio_secs: Option<f64>) -> Value {
+pub fn verify_output(path: &std::path::Path, frames_total: u64, fps: f64, audio_secs: Option<f64>) -> Value { verify_output_opts(path, frames_total, fps, audio_secs, true) }
+/// `decode: false` counts packets instead of decoding every frame: for ffmpeg's own one-pass exports (export_fast), whose
+/// video is either copied untouched from sources kimo already read or freshly encoded by x264, a full decode is a second
+/// export's worth of work (16 s of an otherwise 0.3 s join) for no extra assurance. Timestamps and durations are still checked.
+pub fn verify_output_opts(path: &std::path::Path, frames_total: u64, fps: f64, audio_secs: Option<f64>, decode: bool) -> Value {
     let mut problems: Vec<String> = vec![]; let one = 1.0 / fps;
-    let (cnt, err) = ffprobe(&["-count_frames", "-select_streams", "v:0", "-show_entries", "stream=nb_read_frames,duration", "-of", "csv=p=0"], path).unwrap_or_default();
+    let (cnt, err) = if decode { ffprobe(&["-count_frames", "-select_streams", "v:0", "-show_entries", "stream=nb_read_frames,duration", "-of", "csv=p=0"], path) } else { ffprobe(&["-count_packets", "-select_streams", "v:0", "-show_entries", "stream=nb_read_packets,duration", "-of", "csv=p=0"], path) }.unwrap_or_default();
     let mut it = cnt.trim().split(','); let vdur: f64 = it.next().and_then(|x| x.parse().ok()).unwrap_or(-1.0); let decoded: u64 = it.next().and_then(|x| x.parse().ok()).unwrap_or(0);
     if !err.is_empty() { problems.push(format!("decode errors: {}", err.lines().next().unwrap_or(""))); }
     if decoded != frames_total { problems.push(format!("decoded {decoded} frames, expected {frames_total}")); }
@@ -186,7 +190,34 @@ pub fn classify(e: &str) -> String {
 }
 fn tail(e: &str) -> String { let t: Vec<&str> = e.lines().rev().take(6).collect(); let mut v: Vec<&str> = t; v.reverse(); let j = v.join(" | "); if j.len() > 600 { j[j.len() - 600..].to_string() } else { j } }
 
-fn run(j: Arc<Job>, p: crate::model::Project, dir: std::path::PathBuf, out: String, cf: u64, crf: u32, force: bool, lock: LockGuard) {
+/// Hybrid export worker (export_hybrid): encodes each run of clean chunks with one ffmpeg, in order, and reports every
+/// chunk of the run as made (its `chunk_N.partial.mp4` exists) or failed. Runs beside the renderer, which takes the dirty chunks.
+fn hybrid_worker(j: Arc<Job>, p: crate::model::Project, m: super::export_hybrid::PicMap, runs: Vec<super::export_hybrid::Run>, dir: std::path::PathBuf, cf: u64, crf: u32, tx: std::sync::mpsc::Sender<(u64, Result<(), String>)>) {
+    let enc = crate::render::chunk_encoder_args(&p, crf);
+    for run in runs {
+        let res = (|| -> Result<(), String> {
+            let (enc, vf) = enc.as_ref().map_err(|e| e.clone())?;
+            let argv = super::export_hybrid::run_argv(&m, run.f0, run.f1, cf, run.first, p.fps, enc, vf, &dir).ok_or("the run is not clean")?;
+            let mut c = std::process::Command::new("ffmpeg"); c.args(&argv).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped());
+            #[cfg(windows)]
+            { use std::os::windows::process::CommandExt; c.creation_flags(0x0800_0000); }
+            let mut child = c.spawn().map_err(|e| format!("cannot start ffmpeg: {e}"))?;
+            let err_h = { let e = child.stderr.take(); std::thread::spawn(move || { let mut s = String::new(); if let Some(mut e) = e { use std::io::Read; let _ = e.read_to_string(&mut s); } s }) };
+            let st = loop {
+                if j.cancel.load(std::sync::atomic::Ordering::Relaxed) { let _ = child.kill(); let _ = child.wait(); return Err("cancelled".into()); }
+                match child.try_wait() { Ok(Some(st)) => break st, Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)), Err(e) => return Err(e.to_string()) }
+            };
+            let err = err_h.join().unwrap_or_default();
+            if !st.success() { return Err(format!("ffmpeg: {}", err.lines().rev().take(3).collect::<Vec<_>>().join(" | "))); }
+            for i in run.first..=run.last { if !dir.join(format!("chunk_{i:05}.partial.mp4")).exists() { return Err(format!("ffmpeg did not write chunk {i}")); } }
+            Ok(())
+        })();
+        for i in run.first..=run.last { if tx.send((i, res.clone())).is_err() { return; } }
+        if j.cancel.load(std::sync::atomic::Ordering::Relaxed) { return; }
+    }
+}
+
+fn run(j: Arc<Job>, p: crate::model::Project, dir: std::path::PathBuf, out: String, cf: u64, crf: u32, force: bool, hybrid: bool, lock: LockGuard) {
     let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Value, String> {
         let fps = if p.fps > 0.0 { p.fps } else { 30.0 }; let total = (em::project_end(&p) * fps).ceil() as u64; if total == 0 { return Err("nothing to export: the timeline is empty".into()); }
         std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
@@ -195,15 +226,29 @@ fn run(j: Arc<Job>, p: crate::model::Project, dir: std::path::PathBuf, out: Stri
         let plan: Vec<Option<&'static str>> = chunks.iter().map(|c| reuse_check(&dir, c["index"].as_u64().unwrap_or(0), c["key"].as_str().unwrap_or(""), crf, &old, force)).collect();
         set(&j, |s| { s.state = "running"; s.frames_total = total; s.chunks_total = chunks.len() as u64; s.to_render = plan.iter().filter(|x| x.is_some()).count() as u64; });
         let mut index = json!({"project_hash": m["project_hash"], "chunk_frames": cf, "chunks": {}}); let (mut reused, mut rendered): (Vec<u64>, Vec<Value>) = (vec![], vec![]);
+        // hybrid: clean chunks are encoded by ffmpeg (one process per run of them) on a worker beside the renderer
+        let pmap = if hybrid { super::export_hybrid::picture_map(&p) } else { Err("off (hybrid: false)".to_string()) };
+        let todo: Vec<(u64, [u64; 2], bool)> = chunks.iter().zip(plan.iter()).map(|(c, w)| (c["index"].as_u64().unwrap_or(0), [c["range"][0].as_u64().unwrap_or(0), c["range"][1].as_u64().unwrap_or(0)], w.is_some())).collect();
+        let hruns = match &pmap { Ok(pm) => super::export_hybrid::runs(pm, &todo), Err(_) => vec![] };
+        let clean_set: std::collections::BTreeSet<u64> = hruns.iter().flat_map(|r| r.first..=r.last).collect();
+        let (htx, hrx) = std::sync::mpsc::channel::<(u64, Result<(), String>)>();
+        let hworker = match (&pmap, hruns.is_empty()) { (Ok(pm), false) => { let (j3, p3, m3, d3) = (j.clone(), p.clone(), pm.clone(), dir.clone()); Some(std::thread::spawn(move || hybrid_worker(j3, p3, m3, hruns, d3, cf, crf, htx))) } _ => { drop(htx); None } };
+        let mut hgot: BTreeMap<u64, Result<(), String>> = BTreeMap::new(); let mut by_ffmpeg: Vec<u64> = vec![];
         for (c, why) in chunks.iter().zip(plan.iter()) {
             let idx = c["index"].as_u64().unwrap_or(0); let range = [c["range"][0].as_u64().unwrap_or(0), c["range"][1].as_u64().unwrap_or(0)]; let file = dir.join(chunk_name(idx));
             if j.cancel.load(std::sync::atomic::Ordering::Relaxed) { return Err("cancelled".into()); }
-            set(&j, |s| { s.current_range = Some(range); s.stage = format!("rendering chunk {} of {} (frames {}-{}, {:.1}-{:.1} s)", idx + 1, s.chunks_total, range[0], range[1], range[0] as f64 / fps, range[1] as f64 / fps); });
+            let clean = why.is_some() && clean_set.contains(&idx);
+            set(&j, |s| { s.current_range = Some(range); s.stage = format!("{} chunk {} of {} (frames {}-{}, {:.1}-{:.1} s)", if clean { "encoding (ffmpeg, no render needed)" } else { "rendering" }, idx + 1, s.chunks_total, range[0], range[1], range[0] as f64 / fps, range[1] as f64 / fps); });
             let entry = match why {
                 None => { reused.push(idx); old.as_ref().and_then(|o| o["chunks"].get(idx.to_string()).cloned()).unwrap_or(Value::Null) }
                 Some(why) => {
                     let t0 = std::time::Instant::now(); let part = dir.join(format!("chunk_{idx:05}.partial.mp4")); let _ = std::fs::remove_file(&file);
-                    let r = crate::render::export_range_opts(&p, part.to_str().unwrap_or(""), crf, range[0] as f64 / fps, range[1] as f64 / fps, true, false);
+                    let made = clean && loop {
+                        if let Some(r) = hgot.remove(&idx) { break match r { Ok(()) => true, Err(e) => { if e == "cancelled" { return Err(e); } set(&j, |s| s.warnings.push(json!(format!("chunk {}: the ffmpeg encode failed, rendered instead: {e}", idx + 1)))); false } }; }
+                        if j.cancel.load(std::sync::atomic::Ordering::Relaxed) { return Err("cancelled".into()); }
+                        match hrx.recv_timeout(std::time::Duration::from_millis(200)) { Ok((i, r)) => { hgot.insert(i, r); } Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {} Err(_) => break false }
+                    };
+                    let r = if made { by_ffmpeg.push(idx); Ok(0.0) } else { crate::render::export_range_opts(&p, part.to_str().unwrap_or(""), crf, range[0] as f64 / fps, range[1] as f64 / fps, true, false) };
                     // Commit section: once the encode returned, the chunk is made final (rename) and recorded in index.json without a
                     // cancellation point in between (hashing the chunk calls guard::check). A cancel landing here would otherwise leave a
                     // finished chunk_N.mp4 that the index does not vouch for, which the next run quarantines and re-renders. The job's own
@@ -211,7 +256,7 @@ fn run(j: Arc<Job>, p: crate::model::Project, dir: std::path::PathBuf, out: Stri
                     let _commit = crate::guard::install_token(&crate::guard::new_token());
                     match r { Ok(_) => { sync_file(&part)?; std::fs::rename(&part, &file).map_err(|e| e.to_string())?; sync_dir(&dir); }
                         Err(e) => { let e = format!("chunk {} ({:.1}-{:.1} s): {e}", idx + 1, range[0] as f64 / fps, range[1] as f64 / fps); let pf = dir.join(format!("{}.partial", chunk_name(idx))); let _ = std::fs::rename(&part, &pf); let _ = write_atomic(&dir.join(format!("{}.partial.marker", chunk_name(idx))), &json!({"range": range, "key": c["key"], "error": e})); return Err(e); } }
-                    rendered.push(json!({"index": idx, "reason": why})); set(&j, |s| { s.rendered_secs.push(t0.elapsed().as_secs_f64()); s.frames_rendered += range[1] - range[0]; });
+                    rendered.push(json!({"index": idx, "reason": why, "via": if made { "ffmpeg" } else { "render" }})); set(&j, |s| { s.rendered_secs.push(t0.elapsed().as_secs_f64()); s.frames_rendered += range[1] - range[0]; });
                     json!({"file": chunk_name(idx), "frames": range[1] - range[0], "key": c["key"], "range": range, "crf": crf, "sha256": file_sha(&file), "bytes": std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0)}) }
             };
             index["chunks"][idx.to_string()] = entry; write_atomic(&dir.join("index.json"), &index)?;
@@ -219,9 +264,29 @@ fn run(j: Arc<Job>, p: crate::model::Project, dir: std::path::PathBuf, out: Stri
         }
         let parts: Vec<String> = (0..chunks.len() as u64).map(|i| dir.join(chunk_name(i)).to_string_lossy().into_owned()).collect();
         set(&j, |s| s.stage = "joining chunks and mixing audio".into());
-        let joined = join_verified(&p, &parts, &out)?; let dur = joined["duration"].clone();
+        if let Some(h) = hworker { let _ = h.join(); }
+        let joined = match join_verified(&p, &parts, &out) {
+            Err(e) if e.contains("join_contract") && !by_ffmpeg.is_empty() => {
+                // the ffmpeg-made chunks do not match the rendered ones closely enough to stream-copy together: render them too
+                set(&j, |s| { s.warnings.push(json!(format!("the join refused the ffmpeg-encoded chunks ({e}); rendering them instead"))); s.stage = "rendering the clean chunks after all".into(); });
+                for &idx in &by_ffmpeg {
+                    if j.cancel.load(std::sync::atomic::Ordering::Relaxed) { return Err("cancelled".into()); }
+                    let c = &chunks[idx as usize]; let range = [c["range"][0].as_u64().unwrap_or(0), c["range"][1].as_u64().unwrap_or(0)]; let file = dir.join(chunk_name(idx)); let part = dir.join(format!("chunk_{idx:05}.partial.mp4"));
+                    crate::render::export_range_opts(&p, part.to_str().unwrap_or(""), crf, range[0] as f64 / fps, range[1] as f64 / fps, true, false).map_err(|e| format!("chunk {}: {e}", idx + 1))?;
+                    let _commit = crate::guard::install_token(&crate::guard::new_token());
+                    sync_file(&part)?; std::fs::rename(&part, &file).map_err(|e| e.to_string())?; sync_dir(&dir);
+                    index["chunks"][idx.to_string()] = json!({"file": chunk_name(idx), "frames": range[1] - range[0], "key": c["key"], "range": range, "crf": crf, "sha256": file_sha(&file), "bytes": std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0)});
+                    write_atomic(&dir.join("index.json"), &index)?;
+                    if let Some(r) = rendered.iter_mut().find(|r| r["index"] == json!(idx)) { r["via"] = json!("render"); }
+                }
+                by_ffmpeg.clear();
+                join_verified(&p, &parts, &out)?
+            }
+            r => r?,
+        };
+        let dur = joined["duration"].clone();
         let mut reasons = serde_json::Map::new(); let mut re = 0u64; for r in &rendered { let (i, why) = (r["index"].as_u64().unwrap_or(0), r["reason"].as_str().unwrap_or("")); if matches!(why, "no_previous" | "forced") || old.as_ref().map_or(true, |o| o["chunks"].get(i.to_string()).is_none()) { continue; } re += 1; let n = reasons.get(why).and_then(|v| v.as_u64()).unwrap_or(0); reasons.insert(why.to_string(), json!(n + 1)); }
-        Ok(json!({"path": out, "duration": dur, "verified": joined["verified"], "verify": joined["verify"], "reverified": {"ok": reused.len(), "re_rendered": re, "reasons": reasons}, "quarantined": quarantined, "reused": reused, "rendered": rendered, "project_hash": m["project_hash"], "forced": force}))
+        Ok(json!({"path": out, "duration": dur, "verified": joined["verified"], "verify": joined["verify"], "reverified": {"ok": reused.len(), "re_rendered": re, "reasons": reasons}, "quarantined": quarantined, "reused": reused, "rendered": rendered, "project_hash": m["project_hash"], "forced": force, "hybrid": super::export_hybrid::summary(&pmap, by_ffmpeg.len(), chunks.len())}))
     }));
     let cancelled = j.cancel.load(std::sync::atomic::Ordering::Relaxed);
     if !matches!(res, Ok(Ok(_))) { if let Ok(rd) = std::fs::read_dir(&dir) { for e in rd.flatten() { let n = e.file_name().to_string_lossy().into_owned(); if let Some(stem) = n.strip_suffix(".partial.mp4") { let pf = dir.join(format!("{stem}.mp4.partial")); let _ = std::fs::rename(e.path(), &pf); let _ = write_atomic(&dir.join(format!("{stem}.mp4.partial.marker")), &json!({"error": "interrupted before the chunk finished", "cancelled": cancelled})); } } } }
@@ -235,7 +300,7 @@ fn run(j: Arc<Job>, p: crate::model::Project, dir: std::path::PathBuf, out: Stri
 
 /// Fail in seconds, not after the first chunk (or 24 minutes): the output folder takes a written, flushed file; ffmpeg runs;
 /// and the first and a middle frame render. Any of these failing is reported by export_job_start itself.
-fn preflight(ss: &Session, dir: &std::path::Path) -> Result<(), String> {
+fn preflight(ss: &Session, dir: &std::path::Path, render_check: bool) -> Result<(), String> {
     let probe = dir.join(".kimo-preflight");
     std::fs::write(&probe, b"ok").map_err(|e| format!("preflight: cannot write to {}: {e}", dir.display()))?;
     let flushed = sync_file(&probe);
@@ -245,7 +310,8 @@ fn preflight(ss: &Session, dir: &std::path::Path) -> Result<(), String> {
     if !ff.map(|s| s.success()).unwrap_or(false) { return Err("preflight: ffmpeg is not installed or not on PATH; export needs it".into()); }
     let end = em::project_end(&ss.project);
     if end <= 0.0 { return Err("nothing to export: the timeline is empty".into()); }
-    for t in [0.0, (end / 2.0).max(0.0)] {
+    // a test render of two frames; skipped when ffmpeg alone exports the edit (export_fast): no frame goes through the renderer
+    for t in if render_check { vec![0.0, (end / 2.0).max(0.0)] } else { vec![] } {
         let t0 = std::time::Instant::now();
         let mut cache = crate::render::Cache::new();
         crate::render::prepare_at(&ss.project, &mut cache, Some(t)).and_then(|_| crate::render::render_frame(&ss.project, t, &cache).map(|_| ()))
@@ -256,16 +322,19 @@ fn preflight(ss: &Session, dir: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
-/// The stream-copy export (export_fast): ffmpeg copies the video and mixes the audio; progress from `-progress pipe:1`.
-fn run_fast(j: Arc<Job>, pl: super::export_fast::Plan, fps: f64, out: String, lock: LockGuard) {
+/// The one-ffmpeg export (export_fast): the video copied (stream_copy) or decoded, joined and encoded in one pass
+/// (direct_encode), the audio mixed; progress from `-progress pipe:1`.
+fn run_fast(j: Arc<Job>, pl: super::export_fast::Plan, fps: f64, out: String, crf: u32, lock: LockGuard) {
     use std::io::BufRead;
     let total = (pl.duration * fps).ceil() as u64;
-    set(&j, |s| { s.state = "running"; s.frames_total = total; s.chunks_total = 1; s.to_render = 1; s.stage = "copying the video stream and mixing the audio (no re-render needed)".into(); });
+    set(&j, |s| { s.state = "running"; s.frames_total = total; s.chunks_total = 1; s.to_render = 1; s.stage = match pl.mode { super::export_fast::Mode::Copy => "copying the video stream and mixing the audio (no re-render needed)", super::export_fast::Mode::Encode => "joining and encoding the clips with ffmpeg in one pass (cut-only edit)" }.into(); });
     let t0 = std::time::Instant::now();
     let part = format!("{out}.partial.mp4");
+    let list = format!("{out}.concat.txt");
     let res = (|| -> Result<Value, String> {
+        std::fs::write(&list, super::export_fast::concat_list(&pl)).map_err(|e| format!("cannot write the clip list {list}: {e}"))?;
         let mut c = std::process::Command::new("ffmpeg");
-        c.args(super::export_fast::argv(&pl, &part)).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+        c.args(super::export_fast::argv(&pl, &part, &list, crf)).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
         #[cfg(windows)]
         { use std::os::windows::process::CommandExt; c.creation_flags(0x0800_0000); }
         let mut child = c.spawn().map_err(|e| format!("cannot start ffmpeg: {e}"))?;
@@ -281,13 +350,16 @@ fn run_fast(j: Arc<Job>, pl: super::export_fast::Plan, fps: f64, out: String, lo
         }
         let st = child.wait().map_err(|e| e.to_string())?;
         let err = err_h.join().unwrap_or_default();
-        if !st.success() { let _ = std::fs::remove_file(&part); return Err(format!("ffmpeg stream copy failed: {}", err.lines().rev().take(3).collect::<Vec<_>>().join(" | "))); }
+        if !st.success() { let _ = std::fs::remove_file(&part); return Err(format!("ffmpeg {} failed: {}", super::export_fast::mode_name(&pl), err.lines().rev().take(3).collect::<Vec<_>>().join(" | "))); }
         sync_file(std::path::Path::new(&part))?;
         let _ = std::fs::remove_file(&out);
         std::fs::rename(&part, &out).map_err(|e| format!("cannot move the export into place: {e}"))?;
-        let verify = verify_output(std::path::Path::new(&out), total, fps, if pl.audio.is_empty() { None } else { Some(pl.duration) });
+        // copied audio is the sources' own (its length is theirs, not the timeline's to the sample), so only mixed audio is held to the timeline
+        let total = pl.video.iter().map(|s| s.frames).sum::<u64>().max(1);
+        let verify = verify_output_opts(std::path::Path::new(&out), total, fps, if pl.audio.is_empty() || pl.audio_copy { None } else { Some(pl.duration) }, false);
         Ok(json!({"path": out, "duration": pl.duration, "fast_path": super::export_fast::summary(&pl), "verify": verify, "seconds": t0.elapsed().as_secs_f64()}))
     })();
+    let _ = std::fs::remove_file(&list);
     let cancelled = j.cancel.load(std::sync::atomic::Ordering::Relaxed);
     drop(lock);
     set(&j, |s| { s.current_range = None; s.stage = "finished".into(); match res {
@@ -306,20 +378,20 @@ fn start(ss: &Session, a: &Value, resume: bool) -> Result<Value, String> {
             let ex = em::explain(m, &cur); let first = ex["chunks"].as_array().and_then(|c| c.iter().find(|x| x["stale"] == true)).map(|c| c["reason"][0].clone()).unwrap_or(Value::Null);
             return Err(format!("resume_mismatch: the project changed since this job was started; first differing dependency: {first}. Start a new job (export_job_start) to reuse the chunks that are still valid.")); } }
     if !cs.is_finite() || cs <= 0.0 { return Err("chunk_s must be a positive number of seconds".into()); }
-    let cf = ((cs * fps).round() as u64).max(1); let force = a.get("force").and_then(|v| v.as_bool()).unwrap_or(false); let wait = a.get("wait").and_then(|v| v.as_bool()).unwrap_or(false);
+    let cf = ((cs * fps).round() as u64).max(1); let force = a.get("force").and_then(|v| v.as_bool()).unwrap_or(false); let hybrid = a.get("hybrid").and_then(|v| v.as_bool()) != Some(false); let wait = a.get("wait").and_then(|v| v.as_bool()).unwrap_or(false);
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    preflight(ss, &dir)?;
+    // a cut-only edit (plain clips end to end, plain audio): ffmpeg exports it alone, copying the video when it can (fast: false turns this off)
+    let fast = if resume || a.get("fast").and_then(|v| v.as_bool()) == Some(false) { Err("off".to_string()) } else { super::export_fast::plan(&ss.project) };
+    preflight(ss, &dir, fast.is_err())?;
     let lock = acquire(&dir)?;
     let id = format!("job{}", NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
-    // one untouched video + plain audio: copy the video stream instead of re-rendering it (fast: false turns this off)
-    let fast = if resume || a.get("fast").and_then(|v| v.as_bool()) == Some(false) { Err("off".to_string()) } else { super::export_fast::plan(&ss.project) };
     let j = Arc::new(Job { st: Mutex::new(State { state: "queued", frames_done: 0, frames_total: 0, started: std::time::Instant::now(), current_range: None, chunks_done: 0, chunks_total: 0, chunks_reused: 0, warnings: vec![], rendered_secs: vec![], to_render: 0, completed: vec![], error: None, result: None, stage: "queued".into(), frames_rendered: 0, chunks_at: dir.to_string_lossy().into_owned(), out: out.clone() }), cancel: crate::guard::new_token() });
     jobs().lock().unwrap_or_else(|e| e.into_inner()).insert(id.clone(), j.clone());
     let (p, j2, tok) = (ss.project.clone(), j.clone(), j.cancel.clone());
-    let fast_note = match &fast { Ok(pl) => super::export_fast::summary(pl), Err(why) => json!({"mode": "render", "why_not_stream_copy": why}) };
+    let fast_note = match &fast { Ok(pl) => super::export_fast::summary(pl), Err(why) => json!({"mode": "render", "why_not_fast": why}) };
     let h = match fast {
-        Ok(pl) => crate::guard::spawn_with_token(move || crate::guard::with_token(&tok, || run_fast(j2, pl, fps, out, lock))),
-        Err(_) => crate::guard::spawn_with_token(move || crate::guard::with_token(&tok, || run(j2, p, dir, out, cf, crf as u32, force, lock))),
+        Ok(pl) => crate::guard::spawn_with_token(move || crate::guard::with_token(&tok, || run_fast(j2, pl, fps, out, crf as u32, lock))),
+        Err(_) => crate::guard::spawn_with_token(move || crate::guard::with_token(&tok, || run(j2, p, dir, out, cf, crf as u32, force, hybrid, lock))),
     };
     if wait { let _ = h.join(); }
     Ok(json!({"job_id": id, "path_used": fast_note, "status": status_json(&j)}))
@@ -328,8 +400,8 @@ fn get(a: &Value) -> Result<Arc<Job>, String> { let id = str_arg(a, "job_id")?; 
 
 pub fn commands() -> Vec<Command> { vec![
     Command { name: "export_job_start", mutates: false,
-        description: "Start a chunked export in the background and return a job_id (poll with job_status). Picture-only chunks are rendered into <path>.chunks/ with a manifest.json and index.json, then joined with ONE continuous audio stream into path. Incremental: a chunk is reused only when its dependency key matches AND the chunk file's sha256 still verifies; otherwise it is rendered, and the result lists reused/rendered chunks with the reason (no_previous, key_changed, file_missing, file_hash_mismatch, forced). force:true re-renders everything. wait:true blocks until the job ends and returns the final status. The job renders a snapshot of the project taken at start. Durability (RV-20): the directory holds an exclusive job.lock (same host only; a second start or resume is refused with a job-locked error, a lock left by a killed process is reclaimed). Every chunk and index write is fsynced; on start/resume an unfinished or unindexed chunk is quarantined (.partial + marker) and every indexed chunk is verified (size, sha256, frame count, key) before reuse. The join is stream-copied into <path>.joining.tmp, verified (decoded frames, durations, monotonic timestamps) and renamed atomically; a failed join leaves nothing at path. Failures are classified as disk-full or encoder-failed errors (stderr tail kept) and keep finished chunks. Limits: crash safety is chunk-granular (at most the in-flight chunk is lost), the lock is same-host only, and encodes are not guaranteed bytewise identical across runs (decoded frames were equal in tests).",
-        schema: obj(vec![("path", s("output .mp4 path")), ("chunk_s", n("chunk length in seconds, default 4")), ("crf", n("quality 0..51, default 18")), ("dir", s("chunk directory, default <path>.chunks")), ("force", json!({"type":"boolean"})), ("wait", json!({"type":"boolean","description":"block until done (default false)"}))], &["path"]),
+        description: "Start a chunked export in the background and return a job_id (poll with job_status). Fast path first: a cut-only edit (plain media clips end to end, plain audio, no effects/transforms/text/grades) is exported by ffmpeg alone in one process -- the video stream copied when the clips are whole files encoded the same way (mode stream_copy), else decoded, joined and encoded in one pass (mode direct_encode); path_used says which, or why_not_fast; fast:false forces the render. Picture-only chunks are rendered into <path>.chunks/ with a manifest.json and index.json, then joined with ONE continuous audio stream into path. Incremental: a chunk is reused only when its dependency key matches AND the chunk file's sha256 still verifies; otherwise it is rendered, and the result lists reused/rendered chunks with the reason (no_previous, key_changed, file_missing, file_hash_mismatch, forced). force:true re-renders everything. wait:true blocks until the job ends and returns the final status. The job renders a snapshot of the project taken at start. Durability (RV-20): the directory holds an exclusive job.lock (same host only; a second start or resume is refused with a job-locked error, a lock left by a killed process is reclaimed). Every chunk and index write is fsynced; on start/resume an unfinished or unindexed chunk is quarantined (.partial + marker) and every indexed chunk is verified (size, sha256, frame count, key) before reuse. The join is stream-copied into <path>.joining.tmp, verified (decoded frames, durations, monotonic timestamps) and renamed atomically; a failed join leaves nothing at path. Failures are classified as disk-full or encoder-failed errors (stderr tail kept) and keep finished chunks. Limits: crash safety is chunk-granular (at most the in-flight chunk is lost), the lock is same-host only, and encodes are not guaranteed bytewise identical across runs (decoded frames were equal in tests).",
+        schema: obj(vec![("path", s("output .mp4 path")), ("chunk_s", n("chunk length in seconds, default 4")), ("crf", n("quality 0..51, default 18")), ("dir", s("chunk directory, default <path>.chunks")), ("force", json!({"type":"boolean"})), ("wait", json!({"type":"boolean","description":"block until done (default false)"})), ("fast", json!({"type":"boolean","description":"allow the ffmpeg-only fast path for cut-only edits (default true)"})), ("hybrid", json!({"type":"boolean","description":"encode chunks that hold only plain clips with ffmpeg instead of rendering them (default true)"}))], &["path"]),
         run: |ss, a| start(ss, a, false) },
     Command { name: "job_status", mutates: false,
         description: "Status of an export job: state, progress, chunks, warnings and an ETA. Status of an export job: state (queued|running|cancelling|cancelled|failed|done), frames_done/frames_total, elapsed_s, current_range [first,last) frames, chunks {done,total,reused}, warnings, completed_ranges, and eta {seconds, uncertainty low|medium|high} which stays null until 3 chunks have been measured. The final result (path, reused/rendered chunks with reasons) is under result.",

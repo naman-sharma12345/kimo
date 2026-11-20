@@ -26,7 +26,7 @@ fn chunk(d: &std::path::Path, i: u64) -> std::path::PathBuf { d.join("out.mp4.ch
     let d = tmp("incr"); let (mut ss, ids) = scene(3); run(&mut ss, &d, json!({})); let before: Vec<Vec<u8>> = (0..3).map(|i| std::fs::read(chunk(&d, i)).unwrap()).collect();
     let s = run(&mut ss, &d, json!({})); assert_eq!(s["chunks"]["reused"], 3); assert_eq!(s["result"]["rendered"].as_array().unwrap().len(), 0);
     c(&mut ss, "set_keyframes", json!({"clip_id": ids[1], "property": "opacity", "keys": [{"t": 0.0, "v": 1.0}, {"t": 1.0, "v": 0.4}]}));
-    let s = run(&mut ss, &d, json!({})); assert_eq!(s["chunks"]["reused"], 2, "{s}"); assert_eq!(s["result"]["rendered"], json!([{"index": 1, "reason": "key_changed"}]));
+    let s = run(&mut ss, &d, json!({})); assert_eq!(s["chunks"]["reused"], 2, "{s}"); assert_eq!(s["result"]["rendered"], json!([{"index": 1, "reason": "key_changed", "via": "render"}]));
     assert_eq!(before[0], std::fs::read(chunk(&d, 0)).unwrap(), "a reused chunk is untouched"); assert_eq!(before[2], std::fs::read(chunk(&d, 2)).unwrap()); assert_ne!(before[1], std::fs::read(chunk(&d, 1)).unwrap());
     // forced: everything re-renders and says so; reused chunk bytes equal a fresh full re-render (deterministic encode)
     let s = run(&mut ss, &d, json!({"force": true})); assert_eq!(s["chunks"]["reused"], 0); assert_eq!(s["result"]["rendered"][0]["reason"], "forced");
@@ -36,7 +36,7 @@ fn chunk(d: &std::path::Path, i: u64) -> std::path::PathBuf { d.join("out.mp4.ch
     let d = tmp("hash"); let (mut ss, _) = scene(3); run(&mut ss, &d, json!({}));
     let f = chunk(&d, 0); let mut b = std::fs::read(&f).unwrap(); let n = b.len() - 3; b[n] ^= 0xff; std::fs::write(&f, b).unwrap(); std::fs::remove_file(chunk(&d, 2)).unwrap();
     let s = run(&mut ss, &d, json!({})); let r = s["result"]["rendered"].as_array().unwrap().clone(); assert_eq!(r.len(), 2, "{s}");
-    assert!(r.contains(&json!({"index": 0, "reason": "file_hash_mismatch"})) && r.contains(&json!({"index": 2, "reason": "file_missing"}))); assert_eq!(frames(&d.join("out.mp4")), 150); std::fs::remove_dir_all(&d).ok();
+    assert!(r.contains(&json!({"index": 0, "reason": "file_hash_mismatch", "via": "render"})) && r.contains(&json!({"index": 2, "reason": "file_missing", "via": "render"}))); assert_eq!(frames(&d.join("out.mp4")), 150); std::fs::remove_dir_all(&d).ok();
 }
 #[test] fn cancel_keeps_finished_chunks_marks_the_unfinished_one_and_resume_finishes() {
     let d = tmp("cancel"); let (mut ss, _) = scene(3);

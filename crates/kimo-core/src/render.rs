@@ -201,7 +201,7 @@ fn probe_color_tags(path: &str) -> Option<(u32, String, String, String)> {
 /// Kimo's own sanity layer on top, the convention most NLEs use for untagged/inconsistently-tagged HD
 /// media: treat it as bt709 rather than trust a lone incomplete SD tag. Cached per path (see
 /// `probe_color_tags`); logs one warning per path the first time it overrides.
-fn mistagged_hd_source(path: &str) -> bool {
+pub(crate) fn mistagged_hd_source(path: &str) -> bool {
     static SEEN: std::sync::OnceLock<std::sync::Mutex<HashMap<String, bool>>> = std::sync::OnceLock::new();
     let m = SEEN.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
     if let Some(r) = m.lock().unwrap().get(path) { return *r; }
@@ -223,7 +223,7 @@ fn mistagged_hd_source(path: &str) -> bool {
 /// the transfer itself is missing; HLG is assumed there, the usual default for an untagged bt2020 phone
 /// export). Returns the transfer name to decode with ("arib-std-b67" or "smpte2084"), or None for an
 /// ordinary SDR clip. Cached per path (same pattern as mistagged_hd_source).
-fn hdr_source(path: &str) -> Option<String> {
+pub(crate) fn hdr_source(path: &str) -> Option<String> {
     static SEEN: std::sync::OnceLock<std::sync::Mutex<HashMap<String, Option<String>>>> = std::sync::OnceLock::new();
     let m = SEEN.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
     if let Some(r) = m.lock().unwrap().get(path) { return r.clone(); }
@@ -306,7 +306,7 @@ fn native_media_fps(path: &str) -> Option<f64> {
 /// whole frames to hit the target rate -- is swapped for `minterpolate=mi_mode=blend`: a cheap cross-
 /// dissolve of the two nearest source frames (no motion search, unlike `mi_mode=mci`), so a 24fps source
 /// conformed to a 30fps project no longer shows a quarter of its frames as exact byte-for-byte repeats.
-fn conform_fps_filter(p: &Project, c: &Clip, path: &str, speed: f64, is_img0: bool, seek_base: Option<(f64, i64)>) -> String {
+pub(crate) fn conform_fps_filter(p: &Project, c: &Clip, path: &str, speed: f64, is_img0: bool, seek_base: Option<(f64, i64)>) -> String {
     let eligible = p.frame_blend_conform && !is_img0 && seek_base.is_none() && !c.retimed() && (speed - 1.0).abs() < 1e-9;
     if eligible {
         if let Some(native) = native_media_fps(path) {
@@ -314,6 +314,44 @@ fn conform_fps_filter(p: &Project, c: &Clip, path: &str, speed: f64, is_img0: bo
         }
     }
     format!("fps={}", p.fps)
+}
+
+/// Clips that are drawn only through another clip (a track matte's hidden source, a keyer's clean plate, a displacement
+/// map's or set matte's driving clip, a gradient wipe's luma clip, a 3D particle sprite's layer): never composited
+/// themselves. Shared with the hybrid export, which must not show them either.
+pub(crate) fn hidden_ids(p: &Project) -> std::collections::HashSet<&str> {
+    p.tracks.iter().flat_map(|tr| tr.clips.iter()).filter_map(|c| c.mask.as_ref().and_then(|m| m.matte.as_ref()).filter(|m| m.hide_source).map(|m| m.source.as_str()))
+        .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).filter_map(|c| match &c.source { Source::Particles3D(e) if e.sprite.kind == "layer" && e.sprite.hide_source && !e.sprite.clip_id.is_empty() => Some(e.sprite.clip_id.as_str()), _ => None })) // a Particles3D layer sprite's source is drawn only as the sprite
+        // a keyer's clean-plate clip (strings.ref_clip) is hidden from the composite like a hidden track-matte source
+        .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).flat_map(|c| c.effects.iter()).filter(|e| e.kind == "keyer").filter_map(|e| e.strings.get("ref_clip").map(|s| s.as_str())))
+        // a displacement map's / set matte's driving clip, unless it was asked to show (layerfx.rs)
+        .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).flat_map(|c| c.effects.iter()).filter(|e| crate::layerfx::KINDS.contains(&e.kind.as_str()) && e.strings.get("hide").map_or(true, |h| h == "1")).filter_map(|e| crate::layerfx::source_key(&e.kind).and_then(|k| e.strings.get(k)).map(|s| s.as_str())))
+        // a gradient wipe's luma clip drives the reveal only (pushwipe.rs)
+        .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).filter_map(|c| c.transition_in.as_ref().and_then(|t| t.spec.as_ref()).and_then(|s| s.luma_clip.as_deref()))).collect()
+}
+
+/// Where the in-point decode (`-ss in_pt -i path`) puts time zero and its first frame, for seeking straight to a later
+/// window with the same frames: (the raw stream time of its zero, in seconds = in_pt + container start; the first
+/// decoded frame's time after that zero). ffmpeg shifts input timestamps by the seek point plus the container's start
+/// time and drops frames before zero. Cached per (path, in-point). None on any probe failure (the caller then decodes
+/// from the in-point as before).
+fn seek_anchor(path: &str, in_pt: f64) -> Option<(f64, f64)> {
+    static SEEN: std::sync::OnceLock<std::sync::Mutex<HashMap<(String, u64), Option<(f64, f64)>>>> = std::sync::OnceLock::new();
+    let m = SEEN.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    let key = (path.to_string(), in_pt.to_bits());
+    if let Some(r) = m.lock().unwrap().get(&key) { return *r; }
+    let r = (|| {
+        let o = Command::new("ffprobe").args(["-v", "error", "-show_entries", "format=start_time", "-of", "csv=p=0", path]).output().ok()?;
+        let st0: f64 = String::from_utf8_lossy(&o.stdout).trim().parse().ok().filter(|x: &f64| x.is_finite()).unwrap_or(0.0);
+        let zero = in_pt + st0;
+        let o = Command::new("ffprobe").args(["-v", "error", "-select_streams", "v:0", "-read_intervals", &format!("{}%+3", (zero - 1.0).max(0.0)), "-show_entries", "frame=best_effort_timestamp_time", "-of", "csv=p=0", path]).output().ok()?;
+        let mut ts: Vec<f64> = String::from_utf8_lossy(&o.stdout).lines().filter_map(|l| l.trim().trim_end_matches(',').parse().ok()).collect();
+        ts.sort_by(f64::total_cmp);
+        let first = ts.into_iter().find(|t| *t >= zero - 1e-6)?;
+        Some((zero, (first - zero).max(0.0)))
+    })();
+    m.lock().unwrap().insert(key, r);
+    r
 }
 
 /// Decode `n` frames starting at global clip frame `a` (windowed: memory stays bounded for any clip length).
@@ -424,13 +462,28 @@ fn decode(p: &Project, c: &Clip, path: &str, a: usize, n: usize, seek_base: Opti
     crate::guard::reserve(estimate);
     let exr_args:Vec<&str>=if path.to_lowercase().ends_with(".exr"){vec!["-apply_trc","linear"]}else{vec![]};
     let vf=if native_fit{format!("setpts=PTS/{},{},trim=start_frame={a_rel}:end_frame={},setpts=PTS-STARTPTS,format={pix}",speed.max(0.01),fps_filter,a_rel+n)}else{vf};
-    let mut command=Command::new("ffmpeg");command.args(["-v","error"]).args(&loop_args).args(&exr_args);
+    // Deep windows seek near the window instead of decoding from the clip's in-point every time (which made a long clip's
+    // export quadratic: each 64-frame batch decoded everything before it). Same frames as the in-point decode: the
+    // timestamps are kept (-copyts) and shifted exactly as that decode shifts them, and the fps filter is started on the
+    // very output tick the in-point decode reaches at frame `a_rel` (see seek_anchor). Plain playback only.
+    let deep = (!native_fit && !is_img && seek_base.is_none() && (speed - 1.0).abs() < 1e-9 && !c.retimed() && fps_filter.starts_with("fps=") && a_rel as f64 >= 2.0 * p.fps
+        && std::env::var("KIMO_DECODE_SEEK").ok().as_deref() != Some("off")).then(|| seek_anchor(path, in_pt)).flatten();
+    let deep_args: Option<(String, String, String)> = deep.map(|(zero, first)| {
+        let n0 = (first * p.fps).round();
+        let tick = (n0 + a_rel as f64) / p.fps; // output frame a_rel, in the in-point decode's time
+        let s2 = (in_pt + tick - 1.0).max(in_pt);
+        let vf = format!("{color_override}setpts=PTS-{zero}/TB,{fps_filter}:start_time={tick},trim=end_frame={n},setpts=PTS-STARTPTS,{fitf},format={pix}");
+        (format!("{s2}"), format!("{}", tick - (s2 - in_pt) + (n + 2) as f64 / p.fps + 1.0), vf)
+    });
     // NVDEC when this source's codec is one the GPU decodes (h264/hevc; hw.rs probes and caches).
     // `-hwaccel cuda` only changes which decoder runs; filters, timestamps and pixel format all
-    // stay in system memory exactly as before, so decoded bytes are the codec-spec-equivalent
-    // output a software decode produces too.
-    if crate::hw::nvdec_for(path){command.args(["-hwaccel","cuda"]);}
-    command.args(["-ss",&format!("{in_pt}"),"-t",&format!("{span}"),"-i",path,"-vf",&vf,"-frames:v",&n.max(1).to_string(),"-f","rawvideo","-pix_fmt",pix,"-"]);
+    // stay in system memory exactly as before.
+    let hwaccel: &[&str] = if crate::hw::nvdec_for(path) { &["-hwaccel", "cuda"] } else { &[] };
+    let mut command=Command::new("ffmpeg");
+    match &deep_args {
+        Some((ss, t, dvf)) => { command.args(["-v","error"]).args(hwaccel).args(["-copyts","-ss",ss,"-t",t,"-i",path,"-vf",dvf,"-frames:v",&n.max(1).to_string(),"-f","rawvideo","-pix_fmt",pix,"-"]); }
+        None => { command.args(["-v","error"]).args(&loop_args).args(&exr_args).args(hwaccel).args(["-ss",&format!("{in_pt}"),"-t",&format!("{span}"),"-i",path,"-vf",&vf,"-frames:v",&n.max(1).to_string(),"-f","rawvideo","-pix_fmt",pix,"-"]); }
+    }
     let mut buf=Vec::new();
     let linear_buf=if native_fit{
         let bytes_per_frame=raw_fs.checked_mul(if float_source{4}else{2}).ok_or("native frame size overflow")?;
@@ -450,7 +503,7 @@ fn decode(p: &Project, c: &Clip, path: &str, a: usize, n: usize, seek_base: Opti
     }else{
         let bytes_per_frame=fs.checked_mul(if p.color_pipeline.enabled{2}else{1}).ok_or("decode frame size overflow")?;
         let max=bytes_per_frame.checked_mul(n.max(1)).ok_or("decode output size overflow")?;
-        buf=if via_file{decode_via_file(&mut command,max,crate::color::process::decode_deadline(n.max(1)))?}else{crate::color::process::decode_capture(&mut command,max,crate::color::process::decode_deadline(n.max(1)))?};
+        let tq=std::time::Instant::now(); buf=if via_file{decode_via_file(&mut command,max,crate::color::process::decode_deadline(n.max(1)))?}else{crate::color::process::decode_capture(&mut command,max,crate::color::process::decode_deadline(n.max(1)))?}; stage(9,tq);
         if buf.len()%bytes_per_frame!=0{return Err("truncated project-sized decode output".into())}
         if p.color_pipeline.enabled{let values=buf.chunks_exact(2).map(|v|u16::from_le_bytes([v[0],v[1]]) as f32/65535.).collect();buf=Vec::new();Some(values)}else{None}
     };
@@ -736,7 +789,7 @@ fn source_frame_h(p: &Project, c: &Clip, lt_in: f64, cache: &Cache) -> (Frame, O
         Source::Media { .. } => if let Some(fr) = cache.frames_of(&c.id) {
             source_linear=fr.working_linear;
             let idx = media_index(c,lt,p.fps);
-            if let Some(b)=fr.get_float(idx){f.d.copy_from_slice(b)}else if let Some(b) = fr.get(idx) { for (i, v) in b.iter().enumerate() { f.d[i] = *v as f32 / 255.0; } }
+            if let Some(b)=fr.get_float(idx){f.d.copy_from_slice(b)}else if let Some(b) = fr.get(idx) { let l = u8f(); for (d, v) in f.d.iter_mut().zip(b) { *d = l[*v as usize]; } }
             // Time remap between two source frames: frame mix or optical-flow interpolation, in linear light.
             // A speed ramp with Time Interpolation (speed_blend) blends the same way between the two source frames around its source time.
             let tween = match (&c.time_remap, c.remap_pos(lt, p.fps)) { (Some(r), Some((_, nb, wb))) => Some((nb, wb, r.blend)), _ => c.ramp_pos(lt, p.fps).map(|(_, nb, wb)| (nb, wb, c.speed_blend)) };
@@ -1031,6 +1084,19 @@ fn blend_region_opt(dst: &mut Frame, src: &Frame, opacity: f32, mode: &str, mask
 fn blend_region(dst: &mut Frame, src: &Frame, opacity: f32, mode: &str, mask: Option<&dyn Fn(usize, usize) -> f32>, region: Option<(usize, usize, usize, usize)>) {
     let w = dst.w; let m_id = match mode { "add" => 1, "multiply" => 2, "screen" => 3, "overlay" => 4, m => BLEND_MODES.iter().position(|x| *x == m).filter(|&k| k >= 5).unwrap_or(0) };
     let (ry0, ry1, rx0, rx1) = match region { Some((a, b, c, d)) => (b.min(dst.h), (d + 1).min(dst.h), a.min(w), (c + 1).min(w)), None => (0, dst.h, 0, w) };
+    if mask.is_none() && m_id == 0 {
+        // normal mode, no mask (most layers): the loop below with the mode match and mask call taken out
+        for y in ry0..ry1 {
+            let srow = &src.d[y * w * 4..(y + 1) * w * 4]; let drow = &mut dst.d[y * w * 4..(y + 1) * w * 4];
+            let (mut x0, mut x1) = (rx0, rx1); while x0 < rx1 && srow[x0 * 4 + 3] <= 0.0 { x0 += 1; } if x0 == rx1 { continue; } while x1 > x0 && srow[(x1 - 1) * 4 + 3] <= 0.0 { x1 -= 1; }
+            for (d, s) in drow[x0 * 4..x1 * 4].chunks_exact_mut(4).zip(srow[x0 * 4..x1 * 4].chunks_exact(4)) {
+                let a = s[3] * opacity * 1.0; if a <= 0.0 { continue; }
+                for j in 0..3 { let (b, sv) = (d[j], s[j]); d[j] = b * (1.0 - a) + sv * a; }
+                d[3] = d[3] + a * (1.0 - d[3]);
+            }
+        }
+        return;
+    }
     for y in ry0..ry1 {
         let srow = &src.d[y * w * 4..(y + 1) * w * 4];
         // skip the transparent margins of the row (most layers are small)
@@ -1108,6 +1174,7 @@ pub fn render_frame(p: &Project, t: f64, cache: &Cache) -> Result<Frame, String>
 /// no need to call link_property again. Zero cost when the project has no links (the overwhelmingly common case):
 /// `resolve_links` returns the same reference, no clone.
 pub fn render_frame_opts(p_in: &Project, t: f64, cache: &Cache, transparent: bool) -> Result<Frame, String> {
+    let tsetup = std::time::Instant::now();
     let resolved_owner; let p: &Project = if p_in.links.is_empty() && p_in.expr_scripts.is_empty() { p_in } else { resolved_owner = crate::ext::expr_interp_v7::resolve_live(p_in); resolved_owner.as_ref() };
     if !t.is_finite(){return Err("render time must be finite".into())}
     let _memo = MemoScope::enter();
@@ -1115,22 +1182,20 @@ pub fn render_frame_opts(p_in: &Project, t: f64, cache: &Cache, transparent: boo
     for c in flat_clips(&p.tracks,0.) {if let Some(g)=&c.grade_graph{g.validate_project(p)?;}for e in c.effects {if let Some(w)=e.strings.get("bound_linear_gamut"){let g=w.parse::<usize>().map_err(|_|"bad bound linear gamut")?;if !p.color_pipeline.enabled||g!=p.color_pipeline.working_gamut||e.params.get("gamut").map(|v|(v.base,v.keys.is_empty(),v.expr.is_empty()))!=Some((g as f64,true,true)){return Err("managed linear effect no longer matches working gamut; re-add it".into())}}if let Some(white)=e.strings.get("wrapper_reference_white"){if white.parse::<f64>().ok()!=Some(p.color_pipeline.reference_white){return Err("effect wrapper reference white changed; reconfigure wrapper".into())}}if let Some(w)=e.strings.get("wrapper_working_gamut"){if !p.color_pipeline.enabled||w.parse::<usize>().ok()!=Some(p.color_pipeline.working_gamut){return Err("effect encoding wrapper no longer matches project working gamut; reconfigure or clear it".into())}}}}
     let (w, h) = (p.width as usize, p.height as usize);
     let mut out = Frame::new(w, h);
-    if !transparent { for i in 0..w*h { out.d[i*4+3] = 1.0; } } // opaque black canvas
+    if !transparent { for px in out.d.chunks_exact_mut(4) { px[3] = 1.0; } } // opaque black canvas
+    let mut drew_any = false;
     let seed = (t * p.fps).round() as u64;
-    let hidden: std::collections::HashSet<&str> = p.tracks.iter().flat_map(|tr| tr.clips.iter()).filter_map(|c| c.mask.as_ref().and_then(|m| m.matte.as_ref()).filter(|m| m.hide_source).map(|m| m.source.as_str()))
-        .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).filter_map(|c| match &c.source { Source::Particles3D(e) if e.sprite.kind == "layer" && e.sprite.hide_source && !e.sprite.clip_id.is_empty() => Some(e.sprite.clip_id.as_str()), _ => None })) // a Particles3D layer sprite's source is drawn only as the sprite
-        // a keyer's clean-plate clip (strings.ref_clip) is hidden from the composite like a hidden track-matte source
-        .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).flat_map(|c| c.effects.iter()).filter(|e| e.kind == "keyer").filter_map(|e| e.strings.get("ref_clip").map(|s| s.as_str())))
-        // a displacement map's / set matte's driving clip, unless it was asked to show (layerfx.rs)
-        .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).flat_map(|c| c.effects.iter()).filter(|e| crate::layerfx::KINDS.contains(&e.kind.as_str()) && e.strings.get("hide").map_or(true, |h| h == "1")).filter_map(|e| crate::layerfx::source_key(&e.kind).and_then(|k| e.strings.get(k)).map(|s| s.as_str())))
-        // a gradient wipe's luma clip drives the reveal only (pushwipe.rs)
-        .chain(p.tracks.iter().flat_map(|tr| tr.clips.iter()).filter_map(|c| c.transition_in.as_ref().and_then(|t| t.spec.as_ref()).and_then(|s| s.luma_clip.as_deref()))).collect();
+    let hidden = hidden_ids(p);
     // 3D compositor (comp3d.rs, opt-in): consecutive 3D layers wait here and are depth-composited when a 2D draw or the end flushes them
     let c3 = crate::comp3d::active(p); let mut g3: Vec<crate::comp3d::Layer> = Vec::new();
+    prof("frame_setup", tsetup);
     for tr in &p.tracks { for c in &tr.clips {
         if !crate::editorial::caption_visible(p, &c.id) { continue; }
         if t < c.start - 1e-9 || t >= c.start + c.duration - 1e-9 || (hidden.contains(c.id.as_str()) && MATTE_DEPTH.with(|d| d.get()) == 0) || tr.id == ALONE_SRC_TRACK { continue; }
         crate::guard::check();
+        let first = !drew_any; drew_any = true;
+        if first && !transparent { let lt = (t - c.start).max(0.0); if let Some(b) = base_bytes(p_in, p, c, lt, cache) {
+            let tq = std::time::Instant::now(); base_layer(&mut out, b, crate::keyframe::clamp_prop("opacity", xprop(p, c, "opacity", lt)) as f32); prof("base_layer", tq); continue; } }
         let lt0 = if c.posterize_fps > 0.0 { (((t - c.start) * c.posterize_fps + 1e-6).floor() / c.posterize_fps).max(0.0) } else { (t - c.start).max(0.0) };
         let (ne, esp) = match &c.echo { Some(e) if !matches!(c.source, Source::Adjustment) => (e.count.min(64) as usize, e.spacing), _ => (0, 0.0) };
         let avg = ne > 0 && matches!(c.echo.as_ref().map(|e| e.mode.as_str()), Some("average")); let mut eacc: Option<Frame> = if avg { Some(Frame::new(w, h)) } else { None };
@@ -1192,7 +1257,8 @@ pub fn render_frame_opts(p_in: &Project, t: f64, cache: &Cache, transparent: boo
         // opt-in exact shutter (set_motion_blur samples / shutter_phase / shutter_curve); None keeps the legacy centred fixed-count sampler unchanged
         let ls = crate::shutter::layer_shutter(c, p.fps, lt); let lsw = ls.as_ref().map(|s| [lt + s.open, lt + s.open + s.len * 0.5, lt + s.open + s.len]);
         let moving = if let Some(ws) = lsw { ek == 0 && ws.iter().any(|&t2| ["x", "y", "scale", "rotation"].iter().any(|k| (xprop(p, c, k, t2) - xprop(p, c, k, lt)).abs() > 1e-9) || { let (a, b, r) = mp_at(t2); (a - mp0x).abs() > 1e-9 || (b - mp0y).abs() > 1e-9 || (r - mp0a).abs() > 1e-9 }) } else { c.motion_blur > 0.0 && ek == 0 && { let sh0 = c.motion_blur / 360.0 / p.fps; ["x", "y", "scale", "rotation"].iter().any(|k| (xprop(p, c, k, lt - sh0 * 0.5) - xprop(p, c, k, lt)).abs() > 1e-9 || (xprop(p, c, k, lt + sh0 * 0.5) - xprop(p, c, k, lt)).abs() > 1e-9) } };
-        let mut from_tb = false; let tp=std::time::Instant::now(); let hint_ok = SHAPE_HINT.load(std::sync::atomic::Ordering::Relaxed) && src_hint.is_some() && c.effects.is_empty() && c.mask.is_none() && tplan.is_none() && !p.color_pipeline.enabled && !c.props.keys().any(|k| k.starts_with("pin_") || k.starts_with("mesh_")); let bbf = if hint_ok { alpha_bbox_in(&f, src_hint.unwrap()) } else { alpha_bbox(&f) }; prof("bbox", tp); let tp=std::time::Instant::now(); let f = if moving { let lts: Vec<f64> = match (&ls, lsw) { (Some(s), Some(ws)) => { let n = if s.samples > 0 { s.samples.clamp(2, 256) } else {
+        let mut from_tb = false; let tp=std::time::Instant::now(); let hint_ok = SHAPE_HINT.load(std::sync::atomic::Ordering::Relaxed) && src_hint.is_some() && c.effects.is_empty() && c.mask.is_none() && tplan.is_none() && !p.color_pipeline.enabled && !c.props.keys().any(|k| k.starts_with("pin_") || k.starts_with("mesh_")); let still_layer = !moving && (sc - 1.0).abs() < 1e-9 && xprop(p, c, "rotation", lt) + rot_extra == 0.0 && dx == 0.0 && dy == 0.0; // drawn where it is: no bounding box needed
+        let bbf = if still_layer { None } else if hint_ok { alpha_bbox_in(&f, src_hint.unwrap()) } else { alpha_bbox(&f) }; prof("bbox", tp); let tp=std::time::Instant::now(); let f = if moving { let lts: Vec<f64> = match (&ls, lsw) { (Some(s), Some(ws)) => { let n = if s.samples > 0 { s.samples.clamp(2, 256) } else {
                 // travel (px) of the fastest point per half-shutter: x/y + motion path, scale and rotation swing the bbox half-diagonal; x2 like the mask auto
                 let hd = match bbf { Some((x0, y0, x1, y1)) => 0.5 * ((x1 - x0 + 1) as f64).hypot((y1 - y0 + 1) as f64), None => 0.5 * (w as f64).hypot(h as f64) };
                 let st = |t2: f64| { let m = mp_at(t2); (xprop(p, c, "x", t2) + m.0, xprop(p, c, "y", t2) + m.1, xprop(p, c, "scale", t2), (xprop(p, c, "rotation", t2) + m.2).to_radians()) };
@@ -1225,7 +1291,7 @@ pub fn render_frame_opts(p_in: &Project, t: f64, cache: &Cache, transparent: boo
         if let Source::ShardBurst(sb) = &c.source { if let Some(d) = crate::shards::take_disp() { crate::shards::refract_canvas(&mut out, &d, &f, sb.refract_dispersion.clamp(0.0, 1.0)); } }
         if let Some(acc) = eacc.as_mut() { let wgt = op / (ne + 1) as f32; for i in 0..w * h { let a = f.d[i * 4 + 3] * wgt; if a > 0.0 { for j in 0..3 { acc.d[i * 4 + j] += f.d[i * 4 + j] * a; } acc.d[i * 4 + 3] += a; } } continue; }
         let tp=std::time::Instant::now(); let rect = if from_tb { LAST_RECT.with(|l| l.get()) } else { None }; blend_region_opt(&mut out, &f, op, c_blend, mask.as_deref(), rect, wants_linear_blend(&c.source, p.linear_blend, tplan.is_some())); prof("blend", tp);
-        if let Some(r) = rect { pool_give(f, r); }
+        if let Some(r) = rect { pool_give(f, r); } else { crate::effects::recycle(f.d); }
         if let Some(pl) = &tplan { if let Some(ov) = &pl.overlay { ov(&mut out); } }
         }
         if let Some(mut acc) = eacc { crate::comp3d::flush(&mut out, &mut g3, p, t); for i in 0..w * h { let a = acc.d[i * 4 + 3]; if a > 1e-6 { for j in 0..3 { acc.d[i * 4 + j] /= a; } } } blend_opt(&mut out, &acc, 1.0, &c.blend, None, wants_linear_blend(&c.source, p.linear_blend, false)); }
@@ -1401,6 +1467,21 @@ pub fn export_range_opts(p: &Project, path: &str, crf: u32, t_in: f64, t_out: f6
     export_range_cmd(p, path, f0, f1, command, false, with_audio)
 }
 
+/// The exact encoder arguments a chunk rendered by `export_range_opts(.., low_memory: true, ..)` gets, minus its rawvideo
+/// stdin input and output path: (args after the input, the `-vf` colour conversion it applies). The hybrid export
+/// (ext::export_hybrid) encodes clean chunks with ffmpeg using these, so its chunks share the rendered chunks' codec
+/// headers and can be stream-copied into one file with them.
+pub(crate) fn chunk_encoder_args(p: &Project, crf: u32) -> Result<(Vec<String>, String), String> {
+    let (_workers, low_memory) = crate::guard::export_plan_n(p.width, p.height, std::thread::available_parallelism().map(|x| x.get()).unwrap_or(2), true, frame_buffers(p))?;
+    let cmd = legacy_encoder_command_opts(p, "x.mp4", crf, low_memory)?;
+    let mut a: Vec<String> = cmd.get_args().map(|v| v.to_string_lossy().into_owned()).collect();
+    let i = a.windows(2).position(|w| w[0] == "-i" && w[1] == "-").ok_or("encoder command without a stdin input")?;
+    a.drain(..i + 2); a.pop();
+    let v = a.iter().position(|x| x == "-vf").ok_or("encoder command without -vf")?;
+    let vf = a.remove(v + 1); a.remove(v);
+    Ok((a, vf))
+}
+
 /// Decode the batch starting at local index `i` into `cache`, exactly as the old single-threaded export
 /// loop did: start at a batch of `batch` frames and halve it on a cache-budget error (resetting `cache`,
 /// which only ever happens on that rare fallback path). Returns the batch's actual end (exclusive).
@@ -1408,7 +1489,8 @@ fn decode_batch(p: &Project, cache: &mut Cache, f0: usize, i: usize, n: usize, b
     let mut end = (i + batch).min(n);
     loop {
         let last = (f0 + end - 1) as f64 / p.fps;
-        match prepare_export_range(p, cache, (f0 + i) as f64 / p.fps, last) {
+        let tp = std::time::Instant::now(); let pr = prepare_export_range(p, cache, (f0 + i) as f64 / p.fps, last); stage(11, tp);
+        match pr {
             Ok(()) => return Ok(end),
             Err(e) if end - i > 1 && (e.contains("cache budget") || e.contains("memory cap") || e.contains("bounded cache")) => { end = i + (end - i).div_ceil(2); *cache = Cache::new_export(); }
             Err(e) => return Err(e),
@@ -1426,13 +1508,84 @@ fn decode_batch(p: &Project, cache: &mut Cache, f0: usize, i: usize, n: usize, b
 /// blocks on the encoder's pipe — it hands off a composed batch and moves straight to the next one. Output
 /// bytes are unchanged: same frames, same order, same encoder command; see tests/overlap_pipeline.rs
 /// (framemd5-identical to the old sequential path) for the proof.
-pub(crate) fn export_range_cmd(p: &Project, path: &str, f0: usize, f1: usize, mut command: Command, transparent: bool, audio: bool) -> Result<f64, String> {
+/// v / 255 for every byte, computed exactly as the per-pixel conversion did (`v as f32 / 255.0`).
+fn u8f() -> &'static [f32; 256] { static T: std::sync::OnceLock<[f32; 256]> = std::sync::OnceLock::new(); T.get_or_init(|| std::array::from_fn(|v| v as f32 / 255.0)) }
+
+thread_local! {
+    /// Export only: (the project being exported, its plain clips from export_hybrid). Lets render_frame_opts draw a plain
+    /// bottom layer straight from its decoded bytes (base_layer).
+    static BASE_SIMPLE: std::cell::RefCell<Option<(usize, std::sync::Arc<std::collections::HashSet<String>>)>> = Default::default();
+}
+/// The decoded bytes of a plain clip that is the first layer drawn on the opaque canvas, or None to draw it normally.
+fn base_bytes<'a>(p_in: &Project, p: &Project, c: &Clip, lt: f64, cache: &'a Cache) -> Option<&'a [u8]> {
+    if !BASE_SIMPLE.with(|b| b.borrow().as_ref().is_some_and(|(ptr, set)| *ptr == p_in as *const Project as usize && set.contains(&c.id))) { return None; }
+    if !matches!(c.source, Source::Media { .. }) { return None; }
+    let fr = cache.frames_of(&c.id)?;
+    if fr.linear_buf.is_some() { return None; }
+    let b = fr.get(media_index(c, c.display_time(lt), p.fps))?;
+    (b.len() == p.width as usize * p.height as usize * 4).then_some(b)
+}
+/// Draw a plain clip's bytes onto the canvas with blend_region's own arithmetic (normal mode, no mask, the clip's
+/// opacity), reading each byte as v/255: the very values the clip's float frame would have held, without building it.
+fn base_layer(out: &mut Frame, b: &[u8], op: f32) {
+    let l = u8f();
+    for (d, s) in out.d.chunks_exact_mut(4).zip(b.chunks_exact(4)) {
+        let a = l[s[3] as usize] * op * 1.0; if a <= 0.0 { continue; }
+        for j in 0..3 { let (bb, ss) = (d[j], l[s[j] as usize]); d[j] = bb * (1.0 - a) + ss * a; }
+        d[3] = d[3] + a * (1.0 - d[3]);
+    }
+}
+
+/// A frame where exactly one plain media clip is on screen (export_hybrid's clean frames) composites to that clip's
+/// decoded pixels: an opaque source pixel (alpha 255) blends over the black canvas as itself (a = 1, so b*(1-a)+s*a = s
+/// exactly, and v/255*255 rounds back to v), a transparent one (alpha 0, the fit's letterbox) leaves the opaque black
+/// canvas. So the RGBA8 output is the decoded bytes with alpha forced to 255 and transparent pixels black -- the same
+/// bytes render_frame_opts + to_rgba8 produce, without four frame-sized float buffers. None (use the full path) when
+/// the frame is not clean, the clip's frames are not plain 8-bit, or any pixel is partly transparent.
+fn plain_frame(p: &Project, m: &crate::ext::export_hybrid::PicMap, frame: u64, cache: &Cache) -> Option<Vec<u8>> {
+    let segs = crate::ext::export_hybrid::segments(m, frame, frame + 1)?;
+    let pc = &m.clean[segs.first()?.0];
+    let c = p.tracks.iter().flat_map(|tr| tr.clips.iter()).find(|c| c.id == pc.id)?;
+    let fr = cache.frames_of(&c.id)?;
+    if fr.linear_buf.is_some() { return None; }
+    let lt = c.display_time(frame as f64 / p.fps - c.start);
+    let b = fr.get(media_index(c, lt, p.fps))?;
+    if b.len() != p.width as usize * p.height as usize * 4 { return None; }
+    let mut out = b.to_vec();
+    for px in out.chunks_exact_mut(4) { match px[3] { 255 => {} 0 => { px[0] = 0; px[1] = 0; px[2] = 0; px[3] = 255; } _ => return None } }
+    Some(out)
+}
+
+/// Export stage timings (KIMO_STAGES=1): nanoseconds summed over one export_range_cmd call, printed to stderr at its end.
+/// `*_cpu` stages add up across worker threads; the others are wall time on the export's own thread.
+static STAGES: [std::sync::atomic::AtomicU64; 12] = [const { std::sync::atomic::AtomicU64::new(0) }; 12];
+const STAGE_NAMES: [&str; 12] = ["decode_first", "decode_wait", "compose_wall", "frame_cpu", "output_cpu", "send_wait", "encoder_write", "encoder_finish", "audio", "ffmpeg_run", "decode_call", "prepare_call"];
+fn stage(i: usize, t: std::time::Instant) { STAGES[i].fetch_add(t.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed); }
+
+pub(crate) fn export_range_cmd(p: &Project, path: &str, f0: usize, f1: usize, command: Command, transparent: bool, audio: bool) -> Result<f64, String> {
+    let on = std::env::var("KIMO_STAGES").is_ok();
+    if on { for s in &STAGES { s.store(0, std::sync::atomic::Ordering::Relaxed); } if let Ok(mut m) = PROF_ALL.lock() { m.clear(); } }
+    let t0 = std::time::Instant::now();
+    let r = export_range_cmd_inner(p, path, f0, f1, command, transparent, audio);
+    crate::effects::pool_clear();
+    if on {
+        let ms: Vec<String> = STAGES.iter().zip(STAGE_NAMES).map(|(s, n)| format!("{n}={:.0}", s.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e6)).collect();
+        eprintln!("KIMO_STAGES frames={} wall_ms={:.0} {}", f1 - f0, t0.elapsed().as_secs_f64() * 1000.0, ms.join(" "));
+        if let Ok(m) = PROF_ALL.lock() { eprintln!("KIMO_COMPOSE {}", m.iter().map(|(k, (s, n))| format!("{k}={:.0}ms/{n}", s * 1000.0)).collect::<Vec<_>>().join(" ")); }
+    }
+    r
+}
+fn export_range_cmd_inner(p: &Project, path: &str, f0: usize, f1: usize, mut command: Command, transparent: bool, audio: bool) -> Result<f64, String> {
     let mut cache = Cache::new_export();
     let n = f1 - f0;
     let frame_bytes=(p.width as usize).checked_mul(p.height as usize).and_then(|v|v.checked_mul(4)).ok_or("legacy encoder frame overflow")?;
     let encoder=crate::color::process::EncodeStream::new(&mut command,frame_bytes,crate::color::process::encode_deadline(n))?;
     let nt = crate::guard::export_threads_n(p.width, p.height, std::thread::available_parallelism().map(|x| x.get()).unwrap_or(2).max(1), frame_buffers(p));
     let batch = nt * 4;
+    // plain frames skip the compositor (plain_frame); KIMO_FAST_COMPOSE=off turns this off for comparisons
+    let plain_map = if !transparent && std::env::var("KIMO_FAST_COMPOSE").ok().as_deref() != Some("off") { crate::ext::export_hybrid::picture_map(p).ok() } else { None };
+    let base_simple = plain_map.as_ref().map(|m| std::sync::Arc::new(m.simple.clone()));
+    let plain_map = &plain_map; let base_simple = &base_simple;
 
     // Encoder-writer thread: owns `encoder`, drains a bounded channel. EncodeStream::write() already
     // waits on its own internal writer's ack per call (unchanged, see color/process.rs), but that wait now
@@ -1440,14 +1593,14 @@ pub(crate) fn export_range_cmd(p: &Project, path: &str, f0: usize, f1: usize, mu
     let (frame_tx, frame_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(batch.max(4) * 2);
     let writer = crate::guard::spawn_with_token(move || -> Result<(), String> {
         let mut encoder = encoder;
-        for frame in frame_rx { encoder.write(frame)?; }
-        encoder.finish()
+        for frame in frame_rx { let t = std::time::Instant::now(); encoder.write(frame)?; stage(6, t); }
+        let t = std::time::Instant::now(); let r = encoder.finish(); stage(7, t); r
     });
 
     crate::telemetry::progress_frames(0, n, "frames");
     let loop_result: Result<(), String> = (|| {
         let mut i = 0usize;
-        let mut end = decode_batch(p, &mut cache, f0, i, n, batch)?;
+        let td = std::time::Instant::now(); let mut end = decode_batch(p, &mut cache, f0, i, n, batch)?; stage(0, td);
         while i < n {
             crate::guard::check();
             let mut carried: Option<(Cache, usize)> = None;
@@ -1460,12 +1613,19 @@ pub(crate) fn export_range_cmd(p: &Project, path: &str, f0: usize, f1: usize, mu
                 });
                 // work queue: nt workers pull frame indices, so one slow frame (shards) no longer idles the other cores
                 let next = std::sync::atomic::AtomicUsize::new(i); let slots: Vec<std::sync::Mutex<Option<Result<Vec<u8>, String>>>> = (i..end).map(|_| std::sync::Mutex::new(None)).collect();
-                std::thread::scope(|sc| { for _ in 0..nt.min(end - i) { let (cache, next, slots) = (&cache, &next, &slots); crate::guard::scope_spawn(sc, move || loop { let k = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst); if k >= end { break; }
-                    let tf0 = std::time::Instant::now(); let res = render_frame_opts(p, (f0 + k) as f64 / p.fps, cache, transparent).and_then(|mut f| {if transparent { unpremultiply(&mut f); } prof("frame_total", tf0); let tq = std::time::Instant::now(); crate::color::pipeline::output(p,&mut f)?; prof("pipe_out", tq); let tq = std::time::Instant::now(); let r = if p.linear_blend { to_rgba8_tpdf(&f) } else { to_rgba8(&f) }; prof("to_rgba8", tq); Ok(r)}); *slots[k - i].lock().unwrap() = Some(res); }); } });
+                let tc = std::time::Instant::now();
+                std::thread::scope(|sc| { for _ in 0..nt.min(end - i) { let (cache, next, slots) = (&cache, &next, &slots); crate::guard::scope_spawn(sc, move || { BASE_SIMPLE.with(|b| *b.borrow_mut() = base_simple.as_ref().map(|s| (p as *const Project as usize, s.clone()))); loop { let k = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst); if k >= end { break; }
+                    if let Some(r) = plain_map.as_ref().and_then(|m| { let tq = std::time::Instant::now(); let r = plain_frame(p, m, (f0 + k) as u64, cache); if r.is_some() { prof("plain_frame", tq); } r }) { *slots[k - i].lock().unwrap() = Some(Ok(r)); continue; }
+                    let tf0 = std::time::Instant::now(); let res = render_frame_opts(p, (f0 + k) as f64 / p.fps, cache, transparent).and_then(|mut f| {if transparent { unpremultiply(&mut f); } prof("frame_total", tf0); stage(3, tf0); let tq = std::time::Instant::now(); crate::color::pipeline::output(p,&mut f)?; prof("pipe_out", tq); let tr = std::time::Instant::now(); let r = if p.linear_blend { to_rgba8_tpdf(&f) } else { to_rgba8(&f) }; prof("to_rgba8", tr); stage(4, tq); crate::effects::recycle(std::mem::take(&mut f.d)); Ok(r)}); *slots[k - i].lock().unwrap() = Some(res); } }); } });
+                stage(2, tc);
                 let frames: Vec<Result<Vec<u8>, String>> = slots.into_iter().map(|m| m.into_inner().unwrap().unwrap()).collect();
+                let ts = std::time::Instant::now();
                 for f in frames { if frame_tx.send(f?).is_err() { return Err("encoder closed early".into()); } }
+                stage(5, ts);
                 if let Some(handle) = prefetch {
+                    let tw = std::time::Instant::now();
                     let joined: Result<(Cache, usize), String> = handle.join().map_err(|_| "prefetch decode thread panicked".to_string())?;
+                    stage(1, tw);
                     let (new_cache, new_end) = joined?;
                     carried = Some((new_cache, new_end));
                 }
@@ -1481,8 +1641,10 @@ pub(crate) fn export_range_cmd(p: &Project, path: &str, f0: usize, f1: usize, mu
     loop_result?;
     writer_result?;
     // mux mixed audio
+    let ta = std::time::Instant::now();
     let pcm_full = crate::audio::mix(p); let (s0, s1) = ((f0 as f64 / p.fps * crate::audio::SR as f64) as usize * 2, (f1 as f64 / p.fps * crate::audio::SR as f64) as usize * 2); let pcm: Vec<f32> = { let a = s0.min(pcm_full.len()); let b = s1.min(pcm_full.len()); let mut v = pcm_full[a..b].to_vec(); v.resize(s1 - s0, 0.0); v };
     if audio && pcm.iter().any(|v|v.abs()>1e-6){crate::color::mux::legacy_audio(path,&pcm,n)?}
+    stage(8, ta);
     Ok(n as f64 / p.fps)
 }
 
@@ -1684,7 +1846,10 @@ fn apply_effects_local(effs: &[crate::model::Effect], f: &mut Frame, lt: f64, se
 }
 
 thread_local! { static PROF: std::cell::RefCell<std::collections::BTreeMap<&'static str, f64>> = Default::default(); }
-fn prof(k: &'static str, t: std::time::Instant) { if std::env::var("KIMO_PROF").is_ok() { PROF.with(|p| *p.borrow_mut().entry(k).or_insert(0.0) += t.elapsed().as_secs_f64()); } }
+fn prof_on() -> (bool, bool) { static ON: std::sync::OnceLock<(bool, bool)> = std::sync::OnceLock::new(); *ON.get_or_init(|| (std::env::var("KIMO_PROF").is_ok(), std::env::var("KIMO_STAGES").is_ok())) }
+/// KIMO_STAGES: compositor step totals across every worker thread, printed with the export stage report.
+static PROF_ALL: std::sync::Mutex<std::collections::BTreeMap<&'static str, (f64, u64)>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+fn prof(k: &'static str, t: std::time::Instant) { let (local, all) = prof_on(); if local { PROF.with(|p| *p.borrow_mut().entry(k).or_insert(0.0) += t.elapsed().as_secs_f64()); } if all { if let Ok(mut m) = PROF_ALL.lock() { let e = m.entry(k).or_insert((0.0, 0)); e.0 += t.elapsed().as_secs_f64(); e.1 += 1; } } }
 pub fn prof_dump() { PROF.with(|p| { let mut p = p.borrow_mut(); if !p.is_empty() { eprintln!("PROF {:?}", *p); p.clear(); } }); }
 
 /// Inspect a mask: renders the clip's source (after effects, before its own mask) and shows the coverage of one layer or the whole stack.
@@ -1886,5 +2051,23 @@ mod prng_overflow_tests {
         assert_eq!(a.d, b.d);
         assert!(a.d.iter().all(|v| v.is_finite()));
         assert!(a.d.chunks_exact(4).any(|p| p[3] > 0.0));
+    }
+}
+
+#[cfg(test)]
+mod plain_frame_tests {
+    use super::*;
+    /// plain_frame's rule (opaque bytes as they are, transparent ones black, alpha 255) equals the compositor's own result:
+    /// the decoded frame over the opaque black canvas, blended and quantised, for every byte value.
+    #[test]
+    fn the_shortcut_matches_blend_and_quantise_for_every_byte() {
+        let w = 256 * 2; let mut src8 = vec![0u8; w * 4];
+        for v in 0..256usize { for (k, a) in [(0usize, 255u8), (1, 0u8)] { let i = (v * 2 + k) * 4; src8[i] = v as u8; src8[i + 1] = (255 - v) as u8; src8[i + 2] = (v * 7 % 256) as u8; src8[i + 3] = a; } }
+        let mut src = Frame::new(w, 1); for (i, b) in src8.iter().enumerate() { src.d[i] = *b as f32 / 255.0; }
+        let mut out = Frame::new(w, 1); for i in 0..w { out.d[i * 4 + 3] = 1.0; }
+        blend_region_opt(&mut out, &src, 1.0, "normal", None, None, false);
+        let full = to_rgba8(&out);
+        let mut fast = src8.clone(); for px in fast.chunks_exact_mut(4) { if px[3] == 0 { px[0] = 0; px[1] = 0; px[2] = 0; } px[3] = 255; }
+        assert_eq!(full, fast);
     }
 }
