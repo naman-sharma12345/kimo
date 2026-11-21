@@ -1,5 +1,6 @@
 //! Per-pixel and spatial effects on f32 RGBA frames (premultiplied-free, 0..1).
 use crate::keyframe::Prop;
+use crate::quality;
 use std::collections::BTreeMap;
 
 pub struct Frame { pub w: usize, pub h: usize, pub d: Vec<f32> }
@@ -122,6 +123,12 @@ pub fn apply(kind: &str, params: &Params, strings: &BTreeMap<String, String>, f:
     if strings.contains_key("ocio_domain") {return crate::color::effect_domain::apply(kind,params,strings,f,t,seed)}
     if strings.contains_key("wrapper_working_gamut") {return crate::color::wrapper::apply(kind,params,strings,f,t,seed)}
     match kind {
+        // v10: the colour effects work on light, as a camera or a grading suite does (crate::quality); legacy keeps the encoded-value maths
+        "exposure" if crate::quality::v10() => { let g = 2f32.powf(p(params, "stops", 0.0, t)); px(f, move |c| c.map(|v| quality::to_srgb(quality::to_linear(v) * g))); }
+        "contrast" if crate::quality::v10() => { let a = p(params, "amount", 1.0, t); px(f, move |c| c.map(|v| { let l = quality::to_linear(v); quality::to_srgb(if l > 0.0 { 0.18 * (l / 0.18).powf(a) } else { l }) })); }
+        "saturation" if crate::quality::v10() => { let a = p(params, "amount", 1.0, t); px(f, move |c| { let lab = quality::oklab(c.map(quality::to_linear)); quality::oklab_inv([lab[0], lab[1] * a, lab[2] * a]).map(|v| quality::to_srgb(v.max(0.0))) }); }
+        "temperature" if crate::quality::v10() => { let a = p(params, "amount", 0.0, t); let g = wb_gains(2f32.powf(0.6 * a), 1.0, 2f32.powf(-0.6 * a)); px(f, move |c| [0, 1, 2].map(|j| quality::to_srgb(quality::to_linear(c[j]) * g[j]))); }
+        "tint" if crate::quality::v10() => { let a = p(params, "amount", 0.0, t); let g = wb_gains(2f32.powf(0.3 * a), 2f32.powf(-0.6 * a), 2f32.powf(0.3 * a)); px(f, move |c| [0, 1, 2].map(|j| quality::to_srgb(quality::to_linear(c[j]) * g[j]))); }
         "exposure" => { let g = 2f32.powf(p(params, "stops", 0.0, t)); px(f, |c| [c[0]*g, c[1]*g, c[2]*g]); }
         "contrast" => { let a = p(params, "amount", 1.0, t); px(f, |c| [(c[0]-0.5)*a+0.5, (c[1]-0.5)*a+0.5, (c[2]-0.5)*a+0.5]); }
         "saturation" => { let a = p(params, "amount", 1.0, t); px(f, |c| { let l = lum(c); [l+(c[0]-l)*a, l+(c[1]-l)*a, l+(c[2]-l)*a] }); }
@@ -147,16 +154,16 @@ pub fn apply(kind: &str, params: &Params, strings: &BTreeMap<String, String>, f:
         }
         "vignette" if crate::vignette::extended(params) => crate::vignette::apply(params, f, t),
         "vignette" => {
-            let a = p(params, "amount", 0.5, t); let s = p(params, "softness", 0.5, t).max(0.05);
+            let a = p(params, "amount", 0.5, t); let s = p(params, "softness", 0.5, t).max(0.05); let v10 = crate::quality::v10();
             let (w, h) = (f.w as f32, f.h as f32);
             for y in 0..f.h { for x in 0..f.w {
                 let dx = (x as f32 / w - 0.5) * 2.0; let dy = (y as f32 / h - 0.5) * 2.0;
                 let r = (dx*dx + dy*dy).sqrt() / 1.414;
                 let v = 1.0 - a * ((r - (1.0 - s)).max(0.0) / s).powi(2).min(1.0);
-                let i = (y*f.w+x)*4; f.d[i]*=v; f.d[i+1]*=v; f.d[i+2]*=v; } }
+                let i = (y*f.w+x)*4; if v10 { for j in 0..3 { f.d[i+j] = quality::to_srgb(quality::to_linear(f.d[i+j]) * v); } } else { f.d[i]*=v; f.d[i+1]*=v; f.d[i+2]*=v; } } }
         }
         "blur" => { let rf = p(params, "radius", 4.0, t); if crate::quality::v10() { gauss_blur(f, radius_sigma(crate::quality::px(rf)), true); } else { box_blur3(f, rf as usize); } }
-        "glow" if crate::glow::mode(params, t) => crate::glow::apply_deep(params, f, t),
+        "glow" if crate::glow::mode(params, t) || (crate::quality::v10() && !params.contains_key("mode")) => crate::glow::apply_deep(params, f, t),
         "glow" => {
             let a = p(params, "amount", 0.5, t); let r = p(params, "radius", 12.0, t) as usize; let th = p(params, "threshold", 0.7, t);
             let mut b = Frame { w: f.w, h: f.h, d: f.d.clone() };
@@ -169,9 +176,10 @@ pub fn apply(kind: &str, params: &Params, strings: &BTreeMap<String, String>, f:
             // Light-intensity-responsive bloom: bright-pass with a soft knee that keeps the pixel's colour and scales with its excess over the
             // threshold (so a 4x brighter light blooms 4x more, even above 1.0), then a multi-scale blur (radius, 2r, 4r, ...) averaged with
             // equal weights. mode 1 (default) conserves energy: what the bloom adds is taken out of the bright pixels, so the frame sum is unchanged.
+            let v10 = crate::quality::v10(); if v10 { for q in f.d.chunks_exact_mut(4) { for j in 0..3 { q[j] = quality::to_linear(q[j]); } } }
             let conserve = p(params, "conserve", 1.0, t) >= 0.5;
             let a = p(params, "amount", 0.6, t).max(0.0); let a = if conserve { a.min(1.0) } else { a };
-            let th = p(params, "threshold", 0.8, t).max(0.0); let knee = p(params, "knee", 0.2, t).clamp(0.0, 1.0);
+            let th = p(params, "threshold", 0.8, t).max(0.0); let th = if v10 { quality::to_linear(th) } else { th }; let knee = p(params, "knee", 0.2, t).clamp(0.0, 1.0);
             let r0 = p(params, "radius", 8.0, t).clamp(1.0, 256.0) as usize; let levels = (p(params, "levels", 5.0, t).round() as usize).clamp(1, 7);
             let tint = [p(params, "tint_r", 1.0, t), p(params, "tint_g", 1.0, t), p(params, "tint_b", 1.0, t)];
             let n = f.w * f.h; let mut ex = vec![0f32; n * 3];
@@ -192,6 +200,7 @@ pub fn apply(kind: &str, params: &Params, strings: &BTreeMap<String, String>, f:
                 // light that spills past the layer's alpha: grow alpha so the glow shows outside the shape (straight alpha, premultiplied sum)
                 if a0 < 1.0 && mx > 0.0 { let k = 1.0 - a0; let an = a0 + k * mx.min(1.0);
                     if an > 1e-6 { for j in 0..3 { let p = (f.d[i*4+j] - extra[j]) * a0 + k * extra[j]; f.d[i*4+j] = p / an; } f.d[i*4+3] = an; } } }
+            if v10 { for q in f.d.chunks_exact_mut(4) { for j in 0..3 { q[j] = quality::to_srgb(q[j].max(0.0)); } } }
         }
         "grain" => {
             let a = p(params, "amount", 0.08, t);
@@ -201,6 +210,7 @@ pub fn apply(kind: &str, params: &Params, strings: &BTreeMap<String, String>, f:
             let mut v = [0.0f64; 9];
             for (i, (k, d, lo, hi)) in sh.iter().enumerate() { v[i] = q(k, *d); if !v[i].is_finite() || v[i] < *lo || v[i] > *hi { return Err(format!("grain: {k} must be in {lo}..{hi}, got {}", v[i])); } }
             if sh.iter().zip(&v).any(|(s, x)| *x != s.1) { crate::color::grain_look::apply(a as f64, v[0], v[1], v[2], [v[3], v[4], v[5]], [v[6], v[7], v[8]], f, seed); return Ok(()); }
+            if crate::quality::v10() { crate::color::grain_look::apply(a as f64, (crate::quality::px(1.0) as f64).clamp(1.0, 32.0), 0.35, 0.0, [0.4, 1.0, 0.45], [1.0, 1.0, 1.0], f, seed); return Ok(()); } // film: grain shows most in the mid-tones, least in deep shadows and highlights
             let mut s = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
             for i in 0..f.w*f.h { s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
                 let n = ((s >> 40) as f32 / 16777216.0 - 0.5) * a; for j in 0..3 { f.d[i*4+j] += n; } }
@@ -236,6 +246,17 @@ pub fn apply(kind: &str, params: &Params, strings: &BTreeMap<String, String>, f:
                 for (n, c0) in BANDS { let mut d = (h - c0).abs(); if d > 180.0 { d = 360.0 - d; } let w = (1.0 - d/60.0).max(0.0);
                     if w > 0.0 { dh += g(&format!("{n}_hue"))*w; ds += g(&format!("{n}_sat"))*w; dl += g(&format!("{n}_lum"))*w; } }
                 h = (h + dh*60.0).rem_euclid(360.0); s = (s*(1.0+ds)).clamp(0.0,1.0); l = (l + dl*0.5).clamp(0.0,1.0); hsl2rgb(h, s, l) });
+        }
+        "sharpen" if crate::quality::v10() => {
+            let (a, rf, th) = (p(params, "amount", 0.8, t), p(params, "radius", 2.0, t), p(params, "threshold", 0.01, t).max(0.0));
+            let (w, h) = (f.w, f.h); let mut b = Frame { w, h, d: f.d.clone() }; gauss_blur(&mut b, radius_sigma(crate::quality::px(rf)), true);
+            let src = f.d.clone();
+            for y in 0..h { for x in 0..w { let i = (y * w + x) * 4;
+                let d = lum([src[i], src[i+1], src[i+2]]) - lum([b.d[i], b.d[i+1], b.d[i+2]]);
+                let d = if d.abs() <= th { 0.0 } else { d - th * d.signum() }; if d == 0.0 { continue; }
+                for j in 0..3 { let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+                    for yy in y.saturating_sub(1)..=(y + 1).min(h - 1) { for xx in x.saturating_sub(1)..=(x + 1).min(w - 1) { let v = src[(yy * w + xx) * 4 + j]; lo = lo.min(v); hi = hi.max(v); } }
+                    f.d[i + j] = (src[i + j] + d * a).clamp(lo, hi); } } }
         }
         "sharpen" => { let a = p(params, "amount", 0.8, t); let r = p(params, "radius", 2.0, t) as usize; let mut b = Frame { w: f.w, h: f.h, d: f.d.clone() }; box_blur3(&mut b, r);
             for i in 0..f.w*f.h { for j in 0..3 { f.d[i*4+j] += (f.d[i*4+j] - b.d[i*4+j]) * a; } } }
@@ -278,6 +299,10 @@ pub fn apply(kind: &str, params: &Params, strings: &BTreeMap<String, String>, f:
             let (x0, y0, sz, tv) = (p(params, "x", 0.5, t), p(params, "y", 0.1, t), p(params, "size", 1.0, t).max(0.01), p(params, "travel", 0.5, t)); let col = [p(params, "color_r", 1.0, t), p(params, "color_g", 0.45, t), p(params, "color_b", 0.12, t)];
             for y in 0..f.h { for x in 0..f.w { let (u, v) = (x as f32 / w, y as f32 / h); let cx = x0 + tv * ph.sin(); let d = ((u - cx).powi(2) * 2.0 + (v - y0).powi(2)).sqrt(); let k = (1.0 - d * 1.8 / sz).max(0.0).powi(2) * a * (0.7 + 0.3 * (ph * 2.0).sin());
                 let i = (y*f.w+x)*4; f.d[i] += k * col[0]; f.d[i+1] += k * col[1]; f.d[i+2] += k * col[2]; } } }
+        "zoom_blur" if crate::quality::v10() => { let a = p(params, "amount", 0.06, t); let src = f.d.clone(); let (w, h) = (f.w, f.h); let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+            let n = ((a.abs() * 0.5 * (w as f32).hypot(h as f32) / 1.5).ceil() as usize).clamp(8, 128);
+            for y in 0..h { for x in 0..w { let mut acc = [0f32; 4]; for k in 0..n { let s = 1.0 - a * k as f32 / n as f32; let v = crate::effects2::sample(&src, w, h, (x as f32 - cx) * s + cx, (y as f32 - cy) * s + cy); let al = v[3]; for j in 0..3 { acc[j] += v[j] * al; } acc[3] += al; }
+                let o = (y * w + x) * 4; if acc[3] > 1e-6 { for j in 0..3 { f.d[o + j] = acc[j] / acc[3]; } } f.d[o + 3] = acc[3] / n as f32; } } }
         "zoom_blur" => { let a = p(params, "amount", 0.06, t); let src = f.d.clone(); let (w, h) = (f.w as f32, f.h as f32); let n = 8;
             for y in 0..f.h { for x in 0..f.w { let mut acc = [0f32; 4]; for k in 0..n { let s = 1.0 - a * k as f32 / n as f32; let sx = ((x as f32 - w/2.0) * s + w/2.0).clamp(0.0, w-1.0) as usize; let sy = ((y as f32 - h/2.0) * s + h/2.0).clamp(0.0, h-1.0) as usize; for j in 0..4 { acc[j] += src[(sy*f.w+sx)*4+j]; } }
                 for j in 0..4 { f.d[(y*f.w+x)*4+j] = acc[j] / n as f32; } } } }
@@ -310,6 +335,10 @@ pub fn apply(kind: &str, params: &Params, strings: &BTreeMap<String, String>, f:
         "drop_shadow" => { let (dx, dy, bl, op) = (p(params, "dx", 8.0, t) as isize, p(params, "dy", 8.0, t) as isize, p(params, "blur", 8.0, t) as usize, p(params, "opacity", 0.6, t)); let mut sh = Frame::new(f.w, f.h); let (w, h) = (f.w as isize, f.h as isize);
             for y in 0..h { for x in 0..w { let (sx, sy) = (x - dx, y - dy); if sx >= 0 && sy >= 0 && sx < w && sy < h { sh.d[((y*w+x)*4+3) as usize] = f.d[((sy*w+sx)*4+3) as usize]; } } } box_blur3(&mut sh, bl);
             for i in 0..f.w*f.h { let a = sh.d[i*4+3] * op; let o = &mut f.d[i*4..i*4+4]; let na = o[3] + a * (1.0 - o[3]); if na > 0.0 { for j in 0..3 { o[j] = (o[j] * o[3]) / na; } } o[3] = na; } }
+        "chromatic_aberration" if crate::quality::v10() => { let a = crate::quality::px(p(params, "amount", 4.0, t)); let src = f.d.clone(); let (wu, hu) = (f.w, f.h); let (w, h) = (wu as f32, hu as f32);
+            let (cx, cy, rs) = (p(params, "cx", 0.5, t), p(params, "cy", 0.5, t), p(params, "radial_scale", 2.0, t)); let sc = [p(params, "r_scale", 1.0, t), 0.0, p(params, "b_scale", -1.0, t)];
+            for y in 0..hu { for x in 0..wu { let (nx, ny) = (x as f32 / w - cx, y as f32 / h - cy); let o = (y * wu + x) * 4;
+                for j in [0usize, 2] { let v = crate::effects2::sample(&src, wu, hu, x as f32 + nx * a * rs * sc[j], y as f32 + ny * a * rs * sc[j]); f.d[o + j] = v[j]; } } } }
         "chromatic_aberration" => { let a = p(params, "amount", 4.0, t); let src = f.d.clone(); let (w, h) = (f.w as f32, f.h as f32);
             for y in 0..f.h { for x in 0..f.w { let (nx, ny) = (x as f32 / w - p(params,"cx",0.5,t), y as f32 / h - p(params,"cy",0.5,t)); let o = (y*f.w+x)*4;
                 for (j, s) in [(0usize, p(params,"r_scale",1.,t)), (2usize, p(params,"b_scale",-1.,t))] { let sx = (x as f32 + nx * a * p(params,"radial_scale",2.,t) * s).clamp(0.0, w - 1.0) as usize; let sy = (y as f32 + ny * a * p(params,"radial_scale",2.,t) * s).clamp(0.0, h - 1.0) as usize; f.d[o+j] = src[(sy*f.w+sx)*4+j]; } } } }
@@ -327,6 +356,8 @@ pub fn apply(kind: &str, params: &Params, strings: &BTreeMap<String, String>, f:
     Ok(())
 }
 
+/// Per-channel linear gains rescaled so they keep luminance (a white-balance shift, not a brightness change).
+fn wb_gains(r: f32, g: f32, b: f32) -> [f32; 3] { let l = 0.2126 * r + 0.7152 * g + 0.0722 * b; [r / l, g / l, b / l] }
 pub(crate) fn lum(c: [f32; 3]) -> f32 { 0.2126*c[0] + 0.7152*c[1] + 0.0722*c[2] }
 pub(crate) fn px(f: &mut Frame, op: impl Fn([f32; 3]) -> [f32; 3] + Sync) {
     let ptr=crate::par::SyncPtr(f.d.as_mut_ptr());crate::par::ranges(f.w*f.h,32768,|a,b|{let ptr=ptr;for i in a..b{let px=unsafe{std::slice::from_raw_parts_mut(ptr.0.add(i*4),4)};let o=op([px[0],px[1],px[2]]);px[0]=o[0];px[1]=o[1];px[2]=o[2];}});

@@ -30,6 +30,29 @@ pub fn v10() -> bool { CTX.with(|c| c.get().0) }
 /// at 720p and at 4K.
 pub fn px(v: f32) -> f32 { let (on, s) = CTX.with(|c| c.get()); if on { v * s } else { v } }
 
+/// sRGB encoded value to linear light (exact curve; values past 0..1 extend it).
+#[inline] pub fn to_linear(v: f32) -> f32 { if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) } }
+/// Linear light to the sRGB encoded value.
+#[inline] pub fn to_srgb(v: f32) -> f32 { if v <= 0.003_130_8 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 } }
+
+/// Linear sRGB to OkLab (Björn Ottosson): perceptual lightness and chroma, so saturation can change without
+/// shifting hue or brightness.
+pub fn oklab(c: [f32; 3]) -> [f32; 3] {
+    let l = 0.412_221_47 * c[0] + 0.536_332_55 * c[1] + 0.051_445_995 * c[2];
+    let m = 0.211_903_5 * c[0] + 0.680_699_5 * c[1] + 0.107_396_96 * c[2];
+    let s = 0.088_302_46 * c[0] + 0.281_718_85 * c[1] + 0.629_978_7 * c[2];
+    let (l, m, s) = (l.max(0.0).cbrt(), m.max(0.0).cbrt(), s.max(0.0).cbrt());
+    [0.210_454_26 * l + 0.793_617_8 * m - 0.004_072_047 * s, 1.977_998_5 * l - 2.428_592_2 * m + 0.450_593_7 * s, 0.025_904_037 * l + 0.782_771_77 * m - 0.808_675_77 * s]
+}
+/// OkLab back to linear sRGB.
+pub fn oklab_inv(c: [f32; 3]) -> [f32; 3] {
+    let l = c[0] + 0.396_337_78 * c[1] + 0.215_803_76 * c[2];
+    let m = c[0] - 0.105_561_346 * c[1] - 0.063_854_17 * c[2];
+    let s = c[0] - 0.089_484_18 * c[1] - 1.291_485_5 * c[2];
+    let (l, m, s) = (l * l * l, m * m * m, s * s * s);
+    [4.076_741_7 * l - 3.307_711_6 * m + 0.230_969_94 * s, -1.268_438 * l + 2.609_757_4 * m - 0.341_319_38 * s, -0.004_196_086_3 * l - 0.703_418_6 * m + 1.707_614_7 * s]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -40,5 +63,11 @@ mod tests {
           { let _b = enter(false, 720); assert!(!v10()); assert_eq!(px(10.0), 10.0); }
           assert!(v10()); assert_eq!(px(10.0), 20.0); }
         assert!(!v10());
+    }
+    #[test]
+    fn transfer_and_oklab_round_trip() {
+        for v in [0.0f32, 0.002, 0.04, 0.2, 0.5, 0.9, 1.0] { assert!((to_srgb(to_linear(v)) - v).abs() < 1e-5, "{v}"); }
+        for c in [[0.2f32, 0.5, 0.8], [1.0, 0.0, 0.0], [0.18, 0.18, 0.18]] { let b = oklab_inv(oklab(c)); for j in 0..3 { assert!((b[j] - c[j]).abs() < 1e-4, "{c:?} -> {b:?}"); } }
+        assert!(oklab([0.18; 3])[1].abs() < 1e-4 && oklab([0.18; 3])[2].abs() < 1e-4, "grey has no chroma");
     }
 }

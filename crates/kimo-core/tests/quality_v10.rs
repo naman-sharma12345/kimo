@@ -143,3 +143,66 @@ fn export_dither_moves_every_frame_and_leaves_alpha_alone() {
     let mean = a.chunks_exact(4).map(|q| q[0] as f64).sum::<f64>() / 4096.0;
     assert!((mean - 127.5).abs() < 0.6, "dither adds no bias: mean {mean:.2}");
 }
+
+// ---------------------------------------------------------------- effects
+
+/// A full-frame solid with one effect, rendered in legacy or v10; returns the centre pixel's RGB (0..255).
+fn solid_with(v10: bool, rgb: [f64; 3], kind: &str, params: Value) -> [u8; 3] {
+    let mut s = session(v10); let t = track(&mut s); let id = solid(&mut s, &t, rgb, 0.0, 1.0);
+    c(&mut s, "add_effect", json!({"clip_id": id, "kind": kind, "params": params}));
+    let f = frame(&s, 0.5); let i = ((H / 2 * W + W / 2) * 4) as usize; [f[i], f[i + 1], f[i + 2]]
+}
+fn to_lin(v: u8) -> f64 { let v = v as f64 / 255.0; if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) } }
+fn luminance(c: [u8; 3]) -> f64 { 0.2126 * to_lin(c[0]) + 0.7152 * to_lin(c[1]) + 0.0722 * to_lin(c[2]) }
+
+#[test]
+fn exposure_is_measured_in_stops_of_light() {
+    let (legacy, v10) = (solid_with(false, [0.5; 3], "exposure", json!({"stops": 1.0}))[0], solid_with(true, [0.5; 3], "exposure", json!({"stops": 1.0}))[0]);
+    assert_eq!(legacy, 255, "legacy doubles the encoded value: mid-grey clips to white");
+    assert!((to_lin(v10) / to_lin(128) - 2.0).abs() < 0.05, "v10: +1 stop doubles the light (mid-grey 128 -> ~175), got {v10}");
+}
+
+#[test]
+fn temperature_warms_without_changing_brightness() {
+    let grey = [0.5; 3]; let before = luminance([128; 3]);
+    let v10 = solid_with(true, grey, "temperature", json!({"amount": 1.0}));
+    assert!(v10[0] > v10[2] + 20, "warmer: more red than blue {v10:?}");
+    assert!((luminance(v10) / before - 1.0).abs() < 0.02, "v10 keeps the brightness: {:.4} vs {before:.4}", luminance(v10));
+}
+
+#[test]
+fn saturation_keeps_the_hue() {
+    // a skin-like orange, saturation up 1.6x: OkLab hue angle before and after
+    let hue = |c: [u8; 3]| { let l = kimo_core::quality::oklab([to_lin(c[0]) as f32, to_lin(c[1]) as f32, to_lin(c[2]) as f32]); l[2].atan2(l[1]).to_degrees() };
+    let orange = [0.8, 0.55, 0.4]; let base = hue([204, 140, 102]);
+    let v10 = solid_with(true, orange, "saturation", json!({"amount": 1.6}));
+    assert!((hue(v10) - base).abs() < 2.0, "v10 hue {:.1} vs original {base:.1}", hue(v10));
+    let grey = solid_with(true, orange, "saturation", json!({"amount": 0.0}));
+    assert!(grey.iter().max().unwrap() - grey.iter().min().unwrap() <= 1, "saturation 0 is neutral: {grey:?}");
+}
+
+#[test]
+fn sharpen_adds_no_halos() {
+    // a 0.7 grey square on a 0.3 grey background, sharpened hard: any value outside 0.3..0.7 is a halo
+    let range = |v10: bool| { let mut s = session(v10); let (b, t) = (track(&mut s), track(&mut s)); solid(&mut s, &b, [0.3; 3], 0.0, 1.0);
+        let sq = c(&mut s, "add_shape", json!({"track_id": t, "shape": "rect", "start": 0.0, "duration": 1.0, "width": 100, "height": 100, "fill": [0.7, 0.7, 0.7]}))["clip_id"].as_str().unwrap().to_string();
+        c(&mut s, "add_effect", json!({"clip_id": sq, "kind": "sharpen", "params": {"amount": 2.0, "radius": 3.0}}));
+        let f = frame(&s, 0.5); let row: Vec<u8> = (0..W).map(|x| px(&f, x, H / 2)).collect(); (*row.iter().min().unwrap(), *row.iter().max().unwrap()) };
+    let (lo, hi) = (to_srgb_u8(0.3), to_srgb_u8(0.7));
+    let legacy = range(false); let v10 = range(true);
+    assert!(legacy.1 > hi + 10, "legacy overshoots into a bright halo {legacy:?}");
+    assert!(v10.0 + 2 >= lo && v10.1 <= hi + 2, "v10 stays within the edge's own range {lo}..{hi}: {v10:?}");
+}
+fn to_srgb_u8(v: f64) -> u8 { (v * 255.0).round() as u8 }
+
+#[test]
+fn grain_lives_in_the_mid_tones() {
+    let spread = |v10: bool, g: f64| { let mut s = session(v10); let t = track(&mut s); let id = solid(&mut s, &t, [g; 3], 0.0, 1.0);
+        c(&mut s, "add_effect", json!({"clip_id": id, "kind": "grain", "params": {"amount": 0.12}}));
+        let f = frame(&s, 0.5); let v: Vec<f64> = (0..W * H).map(|i| f[(i * 4) as usize] as f64).collect();
+        let m = v.iter().sum::<f64>() / v.len() as f64; (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / v.len() as f64).sqrt() };
+    let (mid, dark) = (spread(true, 0.5), spread(true, 0.06));
+    assert!(mid > dark * 1.3, "v10 grain is strongest in the mid-tones: mid {mid:.2} vs shadows {dark:.2}");
+    let (lmid, ldark) = (spread(false, 0.5), spread(false, 0.06));
+    assert!((lmid / ldark.max(1e-6) - 1.0).abs() < 0.6, "legacy grain is the same everywhere: {lmid:.2} vs {ldark:.2}");
+}
