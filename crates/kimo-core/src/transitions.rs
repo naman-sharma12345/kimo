@@ -35,18 +35,37 @@ pub struct Plan { pub op: f32, pub mask: Option<Mask>, pub dx: f64, pub dy: f64,
     /// morph_cut: optical-flow weight from the previous abutting clip's last frame (0) to this clip (1).
     pub morph: Option<f32> }
 
+/// Premultiplied bilinear tap (v10 streaks): smooth subpixel positions instead of whole-pixel steps.
+#[inline] fn tap(src: &[f32], w: usize, h: usize, x: f32, y: f32, acc: &mut [f32; 4]) {
+    let (x, y) = (x.clamp(0.0, (w - 1) as f32), y.clamp(0.0, (h - 1) as f32)); let (x0, y0) = (x as usize, y as usize); let (x1, y1) = ((x0 + 1).min(w - 1), (y0 + 1).min(h - 1)); let (fx, fy) = (x - x0 as f32, y - y0 as f32);
+    for (qx, qy, k) in [(x0, y0, (1.0 - fx) * (1.0 - fy)), (x1, y0, fx * (1.0 - fy)), (x0, y1, (1.0 - fx) * fy), (x1, y1, fx * fy)] { let i = (qy * w + qx) * 4; let a = src[i + 3] * k; for j in 0..3 { acc[j] += src[i + j] * a; } acc[3] += a; }
+}
 fn dir_blur(f: &mut Frame, dx: f32, dy: f32, n: usize) { if dx.abs() + dy.abs() < 0.5 { return; } let (w, h) = (f.w, f.h); let src = f.d.clone();
+    if crate::quality::v10() { // enough taps that neighbours are under 1.5 px apart, each one bilinear
+        let n = (((dx.hypot(dy)) / 1.5).ceil() as usize).clamp(n.max(2), 128);
+        for y in 0..h { for x in 0..w { let mut acc = [0f32; 4]; for k in 0..n { let o = k as f32 / (n - 1) as f32 - 0.5; tap(&src, w, h, x as f32 + dx * o, y as f32 + dy * o, &mut acc); }
+            let o = (y * w + x) * 4; if acc[3] > 0.0 { for j in 0..3 { f.d[o + j] = acc[j] / acc[3]; } } f.d[o + 3] = acc[3] / n as f32; } }
+        return; }
     for y in 0..h { for x in 0..w { let mut acc = [0f32; 4]; for k in 0..n { let o = k as f32 / (n - 1) as f32 - 0.5; let sx = ((x as f32 + dx * o).round() as i32).clamp(0, w as i32 - 1) as usize; let sy = ((y as f32 + dy * o).round() as i32).clamp(0, h as i32 - 1) as usize; let i = (sy * w + sx) * 4; let a = src[i + 3]; for j in 0..3 { acc[j] += src[i + j] * a; } acc[3] += a; }
         let o = (y * w + x) * 4; if acc[3] > 0.0 { for j in 0..3 { f.d[o + j] = acc[j] / acc[3]; } } f.d[o + 3] = acc[3] / n as f32; } } }
 fn radial_blur(f: &mut Frame, amount: f32, n: usize) { if amount < 0.002 { return; } let (w, h) = (f.w, f.h); let src = f.d.clone(); let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+    if crate::quality::v10() { // taps under 1.5 px apart at the frame corner (the longest streak), each one bilinear: a smooth zoom streak, not echoes
+        let n = ((amount * 0.5 * (w as f32).hypot(h as f32) / 1.5).ceil() as usize).clamp(n.max(2), 128);
+        for y in 0..h { for x in 0..w { let mut acc = [0f32; 4]; for k in 0..n { let s = 1.0 - amount * k as f32 / (n - 1) as f32; tap(&src, w, h, cx + (x as f32 + 0.5 - cx) * s - 0.5, cy + (y as f32 + 0.5 - cy) * s - 0.5, &mut acc); }
+            let o = (y * w + x) * 4; if acc[3] > 0.0 { for j in 0..3 { f.d[o + j] = acc[j] / acc[3]; } } f.d[o + 3] = acc[3] / n as f32; } }
+        return; }
     for y in 0..h { for x in 0..w { let mut acc = [0f32; 4]; for k in 0..n { let s = 1.0 - amount * k as f32 / (n - 1) as f32; let sx = ((cx + (x as f32 - cx) * s).round() as i32).clamp(0, w as i32 - 1) as usize; let sy = ((cy + (y as f32 - cy) * s).round() as i32).clamp(0, h as i32 - 1) as usize; let i = (sy * w + sx) * 4; let a = src[i + 3]; for j in 0..3 { acc[j] += src[i + j] * a; } acc[3] += a; }
         let o = (y * w + x) * 4; if acc[3] > 0.0 { for j in 0..3 { f.d[o + j] = acc[j] / acc[3]; } } f.d[o + 3] = acc[3] / n as f32; } } }
 
 pub fn plan(tr: &Transition, lt: f64, w: usize, h: usize) -> Plan {
     let kr = (lt / tr.duration).clamp(0.0, 1.0); let k = ease(&tr.ease, kr) as f32; let (wf, hf) = (w as f32, h as f32); let soft = tr.softness.max(0.0) as f32; let seed = tr.seed;
     let mut p = Plan { op: 1.0, mask: None, dx: 0.0, dy: 0.0, scale: 1.0, rot: 0.0, dip: None, post: None, overlay: None, compose: None, morph: None, under: None };
-    let wipe = |ang_deg: f32, k: f32| -> Mask { let (c, s) = (ang_deg.to_radians().cos(), ang_deg.to_radians().sin()); let half = (wf * c.abs() + hf * s.abs()) / 2.0; let sw = (soft * half * 2.0).max(1.0); let edge = -half + k * (2.0 * half + sw);
-        Box::new(move |x, y| { let pr = (x as f32 - wf / 2.0) * c + (y as f32 - hf / 2.0) * s; sstep((edge - pr) / sw) }) };
+    // v10 wipe edge: a thin antialiased feather (2 px at 1080p) sampled at pixel centres; softness above the 0.08 default
+    // still widens it, as before. Legacy: the edge width is softness x the frame span (about 150 px at 1080p by default).
+    let v10 = crate::quality::v10(); let fine = crate::quality::px(2.0).max(1.0); // never under a pixel: a thinner edge would alias
+    let wipe = |ang_deg: f32, k: f32| -> Mask { let (c, s) = (ang_deg.to_radians().cos(), ang_deg.to_radians().sin()); let half = (wf * c.abs() + hf * s.abs()) / 2.0;
+        let sw = if v10 { fine + (soft - 0.08).max(0.0) * half * 2.0 } else { (soft * half * 2.0).max(1.0) }; let edge = -half + k * (2.0 * half + sw); let off = if v10 { 0.5 } else { 0.0 };
+        Box::new(move |x, y| { let pr = (x as f32 + off - wf / 2.0) * c + (y as f32 + off - hf / 2.0) * s; sstep((edge - pr) / sw) }) };
     match tr.kind.as_str() {
         "crossfade" | "dissolve" => p.op = k,
         "morph_cut" => p.morph = Some(k),
@@ -55,7 +74,12 @@ pub fn plan(tr: &Transition, lt: f64, w: usize, h: usize) -> Plan {
         "wipe" => p.mask = Some(wipe(tr.angle as f32, k)), "wipe_left" => p.mask = Some(wipe(0.0, k)), "wipe_right" => p.mask = Some(wipe(180.0, k)), "wipe_up" => p.mask = Some(wipe(90.0, k)), "wipe_down" => p.mask = Some(wipe(270.0, k)),
         "diagonal" => p.mask = Some(wipe(if tr.angle != 0.0 { tr.angle as f32 } else { 45.0 }, k)),
         "iris" => { let r = k * (wf * wf + hf * hf).sqrt() * 0.5 * (1.0 + soft); let sw = (soft * wf * 0.5).max(1.5); p.mask = Some(Box::new(move |x, y| { let d = ((x as f32 - wf / 2.0).powi(2) + (y as f32 - hf / 2.0).powi(2)).sqrt(); sstep((r - d) / sw) })); }
-        "clock" => { let sw = (soft * 0.5).max(0.004); let a0 = (tr.angle as f32 - 90.0).to_radians(); p.mask = Some(Box::new(move |x, y| { let mut a = ((y as f32 - hf / 2.0).atan2(x as f32 - wf / 2.0) - a0).rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU; if a.is_nan() { a = 0.0 } sstep((k * (1.0 + sw) - a) / sw) })); }
+        "clock" => { let sw = (soft * 0.5).max(0.004); let a0 = (tr.angle as f32 - 90.0).to_radians();
+            if v10 { let extra = (soft - 0.08).max(0.0) * 0.5;
+                p.mask = Some(Box::new(move |x, y| { let (px_, py_) = (x as f32 + 0.5 - wf / 2.0, y as f32 + 0.5 - hf / 2.0); let r = px_.hypot(py_).max(0.5);
+                    let swa = fine / (std::f32::consts::TAU * r) + extra; let mut a = (py_.atan2(px_) - a0).rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU; if a.is_nan() { a = 0.0 }
+                    sstep((k * (1.0 + swa) - a) / swa) })); }
+            else { p.mask = Some(Box::new(move |x, y| { let mut a = ((y as f32 - hf / 2.0).atan2(x as f32 - wf / 2.0) - a0).rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU; if a.is_nan() { a = 0.0 } sstep((k * (1.0 + sw) - a) / sw) })); } }
         "split_h" => { let sw = (soft * wf * 0.5).max(1.5); p.mask = Some(Box::new(move |x, _| sstep((k * wf * 0.5 - (x as f32 - wf / 2.0).abs()) / sw + 0.0))); }
         "split_v" => { let sw = (soft * hf * 0.5).max(1.5); p.mask = Some(Box::new(move |_, y| sstep((k * hf * 0.5 - (y as f32 - hf / 2.0).abs()) / sw))); }
         "blinds" => { let n = tr.count.max(2.0) as f32; let hh = hf / n; let sw = (soft * 0.5).max(0.02); p.mask = Some(Box::new(move |_, y| { let v = (y as f32 % hh) / hh; sstep((k * (1.0 + sw) - v) / sw) })); }

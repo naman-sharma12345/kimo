@@ -155,7 +155,7 @@ pub fn apply(kind: &str, params: &Params, strings: &BTreeMap<String, String>, f:
                 let v = 1.0 - a * ((r - (1.0 - s)).max(0.0) / s).powi(2).min(1.0);
                 let i = (y*f.w+x)*4; f.d[i]*=v; f.d[i+1]*=v; f.d[i+2]*=v; } }
         }
-        "blur" => { let r = p(params, "radius", 4.0, t) as usize; box_blur3(f, r); }
+        "blur" => { let rf = p(params, "radius", 4.0, t); if crate::quality::v10() { gauss_blur(f, radius_sigma(crate::quality::px(rf)), true); } else { box_blur3(f, rf as usize); } }
         "glow" if crate::glow::mode(params, t) => crate::glow::apply_deep(params, f, t),
         "glow" => {
             let a = p(params, "amount", 0.5, t); let r = p(params, "radius", 12.0, t) as usize; let th = p(params, "threshold", 0.7, t);
@@ -331,8 +331,51 @@ pub(crate) fn lum(c: [f32; 3]) -> f32 { 0.2126*c[0] + 0.7152*c[1] + 0.0722*c[2] 
 pub(crate) fn px(f: &mut Frame, op: impl Fn([f32; 3]) -> [f32; 3] + Sync) {
     let ptr=crate::par::SyncPtr(f.d.as_mut_ptr());crate::par::ranges(f.w*f.h,32768,|a,b|{let ptr=ptr;for i in a..b{let px=unsafe{std::slice::from_raw_parts_mut(ptr.0.add(i*4),4)};let o=op([px[0],px[1],px[2]]);px[0]=o[0];px[1]=o[1];px[2]=o[2];}});
 }
+/// The sigma the legacy three-box blur of `radius` amounts to (b = radius/2 boxes, three passes: sigma = sqrt(b(b+1))),
+/// for a continuous radius, so v10 blurs keep the size people chose but grow smoothly between whole pixels.
+pub fn radius_sigma(radius: f32) -> f32 { let b = (radius * 0.5).max(0.0); (b * (b + 1.0)).sqrt() }
+
+/// v10 blur: a true separable Gaussian (kernel to 3 sigma, edge clamped). `premultiplied` blurs colour weighted by alpha,
+/// so a layer's edge fades out instead of growing a dark fringe; data frames (masks kept in the colour channels) pass false.
+/// Large sigmas blur a downsampled copy and scale back up, so a 200 px blur stays fast.
+pub fn gauss_blur(f: &mut Frame, sigma: f32, premultiplied: bool) {
+    if !(sigma > 0.05) || f.w == 0 || f.h == 0 { return; }
+    let (w, h) = (f.w, f.h);
+    if premultiplied { for q in f.d.chunks_exact_mut(4) { let a = q[3]; q[0] *= a; q[1] *= a; q[2] *= a; } }
+    let k = if sigma > 12.0 { ((sigma / 6.0).floor() as usize).clamp(2, 16) } else { 1 };
+    if k > 1 && w >= k * 4 && h >= k * 4 {
+        let (sw, shh) = (w.div_ceil(k), h.div_ceil(k)); let mut small = vec![0f32; sw * shh * 4];
+        for y in 0..shh { for x in 0..sw { let mut acc = [0f32; 4]; let mut n = 0f32;
+            for yy in y * k..((y + 1) * k).min(h) { for xx in x * k..((x + 1) * k).min(w) { let i = (yy * w + xx) * 4; for j in 0..4 { acc[j] += f.d[i + j]; } n += 1.0; } }
+            let o = (y * sw + x) * 4; for j in 0..4 { small[o + j] = acc[j] / n; } } }
+        gauss_pass(&mut small, sw, shh, sigma / k as f32);
+        for y in 0..h { for x in 0..w {
+            let (fx, fy) = (((x as f32 + 0.5) / k as f32 - 0.5).clamp(0.0, (sw - 1) as f32), ((y as f32 + 0.5) / k as f32 - 0.5).clamp(0.0, (shh - 1) as f32));
+            let (x0, y0) = (fx as usize, fy as usize); let (x1, y1) = ((x0 + 1).min(sw - 1), (y0 + 1).min(shh - 1)); let (tx, ty) = (fx - x0 as f32, fy - y0 as f32);
+            let i = (y * w + x) * 4;
+            for j in 0..4 { let a = small[(y0 * sw + x0) * 4 + j] * (1.0 - tx) + small[(y0 * sw + x1) * 4 + j] * tx; let b = small[(y1 * sw + x0) * 4 + j] * (1.0 - tx) + small[(y1 * sw + x1) * 4 + j] * tx; f.d[i + j] = a * (1.0 - ty) + b * ty; } } }
+    } else { gauss_pass(&mut f.d, w, h, sigma); }
+    if premultiplied { for q in f.d.chunks_exact_mut(4) { let a = q[3]; if a > 1e-6 { q[0] /= a; q[1] /= a; q[2] /= a; } } }
+}
+/// One separable Gaussian, horizontal then vertical, 4 channels, edges clamped.
+fn gauss_pass(d: &mut [f32], w: usize, h: usize, sigma: f32) {
+    let r = (sigma * 3.0).ceil().max(1.0) as isize;
+    let ker: Vec<f32> = { let v: Vec<f32> = (-r..=r).map(|i| (-(i * i) as f32 / (2.0 * sigma * sigma)).exp()).collect(); let s: f32 = v.iter().sum(); v.into_iter().map(|x| x / s).collect() };
+    let mut tmp = vec![0f32; d.len()];
+    { let (src, ker) = (&*d, &ker);
+      crate::par::rows_mut(&mut tmp, w * 4, |y, out| { for x in 0..w { let mut acc = [0f32; 4];
+        for (t, kv) in ker.iter().enumerate() { let xx = (x as isize + t as isize - r).clamp(0, w as isize - 1) as usize; let i = (y * w + xx) * 4; for j in 0..4 { acc[j] += src[i + j] * kv; } }
+        out[x * 4..x * 4 + 4].copy_from_slice(&acc); } }); }
+    { let (src, ker) = (&tmp, &ker);
+      crate::par::rows_mut(d, w * 4, |y, out| { for x in 0..w { let mut acc = [0f32; 4];
+        for (t, kv) in ker.iter().enumerate() { let yy = (y as isize + t as isize - r).clamp(0, h as isize - 1) as usize; let i = (yy * w + x) * 4; for j in 0..4 { acc[j] += src[i + j] * kv; } }
+        out[x * 4..x * 4 + 4].copy_from_slice(&acc); } }); }
+}
+
 pub fn box_blur3(f: &mut Frame, r: usize) {
     if r == 0 || f.w == 0 || f.h == 0 { return; }
+    // v10: the same blur size as a true Gaussian, scaled with the frame (straight alpha: callers also blur data frames)
+    if crate::quality::v10() { return gauss_blur(f, radius_sigma(crate::quality::px(r as f32)), false); }
     let r = (r / 2).max(1);
     let mut tmp = vec![0f32; f.d.len()];
     for _ in 0..3 { blur_axis(&f.d, &mut tmp, f.w, f.h, r, true); blur_axis(&tmp, &mut f.d, f.w, f.h, r, false); }

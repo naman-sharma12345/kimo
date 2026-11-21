@@ -73,7 +73,7 @@ pub fn picture_map(p: &crate::model::Project) -> Result<PicMap, String> {
             let (ks, ke) = ((start * fps).round() as u64, ((start + dur) * fps).round() as u64);
             if let Some(d) = tr { dirty(ks, (ks + (d * fps).ceil() as u64).min(ke)); } else { m_simple.insert(c["id"].as_str().unwrap_or("").to_string()); }
             let pre = if p.color_tag_sanity && crate::render::mistagged_hd_source(&path) { "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709,".to_string() } else { String::new() };
-            clean.push(PicClip { id: c["id"].as_str().unwrap_or("").to_string(), fps_filter: crate::render::conform_fps_filter(p, typed, &path, 1.0, false, None), fit: crate::render::clip_fit_filter(p.width, p.height, sm.fit, false),
+            clean.push(PicClip { id: c["id"].as_str().unwrap_or("").to_string(), fps_filter: crate::render::conform_fps_filter(p, typed, &path, 1.0, false, None), fit: crate::render::clip_fit_filter(p.width, p.height, sm.fit, p.linear()),
                 path, ks, ke, in_point: c["in_point"].as_f64().unwrap_or(0.0), pre });
         }
     }

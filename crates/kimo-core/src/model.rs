@@ -175,6 +175,19 @@ fn is_zero_f64(v: &f64) -> bool { *v == 0.0 }
 fn one_f64() -> f64 { 1.0 }
 fn is_one_f64(v: &f64) -> bool { *v == 1.0 }
 fn is_false(v: &bool) -> bool { !*v }
+
+/// How a project renders. `Legacy` is every project saved before v10 (the field is absent from those files) and
+/// renders exactly as it always did. `V10` is what new projects get: linear-light blending, Gaussian blurs,
+/// bicubic magnification, transition motion blur, antialiased wipe edges, per-frame dither and resolution-scaled
+/// sizes (crate::quality).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RenderQuality { #[default] Legacy, V10 }
+impl RenderQuality {
+    pub fn is_legacy(&self) -> bool { *self == RenderQuality::Legacy }
+    pub fn name(&self) -> &'static str { match self { RenderQuality::Legacy => "legacy", RenderQuality::V10 => "v10" } }
+    pub fn parse(s: &str) -> Option<Self> { match s { "legacy" => Some(RenderQuality::Legacy), "v10" => Some(RenderQuality::V10), _ => None } }
+}
 impl Default for Audio { fn default() -> Self { Audio { lead: 0.0, tail: 0.0, effects: vec![], pan: Prop::new(0.0), duck_gain: Prop::new(1.0), mute: false, volume: Prop::new(1.0), fade_in: 0.0, fade_out: 0.0, pitch: 0.0, highpass: 0.0, lowpass: 0.0, denoise: 0.0, compress: false, echo: 0.0, reverse: false, speech_level: 0.0, compress_amount: 1.0 } } }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -251,6 +264,8 @@ pub struct Project {
     /// audit's #4 and #6), the same switch for all three. Absent/false for every existing project file, so
     /// old files and golden_frames.txt / recipe_frames.txt stay byte-identical.
     #[serde(default, skip_serializing_if = "is_false")] pub linear_blend: bool,
+    /// v10: see RenderQuality. Absent (legacy) in every project saved before v10, so those render byte-identically.
+    #[serde(default, skip_serializing_if = "RenderQuality::is_legacy")] pub render_quality: RenderQuality,
     /// V8.8.0: explicit x264 encoder preset for the legacy H.264 export (legacy_encoder_command). Absent
     /// (None) keeps ffmpeg's own default ("medium"), so every existing project and golden stays byte-
     /// identical -- this only changes final encoder settings, never a rendered pixel, so it does not
@@ -346,9 +361,15 @@ pub struct Project {
     #[serde(default, skip_serializing_if = "is_zero_f64")] pub master_speech_level_scope_end: f64,
 }
 
+impl Project {
+    /// Linear-light blending (and the lanczos fit and dither that go with it): on with the linear_blend option or in v10.
+    pub fn linear(&self) -> bool { self.linear_blend || self.render_quality == RenderQuality::V10 }
+    pub fn v10(&self) -> bool { self.render_quality == RenderQuality::V10 }
+}
+
 impl Default for Project {
     fn default() -> Self {
-        Project { links: vec![], proxies: Default::default(), grade_scopes: Default::default(), lights: BTreeMap::new(), materials: BTreeMap::new(), editorial: Default::default(), ocio_view_delivery: None, occluders: BTreeMap::new(), color_pipeline: Default::default(), linear_blend: false, x264_preset: None, color_tag_sanity: false, frame_blend_conform: false, adaptive_denoise: false, hdr_tonemap: false, camera: BTreeMap::new(), comp3d: None, hooks: BTreeMap::new(), expr_scripts: vec![], name: "untitled".into(), width: 1280, height: 720, fps: 30.0, assets: BTreeMap::new(), bins: vec![], subclips: BTreeMap::new(), tracks: vec![], next_id: 1, markers: vec![], deps: None, templates: vec![], base_dir: None, master_speech_level: 0.0, master_speech_level_scope_end: 0.0 }
+        Project { links: vec![], proxies: Default::default(), grade_scopes: Default::default(), lights: BTreeMap::new(), materials: BTreeMap::new(), editorial: Default::default(), ocio_view_delivery: None, occluders: BTreeMap::new(), color_pipeline: Default::default(), linear_blend: false, render_quality: RenderQuality::Legacy, x264_preset: None, color_tag_sanity: false, frame_blend_conform: false, adaptive_denoise: false, hdr_tonemap: false, camera: BTreeMap::new(), comp3d: None, hooks: BTreeMap::new(), expr_scripts: vec![], name: "untitled".into(), width: 1280, height: 720, fps: 30.0, assets: BTreeMap::new(), bins: vec![], subclips: BTreeMap::new(), tracks: vec![], next_id: 1, markers: vec![], deps: None, templates: vec![], base_dir: None, master_speech_level: 0.0, master_speech_level_scope_end: 0.0 }
     }
 }
 

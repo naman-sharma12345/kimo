@@ -80,7 +80,11 @@ fn main() {
     spectator::init(); // telemetry for the spectator GUI, on by default (KIMO_SPECTATOR); KIMO_SPECTATOR=off = no thread, no work
     kimo_core::auto_proxy::set_enabled(true); // heavy imports build preview/analysis proxies in the background (KIMO_AUTO_PROXY=off to stop)
     std::panic::set_hook(Box::new(|i| { if matches!(std::thread::current().name(), Some("kimo-preview" | "kimo-preview-stream" | "kimo-preview-audio")) { return; } eprintln!("kimo: {i}"); })); // a cancelled live preview is not news
-    let ss = Arc::new(Mutex::new(Session::new()));
+    // a fresh session is a new project: v10 quality (KIMO_RENDER_QUALITY=legacy keeps the pre-v10 look). Opening a
+    // saved project replaces this with whatever the file says (absent = legacy, so old projects look as they did).
+    let mut fresh = Session::new();
+    if std::env::var("KIMO_RENDER_QUALITY").ok().as_deref() != Some("legacy") { fresh.project.render_quality = kimo_core::model::RenderQuality::V10; }
+    let ss = Arc::new(Mutex::new(fresh));
     let mut enabled: std::collections::HashSet<String> = std::collections::HashSet::new();
     let stdin = std::io::stdin();
     let mut out = std::io::stdout().lock();

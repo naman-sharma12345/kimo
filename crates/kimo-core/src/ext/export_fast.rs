@@ -218,7 +218,7 @@ pub fn plan(p: &crate::model::Project) -> Result<Plan, String> {
         let frames = ((start + dur) * fps).round() as u64 - (start * fps).round() as u64;
         let pre = if p.color_tag_sanity && crate::render::mistagged_hd_source(path) { "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709,".to_string() } else { String::new() };
         video.push(Seg { path: path.clone(), start: *start, inp: *inp, dur: *dur, frames, pre,
-            fps_filter: crate::render::conform_fps_filter(p, typed, path, 1.0, false, None), fit: crate::render::clip_fit_filter(p.width, p.height, sm.fit, false) });
+            fps_filter: crate::render::conform_fps_filter(p, typed, path, 1.0, false, None), fit: crate::render::clip_fit_filter(p.width, p.height, sm.fit, p.linear()) });
         if !silent && probes[path].has_audio { audio.push(Aud { path: path.clone(), start: *start, inp: *inp, dur: *dur, vol: sm.vol, fade_in: sm.fade_in, fade_out: sm.fade_out, seg: Some(k) }); }
     }
     audio.sort_by(|a, b| a.seg.is_none().cmp(&b.seg.is_none()).then(a.start.total_cmp(&b.start)));

@@ -392,7 +392,7 @@ fn decode(p: &Project, c: &Clip, path: &str, a: usize, n: usize, seek_base: Opti
     } let is_img0 = is_still_path(path); let (a, n) = if is_img0 { (0, 1) } else { (a, n) };
     let (in_pt, speed, span, a_rel) = if let Some((st, fbase)) = seek_base { let rel = (a as i64 - fbase).max(0) as usize; (st, 1.0, (rel+n) as f64 / p.fps, rel) } else if c.retimed() { (c.in_point, 1.0, (a+n) as f64 / p.fps, a) } else { (c.in_point, c.speed, (a+n) as f64 / p.fps * c.speed, a) };
     let fit = c.props.get("fit").map(|q| q.at(0.0)).unwrap_or(0.0);
-    let fitf = if crate::reframe::active(c) { crate::reframe::ffmpeg_fit(c, w, h, p.fps, a, n) } else { clip_fit_filter(w, h, fit, p.linear_blend) };
+    let fitf = if crate::reframe::active(c) { crate::reframe::ffmpeg_fit(c, w, h, p.fps, a, n) } else { clip_fit_filter(w, h, fit, p.linear()) };
     // V8.6.1/8.6.2: in-process libav decode, opt-in via KIMO_DECODER=libav AND the "libav" cargo feature
     // (default stays the ffmpeg pipe below until proven; the feature is also off by default as of 8.6.2,
     // so a default build needs no libav*-dev headers or clang). Only attempted for the scope
@@ -721,7 +721,7 @@ fn source_frame_h(p: &Project, c: &Clip, lt_in: f64, cache: &Cache) -> (Frame, O
                 let al = if a1 == a2 { a1 } else { a1*(1.0-k)+a2*k };
                 for j in 0..3 { f.d[i+j] = if al > 0.0 { ((c1[j]*a1*(1.0-k)+c2[j]*a2*k)/al) as f32 } else { (c1[j]*(1.0-k)+c2[j]*k) as f32 }; } f.d[i+3]=(al*fa) as f32; } } },
         Source::Adjustment => {}
-        Source::Precomp { tracks } => { let mut sub = Project { links: vec![], proxies: p.proxies.clone(), grade_scopes: p.grade_scopes.subset(tracks), lights: p.lights.clone(), materials: p.materials.clone(), editorial: p.editorial.clone(), ocio_view_delivery: None, occluders: p.occluders.clone(), color_pipeline: p.color_pipeline.clone(), linear_blend: p.linear_blend, x264_preset: p.x264_preset.clone(), color_tag_sanity: p.color_tag_sanity, frame_blend_conform: p.frame_blend_conform, adaptive_denoise: p.adaptive_denoise, hdr_tonemap: p.hdr_tonemap, hooks: Default::default(), expr_scripts: Default::default(), tracks: tracks.clone(), assets: p.assets.clone(), bins: p.bins.clone(), subclips: p.subclips.clone(), camera: p.camera.clone(), comp3d: p.comp3d.clone(), markers: vec![], name: String::new(), width: p.width, height: p.height, fps: p.fps, next_id: 0, deps: None, templates: vec![], base_dir: p.base_dir.clone(), master_speech_level: 0.0, master_speech_level_scope_end: 0.0 }; sub.name = c.id.clone(); match render_frame_opts(&sub, lt, cache, true) {Ok(fr)=>f=fr,Err(_)=>f.d.fill(f32::NAN)} }
+        Source::Precomp { tracks } => { let mut sub = Project { links: vec![], proxies: p.proxies.clone(), grade_scopes: p.grade_scopes.subset(tracks), lights: p.lights.clone(), materials: p.materials.clone(), editorial: p.editorial.clone(), ocio_view_delivery: None, occluders: p.occluders.clone(), color_pipeline: p.color_pipeline.clone(), linear_blend: p.linear_blend, render_quality: p.render_quality, x264_preset: p.x264_preset.clone(), color_tag_sanity: p.color_tag_sanity, frame_blend_conform: p.frame_blend_conform, adaptive_denoise: p.adaptive_denoise, hdr_tonemap: p.hdr_tonemap, hooks: Default::default(), expr_scripts: Default::default(), tracks: tracks.clone(), assets: p.assets.clone(), bins: p.bins.clone(), subclips: p.subclips.clone(), camera: p.camera.clone(), comp3d: p.comp3d.clone(), markers: vec![], name: String::new(), width: p.width, height: p.height, fps: p.fps, next_id: 0, deps: None, templates: vec![], base_dir: p.base_dir.clone(), master_speech_level: 0.0, master_speech_level_scope_end: 0.0 }; sub.name = c.id.clone(); match render_frame_opts(&sub, lt, cache, true) {Ok(fr)=>f=fr,Err(_)=>f.d.fill(f32::NAN)} }
         Source::Shape { shape, width, height, fill, stroke_width, stroke_color, sides, corner_radius } => {
             let (cx, cy) = (w as f64 / 2.0, h as f64 / 2.0); let (hw, hh) = (width / 2.0, height / 2.0);
             // signed distance (negative inside), then shape modifiers (offset/repeater/merge) from shapemods.rs
@@ -875,7 +875,8 @@ fn alpha_bbox_in(src: &Frame, r: (usize, usize, usize, usize)) -> Option<(usize,
 fn alpha_bbox(src: &Frame) -> Option<(usize, usize, usize, usize)> { let (w, h) = (src.w, src.h); let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0usize, 0usize); let mut any = false;
     for y in 0..h { let row = &src.d[y * w * 4..(y + 1) * w * 4]; let mut first = None; let mut last = 0; for x in 0..w { if row[x * 4 + 3] > 0.0 { if first.is_none() { first = Some(x); } last = x; } } if let Some(f0) = first { any = true; x0 = x0.min(f0); x1 = x1.max(last); y0 = y0.min(y); y1 = y1.max(y); } }
     if any { Some((x0, y0, x1, y1)) } else { None } }
-fn transform(src: &Frame, scale: f64, rot_deg: f64, dx: f64, dy: f64) -> Frame { transform_bb(src, alpha_bbox(src), scale, rot_deg, dx, dy) }
+/// Scale (about the centre), rotate and move a layer the way the compositor does (bicubic magnification in v10).
+pub fn transform(src: &Frame, scale: f64, rot_deg: f64, dx: f64, dy: f64) -> Frame { transform_bb(src, alpha_bbox(src), scale, rot_deg, dx, dy) }
 thread_local! { static BACKDROP: std::cell::RefCell<Option<std::rc::Rc<Frame>>> = Default::default(); }
 /// Composite of all layers below the clip currently being rendered. Only set while an effect that declares `needs_backdrop` runs; None otherwise.
 pub fn backdrop() -> Option<std::rc::Rc<Frame>> { BACKDROP.with(|b| b.borrow().clone()) }
@@ -886,13 +887,45 @@ fn pool_take(w: usize, h: usize) -> Frame { let n = w * h * 4; let hit = POOL.wi
 fn pool_give(f: Frame, rect: (usize, usize, usize, usize)) { POOL.with(|p| { let mut p = p.borrow_mut(); if p.len() < 3 { p.push((f.d, rect)); } }); }
 thread_local! { static FAST_NS: std::cell::Cell<bool> = Default::default(); }
 thread_local! { static LAST_RECT: std::cell::Cell<Option<(usize, usize, usize, usize)>> = Default::default(); }
+/// v10 transition motion blur: when the clip's transition moves it (slide, zoom, spin, barn doors...), the transition's
+/// (dscale, drot, ddx, ddy) at sample times across a 180-degree shutter, relative to this frame's own plan. None when the
+/// transition does not move it by a pixel this frame, or carries its own streak (whip, zoom_blur).
+fn transition_shutter(c: &Clip, lt: f64, fps: f64, w: usize, h: usize, bb: Option<(usize, usize, usize, usize)>) -> Option<Vec<(f64, f64, f64, f64)>> {
+    let tr = c.transition_in.as_ref()?;
+    if tr.kind.starts_with("whip") || tr.kind == "zoom_blur" || tr.duration <= 0.0 { return None; }
+    let at = |t: f64| { let pl = crate::transitions::plan(tr, t.clamp(0.0, tr.duration), w, h); (pl.scale, pl.rot, pl.dx, pl.dy) };
+    let p0 = at(lt); let sh = 0.5 / fps.max(1.0);
+    let (a, b) = (at(lt - sh * 0.5), at(lt + sh * 0.5));
+    let hd = match bb { Some((x0, y0, x1, y1)) => 0.5 * ((x1 - x0 + 1) as f64).hypot((y1 - y0 + 1) as f64), None => 0.5 * (w as f64).hypot(h as f64) };
+    let travel = (b.2 - a.2).hypot(b.3 - a.3) + (b.0 - a.0).abs() * hd + (b.1 - a.1).to_radians().abs() * hd;
+    if travel < 1.0 { return None; }
+    let n = ((travel / 1.5).ceil() as usize).clamp(3, 48);
+    Some((0..n).map(|k| { let t = lt - sh * 0.5 + sh * (k as f64 + 0.5) / n as f64; let q = at(t); (q.0 / p0.0.max(1e-6), q.1 - p0.1, q.2 - p0.2, q.3 - p0.3) }).collect())
+}
+/// Average of the layer drawn at each transition sample, premultiplied and in linear light (a streak, not stacked copies).
+fn transition_blur(f: &Frame, bb: Option<(usize, usize, usize, usize)>, samples: &[(f64, f64, f64, f64)], base: (f64, f64, f64, f64)) -> Frame {
+    let (w, h) = (f.w, f.h); let mut acc = Frame::new(w, h); let n = samples.len().max(1) as f32;
+    for &(ds, dr, ddx, ddy) in samples {
+        let tf = transform_bb(f, bb, base.0 * ds, base.1 + dr, base.2 + ddx, base.3 + ddy);
+        for (o, q) in acc.d.chunks_exact_mut(4).zip(tf.d.chunks_exact(4)) { let a = q[3]; if a <= 0.0 { continue; } for j in 0..3 { o[j] += srgb_to_linear(q[j]) * a; } o[3] += a; }
+    }
+    for o in acc.d.chunks_exact_mut(4) { let a = o[3]; if a > 1e-6 { for j in 0..3 { o[j] = linear_to_srgb(o[j] / a); } o[3] = a / n; } }
+    acc
+}
+
+/// Catmull-Rom weights for a fractional offset (v10 magnification: sharper than bilinear, no ringing worth noticing).
+#[inline] fn catmull_rom(t: f32) -> [f32; 4] { let (t2, t3) = (t * t, t * t * t); [(-t3 + 2.0 * t2 - t) * 0.5, (3.0 * t3 - 5.0 * t2 + 2.0) * 0.5, (-3.0 * t3 + 4.0 * t2 + t) * 0.5, (t3 - t2) * 0.5] }
+
 fn transform_bb(src: &Frame, bb: Option<(usize, usize, usize, usize)>, scale: f64, rot_deg: f64, dx: f64, dy: f64) -> Frame {
     if (scale - 1.0).abs() < 1e-9 && rot_deg == 0.0 && dx == 0.0 && dy == 0.0 { return Frame { w: src.w, h: src.h, d: src.d.clone() }; }
     LAST_RECT.with(|l| l.set(None)); let tp0 = std::time::Instant::now(); let (w, h) = (src.w, src.h); let mut o = pool_take(w, h); prof("tb_alloc", tp0);
     let (cx, cy) = (w as f64/2.0, h as f64/2.0); let r = rot_deg.to_radians(); let (s, co) = (r.sin(), r.cos());
     let inv = 1.0 / scale.max(1e-6);
     let pure_shift = (scale - 1.0).abs() < 1e-9 && rot_deg == 0.0 && dx.fract() == 0.0 && dy.fract() == 0.0;
-    let ns = if pure_shift || FAST_NS.with(|l| l.get()) { 1 } else { ((inv.ceil() as usize).max(2)).min(4) }; let nsf = ns as f64; let wgt = 1.0 / (ns * ns) as f32;
+    let v10 = crate::quality::v10(); let fast = FAST_NS.with(|l| l.get());
+    // v10: enlarging (or rotating at ~1x) samples a 4x4 Catmull-Rom footprint once per pixel; shrinking supersamples up to 8x8 (no 4x4 cap)
+    let cubic = v10 && !pure_shift && !fast && scale > 0.95;
+    let ns = if pure_shift || fast || cubic { 1 } else if v10 { ((inv.ceil() as usize).max(2)).min(8) } else { ((inv.ceil() as usize).max(2)).min(4) }; let nsf = ns as f64; let wgt = 1.0 / (ns * ns) as f32;
     // only visit output pixels that can receive content: forward-map the source's opaque bounding box
     let (bx0, by0, bx1, by1) = match bb { Some(b) => b, None => return o };
     let (mut ox0, mut oy0, mut ox1, mut oy1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
@@ -914,13 +947,20 @@ fn transform_bb(src: &Frame, bb: Option<(usize, usize, usize, usize)>, scale: f6
             let px = x as f64 + (sx_ as f64 + 0.5) / nsf - 0.5 - cx - dx; let py = y as f64 + (sy_ as f64 + 0.5) / nsf - 0.5 - cy - dy;
             ((px*co + py*s)*inv + cx, (-px*s + py*co)*inv + cy) };
             if sx < -0.5 || sy < -0.5 || sx > w as f64 - 0.5 || sy > h as f64 - 0.5 { continue; }
+            if cubic {
+                let (fx0, fy0) = (sx.floor(), sy.floor()); let (wx, wy) = (catmull_rom((sx - fx0) as f32), catmull_rom((sy - fy0) as f32));
+                for (j, wyj) in wy.iter().enumerate() { let yy = (fy0 as isize + j as isize - 1).clamp(0, h as isize - 1) as usize;
+                    for (i, wxi) in wx.iter().enumerate() { let xx = (fx0 as isize + i as isize - 1).clamp(0, w as isize - 1) as usize;
+                        let q = (yy*w+xx)*4; let a = src.d[q+3]; let ka = wxi * wyj * a; acc[0] += src.d[q]*ka; acc[1] += src.d[q+1]*ka; acc[2] += src.d[q+2]*ka; acc[3] += wxi * wyj * a; } }
+                continue;
+            }
             let (sx, sy) = (sx.clamp(0.0, (w-1) as f64), sy.clamp(0.0, (h-1) as f64));
             let (x0, y0) = (sx.floor() as usize, sy.floor() as usize); let (x1, y1) = ((x0+1).min(w-1), (y0+1).min(h-1));
             let (fx, fy) = ((sx - x0 as f64) as f32, (sy - y0 as f64) as f32);
             let wts = [(x0, y0, (1.0-fx)*(1.0-fy)), (x1, y0, fx*(1.0-fy)), (x0, y1, (1.0-fx)*fy), (x1, y1, fx*fy)];
             for (qx, qy, k) in wts { let i = (qy*w+qx)*4; let a = src.d[i+3]; let ka = k * a; acc[0] += src.d[i]*ka; acc[1] += src.d[i+1]*ka; acc[2] += src.d[i+2]*ka; acc[3] += ka; }
         }}
-        let a = acc[3]; let oi = x*4; if a > 1e-6 { orow[oi] = acc[0]/a; orow[oi+1] = acc[1]/a; orow[oi+2] = acc[2]/a; orow[oi+3] = a * wgt; }
+        let a = acc[3]; let oi = x*4; if a > 1e-6 { orow[oi] = acc[0]/a; orow[oi+1] = acc[1]/a; orow[oi+2] = acc[2]/a; orow[oi+3] = a * wgt; if cubic { orow[oi+3] = orow[oi+3].min(1.0); for k in 0..3 { orow[oi+k] = orow[oi+k].max(0.0); } } }
     } });
     prof("tb_loop", tpl); let _ = ow; o
 }
@@ -1177,6 +1217,7 @@ pub fn render_frame_opts(p_in: &Project, t: f64, cache: &Cache, transparent: boo
     let tsetup = std::time::Instant::now();
     let resolved_owner; let p: &Project = if p_in.links.is_empty() && p_in.expr_scripts.is_empty() { p_in } else { resolved_owner = crate::ext::expr_interp_v7::resolve_live(p_in); resolved_owner.as_ref() };
     if !t.is_finite(){return Err("render time must be finite".into())}
+    let _quality = crate::quality::enter(p.v10(), p.height as usize);
     let _memo = MemoScope::enter();
     p.color_pipeline.validate()?;p.grade_scopes.validate(p)?;
     for c in flat_clips(&p.tracks,0.) {if let Some(g)=&c.grade_graph{g.validate_project(p)?;}for e in c.effects {if let Some(w)=e.strings.get("bound_linear_gamut"){let g=w.parse::<usize>().map_err(|_|"bad bound linear gamut")?;if !p.color_pipeline.enabled||g!=p.color_pipeline.working_gamut||e.params.get("gamut").map(|v|(v.base,v.keys.is_empty(),v.expr.is_empty()))!=Some((g as f64,true,true)){return Err("managed linear effect no longer matches working gamut; re-add it".into())}}if let Some(white)=e.strings.get("wrapper_reference_white"){if white.parse::<f64>().ok()!=Some(p.color_pipeline.reference_white){return Err("effect wrapper reference white changed; reconfigure wrapper".into())}}if let Some(w)=e.strings.get("wrapper_working_gamut"){if !p.color_pipeline.enabled||w.parse::<usize>().ok()!=Some(p.color_pipeline.working_gamut){return Err("effect encoding wrapper no longer matches project working gamut; reconfigure or clear it".into())}}}}
@@ -1195,7 +1236,7 @@ pub fn render_frame_opts(p_in: &Project, t: f64, cache: &Cache, transparent: boo
         crate::guard::check();
         let first = !drew_any; drew_any = true;
         if first && !transparent { let lt = (t - c.start).max(0.0); if let Some(b) = base_bytes(p_in, p, c, lt, cache) {
-            let tq = std::time::Instant::now(); base_layer(&mut out, b, crate::keyframe::clamp_prop("opacity", xprop(p, c, "opacity", lt)) as f32); prof("base_layer", tq); continue; } }
+            let tq = std::time::Instant::now(); base_layer(&mut out, b, crate::keyframe::clamp_prop("opacity", xprop(p, c, "opacity", lt)) as f32, wants_linear_blend(&c.source, p.linear(), false)); prof("base_layer", tq); continue; } }
         let lt0 = if c.posterize_fps > 0.0 { (((t - c.start) * c.posterize_fps + 1e-6).floor() / c.posterize_fps).max(0.0) } else { (t - c.start).max(0.0) };
         let (ne, esp) = match &c.echo { Some(e) if !matches!(c.source, Source::Adjustment) => (e.count.min(64) as usize, e.spacing), _ => (0, 0.0) };
         let avg = ne > 0 && matches!(c.echo.as_ref().map(|e| e.mode.as_str()), Some("average")); let mut eacc: Option<Frame> = if avg { Some(Frame::new(w, h)) } else { None };
@@ -1233,7 +1274,8 @@ pub fn render_frame_opts(p_in: &Project, t: f64, cache: &Cache, transparent: boo
             let mut pl = crate::transitions::plan(tr_in, lt, w, h); op *= pl.op; dx += pl.dx; dy += pl.dy; sc *= pl.scale; rot_extra += pl.rot;
             if let Some(m) = crate::pushwipe::luma_mask(p, tr_in, lt, t, w, cache) { pl.mask = Some(m); } // gradient_wipe driven by a clip's luma
             if let Some(u) = pl.under.as_ref() { crate::comp3d::flush(&mut out, &mut g3, p, t); let prev = crate::pushwipe::outgoing(p, c, t, cache); u(&mut out, prev.as_ref()); if !transparent { for i in 0..w * h { out.d[i*4+3] = 1.0; } } } // push / gradient_wipe: the outgoing picture
-            if let Some((col, a)) = pl.dip { crate::comp3d::flush(&mut out, &mut g3, p, t); for i in 0..w * h { for j in 0..3 { out.d[i*4+j] = out.d[i*4+j] * (1.0 - a) + col[j] * a; } out.d[i*4+3] = out.d[i*4+3] + a * (1.0 - out.d[i*4+3]); } }
+            if let Some((col, a)) = pl.dip { crate::comp3d::flush(&mut out, &mut g3, p, t); let lin = p.v10();
+                for i in 0..w * h { for j in 0..3 { out.d[i*4+j] = if lin { linear_to_srgb(srgb_to_linear(out.d[i*4+j]) * (1.0 - a) + srgb_to_linear(col[j]) * a) } else { out.d[i*4+j] * (1.0 - a) + col[j] * a }; } out.d[i*4+3] = out.d[i*4+3] + a * (1.0 - out.d[i*4+3]); } }
             mask = None; tplan = Some(pl);
         }}
         let mut f = f; if let Some(pl) = tplan.as_mut() { mask = pl.mask.take(); if let Some(po) = &pl.post { po(&mut f); } }
@@ -1251,7 +1293,7 @@ pub fn render_frame_opts(p_in: &Project, t: f64, cache: &Cache, transparent: boo
             if c.effects.iter().any(|e| crate::effects2::is_post(&e.kind)) { BACKDROP.with(|b| *b.borrow_mut() = Some(std::rc::Rc::new(Frame { w, h, d: out.d.clone() }))); crate::frosted::set_post(true); crate::frosted::set_tilt((ryv.to_radians().sin()) as f32, (-rxv.to_radians().sin()) as f32); crate::frosted::set_slab(Some(crate::three_d::Projector::new(w, h, &cam, &pose)));
                 let r: Result<(), String> = (|| { for e in c.effects.iter().filter(|e| crate::effects2::is_post(&e.kind)) { effects::apply(&e.kind, &e.params, &e.strings, &mut f3, lt, seed)?; } Ok(()) })();
                 crate::frosted::set_post(false); crate::frosted::set_tilt(0.0, 0.0); crate::frosted::set_slab(None); BACKDROP.with(|b| *b.borrow_mut() = None); r?; }
-            blend_opt(&mut out, &f3, op, c_blend, mask.as_deref(), wants_linear_blend(&c.source, p.linear_blend, tplan.is_some())); if let Some(pl) = &tplan { if let Some(ov) = &pl.overlay { ov(&mut out); } } continue;
+            blend_opt(&mut out, &f3, op, c_blend, mask.as_deref(), wants_linear_blend(&c.source, p.linear(), tplan.is_some())); if let Some(pl) = &tplan { if let Some(ov) = &pl.overlay { ov(&mut out); } } continue;
         }
         crate::comp3d::flush(&mut out, &mut g3, p, t);
         // opt-in exact shutter (set_motion_blur samples / shutter_phase / shutter_curve); None keeps the legacy centred fixed-count sampler unchanged
@@ -1274,7 +1316,14 @@ pub fn render_frame_opts(p_in: &Project, t: f64, cache: &Cache, transparent: boo
                 if let Some((rx0, ry0, rx1, ry1)) = LAST_RECT.with(|l| l.get()) { u = Some(match u { Some((a, b, c2, d)) => (a.min(rx0), b.min(ry0), c2.max(rx1), d.max(ry1)), None => (rx0, ry0, rx1, ry1) });
                 for y in ry0..=ry1 { for x in rx0..=rx1 { let i = y * w + x; let a = tf.d[i * 4 + 3]; if a > 0.0 { if let Some(wk) = cwk { let wa = wk * a; for j in 0..3 { acc.d[i * 4 + j] += tf.d[i * 4 + j] * wa; } acc.d[i * 4 + 3] += wa; wsum[i] += wa; } else { for j in 0..3 { acc.d[i * 4 + j] += tf.d[i * 4 + j] * a; } acc.d[i * 4 + 3] += a; wsum[i] += a; } } } } } }
             if let Some((rx0, ry0, rx1, ry1)) = u { for y in ry0..=ry1 { for x in rx0..=rx1 { let i = y * w + x; if wsum[i] > 0.0 { for j in 0..3 { acc.d[i * 4 + j] /= wsum[i]; } } if cw.is_none() { acc.d[i * 4 + 3] /= n as f32; } } } } acc }
-            else if (sc - 1.0).abs() < 1e-9 && xprop(p, c, "rotation", lt) + rot_extra == 0.0 && dx == 0.0 && dy == 0.0 { f } else { from_tb = true; transform_bb(&f, bbf, sc, xprop(p, c, "rotation", lt) + rot_extra, dx, dy) };
+            else if (sc - 1.0).abs() < 1e-9 && xprop(p, c, "rotation", lt) + rot_extra == 0.0 && dx == 0.0 && dy == 0.0 { f }
+            else if let Some(samples) = (p.v10() && tplan.is_some()).then(|| transition_shutter(c, lt, p.fps, w, h, bbf)).flatten() {
+                // drawn at each sample of the transition's motion and averaged (premultiplied, in linear light); the union of the samples can
+                // reach outside one transform's rect, so the blend scans the whole frame (from_tb stays false)
+                let rot0 = xprop(p, c, "rotation", lt) + rot_extra;
+                transition_blur(&f, bbf, &samples, (sc, rot0, dx, dy))
+            }
+            else { from_tb = true; transform_bb(&f, bbf, sc, xprop(p, c, "rotation", lt) + rot_extra, dx, dy) };
         prof("transform", tp);
         // Stabilize, Synthesize Edges: opt-in, only media clips the stabilizer gave stab_fill and the stab_s* path; the fill can write outside
         // transform_bb's rect, so the blend scans the whole frame and the buffer is not handed back to the pool
@@ -1290,11 +1339,11 @@ pub fn render_frame_opts(p_in: &Project, t: f64, cache: &Cache, transparent: boo
         if let Some(cf) = tplan.as_ref().and_then(|pl| pl.compose.as_ref()) { out = cf(&out, &f); continue; }
         if let Source::ShardBurst(sb) = &c.source { if let Some(d) = crate::shards::take_disp() { crate::shards::refract_canvas(&mut out, &d, &f, sb.refract_dispersion.clamp(0.0, 1.0)); } }
         if let Some(acc) = eacc.as_mut() { let wgt = op / (ne + 1) as f32; for i in 0..w * h { let a = f.d[i * 4 + 3] * wgt; if a > 0.0 { for j in 0..3 { acc.d[i * 4 + j] += f.d[i * 4 + j] * a; } acc.d[i * 4 + 3] += a; } } continue; }
-        let tp=std::time::Instant::now(); let rect = if from_tb { LAST_RECT.with(|l| l.get()) } else { None }; blend_region_opt(&mut out, &f, op, c_blend, mask.as_deref(), rect, wants_linear_blend(&c.source, p.linear_blend, tplan.is_some())); prof("blend", tp);
+        let tp=std::time::Instant::now(); let rect = if from_tb { LAST_RECT.with(|l| l.get()) } else { None }; blend_region_opt(&mut out, &f, op, c_blend, mask.as_deref(), rect, wants_linear_blend(&c.source, p.linear(), tplan.is_some())); prof("blend", tp);
         if let Some(r) = rect { pool_give(f, r); } else { crate::effects::recycle(f.d); }
         if let Some(pl) = &tplan { if let Some(ov) = &pl.overlay { ov(&mut out); } }
         }
-        if let Some(mut acc) = eacc { crate::comp3d::flush(&mut out, &mut g3, p, t); for i in 0..w * h { let a = acc.d[i * 4 + 3]; if a > 1e-6 { for j in 0..3 { acc.d[i * 4 + j] /= a; } } } blend_opt(&mut out, &acc, 1.0, &c.blend, None, wants_linear_blend(&c.source, p.linear_blend, false)); }
+        if let Some(mut acc) = eacc { crate::comp3d::flush(&mut out, &mut g3, p, t); for i in 0..w * h { let a = acc.d[i * 4 + 3]; if a > 1e-6 { for j in 0..3 { acc.d[i * 4 + j] /= a; } } } blend_opt(&mut out, &acc, 1.0, &c.blend, None, wants_linear_blend(&c.source, p.linear(), false)); }
     }}
     crate::comp3d::flush(&mut out, &mut g3, p, t);
     prof_dump();
@@ -1316,6 +1365,12 @@ pub fn to_rgba8(f: &Frame) -> Vec<u8> { f.d.iter().map(|v| (v.clamp(0.0, 1.0) * 
 /// p.color_pipeline.enabled alongside linear-light compositing and the lanczos fit above -- previously
 /// only write_image_tpdf (stills) called this.
 fn tpdf_lsb(i: usize) -> f64 { fn sm(mut x: u64) -> u64 { x = x.wrapping_add(0x9E3779B97F4A7C15); x = (x ^ (x >> 30)).wrapping_mul(0xBF58476D1CE4E5B9); x = (x ^ (x >> 27)).wrapping_mul(0x94D049BB133111EB); x ^ (x >> 31) } let u1 = (sm(0xD1B54A32D192ED03 ^ (i as u64).wrapping_mul(2)) >> 11) as f64 * (1.0 / 9007199254740992.0); let u2 = (sm(0xD1B54A32D192ED03 ^ (i as u64).wrapping_mul(2).wrapping_add(1)) >> 11) as f64 * (1.0 / 9007199254740992.0); u1 + u2 - 1.0 }
+/// v10 export dither: TPDF noise on the colour channels only (alpha is rounded), seeded per frame so the pattern does not
+/// sit still on screen frame after frame.
+pub fn to_rgba8_dither(f: &Frame, frame: u64) -> Vec<u8> {
+    let base = (frame as usize).wrapping_mul(0x9E37_79B1);
+    f.d.iter().enumerate().map(|(i, v)| { let v = v.clamp(0.0, 1.0); if i % 4 == 3 { (v * 255.0 + 0.5) as u8 } else { ((v + (tpdf_lsb(i ^ base) * (1.0 / 255.0)) as f32) * 255.0 + 0.5).clamp(0.0, 255.0) as u8 } }).collect()
+}
 pub fn to_rgba8_tpdf(f: &Frame) -> Vec<u8> { f.d.iter().enumerate().map(|(i, v)| (((v.clamp(0.0, 1.0) + (tpdf_lsb(i) * (1.0 / 255.0)) as f32) * 255.0 + 0.5).clamp(0.0, 255.0)) as u8).collect() }
 
 fn image_encoder_command(w:usize,h:usize,path:&str)->Command{let mut cmd=Command::new("ffmpeg");cmd.args(["-v","error","-y","-f","rawvideo","-pix_fmt","rgba","-s",&format!("{w}x{h}"),"-i","-","-frames:v","1",path]);cmd}
@@ -1527,10 +1582,11 @@ fn base_bytes<'a>(p_in: &Project, p: &Project, c: &Clip, lt: f64, cache: &'a Cac
 }
 /// Draw a plain clip's bytes onto the canvas with blend_region's own arithmetic (normal mode, no mask, the clip's
 /// opacity), reading each byte as v/255: the very values the clip's float frame would have held, without building it.
-fn base_layer(out: &mut Frame, b: &[u8], op: f32) {
+fn base_layer(out: &mut Frame, b: &[u8], op: f32, linear: bool) {
     let l = u8f();
     for (d, s) in out.d.chunks_exact_mut(4).zip(b.chunks_exact(4)) {
         let a = l[s[3] as usize] * op * 1.0; if a <= 0.0 { continue; }
+        if linear && a < 1.0 { for j in 0..3 { d[j] = linear_to_srgb(srgb_to_linear(d[j]) * (1.0 - a) + srgb_to_linear(l[s[j] as usize]) * a); } d[3] = d[3] + a * (1.0 - d[3]); continue; }
         for j in 0..3 { let (bb, ss) = (d[j], l[s[j] as usize]); d[j] = bb * (1.0 - a) + ss * a; }
         d[3] = d[3] + a * (1.0 - d[3]);
     }
@@ -1616,7 +1672,7 @@ fn export_range_cmd_inner(p: &Project, path: &str, f0: usize, f1: usize, mut com
                 let tc = std::time::Instant::now();
                 std::thread::scope(|sc| { for _ in 0..nt.min(end - i) { let (cache, next, slots) = (&cache, &next, &slots); crate::guard::scope_spawn(sc, move || { BASE_SIMPLE.with(|b| *b.borrow_mut() = base_simple.as_ref().map(|s| (p as *const Project as usize, s.clone()))); loop { let k = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst); if k >= end { break; }
                     if let Some(r) = plain_map.as_ref().and_then(|m| { let tq = std::time::Instant::now(); let r = plain_frame(p, m, (f0 + k) as u64, cache); if r.is_some() { prof("plain_frame", tq); } r }) { *slots[k - i].lock().unwrap() = Some(Ok(r)); continue; }
-                    let tf0 = std::time::Instant::now(); let res = render_frame_opts(p, (f0 + k) as f64 / p.fps, cache, transparent).and_then(|mut f| {if transparent { unpremultiply(&mut f); } prof("frame_total", tf0); stage(3, tf0); let tq = std::time::Instant::now(); crate::color::pipeline::output(p,&mut f)?; prof("pipe_out", tq); let tr = std::time::Instant::now(); let r = if p.linear_blend { to_rgba8_tpdf(&f) } else { to_rgba8(&f) }; prof("to_rgba8", tr); stage(4, tq); crate::effects::recycle(std::mem::take(&mut f.d)); Ok(r)}); *slots[k - i].lock().unwrap() = Some(res); } }); } });
+                    let tf0 = std::time::Instant::now(); let res = render_frame_opts(p, (f0 + k) as f64 / p.fps, cache, transparent).and_then(|mut f| {if transparent { unpremultiply(&mut f); } prof("frame_total", tf0); stage(3, tf0); let tq = std::time::Instant::now(); crate::color::pipeline::output(p,&mut f)?; prof("pipe_out", tq); let tr = std::time::Instant::now(); let r = if p.v10() { to_rgba8_dither(&f, (f0 + k) as u64) } else if p.linear_blend { to_rgba8_tpdf(&f) } else { to_rgba8(&f) }; prof("to_rgba8", tr); stage(4, tq); crate::effects::recycle(std::mem::take(&mut f.d)); Ok(r)}); *slots[k - i].lock().unwrap() = Some(res); } }); } });
                 stage(2, tc);
                 let frames: Vec<Result<Vec<u8>, String>> = slots.into_iter().map(|m| m.into_inner().unwrap().unwrap()).collect();
                 let ts = std::time::Instant::now();
@@ -1681,7 +1737,7 @@ pub fn render_clip_alone_as(p: &Project, c: &Clip, t: f64, cache: &Cache) -> Opt
     let mut srcs: Vec<std::sync::Arc<Clip>> = vec![];
     for e in c.effects.iter() { let Some(k) = crate::layerfx::source_key(&e.kind) else { continue };
         if let Some(m) = e.strings.get(k).and_then(|id| p.find_clip(id)).filter(|m| m.id != c.id && !srcs.iter().any(|s| s.id == m.id)) { let mut m = m.clone(); m.start += t - crate::pushwipe::luma_time(p, &m, t); srcs.push(std::sync::Arc::new(m)); } }
-    let sub = Project { links: vec![], proxies: p.proxies.clone(), grade_scopes: p.grade_scopes.subset(&[crate::model::Track{id:"matte".into(),clips:vec![std::sync::Arc::new(c.clone())],locked:false,muted:false,solo:false,name:String::new()}]), lights: p.lights.clone(), materials: p.materials.clone(), editorial: p.editorial.clone(), ocio_view_delivery: None, occluders: p.occluders.clone(), color_pipeline: p.color_pipeline.clone(), linear_blend: p.linear_blend, x264_preset: p.x264_preset.clone(), color_tag_sanity: p.color_tag_sanity, frame_blend_conform: p.frame_blend_conform, adaptive_denoise: p.adaptive_denoise, hdr_tonemap: p.hdr_tonemap, hooks: Default::default(), expr_scripts: Default::default(), tracks: std::iter::once(crate::model::Track { id: "matte".into(), clips: vec![std::sync::Arc::new(c)], locked: false, muted: false, solo: false, name: String::new() }).chain((!srcs.is_empty()).then(|| crate::model::Track { id: ALONE_SRC_TRACK.into(), clips: srcs, locked: false, muted: false, solo: false, name: String::new() })).collect(), assets: p.assets.clone(), bins: p.bins.clone(), subclips: p.subclips.clone(), camera: p.camera.clone(), comp3d: p.comp3d.clone(), markers: vec![], name: String::new(), width: p.width, height: p.height, fps: p.fps, next_id: 0, deps: None, templates: vec![], base_dir: p.base_dir.clone(), master_speech_level: 0.0, master_speech_level_scope_end: 0.0 };
+    let sub = Project { links: vec![], proxies: p.proxies.clone(), grade_scopes: p.grade_scopes.subset(&[crate::model::Track{id:"matte".into(),clips:vec![std::sync::Arc::new(c.clone())],locked:false,muted:false,solo:false,name:String::new()}]), lights: p.lights.clone(), materials: p.materials.clone(), editorial: p.editorial.clone(), ocio_view_delivery: None, occluders: p.occluders.clone(), color_pipeline: p.color_pipeline.clone(), linear_blend: p.linear_blend, render_quality: p.render_quality, x264_preset: p.x264_preset.clone(), color_tag_sanity: p.color_tag_sanity, frame_blend_conform: p.frame_blend_conform, adaptive_denoise: p.adaptive_denoise, hdr_tonemap: p.hdr_tonemap, hooks: Default::default(), expr_scripts: Default::default(), tracks: std::iter::once(crate::model::Track { id: "matte".into(), clips: vec![std::sync::Arc::new(c)], locked: false, muted: false, solo: false, name: String::new() }).chain((!srcs.is_empty()).then(|| crate::model::Track { id: ALONE_SRC_TRACK.into(), clips: srcs, locked: false, muted: false, solo: false, name: String::new() })).collect(), assets: p.assets.clone(), bins: p.bins.clone(), subclips: p.subclips.clone(), camera: p.camera.clone(), comp3d: p.comp3d.clone(), markers: vec![], name: String::new(), width: p.width, height: p.height, fps: p.fps, next_id: 0, deps: None, templates: vec![], base_dir: p.base_dir.clone(), master_speech_level: 0.0, master_speech_level_scope_end: 0.0 };
     MATTE_DEPTH.with(|d| d.set(d.get() + 1)); let r = render_frame_opts(&sub, t, cache, true).ok(); MATTE_DEPTH.with(|d| d.set(d.get() - 1)); r
 }
 
