@@ -556,6 +556,7 @@ fn silent_no_audio_track(name: &str, dur: f64) -> String {
     let cd = sid(&call(&mut ss, "add_clip", json!({"track_id": t, "source_type": "media", "asset_id": dark, "start": 0, "duration": 2, "fit": "cover"})), "clip_id");
     let cg = sid(&call(&mut ss, "add_clip", json!({"track_id": t, "source_type": "media", "asset_id": good, "start": 2, "duration": 2, "fit": "cover"})), "clip_id");
     let before = call(&mut ss, "get_scopes", json!({"time": 1.0}));
+    let before_good = call(&mut ss, "get_scopes", json!({"time": 3.0}))["luma_mean"].as_f64().unwrap();
     let r = call(&mut ss, "auto_grade", json!({}));
     let after = call(&mut ss, "get_scopes", json!({"time": 1.0}));
     let (lb, la) = (before["luma_mean"].as_f64().unwrap(), after["luma_mean"].as_f64().unwrap());
@@ -563,7 +564,13 @@ fn silent_no_audio_track(name: &str, dur: f64) -> String {
     let rgb: Vec<f64> = after["avg_rgb"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
     assert!((rgb[2] - rgb[1]).abs() < 0.06 && (rgb[0] - rgb[1]).abs() < 0.06, "cast left: {rgb:?}");
     assert!(r["graded"].as_array().unwrap().iter().any(|g| g["clip_id"] == json!(cd)), "{r}");
-    assert!(r["skipped"].as_array().unwrap().iter().any(|g| g["clip_id"] == json!(cg)), "the balanced shot should be left alone: {r}");
+    // V10: a shot already in range is no longer skipped but normalised LIGHTLY: half-strength neutral balance, no
+    // exposure change -- its grade stays close to identity and its picture barely moves.
+    let g = r["graded"].as_array().unwrap().iter().find(|g| g["clip_id"] == json!(cg)).unwrap_or_else(|| panic!("the balanced shot should be lightly normalised: {r}"));
+    assert_eq!(g["mode"], json!("light"), "{r}");
+    assert!(g["gain"].as_array().unwrap().iter().all(|v| (v.as_f64().unwrap() - 1.0).abs() < 0.08), "the balanced shot's grade should stay near identity: {r}");
+    let good_after = call(&mut ss, "get_scopes", json!({"time": 3.0}))["luma_mean"].as_f64().unwrap();
+    assert!((good_after - before_good).abs() < 0.04, "the balanced shot's exposure should barely move: {before_good:.3} -> {good_after:.3}: {r}");
 }
 
 /// Music reels: models cut every 1.5 s by arithmetic while the track's first beat was not at 0, so every cut missed.

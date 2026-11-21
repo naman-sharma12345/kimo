@@ -222,5 +222,7 @@ pub fn commands() -> Vec<Command> { vec![
             r.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap()); for (st, en) in &r { let ids = [ss.project.gen_id("clip"), ss.project.gen_id("clip")]; let _ = ids; crate::commands::dispatch(ss, "lift_range", &json!({"track_id": tid, "start": st, "end": en, "extract": true}))?; }
             // the clips the track holds now, so the caller has the new ids without a lookup
             let clips: Vec<Value> = ss.project.tracks.iter().find(|t| t.id == tid).map(|t| t.clips.iter().map(|c| json!({"clip_id": c.id, "start": c.start, "end": c.start + c.duration})).collect()).unwrap_or_default();
-            Ok(json!({"removed": r.len(), "clips": clips})) } },
+            // V10: a short audio crossfade at every splice this made, so the cuts never click
+            let crossfaded = crate::ext::director_tools::declick_cuts(&mut ss.project, &tid, crate::ext::director_tools::DECLICK_MS / 1000.0);
+            Ok(json!({"removed": r.len(), "clips": clips, "crossfaded_cuts": crossfaded})) } },
 ] }
