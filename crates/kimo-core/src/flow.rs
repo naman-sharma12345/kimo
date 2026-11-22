@@ -13,12 +13,14 @@ fn boxf(src: &[f32], w: usize, h: usize, r: usize) -> Vec<f32> { let mut t = vec
 /// Forward flow from `a` to `b` at HALF resolution: (u, v, w, h). Pixel units of the half-res grid.
 pub fn flow(a: &Frame, b: &Frame, quality: usize) -> (Vec<f32>, Vec<f32>, usize, usize) {
     let (w0, h0) = (a.w, a.h); let (g0a, w1, h1) = down(&gray(a), w0, h0); let (g0b, _, _) = down(&gray(b), w0, h0);
-    let levels = quality.clamp(2, 6); let mut pa = vec![(g0a, w1, h1)]; let mut pb = vec![(g0b, w1, h1)];
+    // v10: more pyramid levels (fast motion), more iterations and a larger step, and a median (edge-keeping) smooth
+    let v10 = crate::quality::v10(); let (iters, lim, levels) = if v10 { (6, 8.0f32, quality.max(4).clamp(2, 6)) } else { (4, 4.0, quality.clamp(2, 6)) };
+    let mut pa = vec![(g0a, w1, h1)]; let mut pb = vec![(g0b, w1, h1)];
     for _ in 1..levels { let (la, lw, lh) = pa.last().unwrap().clone(); if lw < 24 || lh < 24 { break; } pa.push(down(&la, lw, lh)); let (lb, _, _) = pb.last().unwrap().clone(); pb.push(down(&lb, lw, lh)); }
     let n = pa.len(); let (mut u, mut v): (Vec<f32>, Vec<f32>) = (vec![], vec![]);
     for lvl in (0..n).rev() { let (ia, w, h) = (&pa[lvl].0, pa[lvl].1, pa[lvl].2); let ib = &pb[lvl].0;
         if lvl == n - 1 { u = vec![0.0; w * h]; v = vec![0.0; w * h]; } else { let (pw, ph) = (pa[lvl + 1].1, pa[lvl + 1].2); u = up_flow(&u, pw, ph, w, h); v = up_flow(&v, pw, ph, w, h); }
-        for _ in 0..4 {
+        for _ in 0..iters {
             let mut bw = vec![0f32; w * h]; { let (uu, vv) = (&u, &v); crate::par::rows_mut(&mut bw, w, |y, row| for x in 0..w { let i = y * w + x; row[x] = bil(ib, w, h, x as f32 + uu[i], y as f32 + vv[i]); }); }
             let (mut ixx, mut ixy, mut iyy, mut ixt, mut iyt) = (vec![0f32; w * h], vec![0f32; w * h], vec![0f32; w * h], vec![0f32; w * h], vec![0f32; w * h]);
             { use crate::par::SyncPtr as P; let (p1, p2, p3, p4, p5) = (P(ixx.as_mut_ptr()), P(ixy.as_mut_ptr()), P(iyy.as_mut_ptr()), P(ixt.as_mut_ptr()), P(iyt.as_mut_ptr())); let bwr = &bw;
@@ -28,10 +30,18 @@ pub fn flow(a: &Frame, b: &Frame, quality: usize) -> (Vec<f32>, Vec<f32>, usize,
             let r = 5; let (sxx, sxy, syy, sxt, syt) = (boxf(&ixx, w, h, r), boxf(&ixy, w, h, r), boxf(&iyy, w, h, r), boxf(&ixt, w, h, r), boxf(&iyt, w, h, r)); let lam = 2e-5;
             { let (pu, pv) = (crate::par::SyncPtr(u.as_mut_ptr()), crate::par::SyncPtr(v.as_mut_ptr())); let (sxx, sxy, syy, sxt, syt) = (&sxx, &sxy, &syy, &sxt, &syt);
             crate::par::ranges(w * h, 4096, |i0, i1| { let (pu, pv) = (pu, pv); for i in i0..i1 { let (a_, b_, c_) = (sxx[i] + lam, sxy[i], syy[i] + lam); let det = a_ * c_ - b_ * b_; if det.abs() < 1e-12 { continue; } let (du, dv) = (-(c_ * sxt[i] - b_ * syt[i]) / det, -(-b_ * sxt[i] + a_ * syt[i]) / det);
-                let lim = 4.0; unsafe { *pu.0.add(i) += du.clamp(-lim, lim); *pv.0.add(i) += dv.clamp(-lim, lim); } } }); }
-            u = boxf(&u, w, h, 1); v = boxf(&v, w, h, 1); } }
+                unsafe { *pu.0.add(i) += du.clamp(-lim, lim); *pv.0.add(i) += dv.clamp(-lim, lim); } } }); }
+            if v10 { u = median3(&u, w, h); v = median3(&v, w, h); } else { u = boxf(&u, w, h, 1); v = boxf(&v, w, h, 1); } } }
     (u, v, pa[0].1, pa[0].2)
 }
+
+/// 3x3 median of a flow component: removes outlier vectors without blurring motion boundaries the way a box does.
+fn median3(src: &[f32], w: usize, h: usize) -> Vec<f32> {
+    let mut o = vec![0f32; w * h];
+    crate::par::rows_mut(&mut o, w, |y, row| { for x in 0..w { let mut v = [0f32; 9]; let mut k = 0;
+        for yy in [y.saturating_sub(1), y, (y + 1).min(h - 1)] { for xx in [x.saturating_sub(1), x, (x + 1).min(w - 1)] { v[k] = src[yy * w + xx]; k += 1; } }
+        v.sort_by(|a, b| a.total_cmp(b)); row[x] = v[4]; } });
+    o }
 
 /// Motion blur along per-pixel flow: `amount` = shutter as a fraction of the frame interval (0.5 = 180 degrees). The flow is centred on the frame.
 pub fn flow_blur(cur: &Frame, next: &Frame, amount: f32, quality: usize) -> Frame {
@@ -145,12 +155,19 @@ pub fn mix_linear(a: &[f32], b: &[f32], w: f64, srgb: bool, o: &mut [f32]) {
 }
 /// Optical-flow frame interpolation at weight `w` between `a` (0) and `b` (1): `a` is sampled back along the forward flow, `b` along the backward flow, then the two are mixed in linear light (see mix_linear).
 pub fn flow_interpolate(a: &Frame, b: &Frame, w: f32, srgb: bool, quality: usize) -> Frame {
-    let (fu, fv, fw, fh) = flow(a, b, quality); let (gu, gv, _, _) = flow(b, a, quality); let (wd, h) = (a.w, a.h); let (sx, sy) = (fw as f32 / wd as f32, fh as f32 / h as f32); let mut o = Frame::new(wd, h);
+    let v10 = crate::quality::v10(); let (fu, fv, fw, fh) = flow(a, b, quality); let (gu, gv, _, _) = flow(b, a, quality); let (wd, h) = (a.w, a.h); let (sx, sy) = (fw as f32 / wd as f32, fh as f32 / h as f32); let mut o = Frame::new(wd, h);
     let samp = |d: &[f32], px: f32, py: f32, out: &mut [f32]| { let (px, py) = (px.clamp(0.0, wd as f32 - 1.0), py.clamp(0.0, h as f32 - 1.0)); let (x0, y0) = (px as usize, py as usize); let (x1, y1) = ((x0 + 1).min(wd - 1), (y0 + 1).min(h - 1)); let (ax, ay) = (px - x0 as f32, py - y0 as f32);
         for j in 0..4 { let (p, q, r, s) = (d[(y0 * wd + x0) * 4 + j], d[(y0 * wd + x1) * 4 + j], d[(y1 * wd + x0) * 4 + j], d[(y1 * wd + x1) * 4 + j]); out[j] = p + (q - p) * ax + (r - p) * ay + (p - q - r + s) * ax * ay; } };
     let (ad, bd) = (&a.d[..], &b.d[..]); crate::par::rows_mut(&mut o.d, wd * 4, |y, orow| { for x in 0..wd { let (fx, fy) = (((x as f32 + 0.5) * sx - 0.5).max(0.0), ((y as f32 + 0.5) * sy - 0.5).max(0.0));
         let (f1, f2) = (bil(&fu, fw, fh, fx, fy) / sx, bil(&fv, fw, fh, fx, fy) / sy); let (g1, g2) = (bil(&gu, fw, fh, fx, fy) / sx, bil(&gv, fw, fh, fx, fy) / sy);
         let (mut pa, mut pb) = ([0f32; 4], [0f32; 4]); samp(ad, x as f32 - w * f1, y as f32 - w * f2, &mut pa); samp(bd, x as f32 - (1.0 - w) * g1, y as f32 - (1.0 - w) * g2, &mut pb);
+        if v10 {
+            // forward-backward consistency at this pixel: the backward flow where the forward flow lands should bring it back
+            let (hx, hy) = (bil(&fu, fw, fh, fx, fy), bil(&fv, fw, fh, fx, fy)); let (bx, by) = (bil(&gu, fw, fh, fx + hx, fy + hy), bil(&gv, fw, fh, fx + hx, fy + hy));
+            let e = ((hx + bx) / sx).hypot((hy + by) / sy); let conf = (-(e * e) / 2.0).exp();
+            if conf < 0.999 { let (mut wa, mut wb) = ([0f32; 4], [0f32; 4]); mix_linear(&pa, &pb, w as f64, srgb, &mut wa); let xi = (y * wd + x) * 4; mix_linear(&ad[xi..xi + 4], &bd[xi..xi + 4], w as f64, srgb, &mut wb);
+                for j in 0..4 { orow[x * 4 + j] = wa[j] * conf + wb[j] * (1.0 - conf); } continue; }
+        }
         mix_linear(&pa, &pb, w as f64, srgb, &mut orow[x * 4..x * 4 + 4]); } });
     o
 }

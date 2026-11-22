@@ -206,3 +206,60 @@ fn grain_lives_in_the_mid_tones() {
     let (lmid, ldark) = (spread(false, 0.5), spread(false, 0.06));
     assert!((lmid / ldark.max(1e-6) - 1.0).abs() < 0.6, "legacy grain is the same everywhere: {lmid:.2} vs {ldark:.2}");
 }
+
+// ---------------------------------------------------------------- VFX
+
+/// A clip whose picture moves 1 px left and 1 px up every frame (a crop window sliding over a test pattern), with a brightness ramp and
+/// fresh noise every frame: the tracked point's true position at frame k is (160 - k, 90 - k).
+fn moving_clip(v10: bool) -> (Session, String, usize) {
+    let dir = std::env::temp_dir().join(format!("kimo_v10_track_{}", std::process::id())); std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("moving.mp4");
+    if !path.exists() {
+        // a still, fully textured picture (one frame of a random cell pattern), panned by exactly 1 px per frame
+        let tex = dir.join("texture.png");
+        let ok = std::process::Command::new("ffmpeg").args(["-v", "error", "-y", "-f", "lavfi", "-i", "life=s=640x360:ratio=0.45:death_color=#203040:life_color=#e0c080:seed=7", "-frames:v", "1"]).arg(&tex).status().unwrap().success();
+        assert!(ok, "ffmpeg could not make the texture");
+        let ok = std::process::Command::new("ffmpeg").args(["-v", "error", "-y", "-loop", "1", "-framerate", "30", "-i"]).arg(&tex).args([
+            "-vf", "crop=320:180:'20+n':'10+n',eq=brightness='0.0015*n':eval=frame,noise=alls=6:allf=t", "-frames:v", "60", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-crf", "8"]).arg(&path).status().unwrap().success();
+        assert!(ok, "ffmpeg could not make the test clip");
+    }
+    let mut s = session(v10); let t = track(&mut s);
+    let a = c(&mut s, "import_media", json!({"path": path.to_str().unwrap()}))["asset_id"].as_str().unwrap().to_string();
+    let id = c(&mut s, "add_clip", json!({"track_id": t, "source_type": "media", "asset_id": a, "start": 0.0, "duration": 2.0}))["clip_id"].as_str().unwrap().to_string();
+    (s, id, 60)
+}
+
+#[test]
+fn a_tracked_point_does_not_drift() {
+    let err = |v10: bool| { let (s, id, n) = moving_clip(v10);
+        let tr = kimo_core::tracking::track_point(&s.project, &id, 0.5, 0.5, 40, 14, true, 0.12).unwrap();
+        let k = (tr.len() - 1).min(n - 1) as f64; let last = tr.last().unwrap();
+        (last.x - (160.0 - k)).hypot(last.y - (90.0 - k)) };
+    let (legacy, v10) = (err(false), err(true));
+    eprintln!("tracking error after 60 frames: legacy {legacy:.2} px, v10 {v10:.2} px");
+    assert!(v10 < 0.5, "v10 tracker stays on the point (error {v10:.2} px after 60 frames)");
+    assert!(v10 <= legacy + 0.05, "v10 is at least as accurate as legacy ({v10:.2} vs {legacy:.2} px)");
+}
+
+#[test]
+fn a_keyed_edge_has_no_green_halo() {
+    // pixels: pure green screen, skin, and an edge pixel that is half skin, half screen (hair against the screen)
+    let skin = [0.85f32, 0.6, 0.5]; let green = [0.1f32, 0.8, 0.15];
+    let key = |v10: bool| { let _q = kimo_core::quality::enter(v10, 1080); let mut f = Frame::new(3, 1);
+        for (i, c) in [green, skin, [0.5 * skin[0] + 0.5 * green[0], 0.5 * skin[1] + 0.5 * green[1], 0.5 * skin[2] + 0.5 * green[2]]].iter().enumerate() { f.d[i * 4..i * 4 + 3].copy_from_slice(c); f.d[i * 4 + 3] = 1.0; }
+        let mut params = effects::Params::new(); for (k, v) in [("r", 0.1), ("g", 0.8), ("b", 0.15), ("tolerance", 0.08), ("softness", 0.25)] { params.insert(k.into(), kimo_core::keyframe::Prop::new(v)); }
+        effects::apply("chroma_key", &params, &Default::default(), &mut f, 0.0, 0).unwrap(); f };
+    let (legacy, v10) = (key(false), key(true));
+    assert!(v10.d[3] < 0.05, "the screen is keyed out (alpha {})", v10.d[3]);
+    assert!(v10.d[7] > 0.95 && (0..3).all(|j| (v10.d[4 + j] - skin[j]).abs() < 0.02), "skin is kept as it was: {:?}", &v10.d[4..8]);
+    let edge_err = |f: &Frame| (0..3).map(|j| (f.d[8 + j] - skin[j]).abs()).fold(0f32, f32::max);
+    eprintln!("edge colour error: legacy {:.3}, v10 {:.3} (alpha {:.2} / {:.2})", edge_err(&legacy), edge_err(&v10), legacy.d[11], v10.d[11]);
+    assert!(v10.d[11] > 0.05 && v10.d[11] < 0.95, "the edge pixel is partly transparent ({})", v10.d[11]);
+    // the visible defect is a green tint on the edge: green above the average of red and blue
+    let cast = |f: &Frame| f.d[9] - 0.5 * (f.d[8] + f.d[10]);
+    assert!(cast(&v10) <= 0.02, "v10 edge has no green cast ({:.3})", cast(&v10));
+    assert!(cast(&legacy) > 0.05, "legacy edge is tinted green ({:.3})", cast(&legacy));
+    // and no over-correction: removing too much screen colour turns an edge magenta (green below both red and blue)
+    assert!(v10.d[9] >= v10.d[8].min(v10.d[10]) - 0.02, "v10 edge is not magenta: {:?}", &v10.d[8..11]);
+    assert!(edge_err(&v10) < edge_err(&legacy), "and does better than legacy ({:.3} vs {:.3})", edge_err(&v10), edge_err(&legacy));
+}

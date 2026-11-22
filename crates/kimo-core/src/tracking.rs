@@ -54,6 +54,7 @@ pub struct TrackSample { pub t: f64, pub x: f64, pub y: f64, pub rot_deg: f64, p
 /// Track a surface point (normalized) through a media clip using a ring of patches around it (translation + rotation + scale).
 /// `rigid` = false tracks translation only (single patch). Memory is windowed: only ~24 frames are decoded at a time.
 pub fn track_point(p: &Project, clip_id: &str, nx: f64, ny: f64, size: i32, range: i32, rigid: bool, radius: f64) -> Result<Vec<TrackSample>, String> {
+    if p.v10() { return track_point_v10(p, clip_id, nx, ny, size, range, rigid, radius); }
     let c = p.find_clip(clip_id).ok_or("no such clip")?.clone(); let mut cache = Cache::new(); let (w, h) = (p.width as usize, p.height as usize); let n = nframes(p, &c);
     let (cx0, cy0) = (nx * w as f64, ny * h as f64); let r = radius * w.min(h) as f64;
     let offs: Vec<(f64, f64)> = if rigid { vec![(0.0, 0.0), (r, 0.0), (-r, 0.0), (0.0, r), (0.0, -r), (r * 0.7, r * 0.7), (-r * 0.7, -r * 0.7), (r * 0.7, -r * 0.7), (-r * 0.7, r * 0.7)] } else { vec![(0.0, 0.0)] };
@@ -64,6 +65,75 @@ pub fn track_point(p: &Project, clip_id: &str, nx: f64, ny: f64, size: i32, rang
         // similarity of the whole patch ring relative to the first frame; refit from the origin each frame to avoid drift accumulation
         let (sc, th, tx, ty) = fit_similarity(&ref_pts, &cur_pts); let o = (sc * (th.cos() * cx0 - th.sin() * cy0) + tx, sc * (th.sin() * cx0 + th.cos() * cy0) + ty);
         out.push(TrackSample { t: i as f64 / p.fps, x: o.0, y: o.1, rot_deg: th.to_degrees(), scale: sc }); prev = cur; }
+    Ok(out)
+}
+
+// ---------------------------------------------------------------- v10 point tracking
+// The legacy tracker matches each frame against the PREVIOUS frame's patch, so every sub-pixel error is carried into the next
+// frame (drift), and a lighting change reads as motion. v10 matches against the FIRST frame's patch (no accumulation) with zero-mean
+// normalised correlation (brightness and contrast changes cancel), searches around the predicted position (constant velocity), then
+// refines to a fraction of a pixel by Gauss-Newton on the normalised patch. Only when the surface no longer looks like its first
+// frame (correlation under 0.6: turned, occluded) does it match the previous frame's patch for that frame.
+
+#[inline] fn bil(g: &[f32], w: usize, h: usize, x: f32, y: f32) -> f32 {
+    let (x, y) = (x.clamp(0.0, w as f32 - 1.001), y.clamp(0.0, h as f32 - 1.001)); let (x0, y0) = (x as usize, y as usize); let (fx, fy) = (x - x0 as f32, y - y0 as f32);
+    let (a, b, c, d) = (g[y0 * w + x0], g[y0 * w + x0 + 1], g[(y0 + 1) * w + x0], g[(y0 + 1) * w + x0 + 1]); a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy }
+/// A (2r+1)^2 patch sampled at subpixel centre (cx, cy), zero mean and unit variance (None when flat).
+fn npatch(g: &[f32], w: usize, h: usize, cx: f32, cy: f32, r: i32) -> Option<Vec<f32>> {
+    let v: Vec<f32> = (-r..=r).flat_map(|dy| (-r..=r).map(move |dx| (dx, dy))).map(|(dx, dy)| bil(g, w, h, cx + dx as f32, cy + dy as f32)).collect();
+    normalise(v) }
+fn normalise(mut v: Vec<f32>) -> Option<Vec<f32>> { let n = v.len() as f32; let m = v.iter().sum::<f32>() / n; let sd = (v.iter().map(|x| (x - m) * (x - m)).sum::<f32>() / n).sqrt(); if sd < 1e-3 { return None; } for x in v.iter_mut() { *x = (*x - m) / sd; } Some(v) }
+fn zncc(a: &[f32], b: &[f32]) -> f32 { a.iter().zip(b).map(|(x, y)| x * y).sum::<f32>() / a.len() as f32 }
+/// Where template `tpl` (normalised, radius r) sits in `g`, searching +-range around `pred`: integer search on a coarse then fine
+/// grid, then Gauss-Newton sub-pixel refinement. (x, y, correlation -1..1).
+fn locate(tpl: &[f32], g: &[f32], w: usize, h: usize, pred: (f32, f32), r: i32, range: i32) -> (f32, f32, f32) {
+    let score = |x: f32, y: f32| npatch(g, w, h, x, y, r).map(|q| zncc(tpl, &q)).unwrap_or(-1.0);
+    let mut best = (pred.0, pred.1, score(pred.0, pred.1));
+    let step = if range > 6 { 2 } else { 1 };
+    for dy in (-range..=range).step_by(step) { for dx in (-range..=range).step_by(step) { let (x, y) = (pred.0 + dx as f32, pred.1 + dy as f32); let sc = score(x, y); if sc > best.2 { best = (x, y, sc); } } }
+    if step > 1 { let c = best; for dy in -1..=1 { for dx in -1..=1 { let (x, y) = (c.0 + dx as f32, c.1 + dy as f32); let sc = score(x, y); if sc > best.2 { best = (x, y, sc); } } } }
+    // Gauss-Newton on the normalised patch: minimise sum (Tn - In(p))^2 over p (the normalisation makes it gain/bias invariant)
+    let (mut x, mut y) = (best.0, best.1);
+    for _ in 0..12 {
+        let raw: Vec<f32> = (-r..=r).flat_map(|dy| (-r..=r).map(move |dx| (dx, dy))).map(|(dx, dy)| bil(g, w, h, x + dx as f32, y + dy as f32)).collect();
+        let n = raw.len() as f32; let m = raw.iter().sum::<f32>() / n; let sd = (raw.iter().map(|v| (v - m) * (v - m)).sum::<f32>() / n).sqrt(); if sd < 1e-3 { break; }
+        let (mut a, mut b, mut c, mut rx, mut ry) = (0f32, 0f32, 0f32, 0f32, 0f32); let mut k = 0;
+        for dy in -r..=r { for dx in -r..=r { let (px, py) = (x + dx as f32, y + dy as f32);
+            let gx = (bil(g, w, h, px + 0.5, py) - bil(g, w, h, px - 0.5, py)) / sd; let gy = (bil(g, w, h, px, py + 0.5) - bil(g, w, h, px, py - 0.5)) / sd;
+            let e = (raw[k] - m) / sd - tpl[k]; a += gx * gx; b += gx * gy; c += gy * gy; rx += gx * e; ry += gy * e; k += 1; } }
+        let det = a * c - b * b; if det.abs() < 1e-9 { break; }
+        let (ux, uy) = ((-(c * rx - b * ry) / det).clamp(-1.0, 1.0), (-(a * ry - b * rx) / det).clamp(-1.0, 1.0)); x += ux; y += uy;
+        if ux.abs().max(uy.abs()) < 0.002 { break; } }
+    let sc = score(x, y); if sc + 0.02 < best.2 { (best.0, best.1, best.2) } else { (x, y, sc) }
+}
+fn track_point_v10(p: &Project, clip_id: &str, nx: f64, ny: f64, size: i32, range: i32, rigid: bool, radius: f64) -> Result<Vec<TrackSample>, String> {
+    let c = p.find_clip(clip_id).ok_or("no such clip")?.clone(); let mut cache = Cache::new(); let (w, h) = (p.width as usize, p.height as usize); let n = nframes(p, &c);
+    let (cx0, cy0) = (nx * w as f64, ny * h as f64); let r = radius * w.min(h) as f64; let pr = (size / 2).clamp(3, 40);
+    let offs: Vec<(f64, f64)> = if rigid { vec![(0.0, 0.0), (r, 0.0), (-r, 0.0), (0.0, r), (0.0, -r), (r * 0.7, r * 0.7), (-r * 0.7, -r * 0.7), (r * 0.7, -r * 0.7), (-r * 0.7, r * 0.7)] } else { vec![(0.0, 0.0)] };
+    let ref_pts: Vec<(f64, f64)> = offs.iter().map(|o| (cx0 + o.0, cy0 + o.1)).collect();
+    let g0 = clip_gray(p, &mut cache, &c, 0)?;
+    // patches that are flat (no texture to follow) are left out of the fit
+    let tpl0: Vec<Option<Vec<f32>>> = ref_pts.iter().map(|q| npatch(&g0, w, h, q.0 as f32, q.1 as f32, pr)).collect();
+    let mut tplp = tpl0.clone(); let mut cur_pts = ref_pts.clone(); let mut vel = vec![(0.0f64, 0.0f64); ref_pts.len()];
+    let mut out = vec![TrackSample { t: 0.0, x: cx0, y: cy0, rot_deg: 0.0, scale: 1.0 }];
+    for i in 1..n { let g = clip_gray(p, &mut cache, &c, i)?;
+        let (mut a, mut b): (Vec<(f64, f64)>, Vec<(f64, f64)>) = (vec![], vec![]);
+        for k in 0..ref_pts.len() { let Some(t0) = &tpl0[k] else { continue };
+            let pred = ((cur_pts[k].0 + vel[k].0) as f32, (cur_pts[k].1 + vel[k].1) as f32);
+            let mut hit = locate(t0, &g, w, h, pred, pr, range);
+            if hit.2 < 0.6 { if let Some(tp) = &tplp[k] { let alt = locate(tp, &g, w, h, pred, pr, range); if alt.2 > hit.2 { hit = alt; } } }
+            if hit.2 < 0.3 { cur_pts[k] = (pred.0 as f64, pred.1 as f64); continue; } // lost this frame: coast, keep it out of the fit
+            let np = (hit.0 as f64, hit.1 as f64); vel[k] = (np.0 - cur_pts[k].0, np.1 - cur_pts[k].1); cur_pts[k] = np;
+            tplp[k] = npatch(&g, w, h, hit.0, hit.1, pr); a.push(ref_pts[k]); b.push(np); }
+        // rotation and scale need at least three good patches; with fewer, follow their mean translation; with none, coast
+        // a fit whose scale is implausible (a few bad patches) is not used at all: its translation belongs to that scale
+        let fit = if rigid && a.len() >= 3 { Some(fit_similarity(&a, &b)).filter(|f| (0.5..=2.0).contains(&f.0)) } else { None };
+        let rigid_fit = fit.is_some();
+        let (sc, th, tx, ty) = if let Some(f) = fit { f }
+            else if !a.is_empty() { let k = a.len() as f64; let l = out.last().unwrap(); (l.scale, l.rot_deg.to_radians(), a.iter().zip(&b).map(|(p, q)| q.0 - p.0).sum::<f64>() / k, a.iter().zip(&b).map(|(p, q)| q.1 - p.1).sum::<f64>() / k) }
+            else { let l = out.last().unwrap(); (l.scale, l.rot_deg.to_radians(), l.x - cx0, l.y - cy0) };
+        let o = if rigid_fit { (sc * (th.cos() * cx0 - th.sin() * cy0) + tx, sc * (th.sin() * cx0 + th.cos() * cy0) + ty) } else { (cx0 + tx, cy0 + ty) };
+        out.push(TrackSample { t: i as f64 / p.fps, x: o.0, y: o.1, rot_deg: th.to_degrees(), scale: sc }); }
     Ok(out)
 }
 

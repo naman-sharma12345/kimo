@@ -220,6 +220,25 @@ pub fn apply(kind: &str, params: &Params, strings: &BTreeMap<String, String>, f:
             for y in 0..f.h{crate::guard::check();for x in 0..f.w{for j in 0..3{let dx=(offsets[j]*angle.cos()) as isize;let dy=(offsets[j]*angle.sin()) as isize;let sx=(x as isize).saturating_add(dx).clamp(0,w-1) as usize;let sy=(y as isize).saturating_add(dy).clamp(0,h-1) as usize;f.d[(y*f.w+x)*4+j]=src[(sy*f.w+sx)*4+j];}}}
         }
         "invert" => px(f, |c| [1.0-c[0], 1.0-c[1], 1.0-c[2]]),
+        "chroma_key" if crate::quality::v10() => {
+            // v10: key on colour alone (Cb/Cr: screen shading and lighting falloff don't matter), a smooth edge, then per edge pixel recover the
+            // foreground colour the screen was mixed into (C = aF + (1-a)K, so F = (C - (1-a)K)/a: no green halo on hair), and suppress spill by
+            // limiting the key's channel to the average of the other two (keeps skin natural, unlike clamping to the max).
+            let k = [p(params,"r",0.0,t), p(params,"g",1.0,t), p(params,"b",0.0,t)];
+            let tol = p(params,"tolerance",0.35,t); let soft = p(params,"softness",0.1,t).max(0.001); let spill = p(params,"spill",1.0,t).clamp(0.0, 1.0);
+            let cbcr = |c: &[f32]| { let y = 0.2126*c[0]+0.7152*c[1]+0.0722*c[2]; [(c[2]-y)/1.8556, (c[0]-y)/1.5748] }; let kc = cbcr(&k[..]);
+            let kd = (0..3).max_by(|&a, &b| k[a].total_cmp(&k[b])).unwrap_or(1); let (o1, o2) = ((kd + 1) % 3, (kd + 2) % 3);
+            for i in 0..f.w*f.h { let c = &mut f.d[i*4..i*4+4];
+                let q = cbcr(&*c); let dist = ((q[0]-kc[0]).powi(2)+(q[1]-kc[1]).powi(2)).sqrt()/std::f32::consts::SQRT_2;
+                let x = ((dist - tol)/soft).clamp(0.0, 1.0); let al = x * x * (3.0 - 2.0 * x);
+                // unmix with the screen-difference opacity (how far the screen's channel still exceeds the others), never less than the matte's:
+                // overestimating opacity leaves a little screen colour (despill removes it), underestimating would push the edge to magenta
+                let sd = |q: &[f32]| q[kd] - q[o1].max(q[o2]); let ks = sd(&k[..]).max(1e-3);
+                let au = al.max((1.0 - sd(&*c) / ks).clamp(0.0, 1.0));
+                if au > 0.02 && au < 0.98 { for j in 0..3 { c[j] = ((c[j] - (1.0 - au) * k[j]) / au).clamp(0.0, 1.0); } }
+                let lim = 0.5 * (c[o1] + c[o2]); if c[kd] > lim { c[kd] = lim + (c[kd] - lim) * (1.0 - spill); }
+                c[3] *= al; }
+        }
         "chroma_key" => {
             let k = [p(params,"r",0.0,t), p(params,"g",1.0,t), p(params,"b",0.0,t)];
             let tol = p(params,"tolerance",0.35,t); let soft = p(params,"softness",0.1,t).max(0.001);
