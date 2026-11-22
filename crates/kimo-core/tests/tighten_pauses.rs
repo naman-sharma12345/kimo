@@ -113,7 +113,17 @@ fn shrinks_the_interior_breath_and_the_opening_without_touching_speech_or_the_ta
     // NEVER CUT MID-WORD: total detected speech is unchanged within VAD noise -- if either cut had
     // landed inside a word, speech duration would have dropped by that much.
     let speech_after = total_speech_s(&mut ss, &track);
-    assert!((speech_before - speech_after).abs() < 0.15, "speech duration must survive the tightening: before {speech_before:.3}s after {speech_after:.3}s");
+    // V10: the probe reads 100 ms RMS windows, so it cannot resolve the 200 ms pause now left between phrases and
+    // reads up to two windows of it as sound -- a quantisation of the measurement, not a change in content. So the
+    // probe gets that much slack upward, and the exact check is the source: every known speech window must still
+    // be wholly inside the kept clips' source ranges.
+    assert!(speech_after >= speech_before - 0.15 && speech_after <= speech_before + 0.25, "speech duration must survive the tightening: before {speech_before:.3}s after {speech_after:.3}s");
+    let t = ss.project.tracks.iter().find(|t| t.id == track).unwrap();
+    let kept: Vec<(f64, f64)> = t.clips.iter().map(|cl| (cl.in_point, cl.in_point + cl.duration * cl.speed)).collect();
+    for (ws, we) in WINDOWS {
+        let covered: f64 = kept.iter().map(|(a, b)| (b.min(we) - a.max(ws)).max(0.0)).sum();
+        assert!(covered >= (we - ws) - 1e-3, "speech window {ws}..{we} lost {:.3}s to a cut (kept source ranges {kept:?})", (we - ws) - covered);
+    }
 
     // The trailing 2.6s silence after the last word must still be there, untouched -- not shrunk, not split.
     let clips = track_media_clips(&ss, &track);

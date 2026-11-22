@@ -304,7 +304,9 @@ fn silent_no_audio_track(name: &str, dur: f64) -> String {
     let r = call(&mut ss, "auto_rough_cut", json!({"asset_ids": [a1, a2]}));
     let t = sid(&r, "track_id");
     // speech total 1.6 + 0.8 + 1.7 = 4.1 s; the cut keeps it with short pads and no gap longer than 0.4 s
-    let d = r["duration"].as_f64().unwrap(); assert!(d > 4.1 && d < 5.4, "{r}");
+    // V10: each kept segment now keeps 80 ms before its onset and 120 ms after its tail (VAD-relative), so the cut
+    // runs a little longer than with the old symmetric 60 ms pad: 5.4 s for this fixture (was under 5.4)
+    let d = r["duration"].as_f64().unwrap(); assert!(d > 4.1 && d < 5.8, "{r}");
     let sp = call(&mut ss, "audio_speech_intervals", json!({"target": {"track_id": t}, "aggressiveness": 1, "min_silence_ms": 200}));
     let iv: Vec<(f64, f64)> = sp["speech"].as_array().unwrap().iter().map(|x| (x["start"].as_f64().unwrap(), x["end"].as_f64().unwrap())).collect();
     let spoken: f64 = iv.iter().map(|(s, e)| e - s).sum(); assert!(spoken > 3.8, "words were cut: {spoken:.2} s of speech left of 4.1 ({iv:?})");

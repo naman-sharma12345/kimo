@@ -1033,7 +1033,7 @@ fn auto_grade(ss: &mut Session, a: &Value) -> Result<Value, String> {
         // still lands on one consistent neutral instead of each keeping its own slight cast.
         let light = (0.32..=0.6).contains(&l) && cast < 0.05;
         let mut note = None;
-        let prim: Vec<String> = c.effects.iter().filter(|e| e.kind == "primaries").map(|e| e.id.clone()).collect();
+        let prim: Vec<String> = c.effects.iter().filter(|e| e.kind == "primaries" && !owned(e, "match_shot_look")).map(|e| e.id.clone()).collect();
         if light {
             // the source is fine: if the picture on the timeline is still dark, an earlier grade crushed it, so that grade goes
             let now = call(ss, "get_scopes", &json!({"time": r3(c.start + c.duration / 2.0)})).ok().and_then(|v| v["luma_mean"].as_f64()).unwrap_or(l);
@@ -1071,14 +1071,16 @@ fn auto_grade(ss: &mut Session, a: &Value) -> Result<Value, String> {
 /// V8.0Q: auto_grade pulls every clip toward one fixed absolute target -- it never looks at what ANOTHER shot in the
 /// same edit looks like, so a warm interview cut against cool b-roll still reads as two shoots stitched together.
 ///
-/// V10: match_shot_look matches the whole colour DISTRIBUTION, not one mean: it renders each clip as it plays now (its
-/// own grade included, e.g. auto_grade's), measures CIELAB mean and covariance (`color::matching::statistics`, the
-/// reference clips pooled), and applies the Gaussian optimal transport between them (`color::matching::transport`)
-/// as a `lab_match` effect after the clip's other grades -- the same perceptual transfer match_grade uses, so contrast
+/// V10: match_shot_look matches the whole colour DISTRIBUTION, not one mean, in two stages on each clip as it plays now
+/// (its own grade included, e.g. auto_grade's): first a gamut-safe per-channel gain onto the reference clips' mean RGB
+/// (a tagged `primaries` effect: a strong cast pushed through Lab alone needs colours outside the gamut), then the
+/// CIELAB mean and covariance of the gained picture (`color::matching::statistics`, the reference clips pooled) moved
+/// onto the reference's by Gaussian optimal transport (`color::matching::transport`), a tagged `lab_match` effect
+/// after the clip's other grades -- the same perceptual transfer match_grade uses, so contrast
 /// and saturation match too, not only white balance and exposure. `strength` blends it in; highlights (L above 0.8)
 /// are eased out of the transfer so a sky or a window is not dragged off white, and skin-coloured pixels keep part of
 /// their own chroma (`protect_skin`) so a match toward a very differently lit scene cannot turn faces green or grey.
-/// The effect is tagged, so a re-run replaces it. `gain` in the result is the clip's mean RGB after / before, per channel.
+/// Both effects are tagged, so a re-run replaces them. `gain` in the result is the clip's mean RGB after / before, per channel.
 fn match_shot_look(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let strength = opt_num(a, "strength", 0.75).clamp(0.0, 1.0);
     let protect_hl = opt_num(a, "protect_highlights", 0.6).clamp(0.0, 1.0);
@@ -1095,8 +1097,8 @@ fn match_shot_look(ss: &mut Session, a: &Value) -> Result<Value, String> {
         if let Some(cm) = p.find_clip_mut(id) { cm.effects.retain(|e| !owned(e, "match_shot_look")); }
         crate::colortools::any_frame(&p, Some(id), t).map_err(|e| format!("clip '{id}': could not render a frame ({e})"))
     };
-    let mut refs = vec![];
-    for id in &ref_ids { refs.push(crate::color::matching::statistics(&render(ss, id)?, None)?); }
+    let (mut refs, mut ref_rgb) = (vec![], [0.0; 3]);
+    for id in &ref_ids { let f = render(ss, id)?; let m = mean3(&pixels(&f)); for k in 0..3 { ref_rgb[k] += m[k] / ref_ids.len() as f64; } refs.push(crate::color::matching::statistics(&f, None)?); }
     // pool the reference shots: mean of means; covariance = mean within-shot covariance + spread of the shot means
     let n = refs.len() as f64;
     let mean: [f64; 3] = [0, 1, 2].map(|j| refs.iter().map(|s| s.mean[j]).sum::<f64>() / n);
@@ -1106,7 +1108,15 @@ fn match_shot_look(ss: &mut Session, a: &Value) -> Result<Value, String> {
     for id in &target_ids {
         if ref_ids.contains(id) { skipped.push(json!({"clip_id": id, "why": "also a reference clip; left as the reference look itself"})); continue; }
         let f = match render(ss, id) { Ok(v) => v, Err(e) => { skipped.push(json!({"clip_id": id, "why": e})); continue; } };
-        let src = match crate::color::matching::statistics(&f, None) { Ok(s) => s, Err(e) => { skipped.push(json!({"clip_id": id, "why": e})); continue; } };
+        // stage 1, gamut-safe: a per-channel gain that brings the shot's mean RGB onto the reference's takes out the
+        // cast and the exposure gap (a strong cast pushed through Lab alone needs colours outside the gamut and is
+        // pulled back by gamut compression); stage 2, the Lab transport, then matches what is left -- contrast,
+        // saturation, the shape of the distribution -- on the gained picture.
+        let mb = mean3(&pixels(&f));
+        let g1 = [0, 1, 2usize].map(|k| (ref_rgb[k] / mb[k].max(1e-3)).clamp(0.5, 2.0).powf(strength));
+        let mut f1 = crate::effects::Frame { w: f.w, h: f.h, d: f.d.clone() };
+        for px in f1.d.chunks_exact_mut(4) { for k in 0..3 { px[k] = (px[k] as f64 * g1[k]).clamp(0.0, 1.0) as f32; } }
+        let src = match crate::color::matching::statistics(&f1, None) { Ok(s) => s, Err(e) => { skipped.push(json!({"clip_id": id, "why": e})); continue; } };
         let m = match crate::color::matching::transport(&src, &dst, 1e-4) { Ok(m) => m, Err(e) => { skipped.push(json!({"clip_id": id, "why": e})); continue; } };
         let mut params = std::collections::BTreeMap::new();
         let mut put = |k: String, v: f64| { params.insert(k, crate::keyframe::Prop::new(v)); };
@@ -1114,17 +1124,20 @@ fn match_shot_look(ss: &mut Session, a: &Value) -> Result<Value, String> {
         put("strength".into(), strength); put("gamut_compress".into(), 1.0); put("protect_highlights".into(), protect_hl); put("protect_skin".into(), protect_skin);
         let fx = crate::model::Effect { id: ss.project.gen_id("fx"), kind: "lab_match".into(), params, strings: [(OWNER.to_string(), "match_shot_look".to_string())].into_iter().collect() };
         // predict the result on the measured frame itself
-        let mut g = crate::effects::Frame { w: f.w, h: f.h, d: f.d.clone() }; crate::color::matching::apply(&fx.params, &mut g, 0.0)?;
-        let (mb, ma) = (mean3(&pixels(&f)), mean3(&pixels(&g)));
+        let mut g = f1; crate::color::matching::apply(&fx.params, &mut g, 0.0)?;
+        let ma = mean3(&pixels(&g));
+        let mut gp = std::collections::BTreeMap::new();
+        for (k, c) in ["gain_r", "gain_g", "gain_b"].iter().enumerate() { gp.insert(c.to_string(), crate::keyframe::Prop::new(g1[k])); }
+        let gain_fx = crate::model::Effect { id: ss.project.gen_id("fx"), kind: "primaries".into(), params: gp, strings: [(OWNER.to_string(), "match_shot_look".to_string())].into_iter().collect() };
         let after = crate::color::matching::statistics(&g, None)?;
         let cm = ss.project.find_clip_mut(id).ok_or("clip vanished")?;
         cm.effects.retain(|e| !owned(e, "match_shot_look"));
-        let fid = fx.id.clone(); cm.effects.push(fx);
+        let fid = fx.id.clone(); cm.effects.push(gain_fx); cm.effects.push(fx);
         out.push(json!({"clip_id": id, "effect_id": fid, "luma_before": r3(luma(mb)), "luma_after_expected": r3(luma(ma)),
-            "gain": ([0, 1, 2usize].map(|k| r3(ma[k] / mb[k].max(1e-4)))), "lab_mean_before": src.mean.map(r3), "lab_mean_after_expected": after.mean.map(r3)}));
+            "gain": ([0, 1, 2usize].map(|k| r3(ma[k] / mb[k].max(1e-4)))), "balance_gain": g1.map(r3), "lab_mean_before": src.mean.map(r3), "lab_mean_after_expected": after.mean.map(r3)}));
     }
     Ok(json!({"reference_lab_mean": dst.mean.map(r3), "matched": out, "skipped": skipped, "strength": strength, "protect_highlights": protect_hl, "protect_skin": protect_skin,
-        "note": "each target clip's CIELAB colour distribution moved `strength` of the way onto the reference clips' (Gaussian optimal transport, lab_match), highlights and skin protected; undo reverts all of it"}))
+        "note": "each target clip: a per-channel balance onto the reference clips' mean, then its CIELAB colour distribution moved `strength` of the way onto theirs (Gaussian optimal transport, lab_match), highlights and skin protected; undo reverts all of it"}))
 }
 
 // ---------------------------------------------------------------- cut_to_beat
