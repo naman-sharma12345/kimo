@@ -18,22 +18,34 @@ use std::time::Duration;
 const WHITE: [f64; 3] = [1.0, 1.0, 1.0];
 const BLACK: [f64; 3] = [0.0, 0.0, 0.0];
 const YELLOW: [f64; 3] = [1.0, 0.86, 0.0];
-const GREEN: [f64; 3] = [0.24, 1.0, 0.36];
+/// A warm, slightly muted highlight (not a saturated sign-paint yellow) for the one spoken word, where a style highlights it.
+const WARM: [f64; 3] = [1.0, 0.84, 0.42];
+/// Words not yet spoken in the karaoke style: a light grey, so the spoken ones read as white without any colour.
+const UNSPOKEN: [f64; 3] = [0.68, 0.68, 0.68];
 /// Roman-script Hinglish prompt: steers the recognizer to write Hindi in Roman letters and English words in English.
 const HINGLISH_PROMPT: &str = "Haan toh dosto, aaj main aapko kuch dikhata hoon. Yeh kaafi accha hai, aur main isko daily use karta hoon. It's really good, trust me.";
 const NBSP: char = '\u{a0}';
 
+/// The caption style when none is asked for.
+pub const DEFAULT_STYLE: &str = "clean";
+
 struct Look { font: &'static str, weight: f64, size: f64, color: [f64; 3], stroke: f64, shadow: f64, upper: bool, bg: Option<[f64; 4]>,
-    active: [f64; 3], keyword: Option<[f64; 3]>, per_line: usize, lines: usize, reveal: bool, pop: f64, karaoke: bool, page_pop: bool, highlight: bool }
-/// Style presets. `size` is the type size as a fraction of the frame width; `stroke` a fraction of the type size.
+    active: [f64; 3], keyword: Option<[f64; 3]>, per_line: usize, lines: usize, reveal: bool, pop: f64, karaoke: bool, page_pop: bool, highlight: bool, settle: bool }
+/// Style presets. `size` is the type size as a fraction of the frame's SHORT side (so a look is the same on 16:9 and
+/// 9:16: on a vertical frame that is its width, on a landscape one its height); `stroke` a fraction of the type size.
+///
+/// The defaults follow how broadcast and good editorial captions are set, not the viral-short look: one humanist sans
+/// (Inter) in sentence case, white with a soft shadow instead of a thick outline, one short line, no per-word bounce and
+/// no rainbow of highlight colours. "clean" is the default. "pop" and "impact" stay bold for social edits but keep one
+/// restrained accent, a small settle instead of a bounce, and no outline.
 fn look(style: &str) -> Result<Look, String> {
     Ok(match style {
-        "pop" => Look { font: "Montserrat", weight: 900.0, size: 0.12, color: WHITE, stroke: 0.11, shadow: 4.0, upper: true, bg: None, active: YELLOW, keyword: Some(GREEN), per_line: 3, lines: 1, reveal: true, pop: 1.22, karaoke: false, page_pop: false, highlight: true },
-        "karaoke" => Look { font: "Montserrat", weight: 800.0, size: 0.08, color: WHITE, stroke: 0.09, shadow: 4.0, upper: false, bg: None, active: YELLOW, keyword: Some(GREEN), per_line: 4, lines: 2, reveal: false, pop: 1.08, karaoke: true, page_pop: false, highlight: true },
-        "clean" => Look { font: "Inter", weight: 700.0, size: 0.064, color: WHITE, stroke: 0.05, shadow: 8.0, upper: false, bg: None, active: [1.0, 0.9, 0.45], keyword: None, per_line: 6, lines: 2, reveal: false, pop: 1.0, karaoke: false, page_pop: false, highlight: false },
-        "boxed" => Look { font: "Montserrat", weight: 900.0, size: 0.09, color: WHITE, stroke: 0.0, shadow: 0.0, upper: true, bg: Some([0.0, 0.0, 0.0, 0.82]), active: GREEN, keyword: Some(YELLOW), per_line: 3, lines: 1, reveal: false, pop: 1.12, karaoke: false, page_pop: false, highlight: true },
-        "impact" => Look { font: "Anton", weight: 400.0, size: 0.15, color: WHITE, stroke: 0.07, shadow: 6.0, upper: true, bg: None, active: YELLOW, keyword: Some(YELLOW), per_line: 2, lines: 1, reveal: false, pop: 1.0, karaoke: false, page_pop: true, highlight: false },
-        o => return Err(format!("style must be pop|karaoke|clean|boxed|impact, got '{}'", crate::transcript_parse::sanitize(o))),
+        "clean" => Look { font: "Inter", weight: 600.0, size: 0.052, color: WHITE, stroke: 0.0, shadow: 14.0, upper: false, bg: None, active: WARM, keyword: None, per_line: 6, lines: 1, reveal: false, pop: 1.0, karaoke: false, page_pop: false, highlight: false, settle: false },
+        "pop" => Look { font: "Montserrat", weight: 800.0, size: 0.072, color: WHITE, stroke: 0.0, shadow: 16.0, upper: true, bg: None, active: WARM, keyword: None, per_line: 3, lines: 1, reveal: false, pop: 1.04, karaoke: false, page_pop: false, highlight: true, settle: false },
+        "karaoke" => Look { font: "Inter", weight: 700.0, size: 0.056, color: UNSPOKEN, stroke: 0.0, shadow: 14.0, upper: false, bg: None, active: WHITE, keyword: None, per_line: 5, lines: 2, reveal: false, pop: 1.0, karaoke: true, page_pop: false, highlight: true, settle: false },
+        "boxed" => Look { font: "Inter", weight: 600.0, size: 0.048, color: WHITE, stroke: 0.0, shadow: 0.0, upper: false, bg: Some([0.0, 0.0, 0.0, 0.62]), active: WARM, keyword: None, per_line: 6, lines: 1, reveal: false, pop: 1.0, karaoke: false, page_pop: false, highlight: false, settle: false },
+        "impact" => Look { font: "Anton", weight: 400.0, size: 0.1, color: WHITE, stroke: 0.0, shadow: 18.0, upper: true, bg: None, active: WARM, keyword: None, per_line: 2, lines: 1, reveal: false, pop: 1.0, karaoke: false, page_pop: false, highlight: false, settle: true },
+        o => return Err(format!("style must be clean|pop|karaoke|boxed|impact, got '{}'", crate::transcript_parse::sanitize(o))),
     })
 }
 
@@ -222,7 +234,7 @@ struct Built { caption_id: String, track_id: String, transcript_id: String, page
 
 /// Builds transcript + caption pages from timeline-timed words grouped by take. `takes`: (take, words in source seconds).
 fn build(ss: &mut Session, a: &Value, l: &Look, takes: Vec<(Take, Vec<sw::TimedWord>)>, language: &str, band: (f64, &'static str)) -> Result<Built, String> {
-    let style = a.get("style").and_then(|v| v.as_str()).unwrap_or("pop");
+    let style = a.get("style").and_then(|v| v.as_str()).unwrap_or(DEFAULT_STYLE);
     let per_line = int_arg(a, "max_words_per_line", 1, 8)?.unwrap_or(l.per_line); let lines = int_arg(a, "lines", 1, 2)?.unwrap_or(l.lines);
     let highlight = bool_arg(a, "highlight")?.unwrap_or(l.highlight); let use_kw = bool_arg(a, "keywords")?.unwrap_or(l.keyword.is_some());
     let color = color_arg(a, "color", l.color)?; let active = color_arg(a, "active_color", l.active)?; let kwc = color_arg(a, "keyword_color", l.keyword.unwrap_or(YELLOW))?;
@@ -244,6 +256,8 @@ fn build(ss: &mut Session, a: &Value, l: &Look, takes: Vec<(Take, Vec<sw::TimedW
     if keep.is_empty() { return Err("no speech recognized in the chosen clips".into()); }
     let tw: Vec<sw::TimedWord> = keep.iter().map(|&i| sw::TimedWord { text: tr.words[i].display.clone(), start: tr.words[i].start, end: tr.words[i].end, conf: tr.words[i].confidence.unwrap_or(1.0) }).collect();
     let max_chars = (if l.upper { 16 } else { 20 }).max(per_line * 5);
+    // on a vertical frame captions are read on a phone at arm's length: a quarter larger than on a landscape frame
+    let short = w.min(h) * if h > w * 1.05 { 1.25 } else { 1.0 };
     let pages = sw::paginate(&tw, per_line, lines, max_chars);
     let mut freq: HashMap<String, usize> = HashMap::new(); for x in &tw { *freq.entry(sw::norm_word(&x.text)).or_insert(0) += 1; }
     // track
@@ -254,18 +268,18 @@ fn build(ss: &mut Session, a: &Value, l: &Look, takes: Vec<(Take, Vec<sw::TimedW
         let idx: Vec<usize> = (pg.first..=pg.last).map(|k| keep[k]).collect();
         let disp: Vec<String> = idx.iter().map(|&i| tr.words[i].display.clone()).collect(); let dref: Vec<&str> = disp.iter().map(|s| s.as_str()).collect();
         let text = compose_cue_text(&dref, &pg.breaks_after);
-        let mut fx = TextFx { weight: l.weight, uppercase: l.upper, bg: l.bg, bg_pad: (l.size * w * 0.32).round(), bg_radius: (l.size * w * 0.22).round(), shadow_blur: l.shadow, shadow_opacity: if l.shadow > 0.0 { 0.55 } else { 0.0 }, ..Default::default() };
+        let mut fx = TextFx { weight: l.weight, uppercase: l.upper, bg: l.bg, bg_pad: (l.size * short * 0.42).round(), bg_radius: (l.size * short * 0.28).round(), shadow_blur: l.shadow, shadow_opacity: if l.shadow > 0.0 { 0.62 } else { 0.0 }, ..Default::default() };
         // type size: the preset, shrunk until the longest line fits 86% of the width -- counting the
         // visible pill (text plus bg_pad on both sides) for a background-box style, not just the glyphs:
         // a 92%-wide line of text padded out by a boxed/pop pill's own bg_pad routinely pushed the actual
         // drawn box edge-to-edge (no side margin, corners clipped by the canvas) even though the bare text
         // measured fine on its own.
-        let mut size = opt_num(a, "size", (l.size * w).round()).clamp(8.0, 600.0);
+        let mut size = opt_num(a, "size", (l.size * short).round()).clamp(8.0, 600.0);
         let fit_target = 0.86 * w - if l.bg.is_some() { 2.0 * fx.bg_pad } else { 0.0 };
         if let Ok(m) = crate::text::measure_text(&text, &font, size, 0.0, l.weight, "center", w, h, Some(&fx)) { if m.width > fit_target { size = (size * fit_target / m.width).floor().max(8.0); } }
         // same margin for the wrap width itself: a background box's own pill (text + 2*bg_pad) stays inside
         // a real 5% side margin (0.90w) instead of running to the canvas edge.
-        fx.box_width = if l.bg.is_some() { (0.90 * w - 2.0 * fx.bg_pad).max(0.3 * w) } else { 0.92 * w };
+        fx.box_width = if l.bg.is_some() { (0.90 * w - 2.0 * fx.bg_pad).max(0.3 * w) } else { 0.90 * w }; // a 5% side margin, as caption_engine
         let s: Vec<f64> = idx.iter().map(|&i| tr.words[i].start - pg.start).collect(); let e: Vec<f64> = idx.iter().map(|&i| tr.words[i].end - pg.start).collect();
         let kw: Vec<usize> = if use_kw && dref.len() >= 2 { sw::keywords(&dref, if dref.len() >= 6 { 2 } else { 1 }, &freq) } else { vec![] };
         let dur = (pg.end - pg.start).max(0.05);
@@ -273,12 +287,12 @@ fn build(ss: &mut Session, a: &Value, l: &Look, takes: Vec<(Take, Vec<sw::TimedW
         let mut props = default_props(); props.insert("y".into(), Prop::new(y.round()));
         // page in: a quick fade and settle (a bigger pop for impact); page out: a fade only when a gap follows
         let mut op = Prop::new(1.0); let mut sc = Prop::new(1.0);
-        if pg.start - prev_end > 0.05 { op.set_key(0.0, 0.0, Ease::OutQuart); op.set_key(0.07f64.min(dur / 2.0), 1.0, Ease::Hold); }
-        if l.page_pop { sc.set_key(0.0, 0.62, Ease::OutBack); sc.set_key(0.16f64.min(dur), 1.0, Ease::Hold); } else if !l.reveal { sc.set_key(0.0, 0.94, Ease::OutQuart); sc.set_key(0.1f64.min(dur), 1.0, Ease::Hold); }
+        if pg.start - prev_end > 0.05 { op.set_key(0.0, 0.0, Ease::OutQuart); op.set_key(0.12f64.min(dur / 2.0), 1.0, Ease::Hold); }
+        if l.page_pop { sc.set_key(0.0, 0.62, Ease::OutBack); sc.set_key(0.16f64.min(dur), 1.0, Ease::Hold); } else if l.settle { sc.set_key(0.0, 0.94, Ease::OutQuart); sc.set_key(0.1f64.min(dur), 1.0, Ease::Hold); }
         let gap_after = pages.get(pi + 1).map_or(1.0, |n| n.start - pg.end); if gap_after > 0.05 && dur > 0.2 { if op.keys.is_empty() { op.set_key(0.0, 1.0, Ease::Hold); } op.set_key(dur - 0.08, 1.0, Ease::InOut); op.set_key(dur, 0.0, Ease::Hold); }
         if !op.keys.is_empty() { props.insert("opacity".into(), op); } if !sc.keys.is_empty() { props.insert("scale".into(), sc); }
         let id = ss.project.gen_id("clip");
-        let src = Source::Text { text, font: font.clone(), size, color, letter_spacing: 0.0, stroke_width: (l.stroke * size).round(), stroke_color: BLACK, shadow: if l.shadow > 0.0 { (size * 0.05).round() } else { 0.0 }, align: "center".into() };
+        let src = Source::Text { text, font: font.clone(), size, color, letter_spacing: 0.0, stroke_width: (l.stroke * size).round(), stroke_color: BLACK, shadow: if l.shadow > 0.0 { (size * 0.035).round() } else { 0.0 }, align: "center".into() };
         let c = Clip { id: id.clone(), source: src, start: pg.start, duration: dur, in_point: 0.0, speed: 1.0, speed_curve: None, speed_blend: Default::default(), time_remap: None, props, grade_graph: None, effects: vec![], blend: "normal".into(), mask: None, time_mode: TimeMode::Normal, corners: None, audio: Audio::default(), motion_blur: 0.0, echo: None, motion_path: None, posterize_fps: 0.0, text_fx: Some(fx), parent: None, inherit: Default::default(), name: Some(format!("caption {}", pi + 1)), role: None, tags: vec!["auto_captions".into()], transition_in: None };
         ss.project.tracks.last_mut().unwrap().clips.push(std::sync::Arc::new(c));
         ss.project.editorial.cue_words.insert(id.clone(), CueBinding { word_ids: idx.iter().map(|&i| tr.words[i].id.clone()).collect(), breaks_after: pg.breaks_after.clone() });
@@ -312,7 +326,7 @@ fn write_sidecars(ss: &Session, a: &Value, id: &str) -> Result<Vec<String>, Stri
 }
 
 fn auto_captions(ss: &mut Session, a: &Value) -> Result<Value, String> {
-    let style = a.get("style").and_then(|v| v.as_str()).unwrap_or("pop"); let l = look(style)?;
+    let style = a.get("style").and_then(|v| v.as_str()).unwrap_or(DEFAULT_STYLE); let l = look(style)?;
     let position = a.get("position").and_then(|v| v.as_str()).unwrap_or("auto");
     if !["auto", "bottom", "middle", "top"].contains(&position) { return Err("position must be auto|bottom|middle|top".into()); }
     if let Some(s) = a.get("script").and_then(|v| v.as_str()) { if s != "roman" && s != "native" { return Err("script must be roman|native".into()); } }
@@ -412,14 +426,14 @@ fn export_captions(ss: &mut Session, a: &Value) -> Result<Value, String> {
 pub fn commands() -> Vec<Command> {
     let colr = |d: &str| json!({"description": d, "anyOf": [{"type":"string"}, {"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3}]});
     vec![
-        Command { name: "auto_captions", description: "Transcribe the talking clips locally and add word-synced animated captions in one call. Styles: pop, karaoke, clean, boxed, impact. Hinglish aware.", mutates: true,
+        Command { name: "auto_captions", description: "Transcribe the talking clips locally and add word-synced captions in one call. Styles: clean (default: Inter, sentence case, soft shadow, one line), boxed (the same on a soft dark box), karaoke (spoken words turn from grey to white), pop (bold caps for social edits, one warm accent on the spoken word), impact (big condensed caps, two words at a time). Hinglish aware.", mutates: true,
             schema: obj(vec![("clip_ids", json!({"type":"array","items":{"type":"string"},"description":"clips to transcribe; default every audible media clip"})),
-                ("style", json!({"type":"string","enum":["pop","karaoke","clean","boxed","impact"],"description":"default pop"})),
+                ("style", json!({"type":"string","enum":["clean","boxed","karaoke","pop","impact"],"description":"default clean"})),
                 ("position", json!({"type":"string","enum":["auto","bottom","middle","top"],"description":"default auto: lower band, or top when a face is low"})),
-                ("max_words_per_line", n("1..8, default by style (pop 3)")), ("lines", n("1 or 2, default by style")),
+                ("max_words_per_line", n("1..8, default by style (clean 6, pop 3)")), ("lines", n("1 or 2, default by style")),
                 ("language", s("auto (default), hinglish, or a code like en, hi, es")), ("script", json!({"type":"string","enum":["roman","native"],"description":"Hindi output script, default roman"})),
                 ("hint", s("names or terms the speaker says, to help recognition")), ("fast", json!({"type":"boolean","description":"greedy decoding: about 3x faster, less accurate (default false)"})), ("normalize_spelling", json!({"type":"boolean","description":"Hinglish only: one spelling for common variants (bahut/bohat -> bohot, pani -> paani); default true"})), ("highlight", json!({"type":"boolean","description":"colour + pop the word being spoken (default by style)"})),
-                ("keywords", json!({"type":"boolean","description":"colour 1-2 stress words per page (default by style)"})),
+                ("keywords", json!({"type":"boolean","description":"colour 1-2 stress words per page (default off)"})),
                 ("font", s("font name or .ttf path (default by style)")), ("size", n("type size px (default by style, shrunk to fit)")), ("color", colr("text colour")), ("active_color", colr("spoken-word colour")), ("keyword_color", colr("keyword colour")),
                 ("words", json!({"type":"array","items":{"type":"object"},"description":"skip recognition: [{text,start,end}] timeline seconds"})),
                 ("replace", s("caption_id of an earlier auto group to replace")), ("srt_path", s("also write an .srt")), ("vtt_path", s("also write a .vtt")), ("overwrite", json!({"type":"boolean"}))], &[]),

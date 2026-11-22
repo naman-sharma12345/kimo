@@ -164,6 +164,46 @@ fn block_origin(cw: f32, ch: f32, bw: f32, bh: f32) -> (f32, f32) { ((cw - bw) /
 pub struct LineMetrics { pub text: String, pub x: f64, pub y: f64, pub w: f64, pub h: f64, pub baseline: f64 }
 pub struct TextMetrics { pub width: f64, pub height: f64, pub lines: Vec<LineMetrics>, pub origin: (f64, f64), pub ink: Option<[f64; 4]>, pub font_file: String, pub substituted: bool }
 /// `ch` = canvas height used to centre the block vertically (0 = height of the block, i.e. origin y 0).
+/// One glyph of laid-out text as vector outlines: SVG path data in pixels relative to the canvas centre, placed exactly
+/// where render_text draws it (same layout, alignment and wrap).
+pub struct GlyphPath { pub ch: char, pub d: String, pub bounds: [f64; 4] }
+struct PathOut { d: String, ox: f64, oy: f64, sx: f64, sy: f64, b: [f64; 4] }
+impl PathOut { fn p(&mut self, x: f32, y: f32) -> (f64, f64) { let (px, py) = (self.ox + x as f64 * self.sx, self.oy - y as f64 * self.sy); self.b = [self.b[0].min(px), self.b[1].min(py), self.b[2].max(px), self.b[3].max(py)]; (px, py) } }
+impl rustybuzz::ttf_parser::OutlineBuilder for PathOut {
+    fn move_to(&mut self, x: f32, y: f32) { let (a, b) = self.p(x, y); self.d += &format!("M{a:.2} {b:.2}"); }
+    fn line_to(&mut self, x: f32, y: f32) { let (a, b) = self.p(x, y); self.d += &format!("L{a:.2} {b:.2}"); }
+    fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) { let (a1, b1) = self.p(x1, y1); let (a, b) = self.p(x, y); self.d += &format!("Q{a1:.2} {b1:.2} {a:.2} {b:.2}"); }
+    fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) { let (a1, b1) = self.p(x1, y1); let (a2, b2) = self.p(x2, y2); let (a, b) = self.p(x, y); self.d += &format!("C{a1:.2} {b1:.2} {a2:.2} {b2:.2} {a:.2} {b:.2}"); }
+    fn close(&mut self) { self.d += "Z"; }
+}
+/// The outlines of every visible glyph of `text` as it would render on a `cw` x `ch` canvas.
+pub fn glyph_paths(text: &str, font_name: &str, size: f64, spacing: f64, weight: f64, align: &str, cw: f64, ch: f64, fx: Option<&TextFx>) -> Result<Vec<GlyphPath>, String> {
+    let f = font(font_name, weight)?; let upper; let text = if fx.map(|x| x.uppercase).unwrap_or(false) { upper = text.to_uppercase(); upper.as_str() } else { text };
+    let (glyphs, bw, bh, _, _, _) = layout(text, &f, size as f32, spacing as f32, align, cw as f32, fx);
+    let (bx, by) = block_origin(cw as f32, ch as f32, bw, bh);
+    let path = resolve_font(font_name); let data = std::fs::read(&path).map_err(|e| format!("font {path}: {e}"))?;
+    let mut face = rustybuzz::ttf_parser::Face::parse(&data, 0).map_err(|e| format!("font parse {path}: {e}"))?;
+    if face.is_variable() { let _ = face.set_variation(rustybuzz::ttf_parser::Tag::from_bytes(b"wght"), if weight > 0.0 { weight as f32 } else { 700.0 }); }
+    let sc = f.as_scaled(PxScale::from(size as f32)).scale_factor();
+    let mut out = vec![];
+    for g in &glyphs {
+        if g.c.is_whitespace() { continue; }
+        let gid = g.gid.unwrap_or(f.glyph_id(g.c).0);
+        let mut b = PathOut { d: String::new(), ox: (bx + g.x) as f64 - cw / 2.0, oy: (by + g.y) as f64 - ch / 2.0, sx: sc.horizontal as f64, sy: sc.vertical as f64, b: [f64::MAX, f64::MAX, f64::MIN, f64::MIN] };
+        if face.outline_glyph(rustybuzz::ttf_parser::GlyphId(gid), &mut b).is_some() && !b.d.is_empty() { out.push(GlyphPath { ch: g.c, d: b.d, bounds: b.b }); }
+    }
+    Ok(out)
+}
+
+/// The exact cap height in pixels (the outline of "H", not its pixel-rounded box: at small sizes rounding both edges
+/// added up to 2 px, so a 9 px caption read 20% taller than it is).
+pub fn cap_height(font_name: &str, size: f64, weight: f64) -> Result<f64, String> {
+    // measured once at 1000 px, where the pixel rounding of the ink box is under 0.2%, then scaled: glyph outlines scale linearly
+    const BIG: f32 = 1000.0;
+    let f = font(font_name, weight)?;
+    let g = f.glyph_id('H').with_scale_and_position(PxScale::from(BIG), ab_glyph::point(0.0, BIG));
+    Ok(f.outline_glyph(g).map_or(0.0, |o| { let b = o.px_bounds(); (b.max.y - b.min.y) as f64 }) * size / BIG as f64)
+}
 pub fn measure_text(text: &str, font_name: &str, size: f64, spacing: f64, weight: f64, align: &str, cw: f64, ch: f64, fx: Option<&TextFx>) -> Result<TextMetrics, String> {
     let f = font(font_name, weight)?; let upper; let text = if fx.map(|x| x.uppercase).unwrap_or(false) { upper = text.to_uppercase(); upper.as_str() } else { text };
     let (glyphs, bw, bh, nl, _, _) = layout(text, &f, size as f32, spacing as f32, align, cw as f32, fx); let sf = f.as_scaled(PxScale::from(size as f32));

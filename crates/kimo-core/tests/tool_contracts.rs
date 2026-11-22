@@ -359,6 +359,68 @@ fn scoped_setup() -> (Vec<Step<'static>>, String) {
     renders_ok(&ss);
     row_err(&s, "add_counter", json!({"track_id": "nope", "start": 0.0, "duration": 1.0}), None);
 }
+#[test] fn add_counter_is_one_clip_that_counts_up() {
+    let mut ss = kimo_core::commands::Session::new();
+    let t = kimo_core::commands::dispatch(&mut ss, "add_track", &json!({})).unwrap()["track_id"].as_str().unwrap().to_string();
+    let r = kimo_core::commands::dispatch(&mut ss, "add_counter", &json!({"track_id": t, "start": 1.0, "duration": 1.0, "hold": 0.5, "from": 0, "to": 1500, "prefix": "$", "grouping": "western"})).unwrap();
+    assert_eq!(r["clip_ids"].as_array().unwrap().len(), 1, "one clip, not one per frame: {r}");
+    let c = ss.project.tracks[0].clips[0].clone();
+    let kimo_core::model::Source::Text { text, .. } = &c.source else { panic!("a text clip") };
+    let at = |g: f64| kimo_core::render::dyn_text(text, g, ss.project.fps);
+    assert_eq!(at(1.0), "$0"); assert_eq!(at(2.0), "$1,500"); assert_eq!(at(2.4), "$1,500", "holds the final value");
+    let mid: f64 = at(1.3).trim_start_matches('$').replace(',', "").parse().unwrap(); assert!(mid > 0.0 && mid < 1500.0, "rolling at 1.3 s: {mid}");
+    assert!((c.start - 1.0).abs() < 1e-9 && (c.duration - 1.5).abs() < 1e-9, "on screen for the roll and the hold");
+}
+#[test] fn set_text_can_remove_an_outline_and_restyle() {
+    let mut ss = Session::new();
+    let t = dispatch(&mut ss, "add_track", &json!({})).unwrap()["track_id"].as_str().unwrap().to_string();
+    let id = dispatch(&mut ss, "add_text", &json!({"track_id": t, "text": "Hi", "start": 0.0, "duration": 1.0, "stroke_width": 6.0})).unwrap()["clip_id"].as_str().unwrap().to_string();
+    dispatch(&mut ss, "set_text", &json!({"clip_id": id, "stroke_width": 0, "letter_spacing": 4, "font": "Inter", "shadow": 3, "align": "left"})).unwrap();
+    let kimo_core::model::Source::Text { stroke_width, letter_spacing, font, shadow, align, .. } = &ss.project.find_clip(&id).unwrap().source else { panic!() };
+    assert_eq!((*stroke_width, *letter_spacing, font.as_str(), *shadow, align.as_str()), (0.0, 4.0, "Inter", 3.0, "left"));
+    assert!(dispatch(&mut ss, "set_text", &json!({"clip_id": id, "stroke_width": -1})).is_err(), "a negative outline is refused");
+    assert!(dispatch(&mut ss, "set_text", &json!({"clip_id": id, "align": "middle"})).is_err());
+}
+#[test] fn add_title_moves_as_a_whole() {
+    let mut ss = Session::new(); dispatch(&mut ss, "project_set", &json!({"width": 1280, "height": 720, "fps": 30})).unwrap();
+    let t = dispatch(&mut ss, "add_track", &json!({})).unwrap()["track_id"].as_str().unwrap().to_string();
+    dispatch(&mut ss, "add_title", &json!({"track_id": t, "style": "lower_third", "text": "Alex", "subtitle": "Coach"})).unwrap();
+    let before: Vec<(f64, f64)> = ss.project.tracks[0].clips.iter().map(|c| (c.props["x"].base, c.props["y"].base)).collect();
+    let t2 = dispatch(&mut ss, "add_track", &json!({})).unwrap()["track_id"].as_str().unwrap().to_string();
+    dispatch(&mut ss, "add_title", &json!({"track_id": t2, "style": "lower_third", "text": "Alex", "subtitle": "Coach", "x": 40, "y": -30})).unwrap();
+    let after: Vec<(f64, f64)> = ss.project.tracks[1].clips.iter().map(|c| (c.props["x"].base, c.props["y"].base)).collect();
+    assert_eq!(before.len(), after.len());
+    for (b, a) in before.iter().zip(&after) { assert!((a.0 - b.0 - 40.0).abs() < 1e-9 && (a.1 - b.1 + 30.0).abs() < 1e-9, "{b:?} -> {a:?}"); }
+}
+#[test] fn text_to_shapes_makes_one_path_per_letter_where_the_text_was() {
+    let mut ss = Session::new(); dispatch(&mut ss, "project_set", &json!({"width": 640, "height": 360, "fps": 30})).unwrap();
+    let t = dispatch(&mut ss, "add_track", &json!({})).unwrap()["track_id"].as_str().unwrap().to_string();
+    let id = dispatch(&mut ss, "add_text", &json!({"track_id": t, "text": "Hi o", "start": 0.0, "duration": 2.0, "font": "Inter", "size": 80})).unwrap()["clip_id"].as_str().unwrap().to_string();
+    let before = render::render_frame(&ss.project, 1.0, &render::Cache::new()).unwrap();
+    let r = dispatch(&mut ss, "text_to_shapes", &json!({"clip_id": id})).unwrap();
+    assert_eq!(r["glyphs"], 3, "H, i, o (the space has no outline): {r}");
+    assert!(ss.project.find_clip(&id).is_none(), "the text clip is replaced");
+    let after = render::render_frame(&ss.project, 1.0, &render::Cache::new()).unwrap();
+    let ink = |f: &kimo_core::effects::Frame| -> Vec<bool> { (0..f.w * f.h).map(|i| f.d[i * 4 + 3] > 0.5 && f.d[i * 4] > 0.5).collect() };
+    let (a, b) = (ink(&before), ink(&after)); let both = a.iter().zip(&b).filter(|(x, y)| **x && **y).count(); let either = a.iter().zip(&b).filter(|(x, y)| **x || **y).count();
+    assert!(either > 500 && both as f64 / either as f64 > 0.9, "the shapes cover the same pixels as the text: IoU {}", both as f64 / either as f64);
+    let id2 = dispatch(&mut ss, "add_text", &json!({"track_id": t, "text": "ab", "start": 3.0, "duration": 2.0, "size": 60})).unwrap()["clip_id"].as_str().unwrap().to_string();
+    let r = dispatch(&mut ss, "text_to_shapes", &json!({"clip_id": id2, "draw_on": 0.6})).unwrap();
+    let c = ss.project.find_clip(r["clip_ids"][0].as_str().unwrap()).unwrap();
+    assert!(c.effects.iter().any(|e| e.kind == "shape_trim"), "draw-on traces with a trim");
+}
+#[test] fn a_transition_between_clips_on_one_track_makes_its_own_overlap() {
+    let mut ss = Session::new(); dispatch(&mut ss, "project_set", &json!({"width": 320, "height": 180, "fps": 30})).unwrap();
+    let t = dispatch(&mut ss, "add_track", &json!({})).unwrap()["track_id"].as_str().unwrap().to_string();
+    let a = dispatch(&mut ss, "add_clip", &json!({"track_id": t, "source_type": "solid", "color": [1, 0, 0], "start": 0.0, "duration": 2.0})).unwrap()["clip_id"].as_str().unwrap().to_string();
+    let b = dispatch(&mut ss, "add_clip", &json!({"track_id": t, "source_type": "solid", "color": [0, 0, 1], "start": 2.0, "duration": 2.0})).unwrap()["clip_id"].as_str().unwrap().to_string();
+    let r = dispatch(&mut ss, "add_transition", &json!({"clip_id": b, "kind": "crossfade", "duration": 1.0})).unwrap();
+    assert!(r["same_track"].is_object(), "{r}");
+    assert!((ss.project.find_clip(&a).unwrap().duration - 3.0).abs() < 1e-9, "the outgoing clip plays on under the incoming one");
+    assert!((ss.project.find_clip(&b).unwrap().start - 2.0).abs() < 1e-9, "the cut stays where it was");
+    let f = render::render_frame(&ss.project, 2.5, &render::Cache::new()).unwrap(); let i = (90 * 320 + 160) * 4;
+    assert!(f.d[i] > 0.15 && f.d[i + 2] > 0.15, "halfway through, red and blue are mixed: {:?}", &f.d[i..i + 3]);
+}
 #[test] fn get_scopes_is_read_only_and_reports_stats() {
     let (s, _t1, _t2, _c) = one_clip(); let mut ss = fresh(&s); let before = pj(&ss);
     let r = call(&mut ss, "get_scopes", json!({"time": 1.5})); assert_eq!(pj(&ss), before, "read-only"); assert!(r.is_object() && !r.as_object().unwrap().is_empty(), "{r}");

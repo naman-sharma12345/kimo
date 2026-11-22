@@ -118,11 +118,23 @@ pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
             let mut c = c; { let an = a.get("anchor").and_then(|v| v.as_str()).unwrap_or("center"); if an != "center" { if let Source::Text { text, font, size, letter_spacing, align, .. } = &c.source { let cw = ss.project.width as f64; let bw = crate::text::measure(text, font, *size, *letter_spacing, 0.0, align, cw)?.0; let dx = if an == "left" { bw / 2.0 } else if an == "right" { -bw / 2.0 } else { return Err("anchor must be center, left or right".into()) }; if let Some(p) = c.props.get_mut("x") { p.base = dx + opt_num(a, "x", 0.0); } } } else if let Some(p) = c.props.get_mut("x") { p.base = opt_num(a, "x", 0.0); } }
             { let al = color_alpha(a, "color"); if al < 1.0 { if let Some(p) = c.props.get_mut("opacity") { p.base *= al; } } }
             ss.project.tracks.iter_mut().find(|t| t.id == tid).ok_or("no such track")?.clips.push(std::sync::Arc::new(c)); Ok(json!({"clip_id":id})) } },
-    Command { name: "set_text", description: "Edit text content/style of a text clip.", mutates: true,
-        schema: obj(vec![("clip_id", s("text clip")), ("text", s("new text")), ("size", n("pixels")), ("color", col_schema("", false))], &["clip_id"]),
-        run: |ss, a| { let c = clip(&mut ss.project, a)?; if let Source::Text { text, size, color: col, .. } = &mut c.source {
-            if let Some(t) = a.get("text").and_then(|v| v.as_str()) { *text = t.replace("\\n", "\n"); } if let Some(v) = a.get("size").and_then(|v| v.as_f64()) { *size = v; }
-            if a.get("color").is_some() { *col = color(a, "color", *col)?; } Ok(json!({"ok":true})) } else { Err("not a text clip".into()) } } },
+    Command { name: "set_text", description: "Edit a text clip's content and core style: text, font, size, colour, outline (stroke_width 0 removes it), letter spacing, drop-shadow offset and alignment. Only the fields you pass change.", mutates: true,
+        schema: obj(vec![("clip_id", s("text clip")), ("text", s("new text")), ("font", s("font family name or .ttf path")), ("size", n("pixels")), ("color", col_schema("", false)),
+            ("stroke_width", n("outline width in pixels; 0 removes the outline")), ("stroke_color", col_schema("outline colour", false)),
+            ("letter_spacing", n("extra space between letters, in pixels")), ("shadow", n("drop-shadow offset in pixels; 0 = none (a soft shadow's blur is set_text_style shadow_blur)")),
+            ("align", json!({"type":"string","enum":["left","center","right"]}))], &["clip_id"]),
+        run: |ss, a| { let c = clip(&mut ss.project, a)?; if let Source::Text { text, font, size, color: col, letter_spacing, stroke_width, stroke_color, shadow, align } = &mut c.source {
+            let num = |k: &str, lo: f64, hi: f64| -> Result<Option<f64>, String> { match a.get(k) { None | Some(Value::Null) => Ok(None), Some(v) => v.as_f64().filter(|x| x.is_finite() && *x >= lo && *x <= hi).map(Some).ok_or_else(|| format!("{k} must be a number {lo}..{hi}")) } };
+            if let Some(t) = a.get("text").and_then(|v| v.as_str()) { *text = t.replace("\\n", "\n"); }
+            if let Some(f) = a.get("font").and_then(|v| v.as_str()) { *font = f.to_string(); }
+            if let Some(v) = num("size", 1.0, 2000.0)? { *size = v; }
+            if a.get("color").is_some() { *col = color(a, "color", *col)?; }
+            if let Some(v) = num("stroke_width", 0.0, 500.0)? { *stroke_width = v; }
+            if a.get("stroke_color").is_some() { *stroke_color = color(a, "stroke_color", *stroke_color)?; }
+            if let Some(v) = num("letter_spacing", -500.0, 2000.0)? { *letter_spacing = v; }
+            if let Some(v) = num("shadow", 0.0, 500.0)? { *shadow = v; }
+            if let Some(v) = a.get("align").and_then(|v| v.as_str()) { if !["left", "center", "right"].contains(&v) { return Err("align must be left|center|right".into()); } *align = v.to_string(); }
+            Ok(json!({"ok":true})) } else { Err("not a text clip".into()) } } },
     Command { name: "set_shape_size", description: "Set a shape clip's own width and height in pixels. This is the shape's size field (rect/ellipse/polygon/line), independent of its animated scale -- not a Prop, so it has no keyframes of its own to fight. Use this to resize a box/pill that backs a text label (e.g. a subscribe_pop pill) after the text it hugs changes size, so the box keeps matching the rendered text bounds instead of staying the width it was first built for.", mutates: true,
         schema: obj(vec![("clip_id", s("shape clip")), ("width", n("pixels")), ("height", n("pixels"))], &["clip_id"]),
         run: |ss, a| { let c = clip(&mut ss.project, a)?; if let Source::Shape { width, height, .. } = &mut c.source {

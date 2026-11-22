@@ -28,21 +28,16 @@ fn words(pairs: &[(&str, f64, f64)]) -> Vec<EWord> { pairs.iter().map(|&(t, s, e
     assert_eq!(units2.len(), 2, "a finished sentence followed by a pause and a new word should stay two units: {:?}", units2);
     assert_eq!(units2[1].first, 5); // "ok" genuinely stands alone -- not an orphan
 }
-#[test] fn segmentation_respects_cps_limit() {
-    // a high char cap (so the char-count cap alone would never force a cut) but a bursty rate: six short
-    // words land in a tight half-second burst, well past max_cps if grouped into one unit; grouping fewer
-    // of them at a time keeps each unit's own reading speed under the cap, so the engine must prefer that.
+#[test] fn fast_speech_is_not_shattered_into_one_word_flashes() {
+    // six short words in a tight half-second burst (far over 15 characters a second): cutting them apart cannot make
+    // them read slower (each piece is as fast as the words), it only makes 0.08 s flashes. They stay one readable cue;
+    // the timing stage is what keeps a fast cue on screen long enough.
     let mut t = 0.0; let mut pairs = vec![]; for _ in 0..6 { pairs.push(("hup".to_string(), t, t + 0.08)); t += 0.08; }
     let w: Vec<EWord> = pairs.iter().map(|(s, a, b)| EWord { text: s.clone(), start: *a, end: *b, conf: 1.0 }).collect();
     let spec = SegmentSpec { max_chars_per_line: 80, max_lines: 3, max_cps: 15.0, pause_break_s: 10.0, ..Default::default() };
     let units = segment(&w, &spec).unwrap();
-    assert!(units.len() > 1, "a bursty run well past max_cps must be cut into more than one unit even with char budget to spare: {:?}", units);
-    for u in &units {
-        if u.last == u.first { continue; } // a single word's own rate can't be helped by segmentation
-        let chars: usize = w[u.first..=u.last].iter().map(|x| x.text.chars().count() + 1).sum::<usize>().saturating_sub(1);
-        let span = (w[u.last].end - w[u.first].start).max(1e-6);
-        assert!(chars as f64 / span <= spec.max_cps + 1e-6, "unit cps {} exceeds {}: {:?}", chars as f64 / span, spec.max_cps, u);
-    }
+    assert_eq!(units.len(), 1, "a fast burst with char budget to spare stays one cue: {:?}", units);
+    assert!(units.iter().all(|u| u.last > u.first), "no one-word units: {:?}", units);
 }
 #[test] fn segmentation_breaks_at_phrase_and_punctuation_boundaries() {
     let w = words(&[("hello",0.0,0.3),("world",0.3,0.6),(".",0.6,0.6),("next",1.0,1.3),("sentence",1.3,1.7)]);
@@ -318,6 +313,7 @@ fn compare_restyle(style: &str, preset: &str) -> (bool, Vec<u64>, Vec<u64>) {
     // zzz_diag transcripts in progress reports) -- the gap is this one animation-curve primitive, named
     // exactly, not a vague "doesn't match".
     eprintln!("PRESET_REPORT:: byte-identical={:?} known-animation-gap={:?}", proven_identical, known_gap);
-    assert_eq!(proven_identical, vec!["clean".to_string()], "if this grew, update the CHANGELOG claim to match; if it shrank, something regressed");
-    assert_eq!(known_gap.len(), 7, "expected exactly pop/karaoke/boxed/impact/subtitle/boxed_simple/yellow to carry the documented animation gap");
+    // 26.11: boxed has no per-word animation any more (plain text on a soft box), so it joined clean as byte-identical
+    assert_eq!(proven_identical, vec!["boxed".to_string(), "clean".to_string()], "if this grew, update the CHANGELOG claim to match; if it shrank, something regressed");
+    assert_eq!(known_gap.len(), 6, "expected exactly pop/karaoke/impact/subtitle/boxed_simple/yellow to carry the documented animation gap");
 }

@@ -14,7 +14,7 @@ add_chart 387a1661c05a384b
 add_clip b26364e2a1be01ac
 add_clip_from_subclip 7830c64a31ad3e9b
 add_code_clip 79e8cbe027cdbd62
-add_counter 1a708a7e5bd2bdaf
+add_counter 3fb959ad00afdc2d
 add_depth_parallax cc1c6063f0930b13
 add_detection_box e740cc0690940b44
 add_displacement_map be79622940cf29ef
@@ -24,7 +24,7 @@ add_emitter 163900fc22436efa
 add_glitch_confetti ea3c9845ccf22d20
 add_glow_text 11957bdb81e0bc57
 add_hud_frame 3dbd990dc13820bb
-add_keyword_pops d4ad5f6b0aff25bc
+add_keyword_pops 64ccbea1319bdc6b
 add_lens_blur 465cef3d1ba4c9ca
 add_managed_linear_effect 15e7663749141579
 add_marker 13b9c5a2e2022d94
@@ -56,9 +56,9 @@ add_speed_lines 0db4bddd46e7a057
 add_subject_clone f6fe4888b2d1c573
 add_text e504fc3dce60034a
 add_text_animator 7c837530f3da76ca
-add_title ef78e3db77ecd193
+add_title 9c0f885e596be675
 add_track d3d8f4adba79137a
-add_transition bb51e8386d1e8f16
+add_transition 0f72589dbde5d178
 add_vertigo_zoom 19a177a511ee9471
 add_vfx_graph bba5b2b13d4443f5
 add_watermark b96ec8e068099019
@@ -80,11 +80,11 @@ audio_speech_intervals 5acb6faed09e4cb7
 audio_to_keyframes 4190ab7dd0c34307
 audio_transients fdd42015ab3821b9
 audit_color_output 58cf03598cf93fb6
-auto_captions eb2ea2f83777efbd
+auto_captions 36d46b20ddb0125e
 auto_chapters fff8eaf584738d1c
 auto_color 86d35765cf0dcf74
 auto_duck d92901f26ddb2d0b
-auto_edit 08dfae3eb22b1621
+auto_edit 4ef8c5e3d9d923cd
 auto_grade b0a9a89d03dd11a4
 auto_reframe 62c25d0e6fc84dd1
 auto_rough_cut 3c2a492a08be57b8
@@ -108,8 +108,8 @@ camera_clip_triangle bb5e8ec86c11e72f
 camera_project_points 9925e0b55b1c4af3
 camera_solve_info 68eba83a999378cc
 cancel_job 71597b2319b6d6cf
-caption_engine_compose d2efad2842511738
-caption_from_words c6b5de8e8851e704
+caption_engine_compose 9b2b784f734b16a9
+caption_from_words d4af19d3caa9173c
 check_code_clip_determinism c8a2418c67534879
 check_color_consistency ebceb412c57323f7
 check_environment 9d09b0da6a1d5b9c
@@ -302,6 +302,7 @@ motion_extract 40677d74bedf2eb2
 move_asset_to_bin 23a63229fa937d23
 move_clip 7a2fedebbc66bea9
 move_key 6ff462a36f5e1225
+music_structure 95777cddcf639116
 mux_chapters d4c909f56caca1e1
 new_project 6f33ccb3ecb0ac22
 normalize_loudness d77d16d8f58e8b00
@@ -480,7 +481,7 @@ set_shape_size f706b2947f49454d
 set_speed 0e5aa672ac57bbd2
 set_speed_ramp c98ee12bfb32f92d
 set_split_edit af640587669e23fa
-set_text ba3bc84f3bce516b
+set_text 75d3e2ede376994a
 set_text_path 103cf0dd9d7f55b1
 set_text_style 977ef2306acb3365
 set_text_weight 814c0178887918c0
@@ -510,6 +511,7 @@ template_delete 6b938f0f0f89fa07
 template_describe 6840c663f33496bf
 template_list 0757d10d640959f3
 text_contrast_series d14fc189b362abb4
+text_to_shapes c18ddeb9517d8ddc
 tighten_pauses 79c006e7fca0b005
 timeline_summary 9fdf3526f8d0c28b
 track_beats 91bef51f0456917f

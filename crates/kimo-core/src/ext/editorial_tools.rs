@@ -52,11 +52,12 @@ fn get<'a>(ss: &'a mut Session, a: &Value) -> Result<&'a mut Clip, String> {
 fn style(c: &mut Clip, name: &str, a: &Value, w: f64, h: f64) -> Result<(), String> {
     // type scales with the short side (on 16:9 that is the height, as before); on a tall canvas the cue sits a quarter of
     // the height below centre, clear of the bottom band phone apps cover with their own buttons and text
-    let s = h.min(w);
+    let s = h.min(w) * if h > w * 1.05 { 1.25 } else { 1.0 }; // vertical: a quarter larger, read on a phone
     let (size, col, stroke, bg) = match name {
-        "subtitle" => (s / 15., [1.; 3], 2., None),
-        "boxed" => (s / 15., [1.; 3], 0., Some([0., 0., 0., 0.75])),
-        "yellow" => (s / 13., [1., 0.9, 0.1], 3., None),
+        // white semibold with a soft shadow (no outline); the same on a soft dark box; a warm (not sign-paint) yellow
+        "subtitle" => (s * 0.051, [1.; 3], 0., None),
+        "boxed" => (s * 0.049, [1.; 3], 0., Some([0., 0., 0., 0.62])),
+        "yellow" => (s * 0.054, [1., 0.86, 0.42], 0., None),
         _ => return Err("style must be subtitle|boxed|yellow".into()),
     };
     let size = finite(a, "size", size, 1., 1000.)?;
@@ -65,18 +66,23 @@ fn style(c: &mut Clip, name: &str, a: &Value, w: f64, h: f64) -> Result<(), Stri
         size: s,
         color,
         stroke_width,
+        shadow,
         ..
     } = &mut c.source
     {
         *s = size;
         *color = col;
         *stroke_width = stroke;
+        *shadow = if bg.is_none() { (size * 0.035).round() } else { 0.0 };
     } else {
         return Err("not a text caption".into());
     }
     c.props.insert("y".into(), Prop::new(y));
     let fx = c.text_fx.get_or_insert_with(Default::default);
     fx.bg = bg;
+    fx.weight = 600.0;
+    // legibility from a soft shadow (or the box), scaled with the frame like the type itself
+    if bg.is_none() { fx.shadow_blur = (14.0 * h.min(w) / 1080.0).max(2.0); fx.shadow_opacity = 0.62; } else { fx.shadow_blur = 0.0; fx.shadow_opacity = 0.0; fx.bg_pad = (size * 0.42).round(); fx.bg_radius = (size * 0.28).round(); }
     let wrap_target = if h * 1.65 > w { w * 0.9 } else { h * 1.65 };
     // A background box's own visible pill is the text plus bg_pad on every side (text.rs's render_text draws
     // it that way); without allowing for that here the wrap width was sized for the bare glyphs and a boxed
@@ -86,13 +92,9 @@ fn style(c: &mut Clip, name: &str, a: &Value, w: f64, h: f64) -> Result<(), Stri
     fx.box_width = if bg.is_some() { (wrap_target - 2.0 * fx.bg_pad).max(0.3 * w) } else { wrap_target };
     Ok(())
 }
-/// The caption font when none is named: DejaVu Sans where it is installed (Linux, unchanged), otherwise the font kimo's
-/// own lookup picks (Montserrat when present, else the system sans). The bare Linux path used to be passed everywhere, so
-/// on Windows and macOS every caption logged a missing font and fell back without saying which font it used.
-fn default_caption_font() -> Value {
-    const DEJAVU: &str = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
-    json!(if std::path::Path::new(DEJAVU).is_file() { DEJAVU.to_string() } else { crate::text::resolve_font_info("Montserrat").0 })
-}
+/// The caption font when none is named: Inter (bundled with kimo), the same on every OS. kimo's lookup falls back to
+/// the system sans only if the bundled fonts are missing.
+fn default_caption_font() -> Value { json!(crate::text::resolve_font_info("Inter").0) }
 fn add_captions_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let tid = str_arg(a, "track_id")?.to_string();
     if !ss.project.tracks.iter().any(|t| t.id == tid && !t.locked) {

@@ -558,19 +558,10 @@ pub(crate) fn text_cap(c: &Clip, w: f64, h: f64) -> Result<f64, String> {
     else {
         return Ok(0.);
     };
-    let fx = c.text_fx.clone().unwrap_or_default();
-    let m = crate::text::measure_text(
-        "H",
-        font,
-        *size,
-        *letter_spacing,
-        fx.weight,
-        align,
-        w,
-        h,
-        Some(&fx),
-    )?;
-    Ok(m.ink.map_or(0., |r| r[3] - r[1]))
+    let _ = (letter_spacing, align, w, h);
+    // the glyph's exact cap height (font outline), not its pixel-rounded ink box or its shadow
+    let weight = c.text_fx.as_ref().map_or(0.0, |fx| fx.weight);
+    crate::text::cap_height(font, *size, weight)
 }
 fn outside(r: [f64; 4], zone: [f64; 4]) -> [f64; 4] {
     [
@@ -656,12 +647,13 @@ fn text_findings(
             v[2].as_f64().unwrap(),
             v[3].as_f64().unwrap(),
         ];
-        let cap = text_cap(&c, w, h)? * xf.scale.abs();
+        // to the 0.1 px the report shows, so the value compared is the value reported
+        let cap = (text_cap(&c, w, h)? * xf.scale.abs() * 10.0).round() / 10.0;
         let delivery = used["delivery_height"].as_f64().unwrap();
         let cap_delivery = cap * delivery / h;
         let cap1080 = cap_delivery * 1080. / delivery;
         if checks.contains("min_text_size")
-            && cap_delivery < used["min_cap_px"].as_f64().unwrap() * delivery / 1080.
+            && cap_delivery + 1e-9 < used["min_cap_px"].as_f64().unwrap() * delivery / 1080. // equal (to float noise) is not below
         {
             emit(
                 &c,

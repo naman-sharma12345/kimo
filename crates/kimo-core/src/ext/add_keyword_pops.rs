@@ -66,7 +66,7 @@ use crate::speech_words;
 use std::collections::HashMap;
 use std::process::Stdio;
 
-const STYLES: [&str; 3] = ["bold_caps", "boxed", "typewriter"];
+const STYLES: [&str; 4] = ["clean", "bold_caps", "boxed", "typewriter"];
 const POSITIONS: [&str; 3] = ["center", "upper_third", "lower_third"];
 const ANIMATE_INS: [&str; 3] = ["pop", "fade", "typewriter"];
 /// Total on-screen time (seconds) used for an auto-picked pop; matches KR2's measured hold range (0.8-1.5s)
@@ -86,7 +86,7 @@ const BOX_PAD_Y: f64 = 0.22;
 /// exactly proportional to px size, so measuring once at any size and scaling is exact).
 const PROBE_SIZE: f64 = 100.0;
 
-fn enum_arg(a: &Value, k: &str, d: &str, ok: &[&str; 3]) -> Result<String, String> {
+fn enum_arg(a: &Value, k: &str, d: &str, ok: &[&str]) -> Result<String, String> {
     match a.get(k) { None | Some(Value::Null) => Ok(d.to_string()),
         Some(Value::String(s)) if ok.contains(&s.as_str()) => Ok(s.clone()),
         Some(v) => Err(format!("{k} must be one of {}, got {v}", ok.join(", "))) }
@@ -196,7 +196,35 @@ fn pop_in_and_fade(ss: &mut Session, id: &str, duration_s: f64, yoff: f64, fade_
 }
 
 /// Places one pop, returns the clip id(s) it created (2 for "boxed": box then text; 1 otherwise).
-fn place_one(ss: &mut Session, track_id: &str, p: &Pop, style: &str, animate_in: &str, color: Option<[f64; 3]>, accent: Option<[f64; 3]>, yoff: f64) -> Result<Vec<String>, String> {
+/// Style "clean" (the default): the word as spoken (not forced to caps) in Inter ExtraBold, about 40% of the frame
+/// width, white with a soft shadow instead of an outline, easing up a few pixels while it fades in, and out with a
+/// short fade. Emphasis that reads like a designed title, not a sticker.
+/// Caller choices for the type: font family, weight (variable fonts) and whether bold_caps keeps its outline.
+#[derive(Clone, Default)]
+struct TypeOpts { font: Option<String>, weight: Option<f64>, outline: Option<bool> }
+
+fn place_clean(ss: &mut Session, track_id: &str, p: &Pop, color: Option<[f64; 3]>, accent: Option<[f64; 3]>, yoff: f64, ty: &TypeOpts) -> Result<Vec<String>, String> {
+    let (fw, fh) = (ss.project.width as f64, ss.project.height as f64); let short = fw.min(fh);
+    let min_size = (short * 0.05).max(8.0); let max_size = (short * 0.16).max(min_size + 1.0);
+    let font = ty.font.clone().unwrap_or_else(|| "Inter".into());
+    let size = fit_size_to_width(&p.text, &font, fw * 0.40, 0.0, min_size, max_size)?.round();
+    let fill = accent.or(color).unwrap_or([1.0, 1.0, 1.0]);
+    let id = call(ss, "add_text", &json!({"track_id": track_id, "text": p.text, "start": p.at_s, "duration": p.duration_s, "font": font, "size": size, "color": fill, "shadow": (size * 0.03).round()}))?["clip_id"].as_str().ok_or("add_text returned no clip_id")?.to_string();
+    if let Some(c) = ss.project.find_clip_mut(&id) { let fx = c.text_fx.get_or_insert_with(Default::default); fx.weight = ty.weight.unwrap_or(800.0); fx.shadow_blur = (18.0 * short / 1080.0).max(2.0); fx.shadow_opacity = 0.6; }
+    let rise = (short * 0.012).round();
+    call(ss, "set_keyframe", &json!({"clip_id": id, "property": "y", "time": 0.0, "value": yoff + rise, "ease": "out_quart"}))?;
+    call(ss, "set_keyframe", &json!({"clip_id": id, "property": "y", "time": 0.28, "value": yoff, "ease": "hold"}))?;
+    call(ss, "set_keyframe", &json!({"clip_id": id, "property": "opacity", "time": 0.0, "value": 0.0, "ease": "out"}))?;
+    call(ss, "set_keyframe", &json!({"clip_id": id, "property": "opacity", "time": 0.2, "value": 1.0, "ease": "out"}))?;
+    let fade_out_start = (p.duration_s - 0.25).max(0.21);
+    call(ss, "set_keyframe", &json!({"clip_id": id, "property": "opacity", "time": fade_out_start, "value": 1.0, "ease": "in"}))?;
+    call(ss, "set_keyframe", &json!({"clip_id": id, "property": "opacity", "time": p.duration_s, "value": 0.0, "ease": "in"}))?;
+    Ok(vec![id])
+}
+
+fn place_one(ss: &mut Session, track_id: &str, p: &Pop, style: &str, animate_in: &str, color: Option<[f64; 3]>, accent: Option<[f64; 3]>, yoff: f64, ty: &TypeOpts) -> Result<Vec<String>, String> {
+    if style == "clean" { return place_clean(ss, track_id, p, color, accent, yoff, ty); }
+    let font = ty.font.clone().unwrap_or_else(|| "Anton".into());
     let text_upper = p.text.to_uppercase();
     // KF16: size scaled to the frame, not a fixed 150*k -- see fit_size_to_width's doc. Bounds are in
     // terms of frame HEIGHT (not the old min(h,w)/1080 `k`) so a one-letter word can't demand an
@@ -205,14 +233,14 @@ fn place_one(ss: &mut Session, track_id: &str, p: &Pop, style: &str, animate_in:
     let min_size = (ss.project.height as f64 * 0.035).max(8.0);
     let max_size = (ss.project.height as f64 * 0.45).max(min_size + 1.0);
     let (target_frac, pad_per_px) = if style == "boxed" { (TARGET_BOX_FRAC_BOXED, 2.0 * BOX_PAD_X) } else { (TARGET_WIDTH_FRAC, 0.0) };
-    let size = fit_size_to_width(&text_upper, "Anton", frame_w * target_frac, pad_per_px, min_size, max_size)?;
+    let size = fit_size_to_width(&text_upper, &font, frame_w * target_frac, pad_per_px, min_size, max_size)?;
 
     if style == "boxed" {
         // KF16: box sized to the TEXT'S OWN bounds + padding, not a fixed frame-width bar -- see this
         // file's module doc for why `add_title(style="hook_box")` (fixed 0.86*frame-width) isn't reused
         // here. add_shape (rect, corner_radius) + add_text are the same existing primitives, just aimed
         // at the measured word width.
-        let (tw, th) = crate::text::measure(&text_upper, "Anton", size, 0.0, 0.0, "center", 0.0)?;
+        let (tw, th) = crate::text::measure(&text_upper, &font, size, 0.0, 0.0, "center", 0.0)?;
         let pad_x = size * BOX_PAD_X;
         let pad_y = size * BOX_PAD_Y;
         let box_w = tw + pad_x * 2.0;
@@ -221,7 +249,7 @@ fn place_one(ss: &mut Session, track_id: &str, p: &Pop, style: &str, animate_in:
         let box_id = call(ss, "add_shape", &json!({"track_id": track_id, "shape": "rect", "start": p.at_s, "duration": p.duration_s,
             "width": box_w, "height": box_h, "fill": box_fill, "corner_radius": (box_h * 0.22).min(box_w * 0.22)}))?["clip_id"].as_str().ok_or("add_shape returned no clip_id")?.to_string();
         let text_id = call(ss, "add_text", &json!({"track_id": track_id, "text": text_upper, "start": p.at_s, "duration": p.duration_s,
-            "font": "Anton", "size": size, "color": color.unwrap_or([1.0, 1.0, 1.0])}))?["clip_id"].as_str().ok_or("add_text returned no clip_id")?.to_string();
+            "font": font, "size": size, "color": color.unwrap_or([1.0, 1.0, 1.0])}))?["clip_id"].as_str().ok_or("add_text returned no clip_id")?.to_string();
         pop_in_and_fade(ss, &box_id, p.duration_s, yoff, 0.4)?;
         pop_in_and_fade(ss, &text_id, p.duration_s, yoff, 0.4)?;
         return Ok(vec![box_id, text_id]);
@@ -231,10 +259,10 @@ fn place_one(ss: &mut Session, track_id: &str, p: &Pop, style: &str, animate_in:
     // shadow. KF16: accent_color, when given, now colours the word itself (default-off: precedence is
     // accent_color > color > white, so the look is byte-identical to KF15 when accent_color is omitted).
     let fill = accent.or(color).unwrap_or([1.0, 1.0, 1.0]);
-    let stroke_w = (size * 0.09).max(2.0);
+    let stroke_w = if ty.outline.unwrap_or(true) { (size * 0.09).max(2.0) } else { 0.0 };
     let shadow_px = (size * 0.05).max(2.0);
     let add_args = json!({"track_id": track_id, "text": text_upper, "start": p.at_s, "duration": p.duration_s,
-        "font": "Anton", "size": size, "color": fill, "stroke_width": stroke_w, "stroke_color": [0.03, 0.03, 0.03], "shadow": shadow_px});
+        "font": font, "size": size, "color": fill, "stroke_width": stroke_w, "stroke_color": [0.03, 0.03, 0.03], "shadow": shadow_px});
     let id = call(ss, "add_text", &add_args)?["clip_id"].as_str().ok_or("add_text returned no clip_id")?.to_string();
     if yoff != 0.0 { call(ss, "set_keyframe", &json!({"clip_id": id, "property": "y", "time": 0.0, "value": yoff, "ease": "hold"}))?; }
 
@@ -280,7 +308,7 @@ fn synth_pop_sfx() -> Option<String> {
 }
 
 fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
-    let style = enum_arg(a, "style", "bold_caps", &STYLES)?;
+    let style = enum_arg(a, "style", "clean", &STYLES)?;
     let position = enum_arg(a, "position", "upper_third", &POSITIONS)?;
     let animate_in = enum_arg(a, "animate_in", "pop", &ANIMATE_INS)?;
     let color = rgb_arg(a, "color")?;
@@ -291,9 +319,9 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let has_words = a.get("words").map(|v| !v.is_null()).unwrap_or(false);
     if auto && has_words { return Err("add_keyword_pops: pass either words or auto:true, not both".into()); }
     if !auto && !has_words { return Err("add_keyword_pops: needs either words=[{text, at_s, ...}] or auto:true".into()); }
-    let max_per_minute = opt_num_checked(a, "max_per_minute", 4.0)?;
+    let max_per_minute = opt_num_checked(a, "max_per_minute", 2.0)?;
     if !(max_per_minute > 0.0) { return Err("max_per_minute must be > 0".into()); }
-    let min_gap_s = opt_num_checked(a, "min_gap_s", 3.0)?;
+    let min_gap_s = opt_num_checked(a, "min_gap_s", 8.0)?;
     if !(min_gap_s >= 0.0) { return Err("min_gap_s must be >= 0".into()); }
 
     let pops = if auto { auto_pick(ss, max_per_minute, min_gap_s)? } else { parse_explicit_words(a)? };
@@ -312,10 +340,13 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
     };
     if !ss.project.tracks.iter().any(|t| t.id == track_id) { return Err(format!("no such track '{track_id}'")); }
     let yoff = y_offset(ss, &position);
+    let ty = TypeOpts { font: a.get("font").and_then(|v| v.as_str()).map(String::from),
+        weight: match a.get("weight") { None | Some(Value::Null) => None, Some(v) => Some(v.as_f64().filter(|w| (100.0..=1000.0).contains(w)).ok_or("weight must be 100..1000")?) },
+        outline: bool_arg_opt(a, "outline")? };
 
     let mut placed = vec![];
     for p in &pops {
-        let ids = place_one(ss, &track_id, p, &style, &animate_in, color, accent_color, yoff)?;
+        let ids = place_one(ss, &track_id, p, &style, &animate_in, color, accent_color, yoff, &ty)?;
         placed.push(json!({"text": p.text, "at_s": p.at_s, "duration_s": p.duration_s, "clip_ids": ids}));
     }
     let mut r = json!({"dry_run": false, "track_id": track_id, "style": style, "position": position, "pops": placed});
@@ -341,18 +372,21 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
 pub fn commands() -> Vec<Command> {
     vec![Command {
         name: "add_keyword_pops",
-        description: "Pops one big emphasised word or phrase onto the screen the instant it's spoken, then clears. The #1 on-screen graphic among top creators (KR2: 6 of 8 sampled use it) -- heavy-weight caps (the bundled Anton black display font) sized to span about 60% of frame width, a thick dark outline and drop shadow or a rounded box hugging the text, with a quick scale-overshoot pop-in (clip-local 0.0 -> 0.3s, Ease::OutBack) and a short fade -- built on add_shape+add_text for style \"boxed\" and add_text + set_keyframe/add_text_animator for \"bold_caps\"/\"typewriter\", sized with the renderer's own crate::text::measure rather than reimplementing text metrics. words=[{text, at_s, duration_s?}] places exact pops; auto:true instead ranks the loaded transcript's words by speech_words::keywords() (the existing caption-keyword emphasis scorer; NOT add_smart_punch, which is a purely visual camera punch-in with no word signal) and keeps up to max_per_minute (default 4, per KR2's measured cadence) per 60s bucket at least min_gap_s (default 3) apart -- and if no transcript is loaded it errors by name, telling you to run transcribe or transcript_import first, rather than silently doing nothing. position defaults to upper_third so the text clears a selfie-framed face; accent_color, when given, colours style boxed's box or bold_caps/typewriter's own text fill (default off: omitting it keeps the plain white-on-dark look); color sets the fill otherwise (white default). sfx (default false) plays a short synthesized pop/blip at each placed word, on its own new audio track (sfx_track_id/sfx_clip_ids on the result) -- a purely procedural sound generated at call time, not a bundled sample; falls back to a warning (no sound placed) if it can't be synthesized on this machine. track_id defaults to a freshly created track. dry_run reports the pops that would be placed without changing anything. Deterministic (same transcript/args, same pops) and undoable with undo like any other mutating tool.",
+        description: "Shows one emphasised word or phrase the instant it's spoken, then clears. Use it rarely, on the few words that carry the point. Default style clean: the word as spoken in Inter ExtraBold, about 40% of frame width, soft shadow, a gentle fade and rise. Other styles: bold_caps (heavy Anton caps, thick outline, pop-in), boxed (a rounded box hugging the text), typewriter -- built on add_shape+add_text for style \"boxed\" and add_text + set_keyframe/add_text_animator for \"bold_caps\"/\"typewriter\", sized with the renderer's own crate::text::measure rather than reimplementing text metrics. words=[{text, at_s, duration_s?}] places exact pops; auto:true instead ranks the loaded transcript's words by speech_words::keywords() (the existing caption-keyword emphasis scorer; NOT add_smart_punch, which is a purely visual camera punch-in with no word signal) and keeps up to max_per_minute (default 4, per KR2's measured cadence) per 60s bucket at least min_gap_s (default 3) apart -- and if no transcript is loaded it errors by name, telling you to run transcribe or transcript_import first, rather than silently doing nothing. position defaults to upper_third so the text clears a selfie-framed face; accent_color, when given, colours style boxed's box or bold_caps/typewriter's own text fill (default off: omitting it keeps the plain white-on-dark look); color sets the fill otherwise (white default). sfx (default false) plays a short synthesized pop/blip at each placed word, on its own new audio track (sfx_track_id/sfx_clip_ids on the result) -- a purely procedural sound generated at call time, not a bundled sample; falls back to a warning (no sound placed) if it can't be synthesized on this machine. track_id defaults to a freshly created track. dry_run reports the pops that would be placed without changing anything. Deterministic (same transcript/args, same pops) and undoable with undo like any other mutating tool.",
         mutates: true,
         schema: obj(vec![
             ("words", json!({"type":"array","description":"explicit mode: [{text, at_s, duration_s?}], at least one entry","items":{"type":"object","properties":{"text":{"type":"string"},"at_s":{"type":"number"},"duration_s":{"type":"number","description":"default 1.3s"}},"required":["text","at_s"]}})),
             ("auto", json!({"type":"boolean","description":"auto mode: pick emphasis words from the loaded transcript's word timings instead of an explicit words list"})),
-            ("max_per_minute", n("auto mode: at most this many pops per 60s of timeline, default 4")),
-            ("min_gap_s", n("auto mode: at least this many seconds between consecutive pops, default 3")),
-            ("style", json!({"type":"string","enum":STYLES,"description":"bold_caps (default): heavy caps sized to ~60% of frame width, with a thick dark outline and drop shadow. boxed: a rounded dark/accent box hugging the text (sized to the text's own measured bounds + padding, not a fixed bar). typewriter: bold_caps look with a character-by-character reveal."})),
+            ("max_per_minute", n("auto mode: at most this many pops per 60s of timeline, default 2 (emphasis works because it is rare)")),
+            ("min_gap_s", n("auto mode: at least this many seconds between consecutive pops, default 8")),
+            ("style", json!({"type":"string","enum":STYLES,"description":"clean (default): the word as spoken in Inter ExtraBold, ~40% of frame width, soft shadow, fades up gently. bold_caps: heavy caps sized to ~60% of frame width, with a thick dark outline and drop shadow. boxed: a rounded dark/accent box hugging the text (sized to the text's own measured bounds + padding, not a fixed bar). typewriter: bold_caps look with a character-by-character reveal."})),
             ("position", json!({"type":"string","enum":POSITIONS,"description":"upper_third (default, clears a selfie-framed face), center, or lower_third"})),
             ("color", json!({"type":"array","description":"text fill [r,g,b] 0..1, default white","items":{"type":"number"}})),
             ("accent_color", json!({"type":"array","description":"optional accent colour [r,g,b] 0..1: style boxed's box fill, or bold_caps/typewriter's own text fill. Default off (omitted = plain white-on-dark look, byte-identical to not passing it).","items":{"type":"number"}})),
             ("animate_in", json!({"type":"string","enum":ANIMATE_INS,"description":"pop (default): scale-overshoot pop-in. fade: opacity only. typewriter: character reveal. style boxed always uses the same pop-and-fade regardless of this."})),
+            ("font", s("font family or .ttf path (default Inter for clean, Anton for the other styles)")),
+            ("weight", n("font weight 100..1000 for variable fonts (default 800 for clean)")),
+            ("outline", json!({"type":"boolean","description":"bold_caps/typewriter: keep the dark outline (default true); false = no outline"})),
             ("sfx", json!({"type":"boolean","description":"default false; true plays a short synthesized pop at each word on its own new audio track"})),
             ("track_id", s("track to place pops on; default: a freshly created track")),
             ("dry_run", json!({"type":"boolean","description":"report the pops that would be placed, change nothing. Default false."})),

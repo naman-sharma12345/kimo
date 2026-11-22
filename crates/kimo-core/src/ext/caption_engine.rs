@@ -69,9 +69,10 @@ fn is_clause_end(t: &str) -> bool { core_tok(t).chars().last().map_or(false, |c|
 const NO_DANGLE: &[&str] = &["a","an","the","my","your","his","her","its","our","their","this","that","these","those","no","not"];
 
 /// Segments ASR words into caption units: breaks at phrase/punctuation boundaries and pauses, not fixed word counts.
-/// Guarantees (tested in quality_v8120.rs): no unit ends on an orphan single word when a merge is possible, every
-/// unit's naive chars/duration stays at or under `max_cps` (the unit is cut earlier rather than let reading speed run
-/// over), and every line holds at least two words unless the whole unit is one word.
+/// Guarantees (tested in quality_v8120.rs): no unit ends on an orphan single word when a merge is possible, and every
+/// line holds at least two words unless the whole unit is one word. Reading speed is NOT a reason to cut here: a fast
+/// speaker reads just as fast in one-word pieces (each piece is as short as the word), so cutting only made 0.06 s
+/// flashes. Reading speed is the timing stage's job (`TimingSpec::max_cps` holds a cue on screen long enough).
 pub fn segment(words: &[EWord], spec: &SegmentSpec) -> Result<Vec<Unit>, String> {
     if words.is_empty() { return Ok(vec![]); }
     if spec.phrase_aware && spec.max_words_per_line.is_none() { return Ok(segment_phrase(words, spec)); }
@@ -84,22 +85,14 @@ pub fn segment(words: &[EWord], spec: &SegmentSpec) -> Result<Vec<Unit>, String>
     let mut cuts: Vec<(usize, usize)> = vec![]; let mut a = 0usize;
     for i in 0..words.len() {
         let chars: usize = words[a..=i].iter().map(|w| clen(&w.text) + 1).sum::<usize>().saturating_sub(1);
-        let cps_chars: usize = words[a..=i].iter().filter(|w| !is_punct_token(&w.text)).map(|w| clen(&w.text) + 1).sum::<usize>().saturating_sub(1);
-        let span = (words[i].end - words[a].start).max(1e-6);
         let next_gap = if i + 1 < words.len() { words[i + 1].start - words[i].end } else { 0.0 };
-        let cps_now = cps_chars as f64 / span;
         let word_cap = spec.max_words_per_line.map(|n| n * lines);
         let full = chars >= cap_chars || word_cap.map_or(false, |wc| (i + 1 - a) >= wc);
-        // reactive CPS cut: once the unit already holds >=2 words and its own (punctuation-free) reading
-        // speed is over the limit, end it here rather than let it get worse by adding another word. A
-        // single word that alone exceeds the cap is left to stand (there is nothing shorter to cut to).
-        let over_cps = cps_now > spec.max_cps; // cut as soon as the rate is over, even for a lone word -- 1 word/unit is the best this can do
         let end = i + 1 == words.len()
             || is_sentence_end(&words[i].text)
             || (is_clause_end(&words[i].text) && i + 1 - a >= 2)
             || next_gap > spec.pause_break_s
-            || full
-            || over_cps;
+            || full;
         if end { cuts.push((a, i)); a = i + 1; }
     }
     // no-orphan: a lone trailing single word is absorbed into the unit before it, UNLESS that would cross
@@ -111,11 +104,6 @@ pub fn segment(words: &[EWord], spec: &SegmentSpec) -> Result<Vec<Unit>, String>
         let (pa, pb) = cuts[cuts.len() - 2]; let (_, lb) = cuts[cuts.len() - 1];
         if is_sentence_end(&words[pb].text) { break; }
         if words[lb].start - words[pb].end > spec.pause_break_s { break; }
-        // don't undo a legitimate CPS-driven split: only merge when the combined unit still reads at an
-        // acceptable pace (a lone word genuinely too fast to help is left alone, not glued to its neighbour).
-        let merged_cps_chars: usize = words[pa..=lb].iter().filter(|w| !is_punct_token(&w.text)).map(|w| clen(&w.text) + 1).sum::<usize>().saturating_sub(1);
-        let merged_span = (words[lb].end - words[pa].start).max(1e-6);
-        if merged_cps_chars as f64 / merged_span > spec.max_cps { break; }
         cuts.pop(); let n = cuts.len(); cuts[n - 1] = (pa, lb);
     }
     let mut units: Vec<Unit> = cuts.into_iter().map(|(first, last)| {
@@ -165,17 +153,17 @@ fn break_quality(words: &[EWord], j: usize) -> f64 {
     if NO_DANGLE.contains(&bare(&words[j].text).as_str()) { q -= 2.5; }
     q
 }
-/// The V10 segmenter (`phrase_aware`): greedy units cut at phrase boundaries, with hard line-length, duration and
-/// reading-speed limits, then a no-orphan pass over EVERY unit and phrase-boundary line breaks.
+/// The V10 segmenter (`phrase_aware`): greedy units cut at phrase boundaries, with hard line-length and duration
+/// limits, then a no-orphan pass over EVERY unit and phrase-boundary line breaks.
 fn segment_phrase(words: &[EWord], spec: &SegmentSpec) -> Vec<Unit> {
     let (per_line, lines) = (spec.max_chars_per_line.max(4), spec.max_lines.clamp(1, 3));
     let cap = per_line * lines; let n = words.len();
     let over = |a: usize, i: usize| -> bool {
         if i == a { return false; }
         let span = words[i].end - words[a].start;
+        // length and duration only: splitting a fast run does not slow it down (see segment()), the timing stage
+        // holds each cue long enough to read
         span_chars(words, a, i) > cap || span > spec.max_duration_s
-            // reading speed with the hold a cue gets after its last word: a run genuinely faster than max_cps is split
-            || reading_chars(words, a, i) as f64 / (span + 0.3).max(1e-6) > spec.max_cps
     };
     let mut cuts: Vec<(usize, usize)> = vec![]; let mut a = 0usize; let mut i = 0usize;
     while i < n {
@@ -200,7 +188,7 @@ fn segment_phrase(words: &[EWord], spec: &SegmentSpec) -> Vec<Unit> {
     // the duration and reading-speed limits stay hard.
     let over_tol = |a: usize, i: usize| -> bool {
         let span = words[i].end - words[a].start;
-        span_chars(words, a, i) > cap + per_line / 4 || span > spec.max_duration_s || reading_chars(words, a, i) as f64 / (span + 0.3).max(1e-6) > spec.max_cps
+        span_chars(words, a, i) > cap + per_line / 4 || span > spec.max_duration_s
     };
     let joinable = |cuts: &[(usize, usize)], k: usize| -> bool { // may cuts[k] and cuts[k+1] become one unit?
         let (pa, pb) = cuts[k]; let (_, lb) = cuts[k + 1];
@@ -504,7 +492,7 @@ pub(crate) fn place_unit(default_band: f64, tall: bool, layout: &LayoutSpec, med
 
 #[derive(Clone, Debug)]
 pub struct ContrastSpec { pub auto: bool, pub min_stroke_frac: f64, pub max_stroke_frac: f64, pub min_shadow: f64, pub max_shadow: f64, pub min_box_alpha: f64, pub max_box_alpha: f64 }
-impl Default for ContrastSpec { fn default() -> Self { ContrastSpec { auto: true, min_stroke_frac: 0.03, max_stroke_frac: 0.12, min_shadow: 2.0, max_shadow: 8.0, min_box_alpha: 0.55, max_box_alpha: 0.88 } } }
+impl Default for ContrastSpec { fn default() -> Self { ContrastSpec { auto: true, min_stroke_frac: 0.0, max_stroke_frac: 0.035, min_shadow: 8.0, max_shadow: 18.0, min_box_alpha: 0.5, max_box_alpha: 0.72 } } }
 
 /// Pure strength selection from a measured background luminance (0..1, sRGB relative luminance under the text):
 /// a bright background needs a stronger outline/shadow/box than a dark one, so legibility rises with it, not the
@@ -541,12 +529,11 @@ pub struct StyleSpec {
     pub font: String, pub weight: f64, pub size_frac: f64, pub fill: [f64; 3],
     pub stroke_frac: f64, pub stroke_color: [f64; 3], pub shadow_blur: f64, pub shadow_opacity: f64,
     pub bg: Option<BoxSpec>, pub case: Case, pub letter_spacing: f64, pub line_height: f64, pub align: String,
-    /// What `size_frac` is a fraction OF: "width" (default, matches the legacy pop/karaoke/clean/boxed/impact
-    /// looks) or "short_side" (min(w,h); matches the legacy subtitle/boxed/yellow restyle path, which sizes
-    /// off the frame's short side so portrait and landscape read at the same relative scale).
+    /// What `size_frac` is a fraction OF: "short_side" (default: min(w,h), so portrait and landscape read at the same
+    /// relative scale) or "width".
     pub size_basis: String,
 }
-impl Default for StyleSpec { fn default() -> Self { StyleSpec { font: "Inter".into(), weight: 700.0, size_frac: 0.08, fill: WHITE, stroke_frac: 0.0, stroke_color: BLACK, shadow_blur: 0.0, shadow_opacity: 0.0, bg: None, case: Case::None, letter_spacing: 0.0, line_height: 1.15, align: "center".into(), size_basis: "width".into() } } }
+impl Default for StyleSpec { fn default() -> Self { StyleSpec { font: "Inter".into(), weight: 600.0, size_frac: 0.052, fill: WHITE, stroke_frac: 0.0, stroke_color: BLACK, shadow_blur: 14.0, shadow_opacity: 0.62, bg: None, case: Case::None, letter_spacing: 0.0, line_height: 1.15, align: "center".into(), size_basis: "short_side".into() } } }
 
 #[derive(Clone, Debug, Default)]
 pub struct WordDelta { pub fill: Option<[f64; 3]>, pub scale: Option<f64>, pub opacity: Option<f64> }
@@ -661,10 +648,14 @@ pub fn compose_animators(states: &WordStates, emph_idx: &[usize], emph: &WordDel
 pub fn build_unit_props(anim: &AnimationSpec, dur: f64, base_y: f64) -> std::collections::BTreeMap<String, Prop> {
     let mut props = default_props(); props.insert("y".into(), Prop::new(base_y.round()));
     let name = |p: AnimProp| match p { AnimProp::Opacity => "opacity", AnimProp::Scale => "scale", AnimProp::Y => "y", AnimProp::Blur => "blur" };
-    for pa in &anim.unit_in.props { let key = name(pa.prop); let mut prop = props.remove(key).unwrap_or_else(|| Prop::new(pa.to));
-        prop.set_key(0.0, pa.from, Ease::Hold); prop.set_key(pa.duration_s.min(dur), pa.to, pa.ease); props.insert(key.into(), prop); }
-    for pa in &anim.unit_out.props { let key = name(pa.prop); let mut prop = props.remove(key).unwrap_or_else(|| Prop::new(pa.from));
-        let t0 = (dur - pa.duration_s).max(0.0); prop.set_key(t0, pa.from, Ease::Hold); prop.set_key(dur, pa.to, pa.ease); props.insert(key.into(), prop); }
+    // "y" is an offset from the cue's own position (from 14 to 0 = rises 14 px into place), not an absolute height.
+    // The ease sits on the EARLIER key: in kimo a key's ease shapes the move that starts at it (a Hold there froze the
+    // value for the whole duration, then jumped).
+    let off = |p: AnimProp, v: f64| if matches!(p, AnimProp::Y) { (base_y + v).round() } else { v };
+    for pa in &anim.unit_in.props { let key = name(pa.prop); let mut prop = props.remove(key).unwrap_or_else(|| Prop::new(off(pa.prop, pa.to)));
+        prop.set_key(0.0, off(pa.prop, pa.from), pa.ease); prop.set_key(pa.duration_s.min(dur), off(pa.prop, pa.to), Ease::Hold); props.insert(key.into(), prop); }
+    for pa in &anim.unit_out.props { let key = name(pa.prop); let mut prop = props.remove(key).unwrap_or_else(|| Prop::new(off(pa.prop, pa.from)));
+        let t0 = (dur - pa.duration_s).max(0.0); prop.set_key(t0, off(pa.prop, pa.from), pa.ease); prop.set_key(dur, off(pa.prop, pa.to), Ease::Hold); props.insert(key.into(), prop); }
     props
 }
 
@@ -781,7 +772,7 @@ fn parse_style(v: &Value) -> Result<StyleSpec, String> {
         let color = match b.get("color") { None | Some(Value::Null) => [0.0, 0.0, 0.0, 0.8], Some(Value::Array(a)) if a.len() == 4 => {
             let mut c = [0.0; 4]; for i in 0..4 { c[i] = a[i].as_f64().filter(|x| (0.0..=1.0).contains(x)).ok_or("style.box.color: [r,g,b,a] components 0..1")?; } c }
             _ => return Err("style.box.color: [r,g,b,a] components 0..1".into()) };
-        Some(BoxSpec { pad_frac: get_f64(b, "style.box", "pad_frac", 0.3, 0.0, 2.0)?, radius_frac: get_f64(b, "style.box", "radius_frac", 0.2, 0.0, 2.0)?, color }) } };
+        Some(BoxSpec { pad_frac: get_f64(b, "style.box", "pad_frac", 0.42, 0.0, 2.0)?, radius_frac: get_f64(b, "style.box", "radius_frac", 0.28, 0.0, 2.0)?, color }) } };
     Ok(StyleSpec {
         font: v.get("font").and_then(|x| x.as_str()).unwrap_or(&d.font).to_string(),
         weight: get_f64(v, "style", "weight", d.weight, 100.0, 1000.0)?,
@@ -875,15 +866,13 @@ pub fn preset_spec(name: &str) -> Result<Value, String> {
     let no_cps = 1000.0; let no_lead = json!({"timing":{"lead_in_s":0.0, "min_duration_s":0.2, "reading_rules":false}, "segment":{"phrase_aware":false}, "contrast":{"auto":false}});
     let p = |segment: Value, style: Value, extra: Value| merge(&merge(&json!({"segment":segment,"style":style}), &extra), &no_lead);
     Ok(match name {
-        "pop" => p(json!({"max_chars_per_line":16,"max_lines":1,"max_cps":no_cps,"max_words_per_line":3}), json!({"font":"Montserrat","weight":900.0,"size_frac":0.12,"fill":"#ffffff","stroke_frac":0.11,"case":"upper"}),
-            json!({"word_states":{"active":{"fill":"#ffdb00","scale":1.22}}, "emphasis":{"by_keyword":true,"keyword_count":1,"delta":{"fill":"#3dff5c"}}})),
-        "karaoke" => p(json!({"max_chars_per_line":20,"max_lines":2,"max_cps":no_cps,"max_words_per_line":4}), json!({"font":"Montserrat","weight":800.0,"size_frac":0.08,"fill":"#ffffff","stroke_frac":0.09,"case":"none"}),
-            json!({"word_states":{"spoken":{"fill":"#ffdb00"},"active":{"scale":1.08}}, "emphasis":{"by_keyword":true,"keyword_count":2,"delta":{"fill":"#3dff5c"}}})),
-        "clean" => p(json!({"max_chars_per_line":30,"max_lines":2,"max_cps":no_cps,"max_words_per_line":6}), json!({"font":"Inter","weight":700.0,"size_frac":0.064,"fill":"#ffffff","stroke_frac":0.05,"shadow_blur":8.0,"case":"none"}), json!({})),
-        "boxed" => p(json!({"max_chars_per_line":16,"max_lines":1,"max_cps":no_cps,"max_words_per_line":3}), json!({"font":"Montserrat","weight":900.0,"size_frac":0.09,"fill":"#ffffff","case":"upper","box":{"color":[0.0,0.0,0.0,0.82]}}),
-            json!({"word_states":{"active":{"fill":"#3dff5c"}}, "emphasis":{"by_keyword":true,"keyword_count":1,"delta":{"fill":"#ffdb00"}}})),
-        "impact" => p(json!({"max_chars_per_line":16,"max_lines":1,"max_cps":no_cps,"max_words_per_line":2}), json!({"font":"Anton","weight":400.0,"size_frac":0.15,"fill":"#ffffff","stroke_frac":0.07,"shadow_blur":6.0,"case":"upper"}),
-            json!({"word_states":{"active":{"fill":"#ffdb00"}}})),
+        "clean" => p(json!({"max_chars_per_line":30,"max_lines":1,"max_cps":no_cps,"max_words_per_line":6}), json!({"font":"Inter","weight":600.0,"size_basis":"short_side","size_frac":0.052,"fill":"#ffffff","shadow_blur":14.0,"shadow_opacity":0.62,"case":"none"}), json!({})),
+        "pop" => p(json!({"max_chars_per_line":16,"max_lines":1,"max_cps":no_cps,"max_words_per_line":3}), json!({"font":"Montserrat","weight":800.0,"size_basis":"short_side","size_frac":0.072,"fill":"#ffffff","shadow_blur":16.0,"shadow_opacity":0.62,"case":"upper"}),
+            json!({"word_states":{"active":{"fill":"#ffd66b","scale":1.04}}})),
+        "karaoke" => p(json!({"max_chars_per_line":25,"max_lines":2,"max_cps":no_cps,"max_words_per_line":5}), json!({"font":"Inter","weight":700.0,"size_basis":"short_side","size_frac":0.056,"fill":"#adadad","shadow_blur":14.0,"shadow_opacity":0.62,"case":"none"}),
+            json!({"word_states":{"spoken":{"fill":"#ffffff"}}})),
+        "boxed" => p(json!({"max_chars_per_line":30,"max_lines":1,"max_cps":no_cps,"max_words_per_line":6}), json!({"font":"Inter","weight":600.0,"size_basis":"short_side","size_frac":0.048,"fill":"#ffffff","case":"none","box":{"color":[0.0,0.0,0.0,0.62]}}), json!({})),
+        "impact" => p(json!({"max_chars_per_line":16,"max_lines":1,"max_cps":no_cps,"max_words_per_line":2}), json!({"font":"Anton","weight":400.0,"size_basis":"short_side","size_frac":0.1,"fill":"#ffffff","shadow_blur":18.0,"shadow_opacity":0.62,"case":"upper"}), json!({})),
         // subtitle/boxed/yellow are the restyle-path looks (set_caption_style): sized off the frame's SHORT
         // side, not its width, and pinned at a fixed height fraction rather than placed by face-avoidance --
         // this engine's fixed_y_frac/size_basis exist specifically to carry that convention over exactly.
@@ -891,9 +880,9 @@ pub fn preset_spec(name: &str) -> Result<Value, String> {
         // These three restyle a caption group that was segmented by the default look ("pop": 3 words/page,
         // 1 line) and then only change size/colour/stroke/bg/position -- so the segmentation here mirrors
         // "pop"'s, not a fresh choice, to land on the same pages the legacy restyle path actually produces.
-        "subtitle" => p(json!({"max_chars_per_line":16,"max_lines":1,"max_cps":no_cps,"max_words_per_line":3}), json!({"font":"Inter","size_basis":"short_side","size_frac":0.0667,"fill":"#ffffff","stroke_frac":0.04166667}), json!({"layout":{"fixed_y_frac":0.35}})),
-        "boxed_simple" => p(json!({"max_chars_per_line":16,"max_lines":1,"max_cps":no_cps,"max_words_per_line":3}), json!({"font":"Inter","size_basis":"short_side","size_frac":0.0667,"fill":"#ffffff","box":{"color":[0.0,0.0,0.0,0.75]}}), json!({"layout":{"fixed_y_frac":0.35}})),
-        "yellow" => p(json!({"max_chars_per_line":16,"max_lines":1,"max_cps":no_cps,"max_words_per_line":3}), json!({"font":"Inter","size_basis":"short_side","size_frac":0.076923,"fill":"#ffe61a","stroke_frac":0.05417}), json!({"layout":{"fixed_y_frac":0.35}})),
+        "subtitle" => p(json!({"max_chars_per_line":16,"max_lines":1,"max_cps":no_cps,"max_words_per_line":3}), json!({"font":"Inter","weight":600.0,"size_basis":"short_side","size_frac":0.051,"fill":"#ffffff","shadow_blur":14.0,"shadow_opacity":0.62}), json!({"layout":{"fixed_y_frac":0.35}})),
+        "boxed_simple" => p(json!({"max_chars_per_line":16,"max_lines":1,"max_cps":no_cps,"max_words_per_line":3}), json!({"font":"Inter","weight":600.0,"size_basis":"short_side","size_frac":0.049,"fill":"#ffffff","box":{"color":[0.0,0.0,0.0,0.62]}}), json!({"layout":{"fixed_y_frac":0.35}})),
+        "yellow" => p(json!({"max_chars_per_line":16,"max_lines":1,"max_cps":no_cps,"max_words_per_line":3}), json!({"font":"Inter","weight":600.0,"size_basis":"short_side","size_frac":0.054,"fill":"#ffdb6b","shadow_blur":14.0,"shadow_opacity":0.62}), json!({"layout":{"fixed_y_frac":0.35}})),
         _ => return Err(format!("preset must be pop|karaoke|clean|boxed|impact|subtitle|boxed_simple|yellow, got '{}'", crate::transcript_parse::sanitize(name))),
     })
 }
@@ -931,7 +920,12 @@ fn parse_words(a: &Value) -> Result<Vec<EWord>, String> {
 fn caption_engine_compose(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let words = parse_words(a)?;
     let mut spec = a.clone();
-    if let Some(p) = a.get("preset").and_then(|v| v.as_str()) { spec = merge(&preset_spec(p)?, a); }
+    if let Some(p) = a.get("preset").and_then(|v| v.as_str()) { spec = merge(&preset_spec(p)?, a);
+        // a word state the caller gives replaces the preset's version of it wholesale: deep-merging kept, say, the
+        // preset's spoken-word fill under an override that only meant to change the scale
+        if let (Some(ws), Some(out)) = (a.pointer("/animation/word_states").or_else(|| a.get("word_states")).and_then(|v| v.as_object()), spec.get_mut("word_states").and_then(|v| v.as_object_mut())) {
+            for (k, v) in ws { out.insert(k.clone(), v.clone()); }
+        } }
     let seg_spec = parse_segment(spec.get("segment").unwrap_or(&Value::Null))?;
     let timing_spec = parse_timing(spec.get("timing").unwrap_or(&Value::Null))?;
     let layout_spec = parse_layout(spec.get("layout").unwrap_or(&Value::Null))?;
@@ -984,7 +978,8 @@ fn caption_engine_compose(ss: &mut Session, a: &Value) -> Result<Value, String> 
             None => { let pl = place_unit(default_band, tall, &layout_spec, &media, mid_t); if pl.moved { avoided += 1; } ((pl.y_frac - 0.5) * h, pl.band.to_string(), pl.forced_overlap) }
         };
 
-        let size_basis_px = if style_spec.size_basis == "short_side" { w.min(h) } else { w };
+        // short side: on a vertical frame (read on a phone) a quarter larger, as auto_captions does
+        let size_basis_px = if style_spec.size_basis == "short_side" { w.min(h) * if h > w * 1.05 { 1.25 } else { 1.0 } } else { w };
         let mut size = (style_spec.size_frac * size_basis_px).round().clamp(8.0, 600.0);
         let mut fx = TextFx { weight: style_spec.weight, uppercase: false, bg: style_spec.bg.as_ref().map(|b| b.color),
             bg_pad: style_spec.bg.as_ref().map_or(24.0, |b| (b.pad_frac * size).round()), bg_radius: style_spec.bg.as_ref().map_or(12.0, |b| (b.radius_frac * size).round()),
@@ -1028,7 +1023,7 @@ fn caption_engine_compose(ss: &mut Session, a: &Value) -> Result<Value, String> 
         // default gentle in/out, same shape every caption look wants, only when the caller gave no animation spec at all
         if animation_spec.unit_in.props.is_empty() && animation_spec.unit_out.props.is_empty() {
             let mut op = Prop::new(1.0); let prev_end = if ui > 0 { timed[ui - 1].end } else { f64::NEG_INFINITY };
-            if tu.start - prev_end > 0.05 { op.set_key(0.0, 0.0, Ease::Out); op.set_key(0.07f64.min(dur / 2.0), 1.0, Ease::Hold); }
+            if tu.start - prev_end > 0.05 { op.set_key(0.0, 0.0, Ease::OutQuart); op.set_key(0.12f64.min(dur / 2.0), 1.0, Ease::Hold); }
             let gap_after = timed.get(ui + 1).map_or(1.0, |n| n.start - tu.end);
             if gap_after > 0.05 && dur > 0.2 { if op.keys.is_empty() { op.set_key(0.0, 1.0, Ease::Hold); } op.set_key(dur - 0.08, 1.0, Ease::InOut); op.set_key(dur, 0.0, Ease::Hold); }
             if !op.keys.is_empty() { props.insert("opacity".into(), op); }
@@ -1045,7 +1040,7 @@ fn caption_engine_compose(ss: &mut Session, a: &Value) -> Result<Value, String> 
 
         let id = ss.project.gen_id("clip");
         let src = Source::Text { text, font: style_spec.font.clone(), size, color: style_spec.fill, letter_spacing: style_spec.letter_spacing * size,
-            stroke_width: (stroke_frac * size).round(), stroke_color: style_spec.stroke_color, shadow: if fx.shadow_blur > 0.0 { (size * 0.05).round() } else { 0.0 }, align: style_spec.align.clone() };
+            stroke_width: (stroke_frac * size).round(), stroke_color: style_spec.stroke_color, shadow: if fx.shadow_blur > 0.0 { (size * 0.035).round() } else { 0.0 }, align: style_spec.align.clone() };
         let c = Clip { id: id.clone(), source: src, start: tu.start, duration: dur, in_point: 0.0, speed: 1.0, speed_curve: None, speed_blend: Default::default(), time_remap: None, props, grade_graph: None,
             effects: vec![], blend: "normal".into(), mask: None, time_mode: TimeMode::Normal, corners: None, audio: Audio::default(), motion_blur: 0.0, echo: None, motion_path: None, posterize_fps: 0.0,
             text_fx: Some(fx), parent: None, inherit: Default::default(), name: Some(format!("caption {}", ui + 1)), role: None, tags: vec!["caption_engine".into()], transition_in: None };
@@ -1106,7 +1101,7 @@ pub fn commands() -> Vec<Command> {
                 ("style", obj(vec![("font", s("font name or .ttf path")), ("weight", n("100..1000")), ("size_frac", n("type size as a fraction of frame width, or of the short side when size_basis is short_side")), ("size_basis", json!({"type":"string","enum":["width","short_side"],"description":"default width"})), ("fill", colr_schema("text colour")),
                     ("stroke_frac", n("outline width as a fraction of size")), ("stroke_color", colr_schema("outline colour")), ("shadow_blur", n("")), ("shadow_opacity", n("")),
                     ("box", obj(vec![("pad_frac", n("")), ("radius_frac", n("")), ("color", json!({"type":"array","items":{"type":"number"},"minItems":4,"maxItems":4}))], &[])),
-                    ("case", json!({"type":"string","enum":["none","upper","lower","title"]})), ("letter_spacing", n("")), ("line_height", n("")), ("align", json!({"type":"string","enum":["left","center","right"]}))], &[])),
+                    ("case", json!({"type":"string","enum":["none","upper","lower","title"]})), ("letter_spacing", n("extra space between letters as a FRACTION of the type size (0.05 = 5%; -0.2..2), not pixels")), ("line_height", n("line height as a multiple of the type size, default 1.15")), ("align", json!({"type":"string","enum":["left","center","right"]}))], &[])),
                 ("word_states", obj(vec![("active", word_delta_schema("currently-spoken word")), ("spoken", word_delta_schema("already-spoken words (the generic karaoke trail)")), ("upcoming", word_delta_schema("not-yet-spoken words"))], &[])),
                 ("emphasis", obj(vec![("list", json!({"type":"array","items":{"type":"string"},"description":"explicit words to emphasise"})), ("by_keyword", json!({"type":"boolean"})), ("keyword_count", n("")),
                     ("by_energy", json!({"type":"boolean","description":"emphasise the loudest words by measured audio energy"})), ("energy_top_frac", n("top fraction of words by loudness, default 0.2")), ("delta", word_delta_schema("emphasised words"))], &[])),

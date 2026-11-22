@@ -28,27 +28,40 @@ fn words() -> Value { json!([
     {"text": "best", "start": 1.60, "end": 1.95}, {"text": "bottle.", "start": 2.05, "end": 2.60}]) }
 #[derive(Debug, Default, Clone, Copy)]
 struct Ink { n: usize, yellow: usize, green: usize, x0: usize, x1: usize, y0: usize, y1: usize, ycx: f64 }
-/// Text ink in a frame: bright pixels, and how many are the active yellow / keyword green; `ycx` = mean x of yellow pixels.
+/// Text ink in a frame: bright pixels, and how many are the warm accent (`yellow`) / keyword green; `ycx` = mean x of the accent pixels.
 fn ink(ss: &Session, t: f64) -> Ink {
     let f = render_frame(&ss.project, t, &Cache::new()).unwrap(); let mut k = Ink { x0: usize::MAX, y0: usize::MAX, ..Default::default() }; let mut sx = 0.0;
     for y in 0..f.h { for x in 0..f.w { let i = (y * f.w + x) * 4; let (r, g, b) = (f.d[i], f.d[i + 1], f.d[i + 2]);
         if r + g + b > 1.2 { k.n += 1; k.x0 = k.x0.min(x); k.x1 = k.x1.max(x); k.y0 = k.y0.min(y); k.y1 = k.y1.max(y); }
-        if r > 0.7 && g > 0.4 && b < 0.2 { k.yellow += 1; sx += x as f64; }
+        if r > 0.75 && g > 0.55 && b < 0.6 && r - b > 0.35 { k.yellow += 1; sx += x as f64; }
         if g > 0.7 && r < 0.45 && b < 0.5 { k.green += 1; } } }
     k.ycx = if k.yellow > 0 { sx / k.yellow as f64 } else { -1.0 }; k
 }
 
-#[test] fn pop_style_reveals_each_word_as_it_is_spoken_and_colours_it() { let _env_guard = env_guard();
+#[test] fn default_style_is_clean_sentence_case_with_no_colour() { let _env_guard = env_guard();
+    let mut ss = portrait();
+    let r = call(&mut ss, "auto_captions", json!({"words": words(), "position": "bottom"}));
+    assert_eq!(r["style"], "clean", "{r}");
+    let k = ink(&ss, 0.97); assert!(k.n > 30, "the caption is on screen: {k:?}");
+    assert!(k.yellow < 5 && k.green < 5, "no highlight or keyword colour by default: {k:?}");
+    let texts: Vec<String> = ss.project.tracks.last().unwrap().clips.iter().filter_map(|c| if let kimo_core::model::Source::Text { text, .. } = &c.source { Some(text.clone()) } else { None }).collect();
+    assert!(texts.iter().all(|t| t.chars().any(|c| c.is_lowercase())), "sentence case, not forced capitals: {texts:?}");
+    let fx = ss.project.tracks.last().unwrap().clips[0].text_fx.clone().unwrap_or_default();
+    assert!(!fx.uppercase && fx.shadow_opacity > 0.0, "soft shadow, no caps: {:?}", (fx.uppercase, fx.shadow_opacity));
+    if let kimo_core::model::Source::Text { stroke_width, .. } = &ss.project.tracks.last().unwrap().clips[0].source { assert_eq!(*stroke_width, 0.0, "no outline"); }
+}
+
+#[test] fn pop_style_colours_the_spoken_word_without_bouncing() { let _env_guard = env_guard();
     let mut ss = portrait();
     let r = call(&mut ss, "auto_captions", json!({"words": words(), "style": "pop", "position": "bottom"}));
     assert_eq!(r["words"], 5); assert_eq!(r["pages"], 2, "{r}"); assert!(r["caption_id"].is_string());
     let first = ink(&ss, 0.55); let all3 = ink(&ss, 1.30);
-    assert!(first.n > 30 && all3.n > first.n, "only the spoken word shows at 0.55 s: ink {} vs {} when three words are out", first.n, all3.n);
-    assert!(all3.x1 - all3.x0 > first.x1 - first.x0 + 20, "the line grows as words arrive: width {} then {}", first.x1 - first.x0, all3.x1 - all3.x0);
+    assert!(first.n > 30, "the whole page is on screen from its first word: {first:?}");
+    assert!((all3.x1 as i64 - all3.x0 as i64 - (first.x1 as i64 - first.x0 as i64)).abs() <= 12, "the line does not grow word by word (no reveal): {first:?} vs {all3:?}");
     let w1 = ink(&ss, 0.97); let w2 = ink(&ss, 1.25);
-    assert!(w1.yellow > 20 && w2.yellow > 20, "the spoken word is coloured: {} / {} yellow px", w1.yellow, w2.yellow);
-    assert!(w2.ycx > w1.ycx + 10.0, "the highlight moves right with the speech: x {} then {}", w1.ycx, w2.ycx);
-    assert_eq!(ink(&ss, 0.3).n, 0, "nothing shows before the first word");
+    assert!(w1.yellow > 20 && w2.yellow > 20, "the spoken word carries the warm accent: {} / {} px", w1.yellow, w2.yellow);
+    assert!(w2.ycx > w1.ycx + 10.0, "the accent moves right with the speech: x {} then {}", w1.ycx, w2.ycx);
+    assert!(w1.green < 5, "no second (keyword) colour: {w1:?}");
 }
 
 #[test] fn captions_sit_in_the_portrait_safe_band() { let _env_guard = env_guard();
@@ -111,12 +124,12 @@ fn ink(ss: &Session, t: f64) -> Ink {
     assert!((x1 as f64) <= 0.96 * w, "pill's right edge should clear a real side margin after switching to boxed: x1={x1} of {w}");
 }
 
-#[test] fn boxed_style_colours_a_keyword_and_the_spoken_word() { let _env_guard = env_guard();
+#[test] fn boxed_style_is_plain_text_on_a_soft_box() { let _env_guard = env_guard();
     let mut ss = portrait(); let r = call(&mut ss, "auto_captions", json!({"words": words(), "style": "boxed", "position": "bottom"}));
-    assert_eq!(r["pages"], 2);
-    // page 2 is "best bottle.": while "best" is spoken it is green (active) and "bottle" is the yellow keyword
-    let k = ink(&ss, 1.75); assert!(k.green > 20, "active word green: {k:?}"); assert!(k.yellow > 20, "keyword yellow: {k:?}");
-    assert!(k.ycx > (k.x0 + k.x1) as f64 / 2.0, "the keyword is the second word (right half): {k:?}");
+    assert_eq!(r["pages"], 1, "{r}");
+    let k = ink(&ss, 1.75); assert!(k.n > 30, "text on screen: {k:?}"); assert!(k.green < 5 && k.yellow < 5, "no highlight colours: {k:?}");
+    let fx = ss.project.tracks.last().unwrap().clips[0].text_fx.clone().unwrap_or_default();
+    let bg = fx.bg.expect("a background box"); assert!(bg[3] > 0.4 && bg[3] < 0.8, "a soft (semi-transparent) box: {bg:?}");
 }
 
 #[test] fn a_word_fix_keeps_the_timing_and_the_animation() { let _env_guard = env_guard();
@@ -280,7 +293,7 @@ fn stub_said(tag: &str, said: &[&str]) -> PathBuf {
     let e = dispatch(&mut ss, "auto_captions", &json!({"whisper_bin": "/nonexistent/whisper-cli"})).unwrap_err();
     assert!(e.contains("tools/whisper/fetch.sh") || e.contains("speech recognizer"), "{e}");
     let e2 = dispatch(&mut ss, "auto_captions", &json!({"words": [{"text": "a", "start": 1.0, "end": 0.5}]})).unwrap_err(); assert!(e2.contains("start < end"), "{e2}");
-    let e3 = dispatch(&mut ss, "auto_captions", &json!({"words": words(), "style": "neon"})).unwrap_err(); assert!(e3.contains("pop|karaoke|clean|boxed|impact"), "{e3}");
+    let e3 = dispatch(&mut ss, "auto_captions", &json!({"words": words(), "style": "neon"})).unwrap_err(); assert!(e3.contains("clean|pop|karaoke|boxed|impact"), "{e3}");
 }
 
 /// 2 s of 360x640 video: a dark room with a skin-toned face-sized patch whose vertical extent is `y0..y1` of the frame.

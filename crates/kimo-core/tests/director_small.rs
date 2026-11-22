@@ -1166,9 +1166,10 @@ fn pillarboxed_landscape(name: &str, dur: f64, canvas_w: u32, canvas_h: u32, ban
     let added = call(&mut ss, "add_caption_cues", json!({"track_id": tt, "cues": [{"start": 0.0, "end": 1.0, "text": "PAGE ONE"}, {"start": 1.5, "end": 2.5, "text": "PAGE TWO"}], "style": "boxed"}));
     let ids: Vec<String> = added["clip_ids"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
     let (p1, p2) = (ids[0].clone(), ids[1].clone());
-    // both pages' boxes sit around x 534-538, y 592, w ~210, h 32 (same style/size): a wide bright box
-    // covering that band, visible only during page two's 1.5-2.5s window.
-    let path = bg_with_box("rv34_subject_v2.mp4", 1280, 720, 3.2, (480, 600, 320, 100), (1.5, 2.5));
+    // both pages' boxed captions sit at about x 562-718, y 598-621 (0.35 x 720 below centre, same style/size): a
+    // bright box whose top corners and edge (its most salient part) fall inside that band, visible only during
+    // page two's 1.5-2.5s window.
+    let path = bg_with_box("rv34_subject_v5.mp4", 1280, 720, 3.2, (580, 606, 120, 100), (1.5, 2.5));
     let mt = sid(&call(&mut ss, "add_track", json!({})), "track_id");
     let a = sid(&call(&mut ss, "import_media", json!({"path": path})), "asset_id");
     call(&mut ss, "add_clip", json!({"track_id": mt, "source_type": "media", "asset_id": a, "start": 0.0, "duration": 3.2, "fit": "cover"}));

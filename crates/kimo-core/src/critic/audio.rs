@@ -61,7 +61,8 @@ pub fn role(p: &Project, track_id: &str, c: &Clip) -> Role {
     let named_music = p.tracks.iter().find(|t| t.id == track_id).map(|t| { let n = t.name.to_lowercase(); n.contains("music") || n.contains("song") || n.contains("bed") }).unwrap_or(false);
     let Some(s) = clip_sound(p, c) else { return Role::Other };
     if named_music { return Role::Music; }
-    if s.speech_ratio >= 0.2 { return Role::Dialogue; }
+    // speech detection fires now and then on engine, traffic and crowd noise; a clip has to be mostly speech to count as dialogue
+    if s.speech_ratio >= 0.35 { return Role::Dialogue; }
     if s.audio_only { Role::Music } else { Role::Other }
 }
 
@@ -126,6 +127,11 @@ fn measure(p: &Project, a: f64, b: f64, o: Opts) -> Vec<Finding> {
         let gain = c.audio.volume.keys.iter().map(|k| k.v).fold(c.audio.volume.base, f64::max).max(0.0);
         let driven = s.peak * gain;
         let source_clipped = s.pcm_peak_frames >= 4 && s.pcm_peak_frames as f64 >= s.frames as f64 * 1e-4;
+        // a clip whose own chain ends in a limiter (or a compressor) does not reach the output at volume x source peak:
+        // the chain holds it down (finish_audio's dialogue chain ends in a -1.5 dB limiter). The mix's true-peak check
+        // below still catches a real over; only a source that is clipped in the file itself is flagged per clip then.
+        let chained = c.audio.effects.iter().any(|e| matches!(e, crate::editorial::AudioEffect::Limiter { .. } | crate::editorial::AudioEffect::Compressor { .. }));
+        let driven = if chained { 0.0 } else { driven };
         if source_clipped || driven >= 1.0 {
             let target_gain = r3((0.708 / s.peak.max(1e-6)).min(gain.max(0.01)) * if source_clipped && driven < 1.0 { 0.85 } else { 1.0 });
             let msg = if source_clipped { format!("{} is clipped in its source ({} sample frames flat at full scale): it will sound distorted; lower it to give the limiter headroom, and replace the take if there is a clean one", c.id, s.pcm_peak_frames) }

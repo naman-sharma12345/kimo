@@ -348,12 +348,17 @@ fn text_contrast_known_ratios_threshold_and_read_only() {
 #[test]
 fn h_ink_size_exact_boundary_and_delivery_scaling() {
     let (mut s, id) = text_scene([0.; 3], 24., 640, 360);
+    // the lint measures the exact cap height of "H" (its outline, not the pixel-rounded ink box): read it from a
+    // run that must warn, then put the threshold exactly on it
     let m = c(
         &mut s,
-        "compute_text_bounds",
-        json!({"text":"H","font":"DejaVuSans","size":24}),
+        "lint_frame",
+        json!({"time":1,"checks":["min_text_size"],"delivery_height":360,"params":{"min_cap_px":1e6},"annotate":false}),
     );
-    let cap = m["ink"][3].as_f64().unwrap() - m["ink"][1].as_f64().unwrap();
+    let cap = findings(&m)[0]["measured"]["cap_height_canvas_px"].as_f64().unwrap();
+    let ink = c(&mut s, "compute_text_bounds", json!({"text":"H","font":"DejaVuSans","size":24}));
+    let ink_cap = ink["ink"][3].as_f64().unwrap() - ink["ink"][1].as_f64().unwrap();
+    assert!(cap > 0.0 && cap <= ink_cap && ink_cap - cap < 2.0, "exact cap {cap} within the rounded ink box {ink_cap}");
     let r = c(
         &mut s,
         "lint_frame",

@@ -530,7 +530,7 @@ fn caption_from_words(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let by_asset = a.get("by_asset").and_then(|v| v.as_object()).cloned();
     let text = a.get("text").and_then(|v| v.as_str()).filter(|t| !t.trim().is_empty()).map(String::from).unwrap_or_default();
     if text.is_empty() && by_asset.is_none() { return Err("text: the words spoken on the track, in order (from the script or brief), or by_asset {asset_id: words} per source clip. Speech-to-text needs the whisper CLI: add_captions {source: \"transcribe\"}".into()); }
-    let style = a.get("style").and_then(|v| v.as_str()).unwrap_or("boxed").to_string();
+    let style = a.get("style").and_then(|v| v.as_str()).unwrap_or("subtitle").to_string(); // white semibold, soft shadow
     let platform = a.get("platform").and_then(|v| v.as_str()).unwrap_or("tiktok").to_string();
     let max_chars = opt_num(a, "max_chars", 22.0).clamp(6.0, 60.0) as usize;
     let lines = opt_num(a, "lines", 2.0).clamp(1.0, 3.0) as usize;
@@ -1412,7 +1412,7 @@ fn lint_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
         let mut half = (w / 2.0 - safe[0]).min(safe[0] + safe[2] - w / 2.0);
         for z in &avoid { if z[1] < r[1] + r[3] + dy && z[1] + z[3] > r[1] + dy && z[0] > w / 2.0 { half = half.min(z[0] - w / 2.0 - 8.0); } }
         let too_wide = r[2] > 2.0 * half;
-        let fix = match &cap { Some(c) => { let mut st = json!({"caption_id": c, "style": "boxed", "y": r3(cur_y + dy)}); if too_wide { st["size"] = json!(((h.min(w) / 15.0) * 2.0 * half / r[2]).floor()); }
+        let fix = match &cap { Some(c) => { let mut st = json!({"caption_id": c, "style": "boxed", "y": r3(cur_y + dy)}); if too_wide { st["size"] = json!(((h.min(w) * 0.049) * 2.0 * half / r[2]).floor()); }
                 json!({"tool": "caption_from_words", "args": {"track_id": "<dialogue track>", "text": "<the spoken words>"}, "or": {"tool": "set_caption_style", "args": st}}) },
             None => if too_wide { json!({"tool": "set_text_style", "args": {"clip_id": id, "box_width": r3(2.0 * half)}, "then": {"tool": "set_property", "args": {"clip_id": id, "property": "y", "value": r3(cur_y + dy)}}}) } else { json!({"tool": "set_property", "args": {"clip_id": id, "property": "y", "value": r3(cur_y + dy)}}) } };
         probs.push(json!({"code": "text_outside_safe_area", "clip_id": id, "caption_id": cap, "rect": [r[0].round(), r[1].round(), r[2].round(), r[3].round()], "message": format!("text box {:?} is under the {platform} UI or outside title safe{}", [r[0].round(), r[1].round(), r[2].round(), r[3].round()], if too_wide { " and too wide" } else { "" }), "fix": fix}));
@@ -1519,11 +1519,19 @@ fn lint_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
         // background got dragged back into the middle of the dialogue and trimmed to a sliver this way,
         // emptying the end screen it was supposed to sit behind) is simply the wrong call for this clip.
         let speech_end = sp.iter().map(|(_, e)| *e).fold(0.0_f64, f64::max);
+        // a clip above the dialogue track whose OWN audio is audible speech is dialogue too (an A/B overlap for a
+        // transition, a second camera angle), not b-roll: flagging it and "fixing" it would cut the spoken line
+        let mut carries_speech: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let above: Vec<(String, f64, bool)> = ss.project.tracks.iter().skip(di + 1).flat_map(|t| t.clips.iter().filter(|c| matches!(c.source, Source::Media { .. })).map(move |c| (c.id.clone(), c.duration, t.muted))).collect();
+        for (cid, dur, muted) in above { if muted || dur < 0.3 { continue; }
+            let audible = ss.project.find_clip(&cid).map_or(false, |c| !c.audio.mute && (c.audio.volume.base > 0.05 || c.audio.volume.keys.iter().any(|k| k.v > 0.05)));
+            if !audible { continue; }
+            if let Ok(iv) = speech(ss, json!({"clip_id": cid}), 2, 250.0, 60.0) { let talk: f64 = iv.iter().map(|(a, b)| b - a).sum(); if talk >= 0.4 * dur.min(10.0) || talk >= 1.5 { carries_speech.insert(cid); } } }
         for tr in ss.project.tracks.iter().skip(di + 1) { for c in &tr.clips {
             let Source::Media { asset } = &c.source else { continue }; if ss.project.assets.get(asset).map(|x| x.width == 0).unwrap_or(true) { continue; }
             if c.start + 1e-6 >= speech_end { continue; }
             let (s, e) = (c.start, c.start + c.duration); let ov: f64 = dil.iter().map(|(a, b)| (e.min(*b) - s.max(*a)).max(0.0)).sum();
-            if ov / (e - s).max(1e-6) < 0.9 {
+            if ov / (e - s).max(1e-6) < 0.9 && !carries_speech.contains(&c.id) {
                 let best = sp.iter().filter(|(a, b)| b - a >= 0.6).min_by(|x, y| ((x.0 + x.1) / 2.0 - (s + e) / 2.0).abs().partial_cmp(&((y.0 + y.1) / 2.0 - (s + e) / 2.0).abs()).unwrap()).copied();
                 let fix = match best { Some((a0, b0)) => { let ns = a0.max(s.min(b0 - 0.5)); let nd = (b0.min(ns + (e - s))) - ns; json!({"tool": "move_clip", "args": {"clip_id": c.id, "start": r3(ns)}, "then": {"tool": "trim_clip", "args": {"clip_id": c.id, "duration": r3(nd.max(0.4))}}}) } None => json!({"tool": "delete_clip", "args": {"clip_id": c.id}}) };
                 probs.push(json!({"code": "broll_over_silence", "clip_id": c.id, "span": [r3(s), r3(e)], "message": format!("b-roll {} plays {:.0}% outside speech", c.id, 100.0 * (1.0 - ov / (e - s).max(1e-6))), "fix": fix}));
@@ -1623,7 +1631,7 @@ pub fn commands() -> Vec<Command> {
                 ("asset_tags", json!({"type": "object", "description": "optional {asset_id:[tag]}"})),
                 ("whoosh_sfx", json!({"type":"boolean","description":"default FALSE: synthesized whoosh per b-roll cut-in -- costs whisper recall on real footage even ducked low; opt in deliberately"}))], &["track_id", "asset_ids"]), run: |ss, a| atomic(ss, a, place_broll) },
         Command { name: "caption_from_words", description: "Captions from words you give (per source clip or whole track), timed to the detected speech, clear of the platform UI. Best-effort checks each cue's words against what kimo's own recognizer actually hears on that audio and flags any it genuinely can't make out (low_confidence_cues, and lint_edit's caption_low_confidence) - check those before export rather than guess. Returns cues.", mutates: true,
-            schema: obj(vec![("track_id", s("the dialogue track")), ("text", s("the words spoken on the whole track, in order")), ("by_asset", json!({"type": "object", "description": "better: {asset_id: words spoken in that clip}; each clip's words stay on its own shots"})), ("style", s("boxed (default)|subtitle|yellow")), ("platform", s("tiktok (default)|reels|shorts|none")),
+            schema: obj(vec![("track_id", s("the dialogue track")), ("text", s("the words spoken on the whole track, in order")), ("by_asset", json!({"type": "object", "description": "better: {asset_id: words spoken in that clip}; each clip's words stay on its own shots"})), ("style", s("subtitle (default: white semibold, soft shadow)|boxed (on a soft dark box)|yellow")), ("platform", s("tiktok (default)|reels|shorts|none")),
                 ("max_chars", n("characters per line, default 22")), ("lines", n("lines per cue, default 2")), ("size", n("pixel size; default fits the safe width")),
                 ("check_confidence", json!({"type":"boolean","description":"best-effort: cross-check given words against the recognizer on the same audio and flag cues it can't make out confidently (default true; set false to skip, e.g. no recognizer installed)"})),
                 ("hint", s("vocabulary/topic hint for the confidence check only (names, jargon in the clip) - does not change the caption text")),
