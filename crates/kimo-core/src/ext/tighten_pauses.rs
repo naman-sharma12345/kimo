@@ -78,7 +78,9 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let ti = ss.project.tracks.iter().position(|t| t.id == track_id).ok_or_else(|| format!("no such track '{track_id}'"))?;
     if ss.project.tracks[ti].locked { return Err(format!("track '{track_id}' is locked")); }
 
-    let pad_ms = opt_num_checked(a, "pad_ms", 120.0)?.clamp(60.0, 250.0);
+    // V10: default 200 ms left in an interior pause, split 120 ms after the last word's tail and 80 ms before the
+    // next word's onset (a tail decays longer than an onset builds), so neither side of the cut clips a word.
+    let pad_ms = opt_num_checked(a, "pad_ms", 200.0)?.clamp(60.0, 250.0);
     let opening_pad_ms = opt_num_checked(a, "opening_pad_ms", 80.0)?.clamp(0.0, 250.0);
     let min_gap_ms = opt_num_checked(a, "min_gap_ms", 260.0)?.max(pad_ms.max(opening_pad_ms) + 40.0);
     let threshold_db_fixed = match a.get("threshold_db") {
@@ -166,8 +168,7 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
             let (rst, ren) = if is_leading {
                 (gs.max(0.0), ge - target_pad_ms / 1000.0)
             } else {
-                let margin = target_pad_ms / 1000.0 / 2.0;
-                (gs + margin, ge - margin)
+                (gs + target_pad_ms / 1000.0 * 0.6, ge - target_pad_ms / 1000.0 * 0.4)
             };
             if ren <= rst + 0.01 { continue; } // under 10ms isn't worth a cut
             candidates.push((rst, ren, gdur * 1000.0, is_leading, target_pad_ms));
@@ -211,6 +212,8 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
         total_removed += tr["removed_seconds"].as_f64().unwrap_or(0.0);
     }
 
+    // every cut this made gets a short audio crossfade so the splice never clicks (see director_tools::declick_cuts)
+    let crossfaded = if dry_run { 0 } else { crate::ext::director_tools::declick_cuts(&mut ss.project, &track_id, crate::ext::director_tools::DECLICK_MS / 1000.0) };
     let (clips_after, total_after_s) = if dry_run {
         (clips.len(), (total_before_s - total_removed).max(0.0))
     } else {
@@ -223,7 +226,7 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
         "pad_ms": pad_ms, "opening_pad_ms": opening_pad_ms, "min_gap_ms": min_gap_ms,
         "gaps_tightened": gaps.len(), "gaps": gaps, "skipped_clips": skipped_clips,
         "removed_seconds": total_removed, "total_before_s": total_before_s, "total_after_s": total_after_s,
-        "clips_after": clips_after,
+        "clips_after": clips_after, "crossfaded_cuts": crossfaded,
         "longest_interior_pause_before_ms": longest_before_ms,
         "opening_before_ms": opening_before_ms, "opening_after_ms": opening_after_ms,
     }))
@@ -236,7 +239,7 @@ pub fn commands() -> Vec<Command> {
         mutates: true,
         schema: obj(vec![
             ("track_id", s("track to tighten, default: the track with the most media clips")),
-            ("pad_ms", n("target remaining gap between phrases after tightening, milliseconds; default 120, clamped 60..250")),
+            ("pad_ms", n("target remaining gap between phrases after tightening, milliseconds (60% after the last word, 40% before the next); default 200, clamped 60..250")),
             ("opening_pad_ms", n("target remaining gap before the very first spoken word on the track's first clip (the cold-open hook), milliseconds; default 80, clamped 0..250")),
             ("min_gap_ms", n("only act on a pause at least this long (milliseconds); default 260, raised automatically to pad_ms/opening_pad_ms + 40 if given lower")),
             ("threshold_db", n("RMS level below which a 100ms window counts as silence; default: auto-calibrated once from the whole track's own measured noise floor and quietest speech level (give a number to pin one fixed level instead)")),

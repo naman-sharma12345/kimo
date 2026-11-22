@@ -43,8 +43,12 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
         if !ss.project.tracks.iter().any(|t| &t.id == tid) { return Err(format!("no such track '{tid}'")); }
     }
     let amount_db = a.get("amount_db").and_then(|v| v.as_f64()).unwrap_or(-12.0);
-    let attack = a.get("attack").and_then(|v| v.as_f64()).unwrap_or(0.1);
-    let release = a.get("release").and_then(|v| v.as_f64()).unwrap_or(0.3);
+    // V10: slower, eased ramps by default (0.35 s down, 0.8 s back up, S-curved: an eased ramp peaks at 3x its average slope, so these are
+    // still gentler at their steepest than the old ramps) -- the old 0.1/0.3 s linear ramps
+    // pumped audibly on every phrase
+    let attack = a.get("attack").and_then(|v| v.as_f64()).unwrap_or(0.35);
+    let release = a.get("release").and_then(|v| v.as_f64()).unwrap_or(0.8);
+    let curve = a.get("curve").and_then(|v| v.as_str()).unwrap_or("smooth").to_string();
     let hold = a.get("hold").and_then(|v| v.as_f64()).unwrap_or(0.0);
     if !(0.0..=5.0).contains(&hold) { return Err("hold must be 0..5".into()); }
 
@@ -58,7 +62,7 @@ fn run(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let mut ducked = 0usize;
     let mut per_track: Vec<Value> = vec![];
     for m in &music_tracks {
-        let r = call(ss, "auto_duck", &json!({"track": m, "speech_windows": windows, "amount_db": amount_db, "attack": attack, "release": release}))?;
+        let r = call(ss, "auto_duck", &json!({"track": m, "speech_windows": windows, "amount_db": amount_db, "attack": attack, "release": release, "curve": curve}))?;
         ducked += 1;
         per_track.push(json!({"track_id": m, "clips": r.get("clips").cloned().unwrap_or(json!(0)), "speech_windows_used": r.get("speech_windows").cloned().unwrap_or(json!(0))}));
     }
@@ -81,8 +85,9 @@ pub fn commands() -> Vec<Command> {
             ("dialogue_tracks", json!({"type":"array","items":{"type":"string"},"description":"every track whose speech should duck the music, at least one"})),
             ("music_tracks", json!({"type":"array","items":{"type":"string"},"description":"every track to duck, at least one"})),
             ("amount_db", n("how far to duck, dB, default -12")),
-            ("attack", n("seconds to duck down, default 0.1")),
-            ("release", n("seconds to come back up, default 0.3")),
+            ("attack", n("seconds to duck down, default 0.35")),
+            ("release", n("seconds to come back up, default 0.8")),
+            ("curve", json!({"type":"string","enum":["linear","smooth"],"description":"ramp shape, default smooth (eased)"})),
             ("hold", n("seconds the duck stays down after speech ends before releasing, default 0, max 5")),
         ], &["dialogue_tracks", "music_tracks"]),
         run,

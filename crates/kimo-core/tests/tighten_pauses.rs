@@ -80,7 +80,7 @@ fn shrinks_the_interior_breath_and_the_opening_without_touching_speech_or_the_ta
 
     let r = c(&mut ss, "tighten_pauses", json!({"track_id": &track}));
 
-    // Both the opening (500ms -> ~80ms) and the interior breath (900ms -> ~120ms) are long enough past
+    // Both the opening (500ms -> ~80ms) and the interior breath (900ms -> ~200ms since V10) are long enough past
     // their targets (min_gap_ms default 260ms) to be found and acted on; the 2.6s trailing silence must
     // never be touched (it isn't "between phrases", it's the handoff after the last word).
     assert_eq!(r["gaps_tightened"].as_u64().unwrap(), 2, "expected the opening gap and the interior breath, nothing else: {r}");
@@ -99,9 +99,10 @@ fn shrinks_the_interior_breath_and_the_opening_without_touching_speech_or_the_ta
 
     // The tool's own target pads (what it tried to leave behind).
     assert!((r["opening_pad_ms"].as_f64().unwrap() - 80.0).abs() < 1e-6);
-    assert!((r["pad_ms"].as_f64().unwrap() - 120.0).abs() < 1e-6);
+    // V10: the default interior pad is 200 ms (120 ms after the tail, 80 ms before the onset), up from 120 ms split evenly
+    assert!((r["pad_ms"].as_f64().unwrap() - 200.0).abs() < 1e-6);
 
-    // Removed roughly (500-80)+(900-120) = 1200ms, loosely (quantization both ways).
+    // Removed roughly (500-80)+(900-200) = 1120ms, loosely (quantization both ways).
     let removed = r["removed_seconds"].as_f64().unwrap();
     assert!((0.85..=1.45).contains(&removed), "removed_seconds out of expected range: {removed} in {r}");
 
@@ -112,7 +113,17 @@ fn shrinks_the_interior_breath_and_the_opening_without_touching_speech_or_the_ta
     // NEVER CUT MID-WORD: total detected speech is unchanged within VAD noise -- if either cut had
     // landed inside a word, speech duration would have dropped by that much.
     let speech_after = total_speech_s(&mut ss, &track);
-    assert!((speech_before - speech_after).abs() < 0.15, "speech duration must survive the tightening: before {speech_before:.3}s after {speech_after:.3}s");
+    // V10: the probe reads 100 ms RMS windows, so it cannot resolve the 200 ms pause now left between phrases and
+    // reads up to two windows of it as sound -- a quantisation of the measurement, not a change in content. So the
+    // probe gets that much slack upward, and the exact check is the source: every known speech window must still
+    // be wholly inside the kept clips' source ranges.
+    assert!(speech_after >= speech_before - 0.15 && speech_after <= speech_before + 0.25, "speech duration must survive the tightening: before {speech_before:.3}s after {speech_after:.3}s");
+    let t = ss.project.tracks.iter().find(|t| t.id == track).unwrap();
+    let kept: Vec<(f64, f64)> = t.clips.iter().map(|cl| (cl.in_point, cl.in_point + cl.duration * cl.speed)).collect();
+    for (ws, we) in WINDOWS {
+        let covered: f64 = kept.iter().map(|(a, b)| (b.min(we) - a.max(ws)).max(0.0)).sum();
+        assert!(covered >= (we - ws) - 1e-3, "speech window {ws}..{we} lost {:.3}s to a cut (kept source ranges {kept:?})", (we - ws) - covered);
+    }
 
     // The trailing 2.6s silence after the last word must still be there, untouched -- not shrunk, not split.
     let clips = track_media_clips(&ss, &track);
@@ -131,7 +142,7 @@ fn shrinks_the_interior_breath_and_the_opening_without_touching_speech_or_the_ta
         .map(|s| s["duration"].as_f64().unwrap() * 1000.0)
         .collect();
     for &d in &interior_after {
-        assert!(d <= 260.0, "an interior pause of {d}ms survived tightening (target was ~80-120ms): {silences:?}");
+        assert!(d <= 260.0, "an interior pause of {d}ms survived tightening (target was ~80-200ms): {silences:?}");
     }
 }
 

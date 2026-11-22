@@ -110,13 +110,49 @@ impl Look {
 }
 fn hamming(a: u64, b: u64) -> u32 { (a ^ b).count_ones() }
 
+// ---------------------------------------------------------------- cut de-clicking
+/// Default length of the audio crossfade put on each side of a cut, milliseconds.
+pub(crate) const DECLICK_MS: f64 = 8.0;
+/// V10: a hard butt-splice between two pieces of audio is a step discontinuity in the waveform, which is an audible
+/// click whenever the two sides are not both at a zero crossing (almost always, mid-room-tone). At every cut on
+/// `track_id` -- two media clips that abut on the timeline -- this gives the outgoing clip a `fade_s` fade-out and
+/// the incoming clip a `fade_s` fade-in (only where the clip has no fade of its own yet), so the waveform runs
+/// continuously through the cut: an equal-length crossfade pair through the edit point. Fades rather than an
+/// overlapping split edit keep the clips "simple", so export's FFmpeg fast path (afade) still applies to them.
+/// Returns how many cuts were treated.
+pub(crate) fn declick_cuts(p: &mut crate::model::Project, track_id: &str, fade_s: f64) -> usize {
+    if !(fade_s > 0.0) { return 0; }
+    let Some(tr) = p.tracks.iter_mut().find(|t| t.id == track_id && !t.locked) else { return 0 };
+    let mut order: Vec<usize> = (0..tr.clips.len()).collect();
+    order.sort_by(|&x, &y| tr.clips[x].start.total_cmp(&tr.clips[y].start));
+    let mut n = 0;
+    for w in order.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let (ca, cb) = (&tr.clips[a], &tr.clips[b]);
+        if !matches!(ca.source, Source::Media { .. }) || !matches!(cb.source, Source::Media { .. }) { continue; }
+        if ((ca.start + ca.duration) - cb.start).abs() > 1e-3 { continue; }
+        let f = fade_s.min(ca.duration / 4.0).min(cb.duration / 4.0);
+        if ca.audio.fade_out <= 0.0 { tr.cm(a).audio.fade_out = f; }
+        if tr.clips[b].audio.fade_in <= 0.0 { tr.cm(b).audio.fade_in = f; }
+        n += 1;
+    }
+    n
+}
+
 // ---------------------------------------------------------------- auto_rough_cut
 fn rough_cut(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let ids = str_list(a, "asset_ids")?;
     let fps = fps(ss);
     let start = snap(opt_num(a, "start", 0.0).max(0.0), fps);
     let max_pause = opt_num(a, "max_pause", 0.35).clamp(0.0, 3.0);
-    let pad = opt_num(a, "pad", 0.06).clamp(0.0, 0.5);
+    // V10: asymmetric word padding. A word's onset (a plosive, a breath in) needs a little lead and its tail (a
+    // decaying vowel, a trailing "s") needs more: 80 ms before, 120 ms after, measured from the VAD's own boundaries
+    // (VAD is asked for no padding of its own). `pad` still sets both at once for a caller that wants one number.
+    let (pad_before, pad_after) = match a.get("pad").and_then(|v| v.as_f64()) {
+        Some(p) => (p.clamp(0.0, 0.5), p.clamp(0.0, 0.5)),
+        None => (opt_num(a, "pad_before", 0.08).clamp(0.0, 0.5), opt_num(a, "pad_after", 0.12).clamp(0.0, 0.5)),
+    };
+    let xfade = opt_num(a, "crossfade_ms", DECLICK_MS).clamp(0.0, 20.0) / 1000.0;
     let mut drop: Vec<(String, usize)> = vec![];
     if let Some(d) = a.get("drop") {
         let arr = d.as_array().ok_or("drop: an array of {asset_id, index} (segment indexes from an earlier result)")?;
@@ -138,9 +174,11 @@ fn rough_cut(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let (mut t, mut clips, mut segs, mut sp_tl) = (start, vec![], vec![], vec![]);
     for id in &ids {
         let (path, adur) = asset(ss, id)?;
-        let mut sp = merge(speech(ss, json!({"path": path}), 1, 300.0, pad * 1000.0).map_err(|e| {
+        let raw = speech(ss, json!({"path": path}), 1, 300.0, 0.0).map_err(|e| {
             if e == "no audio track" { format!("asset '{id}' ({path}) has no audio track, so auto_rough_cut can't detect speech on it; lay it with add_clip instead") } else { e }
-        })?, max_pause);
+        })?;
+        // pads first, then merge: a breath or short pause shorter than max_pause between two padded words stays in
+        let mut sp = merge(raw.into_iter().map(|(s, e)| ((s - pad_before).max(0.0), (e + pad_after).min(adur))).collect(), max_pause);
         if sp.is_empty() { return Err(format!("no speech found in asset '{id}' ({path}); lay it with add_clip instead")); }
         // Only the very first kept segment of the whole output risks this (every later segment already has
         // real silence -- or another kept clip -- right before it, giving VAD a settle window it actually gets).
@@ -192,7 +230,8 @@ fn rough_cut(ss: &mut Session, a: &Value) -> Result<Value, String> {
         }
     }
     if clips.is_empty() { return Err("every speech segment was dropped; nothing was laid".into()); }
-    Ok(json!({"track_id": tid, "end": r3(t), "duration": r3(t - start), "clips": clips, "speech": pairs(&sp_tl), "segments": segs,
+    let declicked = declick_cuts(&mut ss.project, &tid, xfade);
+    Ok(json!({"track_id": tid, "end": r3(t), "duration": r3(t - start), "clips": clips, "speech": pairs(&sp_tl), "segments": segs, "crossfaded_cuts": declicked,
         "next": "b-roll: place_broll {track_id}; captions: caption_from_words {track_id, by_asset: {asset_id: words}}; a false start: run again with drop [{asset_id, index}]"}))
 }
 
@@ -608,7 +647,112 @@ fn asr_confidence(ss: &Session, a: &Value, clip_ids: &[String], hint: &str) -> O
 }
 
 // ---------------------------------------------------------------- finish_audio
-
+/// finish_audio's own dialogue chain is recognised by marker parameter values no hand-set effect is likely to carry,
+/// so a re-run replaces the chain it built before instead of stacking a second one (an AudioEffect has no tag field).
+const FA_Q_MUD: f64 = 0.7071; const FA_Q_PRES: f64 = 0.9001; const FA_COMP_REL_MS: f64 = 180.5; const FA_DEESS_F: f64 = 0.5501; const FA_LIM_REL_MS: f64 = 60.5;
+fn is_finish_fx(e: &crate::editorial::AudioEffect) -> bool {
+    use crate::editorial::AudioEffect as E;
+    match e {
+        E::Eq { width, .. } => *width == FA_Q_MUD || *width == FA_Q_PRES,
+        E::Compressor { release_ms, .. } => *release_ms == FA_COMP_REL_MS,
+        E::Deesser { frequency, .. } => *frequency == FA_DEESS_F,
+        E::Limiter { release_ms, .. } => *release_ms == FA_LIM_REL_MS,
+        E::Denoise { floor_db, .. } => (floor_db.fract().abs() - 0.5).abs() < 1e-9,
+        _ => false,
+    }
+}
+/// What finish_audio measures on one clip's own sound (its decode with finish_audio's previous chain taken out).
+#[derive(Debug)]
+struct VoiceFacts {
+    /// noise floor: the median 20 ms RMS (dBFS) over the clip's pauses (VAD gaps); the quietest tenth when it has none
+    floor_db: f64, from_pauses: bool,
+    /// energy mean of the speech windows, dBFS
+    speech_db: Option<f64>,
+    /// band powers (dBFS) of the speech: mud 150-400 Hz, mids 400-2000, presence 2-5 kHz, sibilance 5-10 kHz
+    mud_db: f64, mid_db: f64, pres_db: f64, sib_db: f64,
+    /// share of the power in the voice band, 100 Hz - 5 kHz
+    voice_share: f64,
+    /// beat tracking over the onsets (perception::audio_events): tempo confidence 0..1 and the tempo
+    beat_conf: f64, bpm: Option<f64>,
+    /// a steady pulse: at least six onsets whose spacings are (nearly) whole multiples of one pulse period
+    pulse: bool,
+}
+fn voice_facts(ss: &Session, id: &str) -> Option<VoiceFacts> {
+    let c = ss.project.find_clip(id)?; let Source::Media { asset } = &c.source else { return None };
+    let path = ss.project.resolve(&ss.project.assets.get(asset)?.path);
+    let mut c2 = c.clone(); c2.audio.effects.retain(|e| !is_finish_fx(e));
+    let pcm = crate::audio::strict_decode(&path, &c2).ok()?;
+    let frames = pcm.len() / 2; if frames < 24000 { return None; } // under half a second: nothing reliable to measure
+    let vad = crate::perception::vad::analyze(&pcm, &crate::perception::vad::Params { pad_ms: 0.0, ..Default::default() }).ok()?;
+    const WIN: usize = 960; // 20 ms
+    let nwin = frames / WIN;
+    let in_speech = |t: f64| vad.speech.iter().any(|s| t >= s.start && t < s.end);
+    let (mut pause_db, mut speech_e, mut speech_n, mut all_db) = (vec![], 0.0f64, 0usize, vec![]);
+    for w in 0..nwin {
+        let e: f64 = pcm[w * WIN * 2..(w + 1) * WIN * 2].iter().map(|v| (*v as f64) * (*v as f64)).sum::<f64>() / (WIN * 2) as f64;
+        let db = if e > 1e-12 { 10.0 * e.log10() } else { -120.0 };
+        all_db.push(db);
+        let t = (w * WIN + WIN / 2) as f64 / 48000.0;
+        if in_speech(t) { speech_e += e; speech_n += 1; } else { pause_db.push(db); }
+    }
+    let from_pauses = pause_db.len() >= 10;
+    let mut v = if from_pauses { pause_db } else { all_db.clone() }; v.sort_by(f64::total_cmp);
+    let floor_db = if from_pauses { v[v.len() / 2] } else { v[v.len() / 10] };
+    let speech_db = if speech_n > 0 && speech_e > 0.0 { Some(10.0 * (speech_e / speech_n as f64).log10()) } else { None };
+    // spectrum of the speech only (whole clip when it has too little), at most 30 s
+    let mut sp: Vec<f32> = vec![];
+    for s in &vad.speech { let (a, b) = (((s.start * 48000.0) as usize).min(frames), ((s.end * 48000.0) as usize).min(frames)); sp.extend_from_slice(&pcm[a * 2..b * 2]); if sp.len() > 48000 * 2 * 30 { break; } }
+    if sp.len() / 2 < 4096 { sp = pcm[..(frames.min(48000 * 30)) * 2].to_vec(); }
+    let cfg = super::audio_spectrum::Cfg { spectrum_points: 0, ..super::audio_spectrum::Cfg::new(2048, super::audio_spectrum::custom_bands(&[20.0, 100.0, 150.0, 400.0, 2000.0, 5000.0, 10000.0, 24000.0]).ok()?, "custom") };
+    let spec = super::audio_spectrum::analyze(&sp, &cfg).ok()?;
+    let bdb: Vec<f64> = spec["bands"].as_array()?.iter().map(|b| b["dbfs"].as_f64().unwrap_or(-150.0)).collect();
+    if bdb.len() != 7 { return None; }
+    let pw: Vec<f64> = bdb.iter().map(|d| 10f64.powf(d / 10.0)).collect(); let total: f64 = pw.iter().sum();
+    let voice_share = if total > 0.0 { pw[1..5].iter().sum::<f64>() / total } else { 0.0 };
+    let mono: Vec<f32> = pcm.chunks_exact(2).map(|p| 0.5 * (p[0] + p[1])).collect();
+    let beats = crate::perception::audio_events::analyze(&mono, &crate::perception::audio_events::Params { mode: "beat".into(), ..Default::default() }).ok();
+    let pulse = beats.as_ref().map(|b| {
+        let t: Vec<f64> = b.transients.iter().map(|e| e.t).collect(); if t.len() < 6 { return false; }
+        let mut ioi: Vec<f64> = t.windows(2).map(|w| w[1] - w[0]).filter(|d| *d > 0.05).collect(); if ioi.len() < 5 { return false; }
+        let mut srt = ioi.clone(); srt.sort_by(f64::total_cmp); let m = srt[srt.len() / 4]; // the pulse quantum (a lower quartile: off-beats halve the spacing)
+        if !(0.2..=2.0).contains(&m) { return false; }
+        ioi.retain(|d| { let r = d / m; r.round() >= 1.0 && (r - r.round()).abs() < 0.12 }); ioi.len() * 10 >= (t.len() - 1) * 8
+    }).unwrap_or(false);
+    Some(VoiceFacts { floor_db, from_pauses, speech_db, mud_db: bdb[2], mid_db: bdb[3], pres_db: bdb[4], sib_db: bdb[5], voice_share,
+        beat_conf: beats.as_ref().map(|b| b.confidence).unwrap_or(0.0), bpm: beats.and_then(|b| b.bpm), pulse })
+}
+/// Music, judged from the sound itself: a steady beat the tempo tracker is confident about, with a spread of energy
+/// wider than a voice's (a voice keeps nearly all its power between 100 Hz and 5 kHz).
+fn sounds_like_music(f: &VoiceFacts) -> bool { (f.pulse && f.voice_share < 0.6) || (f.beat_conf >= 0.6 && f.bpm.map_or(false, |b| (50.0..=220.0).contains(&b)) && f.voice_share < 0.8) }
+/// V10 adaptive dialogue chain, built from add_audio_effect kinds (each step only when the measurement says it helps):
+/// denoise when the pauses show a noise floor above -62 dBFS (strength from how far above), a mud cut at 250 Hz and a
+/// presence lift at 3.5 kHz when the voice is boomy against its presence band, a de-esser scaled to the sibilance, a
+/// gentle 2:1 compressor on the peaks (threshold 6 dB over the clip's own speech level), and a -1.5 dBFS lookahead
+/// limiter so no clip peaks into the master's true-peak ceiling. Returns what was added.
+fn dialogue_chain(ss: &mut Session, id: &str, f: Option<&VoiceFacts>) -> Result<Value, String> {
+    if let Some(c) = ss.project.find_clip_mut(id) { c.audio.effects.retain(|e| !is_finish_fx(e)); }
+    let mut chain = vec![];
+    let mut add = |ss: &mut Session, kind: &str, params: Value, why: Value| -> Result<(), String> {
+        call(ss, "add_audio_effect", &json!({"clip_id": id, "kind": kind, "params": params}))?; chain.push(json!({"kind": kind, "params": params, "why": why})); Ok(())
+    };
+    if let Some(f) = f {
+        let snr = f.speech_db.map(|s| s - f.floor_db);
+        if f.floor_db > -62.0 && snr.map_or(true, |s| s < 45.0) {
+            let red = (6.0 + (f.floor_db + 62.0) * 0.5).clamp(6.0, 18.0);
+            add(ss, "denoise", json!({"reduction_db": r3(red), "floor_db": (f.floor_db.round().clamp(-79.0, -21.0)) - 0.5}), json!({"noise_floor_db": r3(f.floor_db), "measured_in_pauses": f.from_pauses, "snr_db": snr.map(r3)}))?;
+        }
+        let excess = (f.mud_db - f.pres_db) - 12.0;
+        let mud = (excess * 0.3).clamp(0.0, 3.0); let pres = (excess * 0.25).clamp(0.0, 3.0);
+        if mud >= 0.5 { add(ss, "eq", json!({"frequency": 250.0, "width": FA_Q_MUD, "gain_db": -r3(mud)}), json!({"mud_minus_presence_db": r3(f.mud_db - f.pres_db)}))?; }
+        if pres >= 0.5 { add(ss, "eq", json!({"frequency": 3500.0, "width": FA_Q_PRES, "gain_db": r3(pres)}), json!({"mud_minus_presence_db": r3(f.mud_db - f.pres_db)}))?; }
+        let ess = (0.15 + (f.sib_db - f.pres_db + 6.0) * 0.03).clamp(0.1, 0.6);
+        add(ss, "deesser", json!({"intensity": r3(ess), "max": 0.5, "frequency": FA_DEESS_F}), json!({"sibilance_minus_presence_db": r3(f.sib_db - f.pres_db), "mid_db": r3(f.mid_db)}))?;
+        let thr = f.speech_db.map(|s| s + 6.0).unwrap_or(-18.0).clamp(-40.0, -6.0);
+        add(ss, "compressor", json!({"threshold_db": r3(thr), "ratio": 2.0, "attack_ms": 10.0, "release_ms": FA_COMP_REL_MS, "makeup_db": 0.0}), json!({"speech_db": f.speech_db.map(r3)}))?;
+    }
+    add(ss, "limiter", json!({"ceiling_db": -1.5, "attack_ms": 5.0, "release_ms": FA_LIM_REL_MS}), json!("true-peak safety"))?;
+    Ok(json!(chain))
+}
 fn clip_lufs(ss: &mut Session, cid: &str) -> Option<f64> { call(ss, "measure_loudness", &json!({"clip_id": cid})).ok()?["integrated_lufs"].as_f64() }
 fn finish_audio(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let target = opt_num(a, "target_lufs", -14.0).clamp(-30.0, -8.0);
@@ -667,8 +811,9 @@ fn finish_audio(ss: &mut Session, a: &Value) -> Result<Value, String> {
     for t in &ss.project.tracks { if t.muted { continue; } for c in &t.clips { if let Source::Media { asset } = &c.source { let audio_only = ss.project.assets.get(asset).map(|x| x.width == 0 || x.kind.as_deref() == Some("audio")).unwrap_or(false); list.push((c.id.clone(), audio_only)); } } }
     if list.is_empty() { return Err("no media clips with sound on the timeline".into()); }
     let (mut dia, mut mus, mut amb) = (vec![], vec![], vec![]);
+    let (mut classes, mut dia_facts): (Vec<Value>, Vec<Option<VoiceFacts>>) = (vec![], vec![]);
     for (id, audio_only) in &list {
-        if music_ids.contains(id) || *audio_only { mus.push(id.clone()); continue; }
+        if music_ids.contains(id) || *audio_only { mus.push(id.clone()); classes.push(json!({"clip_id": id, "class": "music", "why": if *audio_only { "audio-only" } else { "music_clip_ids" }})); continue; }
         // V7.8Q fix (flagged by a whisper-recall check on real interview footage: most of the real
         // dialogue was coming back MUTED as "ambience" on every real render back to real_v1, hidden
         // because finish_audio's own gain trim just cranks up whatever survived to hit the LUFS target
@@ -687,12 +832,20 @@ fn finish_audio(ss: &mut Session, a: &Value) -> Result<Value, String> {
                 .ok().and_then(|v| v["speech_ratio"].as_f64()).unwrap_or(0.0)
         };
         let ratio = probe(1);
-        let is_dialogue = ratio >= 0.2 || probe(0) >= 0.5;
-        if is_dialogue { dia.push(id.clone()) } else { amb.push(id.clone()) }
+        let speechy = ratio >= 0.2 || probe(0) >= 0.5;
+        // V10: the speech ratio alone called a music clip with a vocal "dialogue" and a music clip on a video track
+        // "ambience" (muted). The clip's own spectrum and onsets settle it: a confident steady beat with energy spread
+        // wider than a voice's is music -- unless the speech detector is sure (ratio >= 0.6) it is someone talking.
+        let facts = voice_facts(ss, id);
+        let musical = facts.as_ref().map(sounds_like_music).unwrap_or(false);
+        let class = if speechy && !(musical && ratio < 0.6) { "dialogue" } else if musical { "music" } else { "ambience" };
+        classes.push(json!({"clip_id": id, "class": class, "speech_ratio": r3(ratio), "beat_confidence": facts.as_ref().map(|f| r3(f.beat_conf)), "steady_pulse": facts.as_ref().map(|f| f.pulse), "bpm": facts.as_ref().and_then(|f| f.bpm).map(r3), "voice_band_share": facts.as_ref().map(|f| r3(f.voice_share))}));
+        match class { "dialogue" => { dia.push(id.clone()); dia_facts.push(facts); } "music" => mus.push(id.clone()), _ => amb.push(id.clone()) }
     }
-    let mut report_d = vec![];
-    for id in &dia {
+    let mut report_d = vec![]; let mut chains = vec![];
+    for (id, f) in dia.iter().zip(dia_facts.iter()) {
         call(ss, "set_audio", &json!({"clip_id": id, "highpass": 80, "compress": true, "compress_amount": compress_strength}))?;
+        chains.push(json!({"clip_id": id, "chain": dialogue_chain(ss, id, f.as_ref())?}));
     }
     // RV-28: speech leveling runs ONCE over the mixed timeline (master_speech_level, read by audio::mix),
     // not per clip -- a per-clip version was tried first and widened loudness range instead of narrowing it
@@ -723,18 +876,20 @@ fn finish_audio(ss: &mut Session, a: &Value) -> Result<Value, String> {
     }
     if !keep_amb { for id in &amb { ss.project.find_clip_mut(id).unwrap().audio.mute = true; } }
     // the mix: trim every audible clip by the same gain until the timeline reads the target
+    // V10: up to six passes to within 0.15 LU (the limiters make the gain-to-loudness step slightly non-linear)
     let mut mix = None;
-    for _ in 0..3 {
+    for _ in 0..6 {
         let m = call(ss, "measure_loudness", &json!({}))?; let Some(l) = m["integrated_lufs"].as_f64() else { break };
-        mix = Some(l); let d = target - l; if d.abs() <= 0.3 { break; }
+        mix = Some(l); let d = target - l; if d.abs() <= 0.15 { break; }
         let g = 10f64.powf(d / 20.0);
         for id in dia.iter().chain(mus.iter()) { let c = ss.project.find_clip_mut(id).unwrap(); let v = (c.audio.volume.base * g).clamp(0.0, 16.0); c.audio.volume = crate::keyframe::Prop::new(v); }
     }
     let m = call(ss, "measure_loudness", &json!({"true_peak": true}))?;
     let l = m["integrated_lufs"].as_f64().or(mix);
     Ok(json!({"mix_lufs": l.map(r3), "target_lufs": target, "sample_peak_dbfs": m["sample_peak_dbfs"].as_f64().map(r3), "true_peak_dbfs": m["true_peak_dbfs"].as_f64().map(r3),
-        "dialogue": report_d, "music": report_m, "ambience_muted": if keep_amb { json!([]) } else { json!(amb) },
-        "note": if level_on { "dialogue: 80 Hz high-pass + gentle speech leveling + compressor, each clip to the same loudness; export limits peaks at -1.5 dBFS" } else { "dialogue: 80 Hz high-pass + compressor, each clip to the same loudness; export limits peaks at -1.5 dBFS" }}))
+        "true_peak_ok": m["true_peak_dbfs"].as_f64().map(|t| t <= -1.0),
+        "dialogue": report_d, "music": report_m, "ambience_muted": if keep_amb { json!([]) } else { json!(amb) }, "classification": classes, "dialogue_chains": chains,
+        "note": if level_on { "dialogue: 80 Hz high-pass, then per clip an adaptive chain (denoise only when the pauses' noise floor needs it, mud/presence EQ, de-esser, compressor, -1.5 dBFS limiter), gentle speech leveling, each clip to the same loudness; the master limits peaks to -1 dBTP" } else { "dialogue: 80 Hz high-pass + the adaptive per-clip chain, each clip to the same loudness; the master limits peaks to -1 dBTP" }}))
 }
 
 // ---------------------------------------------------------------- auto_grade
@@ -746,20 +901,119 @@ fn fit_filter(fit: f64, w: u32, h: u32) -> String {
     else if fit >= 0.5 { format!("scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}") }
     else { format!("scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0") }
 }
-/// Mean RGB (0..1) of what the clip's own `fit` transform actually shows at time `t` -- the project's fit/crop/pad is
-/// applied FIRST (matching render.rs's decode()), then the result is downsampled to 64x64 for a cheap, stable read.
-/// Measuring the raw, unfit source frame instead (the bug this replaced) reads a pillarboxed/letterboxed or off-center
-/// source as false-dark or false-bright and grades the real, already-correct on-screen picture by that wrong number.
-fn mean_rgb(path: &str, t: f64, fit: f64, w: u32, h: u32) -> Option<[f64; 3]> {
-    let vf = format!("{},scale=64:64", fit_filter(fit, w.max(1), h.max(1)));
+/// One frame (display-encoded RGB, alpha 1) of what the clip's own `fit` transform actually shows at source time `t`,
+/// at most 320 px on its long side: the project's fit/crop/pad is applied FIRST (matching render.rs's decode()), then
+/// the result is downsampled. Measuring the raw, unfit source frame instead reads a pillarboxed/letterboxed or
+/// off-center source as false-dark or false-bright. This is the SOURCE look: a grade already on the clip is not in it,
+/// so re-running auto_grade measures the same picture and writes the same grade.
+fn grab_frame(path: &str, t: f64, fit: f64, w: u32, h: u32) -> Option<crate::effects::Frame> {
+    let (w, h) = (w.max(1), h.max(1)); let k = 320.0 / w.max(h) as f64;
+    let (gw, gh) = (((w as f64 * k / 2.0).round() as usize * 2).max(2), ((h as f64 * k / 2.0).round() as usize * 2).max(2));
+    let vf = format!("{},scale={gw}:{gh}:flags=area", fit_filter(fit, w, h));
     let mut cmd = std::process::Command::new("ffmpeg");
     cmd.args(["-v", "error", "-ss", &format!("{:.3}", t.max(0.0)), "-i", path, "-frames:v", "1", "-vf", &vf, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]);
-    let b = capture(&mut cmd, 64 * 64 * 3 + 16, std::time::Duration::from_secs(30)).ok()?;
-    if b.len() < 64 * 64 * 3 { return None; }
-    let mut s = [0f64; 3]; for p in b[..64 * 64 * 3].chunks(3) { for k in 0..3 { s[k] += p[k] as f64 / 255.0; } }
-    Some([s[0] / 4096.0, s[1] / 4096.0, s[2] / 4096.0])
+    let b = capture(&mut cmd, gw * gh * 3 + 16, std::time::Duration::from_secs(30)).ok()?;
+    if b.len() < gw * gh * 3 { return None; }
+    let mut d = Vec::with_capacity(gw * gh * 4);
+    for p in b[..gw * gh * 3].chunks(3) { d.extend_from_slice(&[p[0] as f32 / 255.0, p[1] as f32 / 255.0, p[2] as f32 / 255.0, 1.0]); }
+    Some(crate::effects::Frame { w: gw, h: gh, d })
 }
 fn luma(c: [f64; 3]) -> f64 { 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] }
+fn pixels(f: &crate::effects::Frame) -> Vec<[f64; 3]> { f.d.chunks_exact(4).map(|p| [p[0] as f64, p[1] as f64, p[2] as f64]).collect() }
+fn mean3(v: &[[f64; 3]]) -> [f64; 3] { let n = v.len().max(1) as f64; let mut s = [0.0; 3]; for p in v { for k in 0..3 { s[k] += p[k]; } } s.map(|x| x / n) }
+fn srgb_dec(v: f64) -> f64 { crate::color::managed::decode(1, v.clamp(0.0, 1.0), 100.0) }
+/// Rec.709 vectorscope angle in degrees (atan2(Cr, Cb)), the scale the hue curves use: skin sits near 123.
+fn hue_deg(c: [f64; 3]) -> f64 { let y = luma(c); ((c[0] - y) / 1.5748).atan2((c[2] - y) / 1.8556).to_degrees().rem_euclid(360.0) }
+fn chroma_709(c: [f64; 3]) -> f64 { let y = luma(c); ((c[0] - y) / 1.5748).hypot((c[2] - y) / 1.8556) }
+fn ang_dist(a: f64, b: f64) -> f64 { let d = (a - b).rem_euclid(360.0); d.min(360.0 - d) }
+/// The vectorscope skin (flesh) line: every skin tone, of every complexion, sits near this angle.
+pub(crate) const SKIN_LINE_DEG: f64 = 123.0;
+/// Skin pixels to protect: the face boxes the face model finds (skin-coloured pixels inside them, so hair and eyes
+/// are left out), or with no face found, pixels close to the vectorscope skin line at a plausible chroma and level.
+fn skin_pixels(f: &crate::effects::Frame) -> (Vec<[f64; 3]>, &'static str) {
+    let px = pixels(f);
+    let gate = |c: &[f64; 3], tol: f64| { let ch = chroma_709(*c); let y = luma(*c); ang_dist(hue_deg(*c), SKIN_LINE_DEG) < tol && (0.025..0.3).contains(&ch) && (0.12..0.94).contains(&y) };
+    let faces = crate::vision::detect_faces(f, None);
+    let mut out = vec![];
+    for fb in faces.value.iter() {
+        let b = &fb.bbox; let (x0, y0) = (b.x.max(0.0) as usize, b.y.max(0.0) as usize);
+        let (x1, y1) = (((b.x + b.w).max(0.0) as usize).min(f.w), ((b.y + b.h).max(0.0) as usize).min(f.h));
+        for y in y0..y1 { for x in x0..x1 { let c = px[y * f.w + x]; if gate(&c, 40.0) { out.push(c); } } }
+    }
+    if out.len() >= 16 { return (out, "face"); }
+    let out: Vec<[f64; 3]> = px.iter().filter(|c| gate(c, 22.0)).cloned().collect();
+    if out.len() * 100 >= px.len() { (out, "skin_line") } else { (vec![], "none") }
+}
+/// One auto_grade decision for a sampled frame: per-channel encoded gains (what the primaries grade applies), the
+/// linear-light balance and exposure behind them, and the report.
+struct GradePlan { gain: [f64; 3], k_lin: [f64; 3], exposure: f64, luma_expected: f64, contrast: f64, pivot: f64, report: Value }
+/// V10 auto_grade core (pure, on one frame):
+/// 1. neutral: `auto_balance::measure` finds the neutral cluster (with a confidence from its pixel share); its mean in
+///    LINEAR light gives per-channel gains that make it grey. A frame with little neutral (confidence < 1) is balanced
+///    partly by the old grey-world reading instead, in proportion.
+/// 2. skin: if that balance would move the skin tones (face boxes, else skin-line pixels) further from the vectorscope
+///    skin line than they already are, the balance is scaled back until it does not.
+/// 3. exposure: one linear-light gain that brings the frame's mean (display) luma to `goal`, found on the frame itself so
+///    highlight clipping is accounted for; `light` (a shot already in range) gets no exposure change and half balance.
+/// 4. a gentle S contrast curve about the corrected mid level, more for a flat shot, none for a contrasty one.
+/// Encoded gain = linear gain^(1/2.2): exact for a power-law encode, close for sRGB's.
+fn plan_grade(f: &crate::effects::Frame, strength: f64, goal: f64, light: bool) -> GradePlan {
+    const GAMMA: f64 = 2.2;
+    let px = pixels(f); let m = mean3(&px); let l = luma(m).max(1e-3);
+    let bal = crate::color::auto_balance::measure(std::slice::from_ref(f), 0.5, false, false).ok();
+    let conf = bal.as_ref().map(|b| b.confidence).unwrap_or(0.0);
+    let ch = |p: &[f64; 3]| { let c = p.map(|v| v.max(0.0) + 0.01); [(c[0] / c[1]).ln(), (c[2] / c[1]).ln()] };
+    let k_neutral = match &bal {
+        Some(b) if conf > 0.0 => {
+            let sel: Vec<[f64; 3]> = px.iter().filter(|p| { let y = luma(**p); let c = ch(p); (0.05..0.95).contains(&y) && (c[0] - b.neutral_chroma[0]).hypot(c[1] - b.neutral_chroma[1]) < 0.2 }).map(|p| p.map(srgb_dec)).collect();
+            if sel.len() < 16 { [1.0; 3] } else { let n = mean3(&sel); let g = n[1].max(1e-4); [g / n[0].max(1e-4), 1.0, g / n[2].max(1e-4)] }
+        }
+        _ => [1.0; 3],
+    };
+    let k_grey: [f64; 3] = [0, 1, 2].map(|k| (l / m[k].max(1e-3)).clamp(0.72, 1.4).powf(GAMMA));
+    // a shot already in range is balanced at half strength -- unless its neutral is measured with confidence, in which
+    // case the balance is trusted in full (a visible cast on a grey wall is a cast, however small the frame mean says it is)
+    let s_wb = strength * if light { 0.5 + 0.5 * conf } else { 1.0 };
+    let norm = |k: [f64; 3]| { let y = 0.2126 * k[0] + 0.7152 * k[1] + 0.0722 * k[2]; k.map(|v| v / y.max(1e-6)) };
+    let k_full = norm([0, 1, 2].map(|j| (conf * k_neutral[j].clamp(0.2, 5.0).ln() + (1.0 - conf) * k_grey[j].ln()).exp().powf(s_wb)));
+    let powk = |k: [f64; 3], s: f64| norm(k.map(|v| v.powf(s)));
+    let enc = |k: [f64; 3], e: f64| k.map(|v| (v * e).powf(1.0 / GAMMA));
+    let apply = |c: [f64; 3], g: [f64; 3]| [0, 1, 2].map(|j| (c[j] * g[j]).clamp(0.0, 1.0));
+    // skin protection
+    let (skin, skin_src) = skin_pixels(f);
+    let skin_hue = |g: [f64; 3]| -> Option<f64> { if skin.is_empty() { return None; } let v: Vec<[f64; 3]> = skin.iter().map(|c| apply(*c, g)).collect(); Some(hue_deg(mean3(&v))) };
+    let h0 = skin_hue([1.0; 3]);
+    let mut wb_scale = 1.0;
+    if let Some(h0) = h0 {
+        let e0 = ang_dist(h0, SKIN_LINE_DEG);
+        for s in [1.0, 0.75, 0.5, 0.25, 0.0] { wb_scale = s; let h = skin_hue(enc(powk(k_full, s), 1.0)).unwrap_or(h0); if ang_dist(h, SKIN_LINE_DEG) <= e0.max(6.0) + 1.0 { break; } }
+    }
+    let k_lin = powk(k_full, wb_scale);
+    // exposure, solved on the frame so clipping is part of the answer
+    let mean_luma = |e: f64| { let g = enc(k_lin, e); px.iter().map(|c| luma(apply(*c, g))).sum::<f64>() / px.len().max(1) as f64 };
+    let (elo, ehi) = (0.55f64.powf(GAMMA), 2.4f64.powf(GAMMA));
+    let exposure = if light { 1.0 } else {
+        let (mut lo, mut hi) = (elo.ln(), ehi.ln());
+        if mean_luma(hi.exp()) <= goal { lo = hi; } else if mean_luma(lo.exp()) >= goal { hi = lo; }
+        for _ in 0..40 { let mid = 0.5 * (lo + hi); if mean_luma(mid.exp()) < goal { lo = mid; } else { hi = mid; } }
+        (0.5 * (lo + hi)).exp().powf(strength).clamp(elo, ehi)
+    };
+    let gain = enc(k_lin, exposure).map(|v| v.clamp(0.4, 2.6));
+    let after: Vec<[f64; 3]> = px.iter().map(|c| apply(*c, gain)).collect();
+    let mut ls: Vec<f64> = after.iter().map(|c| luma(*c)).collect(); ls.sort_by(f64::total_cmp);
+    let pct = |q: f64| ls[((ls.len() - 1) as f64 * q) as usize];
+    let range = pct(0.95) - pct(0.05);
+    let contrast = ((0.75 - range) * 0.1).clamp(0.0, 0.03) * strength;
+    let luma_expected = luma(mean3(&after));
+    let pivot = luma_expected.clamp(0.3, 0.6);
+    let report = json!({"neutral_confidence": r3(conf), "neutral_share": bal.as_ref().map(|b| r3(b.neutral_share)), "linear_gain": k_lin.map(r3), "exposure_stops": r3(exposure.log2()),
+        "skin": {"source": skin_src, "hue_before": h0.map(r3), "hue_after": skin_hue(gain).map(r3), "skin_line": SKIN_LINE_DEG, "balance_kept": r3(wb_scale)},
+        "contrast": r3(contrast), "tonal_range_after": r3(range)});
+    GradePlan { gain, k_lin, exposure, luma_expected, contrast, pivot, report }
+}
+/// The tag auto_grade / match_shot_look put on the effects they own, so a re-run replaces them instead of stacking.
+const OWNER: &str = "by";
+fn owned(e: &crate::model::Effect, who: &str) -> bool { e.strings.get(OWNER).map(|s| s == who).unwrap_or(false) }
 fn auto_grade(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let strength = opt_num(a, "strength", 0.85).clamp(0.0, 1.0);
     let goal = opt_num(a, "target_luma", 0.42).clamp(0.2, 0.7);
@@ -771,88 +1025,119 @@ fn auto_grade(ss: &mut Session, a: &Value) -> Result<Value, String> {
         let Some(asset) = ss.project.assets.get(aid).cloned() else { continue };
         if asset.width == 0 { continue; }
         let fit = c.props.get("fit").map(|q| q.at(0.0)).unwrap_or(0.0);
-        let Some(m) = mean_rgb(&crate::deps::resolve_str(&asset.path), c.in_point + c.duration * c.speed / 2.0, fit, ss.project.width, ss.project.height) else { skipped.push(json!({"clip_id": id, "why": "could not read a frame"})); continue };
-        let l = luma(m).max(1e-3);
+        let Some(f) = grab_frame(&crate::deps::resolve_str(&asset.path), c.in_point + c.duration * c.speed / 2.0, fit, ss.project.width, ss.project.height) else { skipped.push(json!({"clip_id": id, "why": "could not read a frame"})); continue };
+        let m = mean3(&pixels(&f)); let l = luma(m).max(1e-3);
         let cast = (m[0] - m[1]).abs().max((m[2] - m[1]).abs());
-        // a shot inside the normal range with no visible cast is left as shot
-        if (0.32..=0.6).contains(&l) && cast < 0.05 {
+        // V10: no clip is skipped any more. A shot inside the normal range with no visible cast is normalised LIGHTLY
+        // (half-strength neutral balance, no exposure change, the gentle contrast curve) so a sequence of "fine" shots
+        // still lands on one consistent neutral instead of each keeping its own slight cast.
+        let light = (0.32..=0.6).contains(&l) && cast < 0.05;
+        let mut note = None;
+        let prim: Vec<String> = c.effects.iter().filter(|e| e.kind == "primaries" && !owned(e, "match_shot_look")).map(|e| e.id.clone()).collect();
+        if light {
             // the source is fine: if the picture on the timeline is still dark, an earlier grade crushed it, so that grade goes
             let now = call(ss, "get_scopes", &json!({"time": r3(c.start + c.duration / 2.0)})).ok().and_then(|v| v["luma_mean"].as_f64()).unwrap_or(l);
             if now < 0.6 * l && now < 0.2 {
-                // reset every primaries grade on the clip in place (a new neutral grade stacked on the crushing one fixes nothing)
-                let prim: Vec<String> = c.effects.iter().filter(|e| e.kind == "primaries").map(|e| e.id.clone()).collect();
-                if prim.is_empty() { call(ss, "set_color_wheels", &json!({"clip_id": id, "gain": [1.0, 1.0, 1.0, 1.0]}))?; }
-                for fx in &prim { call(ss, "set_color_wheels", &json!({"clip_id": id, "effect_id": fx, "gain": [1.0, 1.0, 1.0, 1.0]}))?; }
-                out.push(json!({"clip_id": id, "luma_before": r3(now), "source_luma": r3(l), "gain": [1.0, 1.0, 1.0], "note": "the source is well exposed; the grade that darkened it was reset"})); continue; }
-            skipped.push(json!({"clip_id": id, "why": "already well exposed and neutral", "luma": r3(l), "cast": r3(cast)})); continue; }
-        // grey-world balance and an exposure gain, both clamped, so a grade can never push a shot to black or white
-        let ch: Vec<f64> = (0..3).map(|k| (l / m[k].max(1e-3)).powf(strength).clamp(0.72, 1.4)).collect();
-        let bal = [m[0] * ch[0], m[1] * ch[1], m[2] * ch[2]];
-        let master = (goal / luma(bal).max(1e-3)).powf(strength).clamp(0.55, 2.4);
-        let pred = (luma(bal) * master).min(1.0);
+                for fx in prim.iter().skip(1) { call(ss, "set_color_wheels", &json!({"clip_id": id, "effect_id": fx, "gain": [1.0, 1.0, 1.0, 1.0]}))?; }
+                note = Some("the source is well exposed; the grade that darkened it was replaced");
+            }
+        }
+        let plan = plan_grade(&f, strength, goal, light);
         // update the clip's primaries grade when it has one (running auto_grade twice must not stack two grades)
-        let mut wargs = json!({"clip_id": id, "gain": [r3(ch[0] * master), r3(ch[1] * master), r3(ch[2] * master), 1.0]});
-        if let Some(fx) = c.effects.iter().find(|e| e.kind == "primaries") { wargs["effect_id"] = json!(fx.id); }
+        let mut wargs = json!({"clip_id": id, "gain": [r3(plan.gain[0]), r3(plan.gain[1]), r3(plan.gain[2]), 1.0]});
+        if let Some(fx) = prim.first() { wargs["effect_id"] = json!(fx); }
         call(ss, "set_color_wheels", &wargs)?;
-        out.push(json!({"clip_id": id, "luma_before": r3(l), "cast_before": r3(cast), "gain": [r3(ch[0] * master), r3(ch[1] * master), r3(ch[2] * master)], "luma_expected": r3(pred)}));
+        // the gentle S curve: one tagged point_curves effect, replaced in place on a re-run
+        let cm = ss.project.find_clip_mut(id).ok_or("clip vanished")?;
+        cm.effects.retain(|e| !owned(e, "auto_grade"));
+        if plan.contrast > 0.002 {
+            let (p, d) = (plan.pivot, plan.contrast);
+            let pts = [[0.0, 0.0], [p * 0.5, p * 0.5 - d], [p, p], [(1.0 + p) * 0.5, (1.0 + p) * 0.5 + d], [1.0, 1.0]];
+            let mut params = std::collections::BTreeMap::new(); params.insert("m_count".to_string(), crate::keyframe::Prop::new(pts.len() as f64));
+            for (i, q) in pts.iter().enumerate() { params.insert(format!("m_x{i}"), crate::keyframe::Prop::new(r3(q[0]))); params.insert(format!("m_y{i}"), crate::keyframe::Prop::new(r3(q[1]))); }
+            let fid = ss.project.gen_id("fx");
+            let cm = ss.project.find_clip_mut(id).ok_or("clip vanished")?;
+            cm.effects.push(crate::model::Effect { id: fid, kind: "point_curves".into(), params, strings: [(OWNER.to_string(), "auto_grade".to_string())].into_iter().collect() });
+        }
+        let mut row = json!({"clip_id": id, "mode": if light { "light" } else { "corrected" }, "luma_before": r3(l), "cast_before": r3(cast),
+            "gain": plan.gain.map(r3), "luma_expected": r3(plan.luma_expected), "linear_balance": plan.k_lin.map(r3), "exposure_gain_linear": r3(plan.exposure), "measure": plan.report});
+        if let Some(n) = note { row["note"] = json!(n); }
+        out.push(row);
     }
-    Ok(json!({"graded": out, "skipped": skipped, "note": "per clip: grey-world white balance + exposure toward target_luma, gains clamped; undo reverts all of it"}))
+    Ok(json!({"graded": out, "skipped": skipped, "note": "per clip: neutral (auto_balance) white balance and exposure in linear light, skin kept on the skin line, a gentle contrast curve; shots already in range are normalised lightly; undo reverts all of it"}))
 }
 
 // ---------------------------------------------------------------- match_shot_look
-/// V8.0Q: auto_grade pulls every clip toward one fixed absolute target (target_luma, neutral cast) --
-/// it never looks at what ANOTHER shot in the same edit actually looks like. That is the wrong tool for the
-/// most common real cut: a talking-head shot indoors under warm tungsten light, cut against b-roll shot
-/// outdoors in daylight or at night -- each gets neutralized toward the same generic target but neither is
-/// pulled toward the OTHER, so the cut still reads as two different shoots stitched together (measured on
-/// the real benchmark footage: the talking head reads warm/orange ~2900K, the city b-roll reads cool/blue,
-/// the coffee b-roll reads bright daylight-white -- auto_grade alone does nothing about that mismatch since
-/// both already sit inside its "well exposed and neutral enough" band).
+/// V8.0Q: auto_grade pulls every clip toward one fixed absolute target -- it never looks at what ANOTHER shot in the
+/// same edit looks like, so a warm interview cut against cool b-roll still reads as two shoots stitched together.
 ///
-/// match_shot_look measures a REFERENCE shot's own look (mean RGB, averaged across reference_clip_ids at
-/// each clip's own midpoint) and pulls each target clip's own measured mean RGB a `strength` fraction of the
-/// way toward it -- white balance and exposure together, in one gain, since both the cast mismatch and the
-/// brightness mismatch are part of the same "doesn't match the interview" problem. Reuses mean_rgb/luma (the
-/// exact reader auto_grade already uses, so this measures what fit/crop actually puts on screen, not the raw
-/// source) and set_color_wheels (updating the clip's own primaries grade in place if auto_grade already gave
-/// it one, so the two never stack two separate grades on the same clip -- auto_grade should run first in the
-/// pipeline, matching second, same as any other color pass that needs the base exposure already sane).
+/// V10: match_shot_look matches the whole colour DISTRIBUTION, not one mean, in two stages on each clip as it plays now
+/// (its own grade included, e.g. auto_grade's): first a gamut-safe per-channel gain onto the reference clips' mean RGB
+/// (a tagged `primaries` effect: a strong cast pushed through Lab alone needs colours outside the gamut), then the
+/// CIELAB mean and covariance of the gained picture (`color::matching::statistics`, the reference clips pooled) moved
+/// onto the reference's by Gaussian optimal transport (`color::matching::transport`), a tagged `lab_match` effect
+/// after the clip's other grades -- the same perceptual transfer match_grade uses, so contrast
+/// and saturation match too, not only white balance and exposure. `strength` blends it in; highlights (L above 0.8)
+/// are eased out of the transfer so a sky or a window is not dragged off white, and skin-coloured pixels keep part of
+/// their own chroma (`protect_skin`) so a match toward a very differently lit scene cannot turn faces green or grey.
+/// Both effects are tagged, so a re-run replaces them. `gain` in the result is the clip's mean RGB after / before, per channel.
 fn match_shot_look(ss: &mut Session, a: &Value) -> Result<Value, String> {
-    let strength = opt_num(a, "strength", 0.6).clamp(0.0, 1.0);
+    let strength = opt_num(a, "strength", 0.75).clamp(0.0, 1.0);
+    let protect_hl = opt_num(a, "protect_highlights", 0.6).clamp(0.0, 1.0);
+    let protect_skin = opt_num(a, "protect_skin", 0.5).clamp(0.0, 1.0);
     let ref_ids = str_list(a, "reference_clip_ids")?;
-    if ref_ids.is_empty() { return Err("reference_clip_ids: give one or more clip ids whose look the target clips should be pulled toward".into()); }
     let target_ids = str_list(a, "target_clip_ids")?;
-    if target_ids.is_empty() { return Err("target_clip_ids: give one or more clip ids to pull toward the reference look".into()); }
-    let read = |ss: &Session, id: &str| -> Result<[f64; 3], String> {
-        let c = ss.project.tracks.iter().flat_map(|t| t.clips.iter()).find(|c| &c.id == id).cloned().ok_or_else(|| format!("unknown clip '{id}'"))?;
-        let Source::Media { asset: aid } = &c.source else { return Err(format!("clip '{id}' is not a media clip")) };
-        let asset = ss.project.assets.get(aid).cloned().ok_or_else(|| format!("clip '{id}': unknown asset"))?;
-        let fit = c.props.get("fit").map(|q| q.at(0.0)).unwrap_or(0.0);
-        mean_rgb(&crate::deps::resolve_str(&asset.path), c.in_point + c.duration * c.speed / 2.0, fit, ss.project.width, ss.project.height)
-            .ok_or_else(|| format!("clip '{id}': could not read a frame"))
+    if ss.project.color_pipeline.enabled { return Err("match_shot_look matches display-referred sRGB; turn the project's linear colour pipeline off first (or use match_grade with an encoding wrapper)".into()); }
+    // the clip as it plays now, without a match_shot_look effect of its own (a re-run measures the same picture)
+    let render = |ss: &Session, id: &str| -> Result<crate::effects::Frame, String> {
+        let c = ss.project.find_clip(id).ok_or_else(|| format!("unknown clip '{id}'"))?;
+        if !matches!(c.source, Source::Media { .. }) { return Err(format!("clip '{id}' is not a media clip")); }
+        let t = c.start + c.duration / 2.0;
+        let mut p = ss.project.clone();
+        if let Some(cm) = p.find_clip_mut(id) { cm.effects.retain(|e| !owned(e, "match_shot_look")); }
+        crate::colortools::any_frame(&p, Some(id), t).map_err(|e| format!("clip '{id}': could not render a frame ({e})"))
     };
-    let mut ref_sum = [0.0; 3]; let mut ref_n = 0usize;
-    for id in &ref_ids { let m = read(ss, id)?; for k in 0..3 { ref_sum[k] += m[k]; } ref_n += 1; }
-    let ref_mean = [ref_sum[0] / ref_n as f64, ref_sum[1] / ref_n as f64, ref_sum[2] / ref_n as f64];
+    let (mut refs, mut ref_rgb) = (vec![], [0.0; 3]);
+    for id in &ref_ids { let f = render(ss, id)?; let m = mean3(&pixels(&f)); for k in 0..3 { ref_rgb[k] += m[k] / ref_ids.len() as f64; } refs.push(crate::color::matching::statistics(&f, None)?); }
+    // pool the reference shots: mean of means; covariance = mean within-shot covariance + spread of the shot means
+    let n = refs.len() as f64;
+    let mean: [f64; 3] = [0, 1, 2].map(|j| refs.iter().map(|s| s.mean[j]).sum::<f64>() / n);
+    let cov = std::array::from_fn(|i| std::array::from_fn(|j| refs.iter().map(|s| s.cov[i][j] + (s.mean[i] - mean[i]) * (s.mean[j] - mean[j])).sum::<f64>() / n));
+    let dst = crate::color::matching::Stats { mean, cov, count: refs.iter().map(|s| s.count).sum() };
     let mut out = vec![]; let mut skipped = vec![];
     for id in &target_ids {
         if ref_ids.contains(id) { skipped.push(json!({"clip_id": id, "why": "also a reference clip; left as the reference look itself"})); continue; }
-        let m = match read(ss, id) { Ok(v) => v, Err(e) => { skipped.push(json!({"clip_id": id, "why": e})); continue; } };
-        let l_before = luma(m);
-        // Pull each channel's own measured mean a `strength` fraction of the way toward the reference's
-        // mean (white balance and exposure together, since the gap between two different shoots is both at
-        // once); clamped the same as auto_grade's own per-channel bound so this can never crush or blow a
-        // shot even when the reference is very different (a bright daylight b-roll against a dim interview).
-        let ch: Vec<f64> = (0..3).map(|k| (ref_mean[k] / m[k].max(1e-3)).powf(strength).clamp(0.5, 2.0)).collect();
-        let c = ss.project.tracks.iter().flat_map(|t| t.clips.iter()).find(|c| &c.id == id).unwrap();
-        let mut wargs = json!({"clip_id": id, "gain": [r3(ch[0]), r3(ch[1]), r3(ch[2]), 1.0]});
-        if let Some(fx) = c.effects.iter().find(|e| e.kind == "primaries") { wargs["effect_id"] = json!(fx.id); }
-        call(ss, "set_color_wheels", &wargs)?;
-        let bal = [m[0] * ch[0], m[1] * ch[1], m[2] * ch[2]];
-        out.push(json!({"clip_id": id, "luma_before": r3(l_before), "luma_after_expected": r3(luma(bal).min(1.0)), "gain": [r3(ch[0]), r3(ch[1]), r3(ch[2])]}));
+        let f = match render(ss, id) { Ok(v) => v, Err(e) => { skipped.push(json!({"clip_id": id, "why": e})); continue; } };
+        // stage 1, gamut-safe: a per-channel gain that brings the shot's mean RGB onto the reference's takes out the
+        // cast and the exposure gap (a strong cast pushed through Lab alone needs colours outside the gamut and is
+        // pulled back by gamut compression); stage 2, the Lab transport, then matches what is left -- contrast,
+        // saturation, the shape of the distribution -- on the gained picture.
+        let mb = mean3(&pixels(&f));
+        let g1 = [0, 1, 2usize].map(|k| (ref_rgb[k] / mb[k].max(1e-3)).clamp(0.5, 2.0).powf(strength));
+        let mut f1 = crate::effects::Frame { w: f.w, h: f.h, d: f.d.clone() };
+        for px in f1.d.chunks_exact_mut(4) { for k in 0..3 { px[k] = (px[k] as f64 * g1[k]).clamp(0.0, 1.0) as f32; } }
+        let src = match crate::color::matching::statistics(&f1, None) { Ok(s) => s, Err(e) => { skipped.push(json!({"clip_id": id, "why": e})); continue; } };
+        let m = match crate::color::matching::transport(&src, &dst, 1e-4) { Ok(m) => m, Err(e) => { skipped.push(json!({"clip_id": id, "why": e})); continue; } };
+        let mut params = std::collections::BTreeMap::new();
+        let mut put = |k: String, v: f64| { params.insert(k, crate::keyframe::Prop::new(v)); };
+        for i in 0..3 { put(format!("s{i}"), src.mean[i]); put(format!("t{i}"), dst.mean[i]); for j in 0..3 { put(format!("a{i}{j}"), m[i][j]); } }
+        put("strength".into(), strength); put("gamut_compress".into(), 1.0); put("protect_highlights".into(), protect_hl); put("protect_skin".into(), protect_skin);
+        let fx = crate::model::Effect { id: ss.project.gen_id("fx"), kind: "lab_match".into(), params, strings: [(OWNER.to_string(), "match_shot_look".to_string())].into_iter().collect() };
+        // predict the result on the measured frame itself
+        let mut g = f1; crate::color::matching::apply(&fx.params, &mut g, 0.0)?;
+        let ma = mean3(&pixels(&g));
+        let mut gp = std::collections::BTreeMap::new();
+        for (k, c) in ["gain_r", "gain_g", "gain_b"].iter().enumerate() { gp.insert(c.to_string(), crate::keyframe::Prop::new(g1[k])); }
+        let gain_fx = crate::model::Effect { id: ss.project.gen_id("fx"), kind: "primaries".into(), params: gp, strings: [(OWNER.to_string(), "match_shot_look".to_string())].into_iter().collect() };
+        let after = crate::color::matching::statistics(&g, None)?;
+        let cm = ss.project.find_clip_mut(id).ok_or("clip vanished")?;
+        cm.effects.retain(|e| !owned(e, "match_shot_look"));
+        let fid = fx.id.clone(); cm.effects.push(gain_fx); cm.effects.push(fx);
+        out.push(json!({"clip_id": id, "effect_id": fid, "luma_before": r3(luma(mb)), "luma_after_expected": r3(luma(ma)),
+            "gain": ([0, 1, 2usize].map(|k| r3(ma[k] / mb[k].max(1e-4)))), "balance_gain": g1.map(r3), "lab_mean_before": src.mean.map(r3), "lab_mean_after_expected": after.mean.map(r3)}));
     }
-    Ok(json!({"reference_mean_rgb": ref_mean.map(r3), "matched": out, "skipped": skipped, "strength": strength,
-        "note": "each target clip's own measured mean pulled `strength` of the way toward the reference clips' averaged look; undo reverts all of it"}))
+    Ok(json!({"reference_lab_mean": dst.mean.map(r3), "matched": out, "skipped": skipped, "strength": strength, "protect_highlights": protect_hl, "protect_skin": protect_skin,
+        "note": "each target clip: a per-channel balance onto the reference clips' mean, then its CIELAB colour distribution moved `strength` of the way onto theirs (Gaussian optimal transport, lab_match), highlights and skin protected; undo reverts all of it"}))
 }
 
 // ---------------------------------------------------------------- cut_to_beat
@@ -1330,7 +1615,7 @@ pub fn commands() -> Vec<Command> {
         Command { name: "auto_rough_cut", description: "Lay talking-head assets back to back with the dead air cut out (speech detection). Returns clip ids, speech times and segments.", mutates: true,
             schema: obj(vec![("asset_ids", ids("talking-head assets in story order")), ("track_id", s("optional; rebuilds this track from start")), ("start", n("timeline seconds, default 0")),
                 ("drop", json!({"type": "array", "description": "segments to leave out, e.g. a false start: [{asset_id, index}] from an earlier result", "items": {"type": "object", "properties": {"asset_id": {"type": "string"}, "index": {"type": "integer"}}, "required": ["asset_id", "index"]}})),
-                ("max_pause", n("keep pauses shorter than this inside a segment, default 0.35 s")), ("pad", n("seconds kept around speech, default 0.06")), ("soft", s("\"trim\" (default): cut blurry or whip-pan edges, drop a mostly blurry segment; \"flag\": report only")), ("dedupe", json!({"type": "boolean", "description": "drop a segment that looks like one already kept from another clip (default false; segments report similar_to)"}))], &["asset_ids"]), run: |ss, a| atomic(ss, a, rough_cut) },
+                ("max_pause", n("keep pauses shorter than this inside a segment, default 0.35 s")), ("pad", n("seconds kept on both sides of speech (overrides pad_before/pad_after)")), ("pad_before", n("seconds kept before each word onset, default 0.08")), ("pad_after", n("seconds kept after each word tail, default 0.12")), ("crossfade_ms", n("audio fade on each side of every cut so it never clicks, 0..20, default 8")), ("soft", s("\"trim\" (default): cut blurry or whip-pan edges, drop a mostly blurry segment; \"flag\": report only")), ("dedupe", json!({"type": "boolean", "description": "drop a segment that looks like one already kept from another clip (default false; segments report similar_to)"}))], &["asset_ids"]), run: |ss, a| atomic(ss, a, rough_cut) },
         Command { name: "place_broll", description: "Lay b-roll over a dialogue track only while someone speaks, cut on pauses, b-roll muted. Returns clip ids and times.", mutates: true,
             schema: obj(vec![("track_id", s("the dialogue track")), ("asset_ids", ids("b-roll assets, in order")), ("start", n("window start, timeline s (default: after the first phrase)")), ("end", n("window end, timeline s")),
                 ("min_shot", n("shortest shot, default 1.0 s")), ("max_shot", n("longest shot, default 2.5 s")), ("in_points", json!({"type": "object", "description": "optional {asset_id: source seconds}"})), ("volume", n("b-roll sound 0..1, default 0 (muted)")),
@@ -1350,10 +1635,10 @@ pub fn commands() -> Vec<Command> {
                 ("level_strength", n("leveling factor 1..4, default 2.5")),
                 ("match_strength", n("0..1, how fully each clip is pulled to the loudest, default 1.0 (full match)")),
                 ("compress_strength", n("0..1, dialogue compressor ratio scale, default 0.0 (off; 1.0=old fixed 3:1)"))], &[]), run: |ss, a| atomic(ss, a, finish_audio) },
-        Command { name: "auto_grade", description: "Fix each clip's exposure and colour cast from a measured frame; gains are clamped so no shot goes black or blown.", mutates: true,
+        Command { name: "auto_grade", description: "Fix each clip's exposure and colour cast from a measured frame: neutral white balance and exposure in linear light, skin kept on the skin line, a gentle contrast curve; shots already in range are normalised lightly. Gains are clamped so no shot goes black or blown.", mutates: true,
             schema: obj(vec![("clip_ids", ids("default: every media clip")), ("strength", n("0..1, default 0.85")), ("target_luma", n("0.2..0.7, default 0.42"))], &[]), run: |ss, a| atomic(ss, a, auto_grade) },
-        Command { name: "match_shot_look", description: "Pull each target clip's own measured look toward a reference shot's -- the color/exposure MATCH a cut needs, not auto_grade's fixed absolute target. For b-roll shot in different light than the talking head: run after auto_grade.", mutates: true,
-            schema: obj(vec![("reference_clip_ids", ids("clip(s) whose averaged look is the target")), ("target_clip_ids", ids("clip(s) to pull toward it")), ("strength", n("0..1, default 0.6 (a tasteful nudge, not a full equalize)"))], &["reference_clip_ids", "target_clip_ids"]), run: |ss, a| atomic(ss, a, match_shot_look) },
+        Command { name: "match_shot_look", description: "Pull each target clip's colour distribution (CIELAB mean and covariance, optimal transport) toward a reference shot's -- the color/exposure/contrast MATCH a cut needs, not auto_grade's fixed absolute target. For b-roll shot in different light than the talking head: run after auto_grade.", mutates: true,
+            schema: obj(vec![("reference_clip_ids", ids("clip(s) whose averaged look is the target")), ("target_clip_ids", ids("clip(s) to pull toward it")), ("strength", n("0..1, default 0.75")), ("protect_highlights", n("0..1, how much highlights (L > 0.8) are eased out of the match, default 0.6")), ("protect_skin", n("0..1, share of their own chroma skin-coloured pixels keep, default 0.5"))], &["reference_clip_ids", "target_clip_ids"]), run: |ss, a| atomic(ss, a, match_shot_look) },
         Command { name: "cut_to_beat", description: "Music reel in one call: lays the music and cuts the shots exactly on its beats, N beats per shot. Returns clip ids.", mutates: true,
             schema: obj(vec![("music_asset_id", s("imported music")), ("asset_ids", ids("shots in order (reused in turn if more shots are needed)")), ("beats_per_shot", n("default 4")), ("duration", n("target seconds (default: one shot per asset)")),
                 ("start", n("timeline seconds, default 0")), ("in_points", json!({"type": "object", "description": "optional {asset_id: source seconds}"}))], &["music_asset_id", "asset_ids"]), run: |ss, a| atomic(ss, a, cut_to_beat) },

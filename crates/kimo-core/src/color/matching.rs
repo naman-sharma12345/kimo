@@ -37,10 +37,18 @@ pub fn transport(src:&Stats,dst:&Stats,regularization:f64)->Result<Mat,String>{
 pub fn apply(pr:&Params,f:&mut Frame,t:f64)->Result<(),String>{super::frame::validate(f)?;
     if f.w==0||f.h==0||f.w.checked_mul(f.h).and_then(|n|n.checked_mul(4))!=Some(f.d.len())||f.d.iter().any(|v|!v.is_finite()){return Err("invalid Lab effect frame".into())}let g=|k:&str,d:f64|p(pr,k,d,t) as f64;let a=std::array::from_fn(|i|std::array::from_fn(|j|g(&format!("a{i}{j}"),if i==j{1.}else{0.})));
     let sm:[f64;3]=std::array::from_fn(|j|g(&format!("s{j}"),0.));let tm:[f64;3]=std::array::from_fn(|j|g(&format!("t{j}"),0.));let strength=g("strength",1.);let compress=g("gamut_compress",1.);if !strength.is_finite()||!compress.is_finite(){return Err("nonfinite match strength/gamut_compress".into())}let strength=strength.clamp(0.,1.);let compress=compress>0.5;
+    // V10 protections (both 0 by default, so match_grade is unchanged): highlights above L 0.8 are eased out of the
+    // transfer, and skin-coloured source pixels (near the Rec.709 vectorscope skin line at 123 deg) keep part of their own chroma.
+    let ph=g("protect_highlights",0.).clamp(0.,1.);let ps=g("protect_skin",0.).clamp(0.,1.);
     if a.iter().flatten().chain(sm.iter()).chain(tm.iter()).any(|v|!v.is_finite()||v.abs()>100.){return Err("invalid match transform".into())}
-    for(i,px) in f.d.chunks_exact_mut(4).enumerate(){if i%65536==0{crate::guard::check()}let c=[px[0] as f64,px[1] as f64,px[2] as f64];let lab=to_lab(c);let delta=std::array::from_fn(|j|lab[j]-sm[j]);let mut out=mv(a,delta);for j in 0..3{out[j]=lab[j]+(out[j]+tm[j]-lab[j])*strength}let mut rgb=from_lab(out);
+    for(i,px) in f.d.chunks_exact_mut(4).enumerate(){if i%65536==0{crate::guard::check()}let c=[px[0] as f64,px[1] as f64,px[2] as f64];let lab=to_lab(c);let delta=std::array::from_fn(|j|lab[j]-sm[j]);let mut out=mv(a,delta);let w=strength*(1.-ph*sstep(0.8,1.0,lab[0]));let wc=w*(1.-ps*skin_likelihood(c));out[0]=lab[0]+(out[0]+tm[0]-lab[0])*w;for j in 1..3{out[j]=lab[j]+(out[j]+tm[j]-lab[j])*wc}let mut rgb=from_lab(out);
         if compress {let lin=rgb.map(|v|super::managed::decode(1,v,100.));rgb=super::managed::gamut_compress(lin).map(|v|super::managed::encode(1,v,100.))}
         for j in 0..3{if !rgb[j].is_finite()||rgb[j].abs()>f32::MAX as f64{return Err("match overflow".into())}px[j]=rgb[j] as f32}
     }Ok(())
 }
-pub fn catalog()->Vec<super::Entry>{vec![("lab_match","Lab mean/full-covariance optimal transport, regularized. sRGB/D65 only. Normally set by match_grade. Not semantic/subject-aware and not camera color calibration.",&[("strength",1.,"0..1"),("gamut_compress",1.,"bound output by linear chroma compression")])]}
+fn sstep(a:f64,b:f64,x:f64)->f64{let t=((x-a)/(b-a)).clamp(0.,1.);t*t*(3.-2.*t)}
+/// 0..1: how much a display-encoded pixel looks like skin -- its Rec.709 vectorscope angle near the skin line (123 deg),
+/// at a skin-like chroma and level.
+pub fn skin_likelihood(c:[f64;3])->f64{let y=0.2126*c[0]+0.7152*c[1]+0.0722*c[2];let(cb,cr)=((c[2]-y)/1.8556,(c[0]-y)/1.5748);let ch=cb.hypot(cr);
+    let d=(cr.atan2(cb).to_degrees()-123.).rem_euclid(360.);let d=d.min(360.-d);(-(d*d)/(2.*18.*18.)).exp()*sstep(0.015,0.04,ch)*(1.-sstep(0.25,0.35,ch))*sstep(0.08,0.15,y)*(1.-sstep(0.92,0.98,y))}
+pub fn catalog()->Vec<super::Entry>{vec![("lab_match","Lab mean/full-covariance optimal transport, regularized. sRGB/D65 only. Normally set by match_grade. Not semantic/subject-aware and not camera color calibration.",&[("strength",1.,"0..1"),("gamut_compress",1.,"bound output by linear chroma compression"),("protect_highlights",0.,"0..1 ease highlights (L>0.8) out of the transfer"),("protect_skin",0.,"0..1 share of their own chroma skin-coloured pixels keep")])]}

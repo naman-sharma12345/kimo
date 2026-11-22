@@ -45,8 +45,17 @@ pub struct SegmentSpec {
     /// looks, which wrapped at a fixed words-per-line regardless of how short the words were). None (the
     /// engine's own default): wrap whenever the unit's own text would not fit in `max_chars_per_line` chars.
     pub max_words_per_line: Option<usize>,
+    /// V10: subtitle-grade rules (default on): a unit never overflows its line budget (it is cut BEFORE the word that
+    /// would overflow, at the best phrase boundary), never runs longer than `max_duration_s`, line breaks prefer
+    /// phrase boundaries (after a clause mark, before a conjunction/preposition) and never strand one word on a line,
+    /// and a lone word anywhere (not just at the end) is merged into a neighbour when no sentence end or pause
+    /// separates them. false = the V8.12 rules exactly (every reference preset pins this so the legacy looks stay
+    /// byte-identical to auto_captions).
+    pub phrase_aware: bool,
+    /// Longest a unit may span (first word start to last word end) under `phrase_aware`; default 7 s.
+    pub max_duration_s: f64,
 }
-impl Default for SegmentSpec { fn default() -> Self { SegmentSpec { max_chars_per_line: 20, max_lines: 2, max_cps: 20.0, pause_break_s: 0.45, min_words: 1, max_words_per_line: None } } }
+impl Default for SegmentSpec { fn default() -> Self { SegmentSpec { max_chars_per_line: 42, max_lines: 2, max_cps: 20.0, pause_break_s: 0.45, min_words: 1, max_words_per_line: None, phrase_aware: true, max_duration_s: 7.0 } } }
 
 /// A segmentation result: word index range `[first, last]` inclusive, plus where (if `max_lines`>1) the text breaks to a new line.
 #[derive(Clone, Debug, PartialEq)]
@@ -65,6 +74,7 @@ const NO_DANGLE: &[&str] = &["a","an","the","my","your","his","her","its","our",
 /// over), and every line holds at least two words unless the whole unit is one word.
 pub fn segment(words: &[EWord], spec: &SegmentSpec) -> Result<Vec<Unit>, String> {
     if words.is_empty() { return Ok(vec![]); }
+    if spec.phrase_aware && spec.max_words_per_line.is_none() { return Ok(segment_phrase(words, spec)); }
     let (per_line, lines) = (spec.max_chars_per_line.max(4), spec.max_lines.clamp(1, 3));
     let cap_chars = per_line * lines; let clen = |s: &str| s.chars().count();
     // a bare-punctuation token (no letters or digits of its own) has no spoken duration of its own and
@@ -135,6 +145,113 @@ pub fn segment(words: &[EWord], spec: &SegmentSpec) -> Result<Vec<Unit>, String>
     Ok(units)
 }
 
+/// Words that open a new phrase: a line or unit break just BEFORE one reads as a natural phrase boundary.
+const PHRASE_STARTERS: &[&str] = &["and","but","or","so","because","if","when","while","then","that","which","who","where","to","of","in","on","at","for","with","from","about","after","before","until","since","like"];
+fn bare(t: &str) -> String { t.trim_matches(|c: char| !c.is_alphanumeric() && c != '\'').to_lowercase() }
+fn is_punct_tok(t: &str) -> bool { !t.chars().any(|c| c.is_alphanumeric()) }
+/// Display characters of words[a..=b] joined by single spaces (what the viewer reads on the line).
+pub fn span_chars(words: &[EWord], a: usize, b: usize) -> usize { words[a..=b].iter().map(|w| w.text.chars().count() + 1).sum::<usize>().saturating_sub(1) }
+/// Reading characters of words[a..=b]: bare punctuation tokens ride on the previous word and add no reading time.
+pub fn reading_chars(words: &[EWord], a: usize, b: usize) -> usize { words[a..=b].iter().filter(|w| !is_punct_tok(&w.text)).map(|w| w.text.chars().count() + 1).sum::<usize>().saturating_sub(1) }
+/// How good a break AFTER word j is (higher is better): a clause/sentence mark, a pause, or a phrase starter next.
+fn break_quality(words: &[EWord], j: usize) -> f64 {
+    let mut q = 0.0;
+    if is_sentence_end(&words[j].text) { q += 3.0; } else if is_clause_end(&words[j].text) { q += 2.0; }
+    if let Some(n) = words.get(j + 1) {
+        if is_punct_tok(&n.text) { return -10.0; } // never put a bare punctuation token at the head of a line/unit
+        if PHRASE_STARTERS.contains(&bare(&n.text).as_str()) { q += 1.0; }
+        q += ((n.start - words[j].end) / 0.15).clamp(0.0, 1.5);
+    }
+    if NO_DANGLE.contains(&bare(&words[j].text).as_str()) { q -= 2.5; }
+    q
+}
+/// The V10 segmenter (`phrase_aware`): greedy units cut at phrase boundaries, with hard line-length, duration and
+/// reading-speed limits, then a no-orphan pass over EVERY unit and phrase-boundary line breaks.
+fn segment_phrase(words: &[EWord], spec: &SegmentSpec) -> Vec<Unit> {
+    let (per_line, lines) = (spec.max_chars_per_line.max(4), spec.max_lines.clamp(1, 3));
+    let cap = per_line * lines; let n = words.len();
+    let over = |a: usize, i: usize| -> bool {
+        if i == a { return false; }
+        let span = words[i].end - words[a].start;
+        span_chars(words, a, i) > cap || span > spec.max_duration_s
+            // reading speed with the hold a cue gets after its last word: a run genuinely faster than max_cps is split
+            || reading_chars(words, a, i) as f64 / (span + 0.3).max(1e-6) > spec.max_cps
+    };
+    let mut cuts: Vec<(usize, usize)> = vec![]; let mut a = 0usize; let mut i = 0usize;
+    while i < n {
+        if over(a, i) {
+            // cut before word i at the best phrase boundary in [a, i-1], preferring units that use at least half the budget
+            let half = cap / 2;
+            let sc = |x: usize| break_quality(words, x) + if span_chars(words, a, x) >= half { 1.0 } else { 0.0 } + x as f64 * 1e-3;
+            let j = (a..i).max_by(|&x, &y| sc(x).partial_cmp(&sc(y)).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or(i - 1);
+            cuts.push((a, j)); a = j + 1; continue; // re-check word i against the new unit start
+        }
+        let next_gap = if i + 1 < n { words[i + 1].start - words[i].end } else { 0.0 };
+        let next_is_punct = words.get(i + 1).map_or(false, |w| is_punct_tok(&w.text));
+        let end = i + 1 == n
+            || (!next_is_punct && (is_sentence_end(&words[i].text)
+                || (is_clause_end(&words[i].text) && i > a && span_chars(words, a, i) * 2 >= per_line)
+                || next_gap > spec.pause_break_s));
+        if end { cuts.push((a, i)); a = i + 1; }
+        i += 1;
+    }
+    // no orphan anywhere: a one-word unit joins a neighbour it is not separated from by a sentence end or a pause.
+    // Avoiding an orphan may overrun the character budget by a quarter line (an orphan reads worse than a long line);
+    // the duration and reading-speed limits stay hard.
+    let over_tol = |a: usize, i: usize| -> bool {
+        let span = words[i].end - words[a].start;
+        span_chars(words, a, i) > cap + per_line / 4 || span > spec.max_duration_s || reading_chars(words, a, i) as f64 / (span + 0.3).max(1e-6) > spec.max_cps
+    };
+    let joinable = |cuts: &[(usize, usize)], k: usize| -> bool { // may cuts[k] and cuts[k+1] become one unit?
+        let (pa, pb) = cuts[k]; let (_, lb) = cuts[k + 1];
+        !is_sentence_end(&words[pb].text) && words[pb + 1].start - words[pb].end <= spec.pause_break_s && !over_tol(pa, lb)
+    };
+    let mut k = 0;
+    while k < cuts.len() {
+        let (f, l) = cuts[k];
+        if l == f && n > 1 {
+            if k > 0 && joinable(&cuts, k - 1) { let pa = cuts[k - 1].0; cuts[k - 1] = (pa, l); cuts.remove(k); continue; }
+            if k + 1 < cuts.len() && joinable(&cuts, k) { let nb = cuts[k + 1].1; cuts[k] = (f, nb); cuts.remove(k + 1); continue; }
+            // borrow the previous unit's last word when that unit keeps at least two and no stop or pause splits the pair
+            if k > 0 {
+                let (pa, pb) = cuts[k - 1];
+                if pb >= pa + 2 && !is_sentence_end(&words[pb - 1].text) && !is_sentence_end(&words[pb].text) && words[f].start - words[pb].end <= spec.pause_break_s && !over_tol(pb, l) {
+                    cuts[k - 1] = (pa, pb - 1); cuts[k] = (pb, l);
+                }
+            }
+        }
+        k += 1;
+    }
+    cuts.into_iter().map(|(first, last)| {
+        let breaks = if lines > 1 && last > first && span_chars(words, first, last) > per_line { phrase_breaks(words, first, last, per_line, lines) } else { vec![] };
+        Unit { first, last, breaks_after: breaks }
+    }).collect()
+}
+/// Line breaks (offsets relative to `first`) for words[first..=last]: every line within `per_line` characters when
+/// possible, at least two words per line, balanced lengths, and the break on a phrase boundary when one is close.
+fn phrase_breaks(words: &[EWord], first: usize, last: usize, per_line: usize, lines: usize) -> Vec<usize> {
+    let score = |cuts: &[usize]| -> f64 { // cuts: absolute index of the last word on each line but the final one
+        let mut bounds = vec![first]; for &c in cuts { bounds.push(c + 1); } bounds.push(last + 1);
+        let lens: Vec<usize> = bounds.windows(2).map(|w| span_chars(words, w[0], w[1] - 1)).collect();
+        let counts: Vec<usize> = bounds.windows(2).map(|w| w[1] - w[0]).collect();
+        let mx = *lens.iter().max().unwrap_or(&0); let mn = *lens.iter().min().unwrap_or(&0);
+        let mut s = -((mx - mn) as f64) * 0.5;
+        if mx > per_line { s -= 100.0 + (mx - per_line) as f64; }
+        if counts.iter().any(|&c| c < 2) { s -= 40.0; }
+        for &c in cuts { s += 3.0 * break_quality(words, c); }
+        s
+    };
+    let mut best: Option<(f64, Vec<usize>)> = None;
+    if lines >= 3 && last - first >= 2 {
+        for c1 in first..last { for c2 in c1 + 1..last { let v = vec![c1, c2]; let sc = score(&v) - 15.0; if best.as_ref().map_or(true, |(b, _)| sc > *b) { best = Some((sc, v)); } } }
+    }
+    for c in first..last { let v = vec![c]; let sc = score(&v); if best.as_ref().map_or(true, |(b, _)| sc > *b) { best = Some((sc, v)); } }
+    // a wrap that can only leave a one-word line reads worse than one long line: keep it on one line then
+    let Some((_, v)) = best else { return vec![] };
+    let mut bounds = vec![first]; for &c in &v { bounds.push(c + 1); } bounds.push(last + 1);
+    if bounds.windows(2).any(|w| w[1] - w[0] < 2) { vec![] } else { v.into_iter().map(|c| c - first).collect() }
+}
+
 /// Balanced line breaks over `words` across `lines` lines of at most `per_line` words each, minimising the character-count
 /// imbalance between lines. Never places a break that would strand a `NO_DANGLE` word alone at a line's end when another
 /// balance point within one word scores the same or better.
@@ -166,8 +283,14 @@ pub struct TimingSpec {
     pub bridge_gap_s: f64,
     pub min_duration_s: f64,
     pub min_gap_s: f64,
+    /// V10 reading rules (default on): a cue is held long enough to be read at `max_cps` (and at least
+    /// `min_duration_s`) as far as the next cue allows, never shortened below a bridge to the next cue, and never
+    /// held past `max_duration_s` (its own words are never cut to get there). false = the V8.12 timing exactly.
+    pub reading_rules: bool,
+    pub max_cps: f64,
+    pub max_duration_s: f64,
 }
-impl Default for TimingSpec { fn default() -> Self { TimingSpec { lead_in_s: 0.04, hold_s: 0.35, bridge_gap_s: 0.6, min_duration_s: 0.2, min_gap_s: 0.02 } } }
+impl Default for TimingSpec { fn default() -> Self { TimingSpec { lead_in_s: 0.04, hold_s: 0.35, bridge_gap_s: 0.6, min_duration_s: 0.83, min_gap_s: 0.02, reading_rules: true, max_cps: 20.0, max_duration_s: 7.0 } } }
 
 #[derive(Clone, Debug)]
 pub struct TimedUnit { pub unit: Unit, pub start: f64, pub end: f64, pub straddled_cut: Option<f64> }
@@ -197,7 +320,12 @@ pub fn time_units(units: &[Unit], words: &[EWord], spec: &TimingSpec, shot_cuts:
             Some(ns) => (w_end + spec.hold_s).min(ns - spec.min_gap_s), // hold, but never into the next cue's own min_gap
             None => w_end + spec.hold_s,
         };
-        if end - start < spec.min_duration_s {
+        if spec.reading_rules {
+            // long enough to read and at least the minimum, as far as the next cue allows; never shorter than a bridge
+            let need = spec.min_duration_s.max(reading_chars(words, u.first, u.last) as f64 / spec.max_cps.max(1.0));
+            if end - start < need { let want = start + need; end = end.max(match next_w_start { Some(ns) => want.min(ns - spec.min_gap_s), None => want }); }
+            end = end.min((start + spec.max_duration_s).max(w_end));
+        } else if end - start < spec.min_duration_s {
             let want = start + spec.min_duration_s;
             end = match next_w_start { Some(ns) => want.min(ns - spec.min_gap_s), None => want };
         }
@@ -596,6 +724,8 @@ fn parse_segment(v: &Value) -> Result<SegmentSpec, String> {
         pause_break_s: get_f64(v, "segment", "pause_break_s", d.pause_break_s, 0.05, 5.0)?,
         min_words: get_usize(v, "segment", "min_words", d.min_words, 1, 10)?,
         max_words_per_line,
+        phrase_aware: get_bool(v, "segment", "phrase_aware", d.phrase_aware)?,
+        max_duration_s: get_f64(v, "segment", "max_duration_s", d.max_duration_s, 0.5, 60.0)?,
     })
 }
 fn parse_timing(v: &Value) -> Result<TimingSpec, String> {
@@ -606,6 +736,9 @@ fn parse_timing(v: &Value) -> Result<TimingSpec, String> {
         bridge_gap_s: get_f64(v, "timing", "bridge_gap_s", d.bridge_gap_s, 0.0, 5.0)?,
         min_duration_s: get_f64(v, "timing", "min_duration_s", d.min_duration_s, 0.05, 10.0)?,
         min_gap_s: get_f64(v, "timing", "min_gap_s", d.min_gap_s, 0.0, 1.0)?,
+        reading_rules: get_bool(v, "timing", "reading_rules", d.reading_rules)?,
+        max_cps: get_f64(v, "timing", "max_cps", d.max_cps, 3.0, 1000.0)?,
+        max_duration_s: get_f64(v, "timing", "max_duration_s", d.max_duration_s, 0.5, 60.0)?,
     })
 }
 fn parse_layout(v: &Value) -> Result<LayoutSpec, String> {
@@ -739,7 +872,7 @@ pub fn preset_spec(name: &str) -> Result<Value, String> {
     // sets max_cps very high so it never fires, matching the old looks' real behaviour instead of silently
     // adding a constraint they were never designed against. The char caps mirror auto_captions::look()'s own
     // derivation (`max_chars = (upper ? 16 : 20).max(per_line_words * 5)`) for each style's per_line/lines.
-    let no_cps = 1000.0; let no_lead = json!({"timing":{"lead_in_s":0.0}, "contrast":{"auto":false}});
+    let no_cps = 1000.0; let no_lead = json!({"timing":{"lead_in_s":0.0, "min_duration_s":0.2, "reading_rules":false}, "segment":{"phrase_aware":false}, "contrast":{"auto":false}});
     let p = |segment: Value, style: Value, extra: Value| merge(&merge(&json!({"segment":segment,"style":style}), &extra), &no_lead);
     Ok(match name {
         "pop" => p(json!({"max_chars_per_line":16,"max_lines":1,"max_cps":no_cps,"max_words_per_line":3}), json!({"font":"Montserrat","weight":900.0,"size_frac":0.12,"fill":"#ffffff","stroke_frac":0.11,"case":"upper"}),
@@ -965,8 +1098,8 @@ pub fn commands() -> Vec<Command> {
             schema: obj(vec![
                 ("words", json!({"type":"array","description":"required: ASR words in TIMELINE seconds, already timed and in order: [{text, start, end, conf?}]","items":{"type":"object"}})),
                 ("preset", json!({"type":"string","enum":["pop","karaoke","clean","boxed","impact","subtitle","boxed_simple","yellow"],"description":"optional reference starting point; every field below still overrides it"})),
-                ("segment", obj(vec![("max_chars_per_line", n("default 20")), ("max_lines", n("1..3, default 2")), ("max_cps", n("reading speed cap, chars/sec, default 20")), ("pause_break_s", n("pause that forces a break, default 0.45")), ("min_words", n("default 1")), ("max_words_per_line", n("optional: wrap by word count instead of the character budget (1..12)"))], &[])),
-                ("timing", obj(vec![("lead_in_s", n("snap-in lookahead, default 0.04")), ("hold_s", n("post-roll when no bridge, default 0.35")), ("bridge_gap_s", n("gap below which cues snap together, default 0.6")), ("min_duration_s", n("default 0.2")), ("min_gap_s", n("minimum visible gap between cues, default 0.02"))], &[])),
+                ("segment", obj(vec![("max_chars_per_line", n("default 42")), ("max_lines", n("1..3, default 2")), ("max_cps", n("reading speed cap, chars/sec, default 20")), ("pause_break_s", n("pause that forces a break, default 0.45")), ("min_words", n("default 1")), ("max_words_per_line", n("optional: wrap by word count instead of the character budget (1..12)")), ("phrase_aware", json!({"type":"boolean","description":"default true: never overflow a line, break lines at phrase boundaries, no one-word unit or line anywhere; presets pin false"})), ("max_duration_s", n("longest unit, default 7"))], &[])),
+                ("timing", obj(vec![("lead_in_s", n("snap-in lookahead, default 0.04")), ("hold_s", n("post-roll when no bridge, default 0.35")), ("bridge_gap_s", n("gap below which cues snap together, default 0.6")), ("min_duration_s", n("default 0.83 (presets 0.2)")), ("min_gap_s", n("minimum visible gap between cues, default 0.02")), ("reading_rules", json!({"type":"boolean","description":"default true: hold each cue long enough to read at max_cps, within max_duration_s; presets pin false"})), ("max_cps", n("reading speed used to hold cues, default 20")), ("max_duration_s", n("longest a cue stays up, default 7"))], &[])),
                 ("layout", obj(vec![("position", json!({"type":"string","enum":["auto","bottom","middle","top"]})), ("platform", json!({"type":"string","enum":["none","tiktok","reels","shorts","youtube"]})), ("face_avoidance", json!({"type":"boolean","description":"default true: a cue moves off the detected FACE/HEAD at its own on-screen moment, not off the whole body -- it keeps the preferred lower-third under the chin whenever that clears the face by face_margin_frac, and only moves (smallest clearing nudge first, then the opposite band) when it would not"})), ("side_margin_frac", n("default 0.05")), ("fixed_y_frac", json!({"type":"number","description":"optional -1..1: pin the vertical offset to exactly this fraction of frame height (0 = centre, positive = down, the same convention the clip's own y property uses), skipping face-avoidance placement entirely"})), ("face_region_frac", n("default 0.35: how much of the detected skin/subject band, from its own top, counts as the face/head to avoid (the detector only ever finds a whole body/skin band, not a face box)")), ("face_margin_frac", n("default 0.04: minimum clear gap, as a fraction of frame height, between the caption and the face/head region")), ("caption_half_height_frac", n("default 0.10: the caption's own rough half-height, as a fraction of frame height, used for every clearance test")), ("lower_nudge_frac", n("default 0.08: how far the first fallback candidate moves from the preferred anchor before trying the opposite band")), ("top_safe_frac", n("default 0.02: minimum clear gap from the very top edge of the frame for a top-side candidate"))], &[])),
                 ("contrast", obj(vec![("auto", json!({"type":"boolean","description":"default true: stroke/shadow/box strength is set from measured background luminance under the text"})),
                     ("min_stroke_frac", n("")), ("max_stroke_frac", n("")), ("min_shadow", n("")), ("max_shadow", n("")), ("min_box_alpha", n("")), ("max_box_alpha", n(""))], &[])),
