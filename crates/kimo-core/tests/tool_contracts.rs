@@ -421,6 +421,46 @@ fn scoped_setup() -> (Vec<Step<'static>>, String) {
     let f = render::render_frame(&ss.project, 2.5, &render::Cache::new()).unwrap(); let i = (90 * 320 + 160) * 4;
     assert!(f.d[i] > 0.15 && f.d[i + 2] > 0.15, "halfway through, red and blue are mixed: {:?}", &f.d[i..i + 3]);
 }
+#[test] fn source_text_keyframes_change_one_clip() {
+    let mut ss = Session::new();
+    let t = dispatch(&mut ss, "add_track", &json!({})).unwrap()["track_id"].as_str().unwrap().to_string();
+    let id = dispatch(&mut ss, "add_text", &json!({"track_id": t, "text": "Ready", "start": 0.0, "duration": 3.0})).unwrap()["clip_id"].as_str().unwrap().to_string();
+    dispatch(&mut ss, "set_text_keyframes", &json!({"clip_id": id, "keys": [{"time": 1.0, "text": "Set"}, {"time": 2.0, "text": "Go"}]})).unwrap();
+    let c = ss.project.find_clip(&id).unwrap();
+    assert_eq!((render::text_at(c, "Ready", 0.5), render::text_at(c, "Ready", 1.0), render::text_at(c, "Ready", 2.7)), ("Ready", "Set", "Go"));
+}
+#[test] fn tabular_figures_give_digits_one_width_and_axes_are_stored() {
+    let mut fx = kimo_core::model::TextFx::default();
+    let w = |fx: &kimo_core::model::TextFx, t: &str| kimo_core::text::measure_text(t, "Inter", 80.0, 0.0, 600.0, "left", 1000.0, 300.0, Some(fx)).unwrap().width;
+    assert!((w(&fx, "1111") - w(&fx, "8888")).abs() > 1.0, "proportional digits differ");
+    fx.tabular = true; assert!((w(&fx, "1111") - w(&fx, "8888")).abs() < 0.5, "tabular digits match: {} vs {}", w(&fx, "1111"), w(&fx, "8888"));
+    let mut ss = Session::new(); let t = dispatch(&mut ss, "add_track", &json!({})).unwrap()["track_id"].as_str().unwrap().to_string();
+    let id = dispatch(&mut ss, "add_text", &json!({"track_id": t, "text": "12", "start": 0.0, "duration": 1.0})).unwrap()["clip_id"].as_str().unwrap().to_string();
+    dispatch(&mut ss, "set_font_axes", &json!({"clip_id": id, "axes": {"wdth": [{"time": 0, "value": 75}, {"time": 1, "value": 125}]}, "tabular": true})).unwrap();
+    let fx = ss.project.find_clip(&id).unwrap().text_fx.clone().unwrap(); assert!(fx.tabular && fx.axes["wdth"].keys.len() == 2);
+    assert!(dispatch(&mut ss, "set_font_axes", &json!({"clip_id": id, "axes": {"width": 1}})).is_err(), "axis tags are 4 letters");
+}
+#[test] fn key_velocity_shapes_the_curve_and_copies_across() {
+    let mut ss = Session::new(); let t = dispatch(&mut ss, "add_track", &json!({})).unwrap()["track_id"].as_str().unwrap().to_string();
+    let id = dispatch(&mut ss, "add_clip", &json!({"track_id": t, "source_type": "solid", "color": [1, 1, 1], "start": 0.0, "duration": 2.0})).unwrap()["clip_id"].as_str().unwrap().to_string();
+    for (p, v0, v1) in [("x", 0.0, 100.0), ("y", 0.0, -50.0)] { dispatch(&mut ss, "set_keyframe", &json!({"clip_id": id, "property": p, "time": 0.0, "value": v0})).unwrap(); dispatch(&mut ss, "set_keyframe", &json!({"clip_id": id, "property": p, "time": 1.0, "value": v1})).unwrap(); }
+    let lin = ss.project.find_clip(&id).unwrap().props["x"].at(0.2);
+    dispatch(&mut ss, "set_key_velocity", &json!({"clip_id": id, "property": "x", "time": 0.0, "out_speed": 0, "out_influence": 75})).unwrap();
+    let eased = ss.project.find_clip(&id).unwrap().props["x"].at(0.2); assert!(eased < lin * 0.7, "a slow start: {eased} vs linear {lin}");
+    dispatch(&mut ss, "copy_ease", &json!({"clip_id": id, "property": "x", "to": [{"property": "y"}]})).unwrap();
+    let (x, y) = { let c = ss.project.find_clip(&id).unwrap(); (c.props["x"].at(0.2) / 100.0, c.props["y"].at(0.2) / -50.0) };
+    assert!((x - y).abs() < 0.02, "y moves with the same feel as x: {x} vs {y}");
+    let g = dispatch(&mut ss, "key_graph", &json!({"clip_id": id, "property": "x"})).unwrap(); assert!(g["graph"].as_array().unwrap().len() > 10);
+}
+#[test] fn add_sfx_synthesizes_and_places_a_sound() {
+    let mut ss = Session::new();
+    let r = dispatch(&mut ss, "add_sfx", &json!({"kind": "whoosh", "at": [1.0, 3.0]})).unwrap();
+    assert_eq!(r["placed"], 2, "{r}");
+    let c = ss.project.find_clip(r["clip_ids"][0].as_str().unwrap()).unwrap(); assert!((c.start - (1.0 - 0.8 * 0.55)).abs() < 1e-3, "a whoosh peaks on its mark: starts at {}", c.start);
+    let r = dispatch(&mut ss, "add_sfx", &json!({"kind": "riser", "at": 4.0, "duration": 2.0})).unwrap();
+    let c = ss.project.find_clip(r["clip_ids"][0].as_str().unwrap()).unwrap(); assert!((c.start + c.duration - 4.0).abs() < 1e-3, "a riser ends on its mark");
+    assert!(dispatch(&mut ss, "add_sfx", &json!({"kind": "laser", "at": 1.0})).is_err());
+}
 #[test] fn get_scopes_is_read_only_and_reports_stats() {
     let (s, _t1, _t2, _c) = one_clip(); let mut ss = fresh(&s); let before = pj(&ss);
     let r = call(&mut ss, "get_scopes", json!({"time": 1.5})); assert_eq!(pj(&ss), before, "read-only"); assert!(r.is_object() && !r.as_object().unwrap().is_empty(), "{r}");

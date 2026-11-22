@@ -71,12 +71,18 @@ pub fn resolve_font_info(name: &str) -> (String, bool) { if std::path::Path::new
     (system_fallback_font().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".into()), true) }
 pub fn resolve_font(name: &str) -> String { resolve_font_info(name).0 }
 
-fn font(name: &str, weight: f64) -> Result<std::sync::Arc<FontVec>, String> {
-    let key = format!("{name}@{weight}"); let m = FONTS.get_or_init(|| Mutex::new(HashMap::new())); let mut g = m.lock().unwrap();
+/// The text's variable-font axes at time t (beyond weight), rounded so a keyframed axis does not fill the font cache.
+fn axes_at(fx: Option<&TextFx>, t: f64) -> Vec<([u8; 4], f32)> {
+    let Some(fx) = fx else { return vec![] };
+    fx.axes.iter().filter_map(|(k, p)| { let b = k.as_bytes(); if b.len() != 4 { return None; } Some(([b[0], b[1], b[2], b[3]], ((p.at(t) * 10.0).round() / 10.0) as f32)) }).collect()
+}
+fn font(name: &str, weight: f64) -> Result<std::sync::Arc<FontVec>, String> { font_ax(name, weight, &[]) }
+fn font_ax(name: &str, weight: f64, axes: &[([u8; 4], f32)]) -> Result<std::sync::Arc<FontVec>, String> {
+    let key = format!("{name}@{weight}{}", axes.iter().map(|(t, v)| format!(";{}={v}", String::from_utf8_lossy(t))).collect::<String>()); let m = FONTS.get_or_init(|| Mutex::new(HashMap::new())); let mut g = m.lock().unwrap();
     if let Some(f) = g.get(&key) { return Ok(f.clone()); }
     let path = resolve_font(name); let data = std::fs::read(&path).map_err(|e| format!("font {path}: {e}"))?;
     let mut f = FontVec::try_from_vec(data).map_err(|e| format!("font parse {path}: {e}"))?;
-    { use ab_glyph::VariableFont; f.set_variation(b"wght", if weight > 0.0 { weight as f32 } else { 700.0 }); }
+    { use ab_glyph::VariableFont; f.set_variation(b"wght", if weight > 0.0 { weight as f32 } else { 700.0 }); for (tag, v) in axes { f.set_variation(tag, *v); } }
     let f = std::sync::Arc::new(f); g.insert(key, f.clone()); Ok(f)
 }
 
@@ -107,13 +113,14 @@ fn shape_word(f: &FontVec, sf: &ab_glyph::PxScaleFont<&FontVec>, word: &str, spa
 fn layout(text: &str, f: &FontVec, size: f32, spacing: f32, align: &str, cw: f32, fx: Option<&TextFx>) -> (Vec<G>, f32, f32, usize, usize, usize) {
     let sf = f.as_scaled(PxScale::from(size)); let lh = sf.height() * fx.map(|x| x.line_spacing as f32).unwrap_or(1.15); let kern = fx.map(|x| x.kerning).unwrap_or(true);
     let maxw = fx.map(|x| x.box_width as f32).filter(|w| *w > 0.0);
+    let tab = if fx.map(|x| x.tabular).unwrap_or(false) { Some(('0'..='9').map(|d| sf.h_advance(f.glyph_id(d))).fold(0f32, f32::max)) } else { None };
     // split into logical lines, then wrap words
     let mut lines: Vec<Vec<Cell>> = vec![];
     for para in text.split('\n') { let mut cur: Vec<Cell> = vec![]; let mut curw = 0f32; let mut prev: Option<char> = None; let words: Vec<&str> = para.split(' ').collect();
         for (wi, wd) in words.iter().enumerate() { let mut chars: Vec<Cell> = vec![]; let mut p2 = prev; if wi > 0 { chars.push((' ', sf.h_advance(f.glyph_id(' ')) + spacing, None)); p2 = Some(' '); }
             let shaped = if needs_shaping(wd) { shape_word(f, &sf, wd, spacing) } else { None };
             if let Some(sh) = shaped { p2 = wd.chars().last(); chars.extend(sh); } else {
-            for ch in wd.chars() { let gid = f.glyph_id(ch); if gid.0 == 0 && !ch.is_whitespace() { continue; } let k = if kern { p2.map(|p| sf.kern(f.glyph_id(p), gid)).unwrap_or(0.0) } else { 0.0 }; chars.push((ch, sf.h_advance(gid) + spacing + k, None)); p2 = Some(ch); } }
+            for ch in wd.chars() { let gid = f.glyph_id(ch); if gid.0 == 0 && !ch.is_whitespace() { continue; } let k = if kern { p2.map(|p| sf.kern(f.glyph_id(p), gid)).unwrap_or(0.0) } else { 0.0 }; match tab.filter(|_| ch.is_ascii_digit()) { Some(cell) => chars.push((ch, cell + spacing, Some((gid.0, (cell - sf.h_advance(gid)) / 2.0, 0.0)))), None => chars.push((ch, sf.h_advance(gid) + spacing + k, None)) } p2 = Some(ch); } }
             let ww: f32 = chars.iter().map(|c| c.1).sum();
             if let Some(mw) = maxw { if curw + ww > mw && !cur.is_empty() { if chars.first().map(|c| c.0 == ' ').unwrap_or(false) { chars.remove(0); } let ww2: f32 = chars.iter().map(|c| c.1).sum(); lines.push(std::mem::take(&mut cur)); cur = chars; curw = ww2; prev = p2; continue; } }
             curw += ww; cur.extend(chars); prev = p2; }
@@ -178,7 +185,7 @@ impl rustybuzz::ttf_parser::OutlineBuilder for PathOut {
 }
 /// The outlines of every visible glyph of `text` as it would render on a `cw` x `ch` canvas.
 pub fn glyph_paths(text: &str, font_name: &str, size: f64, spacing: f64, weight: f64, align: &str, cw: f64, ch: f64, fx: Option<&TextFx>) -> Result<Vec<GlyphPath>, String> {
-    let f = font(font_name, weight)?; let upper; let text = if fx.map(|x| x.uppercase).unwrap_or(false) { upper = text.to_uppercase(); upper.as_str() } else { text };
+    let f = font_ax(font_name, weight, &axes_at(fx, 0.0))?; let upper; let text = if fx.map(|x| x.uppercase).unwrap_or(false) { upper = text.to_uppercase(); upper.as_str() } else { text };
     let (glyphs, bw, bh, _, _, _) = layout(text, &f, size as f32, spacing as f32, align, cw as f32, fx);
     let (bx, by) = block_origin(cw as f32, ch as f32, bw, bh);
     let path = resolve_font(font_name); let data = std::fs::read(&path).map_err(|e| format!("font {path}: {e}"))?;
@@ -205,7 +212,7 @@ pub fn cap_height(font_name: &str, size: f64, weight: f64) -> Result<f64, String
     Ok(f.outline_glyph(g).map_or(0.0, |o| { let b = o.px_bounds(); (b.max.y - b.min.y) as f64 }) * size / BIG as f64)
 }
 pub fn measure_text(text: &str, font_name: &str, size: f64, spacing: f64, weight: f64, align: &str, cw: f64, ch: f64, fx: Option<&TextFx>) -> Result<TextMetrics, String> {
-    let f = font(font_name, weight)?; let upper; let text = if fx.map(|x| x.uppercase).unwrap_or(false) { upper = text.to_uppercase(); upper.as_str() } else { text };
+    let f = font_ax(font_name, weight, &axes_at(fx, 0.0))?; let upper; let text = if fx.map(|x| x.uppercase).unwrap_or(false) { upper = text.to_uppercase(); upper.as_str() } else { text };
     let (glyphs, bw, bh, nl, _, _) = layout(text, &f, size as f32, spacing as f32, align, cw as f32, fx); let sf = f.as_scaled(PxScale::from(size as f32));
     let (bx, by) = block_origin(cw as f32, if ch > 0.0 { ch as f32 } else { bh }, bw, bh);
     let lh = bh / nl.max(1) as f32; let mut wpl: Vec<Vec<String>> = vec![vec![]; nl]; let mut ext: Vec<Option<(f32, f32)>> = vec![None; nl]; let mut last = (usize::MAX, usize::MAX);
@@ -311,7 +318,7 @@ fn stroke_dilate(cov: &[f32], w: usize, h: usize, radius: f64) -> Vec<f32> {
 }
 
 pub fn render_text(fr: &mut Frame, text: &str, fontpath: &str, size: f64, col: [f64; 3], spacing: f64, stroke_w: f64, stroke_col: [f64; 3], shadow: f64, align: &str, reveal: f64, fx: Option<&TextFx>, t: f64) -> Result<(), String> {
-    let f = font(fontpath, fx.map(|x| x.weight).unwrap_or(0.0))?; let upper; let text = if fx.map(|x| x.uppercase).unwrap_or(false) { upper = text.to_uppercase(); upper.as_str() } else { text }; let (w, h) = (fr.w, fr.h);
+    let f = font_ax(fontpath, fx.map(|x| x.weight).unwrap_or(0.0), &axes_at(fx, t))?; let upper; let text = if fx.map(|x| x.uppercase).unwrap_or(false) { upper = text.to_uppercase(); upper.as_str() } else { text }; let (w, h) = (fr.w, fr.h);
     let (main, bounds, tint) = coverage(w, h, text, &f, size as f32, spacing as f32, align, reveal, fx, t);
     let over = |fr: &mut Frame, cov: &[f32], c: &dyn Fn(usize) -> [f32; 3], k: f32| { for i in 0..w * h { let a = cov[i] * k; if a <= 0.0 { continue; } let cc = c(i); let o = &mut fr.d[i * 4..i * 4 + 4]; let na = a + o[3] * (1.0 - a); for j in 0..3 { o[j] = (cc[j] * a + o[j] * o[3] * (1.0 - a)) / na.max(1e-6); } o[3] = na; } };
     // background box

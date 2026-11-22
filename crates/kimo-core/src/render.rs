@@ -782,7 +782,7 @@ fn source_frame_h(p: &Project, c: &Clip, lt_in: f64, cache: &Cache) -> (Frame, O
             }
         }
         Source::Text { text, font, size, color, letter_spacing, stroke_width, stroke_color, shadow, align } => {
-            let text = &dyn_text(text, c.start + lt, p.fps);
+            let text = &dyn_text(text_at(c, text, lt), c.start + lt, p.fps);
             let _ = crate::text::render_text(&mut f, text, font, *size, *color, *letter_spacing, *stroke_width, *stroke_color, *shadow, align, prop(c, "reveal", lt), c.text_fx.as_ref(), lt);
         }
         Source::Code(_) => if let Some((_, _, m)) = cache.code.get(&c.id) { // straight-alpha sRGB RGBA8 at canvas size, like decoded media
@@ -1857,6 +1857,10 @@ fn corner_pin(src: &Frame, off: &[[f64; 2]; 4]) -> Frame {
 /// `{bar:BPM:S}` musical position "BAR bb.b.s" at BPM offset by S seconds, `{t:S}` seconds with 2 decimals, `{pct:A:B}` percent 0..100 from timeline time A to B,
 /// `{num:DEC:GROUPING:EASE:t0=v0,t1=v1,...[:deva]}` a live number eased between keyed values (times in the containing composition's clock; see numfmt.rs),
 /// `{tcd:S}` real SMPTE drop-frame timecode (29.97/59.94 only; falls back to a dashed placeholder at any other fps rather than a wrong label) via timecode::label.
+/// The text a text clip shows at clip-local time `lt`: the latest source-text keyframe at or before it, else its own text.
+pub fn text_at<'a>(c: &'a Clip, own: &'a str, lt: f64) -> &'a str {
+    c.text_fx.as_ref().and_then(|fx| fx.text_keys.iter().filter(|k| k.t <= lt + 1e-9).max_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal))).map_or(own, |k| k.text.as_str())
+}
 pub fn dyn_text(text: &str, gt: f64, fps: f64) -> String {
     if !text.contains('{') { return text.to_string(); }
     let mut out = String::new(); let mut rest = text;

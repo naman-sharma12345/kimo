@@ -48,6 +48,8 @@ add_punch_ins f51612dec98633d9
 add_push_wipe 4869e61f95c4c704
 add_scene3d f6e6ccc92bde6f85
 add_set_channels 1360567a1d34b9d6
+add_sfx d3e25cd767c2c836
+add_sfx_on cc0afd2dcd28b46a
 add_shape d5414bb0544a4ab5
 add_shape_modifier 95434f64dd11932f
 add_shard_burst d5d23132405a5039
@@ -132,6 +134,7 @@ contact_sheet 81736e8a9b89e7df
 contour_sdf_graph d53d4b3f16e077ae
 contrast_ratio d578343880c80bfe
 copy_curve 0057930bd542d836
+copy_ease 031ea8fd06300343
 copy_keyframes 70ef3cc730635528
 corner_disagreement 44cdf6a5779ea221
 create_bin eb4e9ec665ef012c
@@ -251,6 +254,7 @@ inspect_vertex_stream 1131d4d20cf1ffed
 instantiate_gltf_scene 84530f639eee8159
 job_status ffd018be66e31a3e
 join_export b38ba03540491255
+key_graph 55c9126c27d2abe3
 kimo_info 22a891990956a689
 lift_range 76f97b3850975a47
 light_rig 2d21a8c90d40d65f
@@ -445,12 +449,14 @@ set_essential_properties 2d4f32d321caf3e7
 set_expression 12c7a08732138781
 set_expression_script 0485f0564460ed0e
 set_flow_blur 7e459b163e1a216d
+set_font_axes 4867914102a498d6
 set_grade_graph 6748da7824c2fc7e
 set_grade_node 01ef22101da7231f
 set_grade_output 6560facb5fcf1afa
 set_grade_scopes 10538c1f26d81a94
 set_ground_plane 914a2cd630bf2c94
 set_hdr_mastering 7f72fec86997f9fc
+set_key_velocity a562bd1edbbec49d
 set_keyframe d367b31d80f6c144
 set_keyframe_bezier fb0399046835f763
 set_keyframes 8e8fdaa1741a54bf
@@ -482,6 +488,7 @@ set_speed 0e5aa672ac57bbd2
 set_speed_ramp c98ee12bfb32f92d
 set_split_edit af640587669e23fa
 set_text 75d3e2ede376994a
+set_text_keyframes 92fdda11b077f9fa
 set_text_path 103cf0dd9d7f55b1
 set_text_style 977ef2306acb3365
 set_text_weight 814c0178887918c0

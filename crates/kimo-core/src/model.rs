@@ -549,9 +549,18 @@ pub struct TextFx {
     pub gradient: Option<([f64; 3], [f64; 3])>, pub glow: f64, pub glow_color: [f64; 3],
     pub animators: Vec<TextAnimator>,
     #[serde(default)] pub path: Option<crate::motion::MotionPath>, #[serde(default = "zp")] pub path_start: Prop, #[serde(default)] pub path_flip: bool,
+    /// Variable-font axes beyond weight, keyframable: "wdth", "slnt", "opsz", "ital" or any 4-letter custom axis.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")] pub axes: BTreeMap<String, Prop>,
+    /// Tabular figures: every digit takes the same advance (the widest digit's), so a counter or timer does not jiggle.
+    #[serde(default, skip_serializing_if = "is_false")] pub tabular: bool,
+    /// Source-text keyframes: from each key's time (clip-local seconds) the clip shows that key's text instead of its own.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")] pub text_keys: Vec<TextKey>,
 }
+/// One source-text keyframe: from `t` (clip-local seconds) on, the clip reads `text`.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct TextKey { pub t: f64, pub text: String }
 fn zp() -> Prop { Prop::new(0.0) }
-impl Default for TextFx { fn default() -> Self { TextFx { weight: 0.0, uppercase: false, line_mask: false, italic_skew: 0.0, box_width: 0.0, line_spacing: 1.15, kerning: true, bg: None, bg_pad: 24.0, bg_radius: 12.0, shadow_blur: 0.0, shadow_opacity: 0.6, shadow_color: [0.0; 3], shadow_angle: 45.0, gradient: None, glow: 0.0, glow_color: [1.0, 1.0, 1.0], animators: vec![], path: None, path_start: Prop::new(0.0), path_flip: false } } }
+impl Default for TextFx { fn default() -> Self { TextFx { weight: 0.0, uppercase: false, line_mask: false, italic_skew: 0.0, box_width: 0.0, line_spacing: 1.15, kerning: true, bg: None, bg_pad: 24.0, bg_radius: 12.0, shadow_blur: 0.0, shadow_opacity: 0.6, shadow_color: [0.0; 3], shadow_angle: 45.0, gradient: None, glow: 0.0, glow_color: [1.0, 1.0, 1.0], animators: vec![], path: None, path_start: Prop::new(0.0), path_flip: false, axes: BTreeMap::new(), tabular: false, text_keys: vec![] } } }
 /// Range selector + properties applied to each unit (char/word/line) by selector amount. All values keyframable.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TextAnimator {
