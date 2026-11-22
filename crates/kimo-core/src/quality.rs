@@ -30,6 +30,16 @@ pub fn v10() -> bool { CTX.with(|c| c.get().0) }
 /// at 720p and at 4K.
 pub fn px(v: f32) -> f32 { let (on, s) = CTX.with(|c| c.get()); if on { v * s } else { v } }
 
+/// Separable Gaussian blur of one plane (mask coverage), edges clamped, exact for fractional sigma.
+pub fn gauss_plane(c: &mut [f32], w: usize, h: usize, sigma: f32) {
+    if !(sigma > 0.05) || w == 0 || h == 0 { return; }
+    let r = (sigma * 3.0).ceil().max(1.0) as isize;
+    let ker: Vec<f32> = { let v: Vec<f32> = (-r..=r).map(|i| (-(i * i) as f32 / (2.0 * sigma * sigma)).exp()).collect(); let t: f32 = v.iter().sum(); v.into_iter().map(|x| x / t).collect() };
+    let mut tmp = vec![0f32; c.len()];
+    { let (src, ker) = (&*c, &ker); crate::par::rows_mut(&mut tmp, w, |y, out| for x in 0..w { out[x] = ker.iter().enumerate().map(|(k, kv)| src[y * w + (x as isize + k as isize - r).clamp(0, w as isize - 1) as usize] * kv).sum(); }); }
+    { let (src, ker) = (&tmp, &ker); crate::par::rows_mut(c, w, |y, out| for x in 0..w { out[x] = ker.iter().enumerate().map(|(k, kv)| src[(y as isize + k as isize - r).clamp(0, h as isize - 1) as usize * w + x] * kv).sum(); }); }
+}
+
 /// sRGB encoded value to linear light (exact curve; values past 0..1 extend it).
 #[inline] pub fn to_linear(v: f32) -> f32 { if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) } }
 /// Linear light to the sRGB encoded value.

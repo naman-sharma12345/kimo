@@ -36,11 +36,14 @@ fn inv3(m: [[f64; 3]; 3]) -> [[f64; 3]; 3] { let d = m[0][0] * (m[1][1] * m[2][2
 
 /// Snap each outline point along its normal to the strongest edge within `snap` px. Returns mean absolute move.
 fn snap_points(pts: &mut Vec<(f64, f64)>, g: &[f32], gw: usize, gh: usize, sc: f64, snap: f64) -> f64 {
-    let n = pts.len(); if n < 3 || snap <= 0.0 { return 0.0; } let mut off = vec![0f64; n];
+    let n = pts.len(); if n < 3 || snap <= 0.0 { return 0.0; } let mut off = vec![0f64; n]; let v10 = crate::quality::v10();
     for i in 0..n { let (a, b) = (pts[(i + n - 1) % n], pts[(i + 1) % n]); let (tx, ty) = (b.0 - a.0, b.1 - a.1); let l = (tx * tx + ty * ty).sqrt().max(1e-9); let (nx, ny) = (ty / l, -tx / l);
         let samp = |o: f64| -> f32 { bil(g, gw, gh, ((pts[i].0 + nx * o) / sc - 0.5) as f32, ((pts[i].1 + ny * o) / sc - 0.5) as f32) };
-        let (mut best, mut bo) = (0f32, 0f64); let steps = (snap / sc).ceil().max(1.0) as i32; let st = snap / steps as f64; let base = ((samp(st) - samp(-st)).abs()) / 2.0;
-        for s in -steps..=steps { let o = s as f64 * st; let gr = (samp(o + st) - samp(o - st)).abs() * (1.0 - 0.5 * (o.abs() / snap) as f32); if gr > best { best = gr; bo = o; } }
+        // v10: quarter-pixel steps and a parabola through the strongest edge (sub-pixel, so the outline does not jump between pixel rows)
+        let (mut best, mut bo) = (0f32, 0f64); let steps = ((snap / sc).ceil().max(1.0) * if v10 { 4.0 } else { 1.0 }) as i32; let st = snap / steps as f64; let base = ((samp(st) - samp(-st)).abs()) / 2.0;
+        let gr_at = |o: f64| (samp(o + st) - samp(o - st)).abs() * (1.0 - 0.5 * (o.abs() / snap) as f32);
+        for s in -steps..=steps { let o = s as f64 * st; let gr = gr_at(o); if gr > best { best = gr; bo = o; } }
+        if v10 && best > 0.0 { let (l, r) = (gr_at(bo - st), gr_at(bo + st)); let d = l - 2.0 * best + r; if d.abs() > 1e-6 { bo += st * (0.5 * (l - r) / d).clamp(-0.5, 0.5) as f64; } }
         off[i] = if best > base * 1.3 + 2.0 { bo } else { 0.0 }; }
     let sm: Vec<f64> = (0..n).map(|i| { let mut v = [off[(i + n - 1) % n], off[i], off[(i + 1) % n]]; v.sort_by(|a, b| a.partial_cmp(b).unwrap()); 0.6 * v[1] + 0.4 * off[i] }).collect();
     let mut tot = 0.0; for i in 0..n { let (a, b) = (pts[(i + n - 1) % n], pts[(i + 1) % n]); let (tx, ty) = (b.0 - a.0, b.1 - a.1); let l = (tx * tx + ty * ty).sqrt().max(1e-9); pts[i].0 += ty / l * sm[i]; pts[i].1 += -tx / l * sm[i]; tot += sm[i].abs(); }
@@ -49,6 +52,7 @@ fn snap_points(pts: &mut Vec<(f64, f64)>, g: &[f32], gw: usize, gh: usize, sc: f
 
 pub fn propagate(p: &Project, clip_id: &str, keys: &[PathKey], snap: f64, quality: usize, tau: f64) -> Result<(Vec<PathKey>, RotoStats), String> {
     let c = p.find_clip(clip_id).ok_or("no such clip")?.clone(); let mut cache = Cache::new(); let (w, h) = (p.width as usize, p.height as usize);
+    let _quality = crate::quality::enter(p.v10(), h); let v10 = p.v10(); // v10 flow and snapping for this run
     if keys.len() < 2 { return Err("need at least two keyframes (hold-free path keys with equal point counts)".into()); }
     let n0 = keys[0].points.len(); if keys.iter().any(|k| k.points.len() != n0) { return Err("all keys must have the same point count".into()); }
     let fidx = |t: f64| (t * p.fps).round().max(0.0) as usize; let mut out: Vec<PathKey> = keys.to_vec(); let mut stats = RotoStats { frames: 0, segments: 0, mean_snap_px: 0.0 }; let mut snap_sum = 0.0; let mut snap_n = 0usize;
@@ -58,13 +62,20 @@ pub fn propagate(p: &Project, clip_id: &str, keys: &[PathKey], snap: f64, qualit
         let px = |k: &PathKey| -> Vec<(f64, f64)> { k.points.iter().map(|q| (q.x * w as f64, q.y * h as f64)).collect() };
         let mut fwd: Vec<Vec<(f64, f64)>> = vec![px(ka)]; for i in 0..m { let fl = crate::flow::flow(&to_frame(&grays[i].0, gw, gh), &to_frame(&grays[i + 1].0, gw, gh), quality); let mut q = fwd[i].clone(); advect(&mut q, &fl, gw, sc); fwd.push(q); }
         let mut bwd: Vec<Vec<(f64, f64)>> = vec![vec![]; m + 1]; bwd[m] = px(kb); for i in (0..m).rev() { let fl = crate::flow::flow(&to_frame(&grays[i + 1].0, gw, gh), &to_frame(&grays[i].0, gw, gh), quality); let mut q = bwd[i + 1].clone(); advect(&mut q, &fl, gw, sc); bwd[i] = q; }
+        let mut seg_pts: Vec<Vec<(f64, f64)>> = vec![px(ka)];
         for i in 1..m { let u = i as f64 / m as f64; let lin: Vec<(f64, f64)> = (0..n0).map(|j| (((1.0 - u) * ka.points[j].x + u * kb.points[j].x) * w as f64, ((1.0 - u) * ka.points[j].y + u * kb.points[j].y) * h as f64)).collect();
             let fb: Vec<(f64, f64)> = (0..n0).map(|j| ((1.0 - u) * fwd[i][j].0 + u * bwd[i][j].0, (1.0 - u) * fwd[i][j].1 + u * bwd[i][j].1)).collect();
             // forward and backward chains must agree where the flow is right; where they disagree, fall back toward plain key interpolation
             let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN); for q in &lin { x0 = x0.min(q.0); x1 = x1.max(q.0); y0 = y0.min(q.1); y1 = y1.max(q.1); } let size = (x1 - x0).max(y1 - y0).max(8.0);
             let dis = (0..n0).map(|j| (fwd[i][j].0 - bwd[i][j].0).hypot(fwd[i][j].1 - bwd[i][j].1)).sum::<f64>() / n0 as f64; let wf = (-(dis / (tau * size)).powi(2)).exp();
             let mut pts: Vec<(f64, f64)> = (0..n0).map(|j| (wf * fb[j].0 + (1.0 - wf) * lin[j].0, wf * fb[j].1 + (1.0 - wf) * lin[j].1)).collect();
-            snap_sum += snap_points(&mut pts, &grays[i].0, gw, gh, sc, snap); snap_n += 1;
+            snap_sum += snap_points(&mut pts, &grays[i].0, gw, gh, sc, snap); snap_n += 1; seg_pts.push(pts); }
+        seg_pts.push(px(kb));
+        // v10: per-frame snapping makes an outline shimmer ("boil"); a small temporal Gaussian over each point's path keeps real motion and
+        // removes the frame-to-frame jitter. The user's keys (first and last) stay exactly where they were drawn.
+        if v10 && m >= 3 { let src = seg_pts.clone(); let kw = [0.06f64, 0.24, 0.40, 0.24, 0.06];
+            for i in 1..m { for j in 0..n0 { let (mut sx, mut sy, mut sw) = (0.0, 0.0, 0.0); for (d, kv) in kw.iter().enumerate() { let k = i as isize + d as isize - 2; if k < 0 || k > m as isize { continue; } sx += src[k as usize][j].0 * kv; sy += src[k as usize][j].1 * kv; sw += kv; } seg_pts[i][j] = (sx / sw, sy / sw); } } }
+        for i in 1..m { let u = i as f64 / m as f64; let pts = &seg_pts[i];
             let t = (fa + i) as f64 / p.fps; let points: Vec<PathPt> = (0..n0).map(|j| { let (a, b) = (&ka.points[j], &kb.points[j]); let l = |x: f64, y: f64| x + (y - x) * u; PathPt { x: pts[j].0 / w as f64, y: pts[j].1 / h as f64, ix: l(a.ix, b.ix), iy: l(a.iy, b.iy), ox: l(a.ox, b.ox), oy: l(a.oy, b.oy), f: l(a.f, b.f), fi: l(a.fi, b.fi), fo: l(a.fo, b.fo) } }).collect();
             out.retain(|k| (k.t - t).abs() > 1e-9); out.push(PathKey { t, points, hold: false }); stats.frames += 1; }
         stats.segments += 1; }

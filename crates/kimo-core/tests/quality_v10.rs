@@ -263,3 +263,45 @@ fn a_keyed_edge_has_no_green_halo() {
     assert!(v10.d[9] >= v10.d[8].min(v10.d[10]) - 0.02, "v10 edge is not magenta: {:?}", &v10.d[8..11]);
     assert!(edge_err(&v10) < edge_err(&legacy), "and does better than legacy ({:.3} vs {:.3})", edge_err(&v10), edge_err(&legacy));
 }
+
+// ---------------------------------------------------------------- rotoscoping and masks
+
+/// Roto: a bright disc (radius 40) gliding 1.3 px right and 0.4 px down per frame over a textured background. Keys hold the true outline at
+/// frames 0 and 30; propagation fills in between. Returns (mean distance of the outline from the true circle, boil = mean frame-to-frame jitter).
+fn roto_run(v10: bool) -> (f64, f64) {
+    let dir = std::env::temp_dir().join(format!("kimo_v10_roto_{}", std::process::id())); std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("disc.mp4");
+    if !path.exists() {
+        let ok = std::process::Command::new("ffmpeg").args(["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=black:s=320x180:r=30:d=1.1",
+            "-vf", "format=gray,geq=lum='40+25*sin(X/7)*cos(Y/5)+170*clip(40-hypot(X-(90+1.3*N),Y-(80+0.4*N))+0.5,0,1)'", "-frames:v", "31", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-crf", "6"]).arg(&path).status().unwrap().success();
+        assert!(ok, "ffmpeg could not make the roto clip");
+    }
+    let mut s = session(v10); let t = track(&mut s);
+    let a = c(&mut s, "import_media", json!({"path": path.to_str().unwrap()}))["asset_id"].as_str().unwrap().to_string();
+    let id = c(&mut s, "add_clip", json!({"track_id": t, "source_type": "media", "asset_id": a, "start": 0.0, "duration": 1.0333}))["clip_id"].as_str().unwrap().to_string();
+    let centre = |f: f64| (90.0 + 1.3 * f, 80.0 + 0.4 * f); let n = 24;
+    let key = |f: f64| { let (cx, cy) = centre(f); kimo_core::masks::PathKey { t: f / 30.0, hold: false, points: (0..n).map(|k| { let a = k as f64 / n as f64 * std::f64::consts::TAU;
+        kimo_core::masks::PathPt { x: (cx + 40.0 * a.cos()) / W as f64, y: (cy + 40.0 * a.sin()) / H as f64, ix: 0.0, iy: 0.0, ox: 0.0, oy: 0.0, f: 0.0, fi: 0.0, fo: 0.0 } }).collect() } };
+    let (keys, _) = kimo_core::roto::propagate(&s.project, &id, &[key(0.0), key(30.0)], 6.0, 3, 0.25).unwrap();
+    let frames: Vec<&kimo_core::masks::PathKey> = keys.iter().filter(|k| k.t > 1e-6 && k.t < 1.0 - 1e-6).collect();
+    let err = frames.iter().map(|k| { let (cx, cy) = centre((k.t * 30.0).round()); k.points.iter().map(|p| ((p.x * W as f64 - cx).hypot(p.y * H as f64 - cy) - 40.0).abs()).sum::<f64>() / n as f64 }).sum::<f64>() / frames.len() as f64;
+    let boil = (1..frames.len() - 1).map(|i| (0..n).map(|j| { let q = |k: usize| (frames[k].points[j].x * W as f64, frames[k].points[j].y * H as f64);
+        let (a, b, c2) = (q(i - 1), q(i), q(i + 1)); (a.0 - 2.0 * b.0 + c2.0).hypot(a.1 - 2.0 * b.1 + c2.1) }).sum::<f64>() / n as f64).sum::<f64>() / (frames.len() - 2) as f64;
+    (err, boil)
+}
+
+#[test]
+fn a_rotoscoped_outline_follows_the_edge_without_boiling() {
+    let ((le, lb), (ve, vb)) = (roto_run(false), roto_run(true));
+    eprintln!("roto: legacy error {le:.2} px boil {lb:.2} px; v10 error {ve:.2} px boil {vb:.2} px");
+    assert!(vb < lb * 0.7, "v10 outline jitters less frame to frame ({vb:.2} vs legacy {lb:.2} px)");
+    assert!(ve <= le + 0.2 && ve < 1.5, "and stays on the edge ({ve:.2} px from the true circle; legacy {le:.2})");
+}
+
+#[test]
+fn a_mask_feather_follows_its_exact_size() {
+    let edge = |v10: bool, sigma: f32| { let _q = kimo_core::quality::enter(v10, 1080); let (w, h) = (64usize, 8usize);
+        let mut c: Vec<f32> = (0..w * h).map(|i| if i % w < w / 2 { 1.0 } else { 0.0 }).collect(); kimo_core::masks::blur_cov(&mut c, w, h, sigma); c };
+    assert_eq!(edge(false, 3.0), edge(false, 3.2), "legacy rounds the feather to whole pixels: 3.0 and 3.2 are the same");
+    assert_ne!(edge(true, 3.0), edge(true, 3.2), "v10 feathers by the exact amount");
+}

@@ -302,6 +302,8 @@ pub(crate) fn box_pass(src: &[f32], dst: &mut [f32], w: usize, h: usize, r: usiz
     }
 }
 pub fn blur_cov(c: &mut Vec<f32>, w: usize, h: usize, sigma: f32) {
+    // v10: a true Gaussian of the exact sigma (the legacy three-box approximation rounds its size to whole pixels, so an animated feather steps)
+    if crate::quality::v10() { return crate::quality::gauss_plane(c, w, h, sigma); }
     if sigma < 0.4 { return; } let r = ((sigma * 1.7).round() as usize).max(1).min(w.min(h) / 2 - 1); let mut t = vec![0f32; w * h];
     for _ in 0..3 { box_pass(c, &mut t, w, h, r, true); box_pass(&t, c, w, h, r, false); }
 }
