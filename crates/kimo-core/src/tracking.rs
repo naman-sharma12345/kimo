@@ -78,62 +78,87 @@ pub fn track_point(p: &Project, clip_id: &str, nx: f64, ny: f64, size: i32, rang
 #[inline] fn bil(g: &[f32], w: usize, h: usize, x: f32, y: f32) -> f32 {
     let (x, y) = (x.clamp(0.0, w as f32 - 1.001), y.clamp(0.0, h as f32 - 1.001)); let (x0, y0) = (x as usize, y as usize); let (fx, fy) = (x - x0 as f32, y - y0 as f32);
     let (a, b, c, d) = (g[y0 * w + x0], g[y0 * w + x0 + 1], g[(y0 + 1) * w + x0], g[(y0 + 1) * w + x0 + 1]); a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy }
-/// A (2r+1)^2 patch sampled at subpixel centre (cx, cy), zero mean and unit variance (None when flat).
-fn npatch(g: &[f32], w: usize, h: usize, cx: f32, cy: f32, r: i32) -> Option<Vec<f32>> {
-    let v: Vec<f32> = (-r..=r).flat_map(|dy| (-r..=r).map(move |dx| (dx, dy))).map(|(dx, dy)| bil(g, w, h, cx + dx as f32, cy + dy as f32)).collect();
+/// A 2x2 warp of patch offsets (the current scale and rotation), so a patch is compared the way the surface now looks.
+type Warp = [f32; 4];
+const NO_WARP: Warp = [1.0, 0.0, 0.0, 1.0];
+fn warp_of(sc: f64, th: f64) -> Warp { let (c, s) = ((sc * th.cos()) as f32, (sc * th.sin()) as f32); [c, -s, s, c] }
+#[inline] fn wo(m: &Warp, dx: i32, dy: i32) -> (f32, f32) { (m[0] * dx as f32 + m[1] * dy as f32, m[2] * dx as f32 + m[3] * dy as f32) }
+/// A (2r+1)^2 patch sampled at subpixel centre (cx, cy) through warp `m`, zero mean and unit variance (None when flat).
+fn npatch(g: &[f32], w: usize, h: usize, cx: f32, cy: f32, r: i32, m: &Warp) -> Option<Vec<f32>> {
+    let v: Vec<f32> = (-r..=r).flat_map(|dy| (-r..=r).map(move |dx| (dx, dy))).map(|(dx, dy)| { let (ox, oy) = wo(m, dx, dy); bil(g, w, h, cx + ox, cy + oy) }).collect();
     normalise(v) }
 fn normalise(mut v: Vec<f32>) -> Option<Vec<f32>> { let n = v.len() as f32; let m = v.iter().sum::<f32>() / n; let sd = (v.iter().map(|x| (x - m) * (x - m)).sum::<f32>() / n).sqrt(); if sd < 1e-3 { return None; } for x in v.iter_mut() { *x = (*x - m) / sd; } Some(v) }
 fn zncc(a: &[f32], b: &[f32]) -> f32 { a.iter().zip(b).map(|(x, y)| x * y).sum::<f32>() / a.len() as f32 }
-/// Where template `tpl` (normalised, radius r) sits in `g`, searching +-range around `pred`: integer search on a coarse then fine
-/// grid, then Gauss-Newton sub-pixel refinement. (x, y, correlation -1..1).
-fn locate(tpl: &[f32], g: &[f32], w: usize, h: usize, pred: (f32, f32), r: i32, range: i32) -> (f32, f32, f32) {
-    let score = |x: f32, y: f32| npatch(g, w, h, x, y, r).map(|q| zncc(tpl, &q)).unwrap_or(-1.0);
+/// True when a patch of radius r through warp m, centred at (x, y), lies inside the frame (with a pixel to spare). A patch that
+/// pokes past the edge reads clamped border pixels, which correlate with anything, so it is not measured at all.
+fn inside(w: usize, h: usize, x: f32, y: f32, r: i32, m: &Warp) -> bool {
+    let e = (m[0].abs() + m[1].abs()).max(m[2].abs() + m[3].abs()) * r as f32 + 1.5; x - e >= 0.0 && y - e >= 0.0 && x + e <= w as f32 - 1.0 && y + e <= h as f32 - 1.0 }
+/// Where template `tpl` (normalised, radius r, sampled through warp m) sits in `g`, searching +-range around `pred`: integer
+/// search on a coarse then fine grid, then Gauss-Newton sub-pixel refinement. (x, y, correlation -1..1).
+fn locate(tpl: &[f32], g: &[f32], w: usize, h: usize, pred: (f32, f32), r: i32, range: i32, m: &Warp) -> (f32, f32, f32) {
+    let score = |x: f32, y: f32| if inside(w, h, x, y, r, m) { npatch(g, w, h, x, y, r, m).map(|q| zncc(tpl, &q)).unwrap_or(-1.0) } else { -1.0 };
     let mut best = (pred.0, pred.1, score(pred.0, pred.1));
     let step = if range > 6 { 2 } else { 1 };
-    for dy in (-range..=range).step_by(step) { for dx in (-range..=range).step_by(step) { let (x, y) = (pred.0 + dx as f32, pred.1 + dy as f32); let sc = score(x, y); if sc > best.2 { best = (x, y, sc); } } }
+    // every pixel near the prediction (fine texture decorrelates within a pixel, so a coarse grid alone can step over the true
+    // match), then a coarse grid over the rest of the range
+    let near = range.min(4);
+    for dy in -range..=range { for dx in -range..=range { if (dx.abs() > near || dy.abs() > near) && (dx % step != 0 || dy % step != 0) { continue; }
+        let (x, y) = (pred.0 + dx as f32, pred.1 + dy as f32); let sc = score(x, y); if sc > best.2 { best = (x, y, sc); } } }
     if step > 1 { let c = best; for dy in -1..=1 { for dx in -1..=1 { let (x, y) = (c.0 + dx as f32, c.1 + dy as f32); let sc = score(x, y); if sc > best.2 { best = (x, y, sc); } } } }
+    if best.2 <= -1.0 { return best; }
     // Gauss-Newton on the normalised patch: minimise sum (Tn - In(p))^2 over p (the normalisation makes it gain/bias invariant)
     let (mut x, mut y) = (best.0, best.1);
     for _ in 0..12 {
-        let raw: Vec<f32> = (-r..=r).flat_map(|dy| (-r..=r).map(move |dx| (dx, dy))).map(|(dx, dy)| bil(g, w, h, x + dx as f32, y + dy as f32)).collect();
-        let n = raw.len() as f32; let m = raw.iter().sum::<f32>() / n; let sd = (raw.iter().map(|v| (v - m) * (v - m)).sum::<f32>() / n).sqrt(); if sd < 1e-3 { break; }
-        let (mut a, mut b, mut c, mut rx, mut ry) = (0f32, 0f32, 0f32, 0f32, 0f32); let mut k = 0;
-        for dy in -r..=r { for dx in -r..=r { let (px, py) = (x + dx as f32, y + dy as f32);
+        let pts: Vec<(f32, f32)> = (-r..=r).flat_map(|dy| (-r..=r).map(move |dx| (dx, dy))).map(|(dx, dy)| { let (ox, oy) = wo(m, dx, dy); (x + ox, y + oy) }).collect();
+        let raw: Vec<f32> = pts.iter().map(|&(px, py)| bil(g, w, h, px, py)).collect();
+        let n = raw.len() as f32; let mu = raw.iter().sum::<f32>() / n; let sd = (raw.iter().map(|v| (v - mu) * (v - mu)).sum::<f32>() / n).sqrt(); if sd < 1e-3 { break; }
+        let (mut a, mut b, mut c, mut rx, mut ry) = (0f32, 0f32, 0f32, 0f32, 0f32);
+        for (k, &(px, py)) in pts.iter().enumerate() {
             let gx = (bil(g, w, h, px + 0.5, py) - bil(g, w, h, px - 0.5, py)) / sd; let gy = (bil(g, w, h, px, py + 0.5) - bil(g, w, h, px, py - 0.5)) / sd;
-            let e = (raw[k] - m) / sd - tpl[k]; a += gx * gx; b += gx * gy; c += gy * gy; rx += gx * e; ry += gy * e; k += 1; } }
+            let e = (raw[k] - mu) / sd - tpl[k]; a += gx * gx; b += gx * gy; c += gy * gy; rx += gx * e; ry += gy * e; }
         let det = a * c - b * b; if det.abs() < 1e-9 { break; }
         let (ux, uy) = ((-(c * rx - b * ry) / det).clamp(-1.0, 1.0), (-(a * ry - b * rx) / det).clamp(-1.0, 1.0)); x += ux; y += uy;
         if ux.abs().max(uy.abs()) < 0.002 { break; } }
     let sc = score(x, y); if sc + 0.02 < best.2 { (best.0, best.1, best.2) } else { (x, y, sc) }
 }
+// Real footage adds what a synthetic pan does not: the surface turns and grows (a template taken at frame 0 stops matching), and
+// patches leave the frame. So in v10: each patch is compared through the current scale and rotation; a patch whose window leaves
+// the frame is not measured (clamped border pixels match anything); a lost or unmeasured patch is put back where the fit of the
+// others says it is (so it picks up again when it returns, instead of coasting off on its own); a fit that jumps in scale or
+// rotation from one frame to the next is not believed (translation only, at the previous scale and angle); and with nothing
+// measured the track holds its last good position.
 fn track_point_v10(p: &Project, clip_id: &str, nx: f64, ny: f64, size: i32, range: i32, rigid: bool, radius: f64) -> Result<Vec<TrackSample>, String> {
     let c = p.find_clip(clip_id).ok_or("no such clip")?.clone(); let mut cache = Cache::new(); let (w, h) = (p.width as usize, p.height as usize); let n = nframes(p, &c);
     let (cx0, cy0) = (nx * w as f64, ny * h as f64); let r = radius * w.min(h) as f64; let pr = (size / 2).clamp(3, 40);
     let offs: Vec<(f64, f64)> = if rigid { vec![(0.0, 0.0), (r, 0.0), (-r, 0.0), (0.0, r), (0.0, -r), (r * 0.7, r * 0.7), (-r * 0.7, -r * 0.7), (r * 0.7, -r * 0.7), (-r * 0.7, r * 0.7)] } else { vec![(0.0, 0.0)] };
     let ref_pts: Vec<(f64, f64)> = offs.iter().map(|o| (cx0 + o.0, cy0 + o.1)).collect();
     let g0 = clip_gray(p, &mut cache, &c, 0)?;
-    // patches that are flat (no texture to follow) are left out of the fit
-    let tpl0: Vec<Option<Vec<f32>>> = ref_pts.iter().map(|q| npatch(&g0, w, h, q.0 as f32, q.1 as f32, pr)).collect();
+    // patches that are flat (no texture to follow) or outside the first frame are left out
+    let tpl0: Vec<Option<Vec<f32>>> = ref_pts.iter().map(|q| if inside(w, h, q.0 as f32, q.1 as f32, pr, &NO_WARP) { npatch(&g0, w, h, q.0 as f32, q.1 as f32, pr, &NO_WARP) } else { None }).collect();
     let mut tplp = tpl0.clone(); let mut cur_pts = ref_pts.clone(); let mut vel = vec![(0.0f64, 0.0f64); ref_pts.len()];
     let mut out = vec![TrackSample { t: 0.0, x: cx0, y: cy0, rot_deg: 0.0, scale: 1.0 }];
+    let (mut lsc, mut lth, mut ltx, mut lty) = (1.0f64, 0.0f64, 0.0f64, 0.0f64); // the last believed similarity
+    let apply = |f: (f64, f64, f64, f64), q: (f64, f64)| (f.0 * (f.1.cos() * q.0 - f.1.sin() * q.1) + f.2, f.0 * (f.1.sin() * q.0 + f.1.cos() * q.1) + f.3);
     for i in 1..n { let g = clip_gray(p, &mut cache, &c, i)?;
-        let (mut a, mut b): (Vec<(f64, f64)>, Vec<(f64, f64)>) = (vec![], vec![]);
+        let m = warp_of(lsc, lth); let (mut a, mut b): (Vec<(f64, f64)>, Vec<(f64, f64)>) = (vec![], vec![]); let mut seen = vec![false; ref_pts.len()];
         for k in 0..ref_pts.len() { let Some(t0) = &tpl0[k] else { continue };
             let pred = ((cur_pts[k].0 + vel[k].0) as f32, (cur_pts[k].1 + vel[k].1) as f32);
-            let mut hit = locate(t0, &g, w, h, pred, pr, range);
-            if hit.2 < 0.6 { if let Some(tp) = &tplp[k] { let alt = locate(tp, &g, w, h, pred, pr, range); if alt.2 > hit.2 { hit = alt; } } }
-            if hit.2 < 0.3 { cur_pts[k] = (pred.0 as f64, pred.1 as f64); continue; } // lost this frame: coast, keep it out of the fit
-            let np = (hit.0 as f64, hit.1 as f64); vel[k] = (np.0 - cur_pts[k].0, np.1 - cur_pts[k].1); cur_pts[k] = np;
-            tplp[k] = npatch(&g, w, h, hit.0, hit.1, pr); a.push(ref_pts[k]); b.push(np); }
-        // rotation and scale need at least three good patches; with fewer, follow their mean translation; with none, coast
-        // a fit whose scale is implausible (a few bad patches) is not used at all: its translation belongs to that scale
-        let fit = if rigid && a.len() >= 3 { Some(fit_similarity(&a, &b)).filter(|f| (0.5..=2.0).contains(&f.0)) } else { None };
-        let rigid_fit = fit.is_some();
-        let (sc, th, tx, ty) = if let Some(f) = fit { f }
-            else if !a.is_empty() { let k = a.len() as f64; let l = out.last().unwrap(); (l.scale, l.rot_deg.to_radians(), a.iter().zip(&b).map(|(p, q)| q.0 - p.0).sum::<f64>() / k, a.iter().zip(&b).map(|(p, q)| q.1 - p.1).sum::<f64>() / k) }
-            else { let l = out.last().unwrap(); (l.scale, l.rot_deg.to_radians(), l.x - cx0, l.y - cy0) };
-        let o = if rigid_fit { (sc * (th.cos() * cx0 - th.sin() * cy0) + tx, sc * (th.sin() * cx0 + th.cos() * cy0) + ty) } else { (cx0 + tx, cy0 + ty) };
-        out.push(TrackSample { t: i as f64 / p.fps, x: o.0, y: o.1, rot_deg: th.to_degrees(), scale: sc }); }
+            if !inside(w, h, pred.0, pred.1, pr, &m) { continue; }
+            let mut hit = locate(t0, &g, w, h, pred, pr, range, &m);
+            if hit.2 < 0.6 { if let Some(tp) = &tplp[k] { let alt = locate(tp, &g, w, h, pred, pr, range, &m); if alt.2 > hit.2 { hit = alt; } } }
+            if hit.2 < 0.3 { continue; }
+            let np = (hit.0 as f64, hit.1 as f64); vel[k] = (np.0 - cur_pts[k].0, np.1 - cur_pts[k].1); cur_pts[k] = np; seen[k] = true;
+            tplp[k] = npatch(&g, w, h, hit.0, hit.1, pr, &m); a.push(ref_pts[k]); b.push(np); }
+        // rotation and scale need at least three good patches, and must move plausibly from the last frame
+        let fit = if rigid && a.len() >= 3 { Some(fit_similarity(&a, &b)).filter(|f| (0.5..=2.0).contains(&f.0) && (f.0 / lsc - 1.0).abs() < 0.08 && (f.1 - lth).abs() < 0.1) } else { None };
+        let f = if let Some(f) = fit { f }
+            else if !a.is_empty() { // translation only, keeping the last scale and angle (consistent with them, so no jump)
+                let k = a.len() as f64; let (mut sx, mut sy) = (0.0, 0.0); for (pa, pb) in a.iter().zip(&b) { let q = apply((lsc, lth, 0.0, 0.0), *pa); sx += pb.0 - q.0; sy += pb.1 - q.1; } (lsc, lth, sx / k, sy / k) }
+            else { (lsc, lth, ltx, lty) }; // nothing measured: hold
+        // patches not measured this frame go where the fit puts them, moving with it
+        for k in 0..ref_pts.len() { if !seen[k] { let np = apply(f, ref_pts[k]); vel[k] = (np.0 - cur_pts[k].0, np.1 - cur_pts[k].1); cur_pts[k] = np; } }
+        (lsc, lth, ltx, lty) = f; let o = apply(f, (cx0, cy0));
+        out.push(TrackSample { t: i as f64 / p.fps, x: o.0, y: o.1, rot_deg: lth.to_degrees(), scale: lsc }); }
     Ok(out)
 }
 
