@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 pub mod expect;
 
 /// What every agent should know about observe/expect/review (sent as the MCP server's initialize instructions).
-pub const AGENT_GUIDE: &str = "kimo shows you every edit: each call that changes the project returns `observe` (what it touched, before/after frames as an image, brightness numbers, and findings: mistakes with severity and the exact fix call). Read it after every edit and fix any error or warning before moving on. For anything that must hold, pass expect: [...] on the edit (visible/hidden at a time, inside title_safe, luma range, no_black_frames, readable, max_findings); if it fails the edit is rolled back and you are told why. Run review before export. Use observe: \"full\" for a sharper look, or render_frame/contact_sheet for any moment you want to see.";
+pub const AGENT_GUIDE: &str = "kimo shows you every edit: each call that changes the project returns `observe` (what it touched, before/after frames as an image, brightness numbers, and findings: mistakes with severity and the exact fix call). Read it after every edit and fix any error or warning before moving on. For anything that must hold, pass expect: [...] on the edit (visible/hidden at a time, inside title_safe, luma range, no_black_frames, readable, max_findings); if it fails the edit is rolled back and you are told why. Run review before export. Use observe: \"full\" for a sharper look, or render_frame/contact_sheet for any moment you want to see. Editing craft: pace to the genre (social and promos 1-3 s shots, vlogs and talking heads 3-8 s, documentary and drama 4-10 s), cut on action or on the beat, and vary shot length. Use straight cuts almost everywhere; a dissolve (0.3-0.7 s) marks time or place passing and never takes more than 40% of the shorter shot; moving transitions (slide, push, whip, zoom, spin) need motion blur. Loudness: YouTube and social -14 LUFS, podcasts -16, broadcast -23 integrated, true peak under -1 dBTP, music at least 10 dB under speech (finish_audio, duck_timeline). Colour: grade first (auto_grade), then match the shots of each scene to each other (match_shot_look); keep skin on the skin line; mark scenes with markers named \"Scene ...\". Captions: short lines (about 32-42 characters, two lines at most), on screen long enough to read (about 15 characters a second), inside title safe and clear of the platform's buttons. Before you call an edit finished, run review, fix every error and warning it reports, and run it again.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode { Off, Numbers, Fast, Full }
@@ -151,6 +151,15 @@ pub fn after_edit(ss: &mut Session, label: &str, mode: Mode) -> Value {
             findings.extend(picture::check_frame(t, &a_st, b_pair.as_ref().map(|x| &x.1)));
             shots.push(Probe { t, before: b_pair, after: (a_rgba, a_st), w, h });
         }
+    }
+    // sound: only when the edit touched a clip with audio, measured over the touched spans (cached)
+    findings.extend(critic::audio::check_edit(&ss.project, &sp, &ids));
+    // colour: the touched shots against their scenes (every shot on a global change), inside what is left of the budget
+    if mode != Mode::Numbers && (global || ids.iter().any(|id| ss.project.find_clip(id).map(|c| matches!(c.source, crate::model::Source::Media { .. })).unwrap_or(false))) {
+        let deadline = t0 + std::time::Duration::from_millis(budget as u64);
+        let end = crate::ext::export_manifest::project_end(&ss.project);
+        let focus = if global { None } else { Some(ids.as_slice()) };
+        findings.extend(critic::color::check(ss, 0.0, end, focus, deadline, mode == Mode::Full).0);
     }
     critic::sort(&mut findings);
     let mut out = json!({

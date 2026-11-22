@@ -5,13 +5,19 @@
 //! Two kinds of check:
 //! * timeline critics (`editing`, `transitions`, `text`, `motion`) read the project only, so they are cheap and run on
 //!   every edit (limited to the spans the edit touched) and over the whole timeline in `review`;
-//! * picture critics (`picture`) read rendered frames (luma, clipping, crush, an edit that turned a frame black).
+//! * picture critics (`picture`) read rendered frames (luma, clipping, crush, an edit that turned a frame black);
+//! * the colour critic (`color`) reads each shot's draft frame (shot-to-scene match, casts, skin off the skin line);
+//! * the audio critic (`audio`) reads the mixed PCM (loudness off target, true peak, clipping, music over speech).
+//!
+//! `picture`, `color` and `audio` need frames or PCM, so `observe::after_edit` and `review` call them explicitly.
 //!
 //! Thresholds are conservative on purpose: a warning should mean "a viewer would notice", not "a number moved".
 use crate::model::Project;
 use serde::Serialize;
 use serde_json::{json, Value};
 
+pub mod audio;
+pub mod color;
 pub mod editing;
 pub mod motion;
 pub mod picture;
