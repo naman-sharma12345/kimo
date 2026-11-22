@@ -355,7 +355,7 @@ function graphicsOps(state, MODES, ev) {
       K.sub = `${nm} - ${layer === 'prompt' ? 'prompt box' : layer === 'counter' ? 'counter' : 'shape layer'}`;
       let li = K.blocks.find(b => b._layers);
       if (!li) { K.blocks.push({ sec: 'Shape layers', _gfx: true }); li = { list: [], sel: 0, _gfx: true, _layers: true }; K.blocks.push(li); }
-      if (!li.list.includes(nm)) li.list.push(nm); li.sel = li.list.indexOf(nm); if (li.list.length > 8) li.list.splice(0, li.list.length - 8);
+      if (!li.list.includes(nm)) li.list.push(nm); if (li.list.length > 8) li.list.splice(0, li.list.length - 8); li.sel = li.list.indexOf(nm); // select after trimming, or the highlight lands on the wrong layer
     }
     if ((tn === 'set_layer_style' || tn === 'add_shape_modifier' || tn === 'add_modifier') && (A.params || A.style || A.kind)) {
       const sec = tn === 'set_layer_style' ? 'Layer style' : 'Modifiers';

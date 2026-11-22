@@ -11,7 +11,7 @@ const prop = (c, k, def) => c.props?.[k]?.base ?? def;
 function renderInspector() {
   const body = $('#insp-body');
   const c = S.sel && P.clips.get(S.sel);
-  if (document.activeElement && body.contains(document.activeElement) && document.activeElement.dataset.keep === c?.id) return; // don't clobber typing
+  if (c && document.activeElement && body.contains(document.activeElement) && document.activeElement.dataset.keep === c.id) return; // don't clobber typing
   if (!c) {
     $('#insp-title').textContent = 'Project';
     const n = P.clips.size;

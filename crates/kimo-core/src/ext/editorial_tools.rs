@@ -86,6 +86,13 @@ fn style(c: &mut Clip, name: &str, a: &Value, w: f64, h: f64) -> Result<(), Stri
     fx.box_width = if bg.is_some() { (wrap_target - 2.0 * fx.bg_pad).max(0.3 * w) } else { wrap_target };
     Ok(())
 }
+/// The caption font when none is named: DejaVu Sans where it is installed (Linux, unchanged), otherwise the font kimo's
+/// own lookup picks (Montserrat when present, else the system sans). The bare Linux path used to be passed everywhere, so
+/// on Windows and macOS every caption logged a missing font and fell back without saying which font it used.
+fn default_caption_font() -> Value {
+    const DEJAVU: &str = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+    json!(if std::path::Path::new(DEJAVU).is_file() { DEJAVU.to_string() } else { crate::text::resolve_font_info("Montserrat").0 })
+}
 fn add_captions_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let tid = str_arg(a, "track_id")?.to_string();
     if !ss.project.tracks.iter().any(|t| t.id == tid && !t.locked) {
@@ -131,7 +138,7 @@ fn add_captions_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let result = existing(
         ss,
         "import_srt",
-        &json!({"track_id":tid,"path":path,"font":a.get("font").cloned().unwrap_or(json!("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"))}),
+        &json!({"track_id":tid,"path":path,"font":a.get("font").cloned().unwrap_or_else(default_caption_font)}),
     )?;
     let clips: Vec<String> = result["clip_ids"]
         .as_array()

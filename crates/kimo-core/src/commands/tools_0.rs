@@ -71,9 +71,19 @@ pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
             // heavy video: proxies build in the background (auto_proxy.rs); this call does not wait for them
             if let Some(job) = crate::auto_proxy::on_import(&ss.project, &id) { out["proxy"] = job; }
             Ok(out) } },
-    Command { name: "add_track", description: "Add a track on top of the stack. Higher tracks composite over lower ones.", mutates: true,
-        schema: obj(vec![], &[]),
-        run: |ss, _| { let id = ss.project.gen_id("track"); ss.project.tracks.push(Track { id: id.clone(), clips: vec![], locked: false, muted: false, solo: false, name: String::new() }); Ok(json!({"track_id":id})) } },
+    Command { name: "add_track", description: "Add a track on top of the stack. Higher tracks composite over lower ones. Optional name (shown in the app's timeline).", mutates: true,
+        schema: obj(vec![("name", s("track name, e.g. \"Music\" or \"Titles\" (optional)"))], &[]),
+        run: |ss, a| { let name = a.get("name").and_then(|v| v.as_str()).unwrap_or("").trim().to_string(); let id = ss.project.gen_id("track"); ss.project.tracks.push(Track { id: id.clone(), clips: vec![], locked: false, muted: false, solo: false, name: name.clone() });
+            let mut out = json!({"track_id":id}); if !name.is_empty() { out["name"] = json!(name); } Ok(out) } },
+    Command { name: "new_project", description: "Start over with a fresh, empty project in this session, as if the engine had just started: no tracks, clips or assets, and ids count from 1 again. Optional width, height, fps and render_quality (default v10), as project_set takes them. Unsaved changes to the current project are dropped (undo brings it back).", mutates: true,
+        schema: obj(vec![("width", n("frame width in pixels (default 1920)")), ("height", n("frame height in pixels (default 1080)")), ("fps", n("frames per second (default 30)")),
+            ("render_quality", json!({"type":"string","enum":["v10","legacy"],"description":"v10 (default) or legacy (the pre-v10 look)"}))], &[]),
+        run: |ss, a| {
+            ss.project = Project::default(); ss.project.render_quality = crate::model::RenderQuality::V10;
+            ss.cache = render::Cache::new(); ss.created_with = None;
+            let mut set = serde_json::Map::new(); for k in ["width", "height", "fps", "render_quality"] { if let Some(v) = a.get(k) { set.insert(k.into(), v.clone()); } }
+            if !set.is_empty() { crate::commands::dispatch_nested(ss, "project_set", &Value::Object(set))?; }
+            let p = &ss.project; Ok(json!({"width":p.width,"height":p.height,"fps":p.fps,"render_quality":p.render_quality.name(),"tracks":0,"assets":0})) } },
     Command { name: "add_clip", description: "Add a clip to a track. source_type: media (needs asset_id), solid (color [r,g,b] 0..1), gradient (color, color2; linear at angle, or radial).", mutates: true,
         schema: obj(vec![("track_id", s("target track")), ("source_type", json!({"type":"string","enum":["media","solid","gradient"]})), ("asset_id", s("for media")),
             ("color", col_schema("", false)), ("color2", col_schema("gradient end colour", false)), ("gradient", json!({"type":"string","enum":["linear","radial"],"description":"gradient shape: linear (default) or radial (color at the centre, color2 at the corners)"})), ("angle", n("linear gradient direction in degrees, color -> color2: 0 top->bottom (default), 90 left->right, 180 bottom->top; keyframe as gradient_angle")),

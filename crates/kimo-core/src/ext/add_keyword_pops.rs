@@ -75,10 +75,13 @@ const AUTO_DURATION_S: f64 = 1.3;
 /// KF16: target fraction of frame width a short word/phrase's rendered bbox should span -- the middle of
 /// KR2's measured 50-70% range (one word should span roughly 50-70% of frame width on a 720-wide vertical).
 const TARGET_WIDTH_FRAC: f64 = 0.60;
-/// KF16: style "boxed" targets a smaller TEXT width than bold_caps, because the box's own padding
-/// adds to the total visual footprint -- without this, a short word's box (text + padding) would
-/// itself approach the old "box spans most of the frame" bug, just arrived at a different way.
-const TARGET_WIDTH_FRAC_BOXED: f64 = 0.38;
+/// Style "boxed": the WHOLE box (text plus both side paddings) spans this fraction of the frame width. Fitting only
+/// the text (to 0.38) let a condensed font like Anton be set larger for the same width, and its padding, which grows
+/// with the size, pushed the box past half the frame.
+const TARGET_BOX_FRAC_BOXED: f64 = 0.45;
+/// Style "boxed": padding around the text, as fractions of the font size (sides, top and bottom).
+const BOX_PAD_X: f64 = 0.30;
+const BOX_PAD_Y: f64 = 0.22;
 /// A fixed probe size for `fit_size_to_width`'s one-shot linear measurement (ab_glyph glyph metrics are
 /// exactly proportional to px size, so measuring once at any size and scaling is exact).
 const PROBE_SIZE: f64 = 100.0;
@@ -105,10 +108,12 @@ fn rgb_arg(a: &Value, k: &str) -> Result<Option<[f64; 3]>, String> {
 /// `add_text`'s anchor logic and `add_title`'s `fit_width` already use) and scaling linearly, then
 /// clamping to [min_size, max_size] so a one-character interjection can't blow past a legible cap height
 /// and a long phrase can't shrink below a legible floor.
-fn fit_size_to_width(text: &str, font: &str, target_w: f64, min_size: f64, max_size: f64) -> Result<f64, String> {
+/// `pad_per_px` is extra width that grows with the size (the boxed style's two side paddings): the fitted width is
+/// text + pad_per_px * size.
+fn fit_size_to_width(text: &str, font: &str, target_w: f64, pad_per_px: f64, min_size: f64, max_size: f64) -> Result<f64, String> {
     let (w, _) = crate::text::measure(text, font, PROBE_SIZE, 0.0, 0.0, "center", 0.0)?;
     if w <= 0.0 { return Ok(min_size); }
-    Ok((PROBE_SIZE * target_w / w).clamp(min_size, max_size))
+    Ok((PROBE_SIZE * target_w / (w + pad_per_px * PROBE_SIZE)).clamp(min_size, max_size))
 }
 
 #[derive(Clone)]
@@ -199,8 +204,8 @@ fn place_one(ss: &mut Session, track_id: &str, p: &Pop, style: &str, animate_in:
     let frame_w = ss.project.width as f64;
     let min_size = (ss.project.height as f64 * 0.035).max(8.0);
     let max_size = (ss.project.height as f64 * 0.45).max(min_size + 1.0);
-    let target_frac = if style == "boxed" { TARGET_WIDTH_FRAC_BOXED } else { TARGET_WIDTH_FRAC };
-    let size = fit_size_to_width(&text_upper, "Anton", frame_w * target_frac, min_size, max_size)?;
+    let (target_frac, pad_per_px) = if style == "boxed" { (TARGET_BOX_FRAC_BOXED, 2.0 * BOX_PAD_X) } else { (TARGET_WIDTH_FRAC, 0.0) };
+    let size = fit_size_to_width(&text_upper, "Anton", frame_w * target_frac, pad_per_px, min_size, max_size)?;
 
     if style == "boxed" {
         // KF16: box sized to the TEXT'S OWN bounds + padding, not a fixed frame-width bar -- see this
@@ -208,8 +213,8 @@ fn place_one(ss: &mut Session, track_id: &str, p: &Pop, style: &str, animate_in:
         // here. add_shape (rect, corner_radius) + add_text are the same existing primitives, just aimed
         // at the measured word width.
         let (tw, th) = crate::text::measure(&text_upper, "Anton", size, 0.0, 0.0, "center", 0.0)?;
-        let pad_x = size * 0.30;
-        let pad_y = size * 0.22;
+        let pad_x = size * BOX_PAD_X;
+        let pad_y = size * BOX_PAD_Y;
         let box_w = tw + pad_x * 2.0;
         let box_h = th + pad_y * 2.0;
         let box_fill = accent.unwrap_or([0.05, 0.05, 0.07]);

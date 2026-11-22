@@ -1372,7 +1372,7 @@ fn lint_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
         let min_gap = (ra[3].min(rb[3]) * 0.15).max(12.0);
         if gap >= min_gap { continue; }
         overl += 1; if overl > 6 { continue; }
-        let cur_y = ss.project.tracks.iter().flat_map(|t| t.clips.iter()).find(|c| c.id == b.0).and_then(|c| c.props.get("y").map(|p| p.base)).unwrap_or(0.0);
+        let cur_y = ss.project.tracks.iter().flat_map(|t| t.clips.iter()).find(|c| c.id == b.0).map(|c| crate::render::local_xform(c, m - c.start).y).unwrap_or(0.0); // where the text is at the overlap, not its stored base
         let push_down = (ra[1] + ra[3] / 2.0) < (rb[1] + rb[3] / 2.0); // a is already above b -> add the clearance below b, else above it
         let dy = (min_gap - gap) + 6.0; let new_y = r3(cur_y + if push_down { dy } else { -dy });
         probs.push(json!({"code": "text_crowded", "severity": "warning", "clip_id": b.0, "other_clip_id": a.0, "at": r3(m), "gap_px": r3(gap.max(0.0)),

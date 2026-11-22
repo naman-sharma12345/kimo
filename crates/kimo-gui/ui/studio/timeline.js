@@ -72,7 +72,7 @@ tlScroll.addEventListener('wheel', e => {
 }, { passive: false });
 // seek by ruler / empty lane
 function seekTo(t, render = true) {
-  V.t = clamp(r3(t), 0, Math.max(P.dur || 0, V.dur || 0, 0)); $('#vw-scrub').value = V.t; vTime(); placePlayhead();
+  V.t = clamp(t, 0, Math.max(P.dur || 0, V.dur || 0, 0)); $('#vw-scrub').value = V.t; vTime(); placePlayhead();
   if (render) { if (inDraft(V.t)) $('#vw-scrub').oninput(); else viewerSeek(); }
 }
 let seekTimer = 0;

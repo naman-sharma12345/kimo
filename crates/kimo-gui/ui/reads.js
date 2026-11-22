@@ -211,7 +211,7 @@ function argRows(A, n = 3) {
   return out;
 }
 export function callRows(tool, A, R, C, clipName) {
-  let rows = CALL[tool] ? CALL[tool](A || {}, R, C) : [...argRows(A, 3), ...genericRows(R, 2)];
+  let rows = Object.hasOwn(CALL, tool) ? CALL[tool](A || {}, R, C) : [...argRows(A, 3), ...genericRows(R, 2)];
   rows = rows.filter(r => r && r[1] != null && r[1] !== '').map(r => [String(r[0]), String(r[1]), !!r[2]]);
   if (rows.length && clipName) rows.unshift(['Clip', String(clipName), false]);
   return rows.slice(0, 4);

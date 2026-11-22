@@ -263,7 +263,7 @@ function kv({ spec, data, w, h }) {
 }
 function block(b, w) {
   if (b.sec !== undefined) return `<div class="sec" ${b.h ? `style="height:${b.h}px"` : ''}>${E(b.sec)}</div>`;
-  if (b.gap) return `<div style="height:${b.gap}px"></div>`;
+  if (b.gap && !b.widget) return `<div style="height:${b.gap}px"></div>`;
   if (b.list) return `<div class="list">${b.list.map((x, i) => { const m = /^(\d+)\s+(.*)$/.exec(String(x)); return `<div class="${i === b.sel ? 'sel' : ''}">${m ? `<span class="n">${E(m[1])}</span>${E(m[2])}` : E(x)}</div>`; }).join('')}</div>`;
   if (b.curve) {   // a colour curve as the call gave it (PCHIP points), drawn on a unit box
     const W2 = Math.max(60, w), H2 = 64, col = { r: '#e2553f', g: '#5fbf6a', b: '#4f7fe0' }[b.ch] || 'var(--cream)';

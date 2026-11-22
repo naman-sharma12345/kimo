@@ -690,8 +690,12 @@ pub fn models(k: Kind) -> Models {
 
 /// Stop the running turn (if any).
 pub fn stop(slot: &Slot) -> bool {
-    if let Some(ch) = slot.lock().unwrap().as_mut() { let _ = ch.kill(); return true; }
-    false
+    // Take the child out of the slot: run() reads an empty slot as "the user stopped it" and says "Stopped.". Left in
+    // place, the killed child's exit status read as the agent CLI failing ("... exited with ..."). Reaped here, since
+    // run() no longer holds it.
+    let Some(mut ch) = ({ let mut g = slot.lock().unwrap(); let killed = g.as_mut().map_or(false, |c| c.kill().is_ok()); if killed { g.take() } else { None } }) else { return false };
+    let _ = ch.wait();
+    true
 }
 
 #[cfg(test)]

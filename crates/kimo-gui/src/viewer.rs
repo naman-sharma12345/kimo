@@ -70,10 +70,12 @@ pub fn byte_range(h: Option<&str>, len: u64) -> Result<Option<(u64, u64)>, ()> {
 
 /// The kimo:// answer for one request: status, headers, body. Only cache files are served; a Range gets a 206.
 pub fn respond(dir: &Path, uri_path: &str, range: Option<&str>) -> (u16, Vec<(&'static str, String)>, Vec<u8>) {
-    let Some((file, mime)) = cache_file(dir, uri_path) else { return (404, vec![("Content-Type", "text/plain".into())], b"not in the viewer cache".to_vec()) };
-    let Ok(bytes) = std::fs::read(&file) else { return (404, vec![("Content-Type", "text/plain".into())], b"gone".to_vec()) };
+    // fetch() from the app page needs this header (an <img> or <video> does not); only the app's own origin, never echoed
+    let cors = ("Access-Control-Allow-Origin", if cfg!(windows) { "http://tauri.localhost" } else { "tauri://localhost" }.to_string());
+    let Some((file, mime)) = cache_file(dir, uri_path) else { return (404, vec![cors, ("Content-Type", "text/plain".into())], b"not in the viewer cache".to_vec()) };
+    let Ok(bytes) = std::fs::read(&file) else { return (404, vec![cors, ("Content-Type", "text/plain".into())], b"gone".to_vec()) };
     let len = bytes.len() as u64;
-    let mut h = vec![("Content-Type", mime.to_string()), ("Accept-Ranges", "bytes".to_string()), ("Cache-Control", "no-store".to_string())];
+    let mut h = vec![cors, ("Content-Type", mime.to_string()), ("Accept-Ranges", "bytes".to_string()), ("Cache-Control", "no-store".to_string())];
     match byte_range(range, len) {
         Ok(None) => { h.push(("Content-Length", len.to_string())); (200, h, bytes) }
         Ok(Some((s, e))) => {

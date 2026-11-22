@@ -22,7 +22,7 @@ pub fn commands() -> Vec<Command> { vec![
                 let (id, f, cx, cy, k1, k2) = super::camera_solve::solve_lens(a.get("solve_id").and_then(|v| v.as_str())).ok_or("no camera solve found; run solve_camera or give k1+focal_px")?; (id, f, cx, cy, k1, k2) };
             if !f.is_finite() || f < 1.0 || !k1.is_finite() || !k2.is_finite() || k1.abs() > 1.0 || k2.abs() > 1.0 { return Err("bad lens parameters".into()); }
             let f0 = (opt_num(a, "start", 0.0) as usize).min(nf - 1); let f1 = (opt_num(a, "end", (nf - 1) as f64) as usize).min(nf - 1).max(f0);
-            let out = a.get("out_path").and_then(|v| v.as_str()).map(|x| x.to_string()).unwrap_or_else(|| format!("/tmp/kimo_undistort_{cid}.mp4"));
+            let out = a.get("out_path").and_then(|v| v.as_str()).map(|x| x.to_string()).unwrap_or_else(|| std::env::temp_dir().join(format!("kimo_undistort_{cid}.mp4")).to_string_lossy().into_owned());
             let mut enc = std::process::Command::new("ffmpeg").args(["-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", &format!("{w}x{h}"), "-r", &format!("{fps}"), "-i", "-", "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", &out]).stdin(std::process::Stdio::piped()).spawn().map_err(|e| format!("ffmpeg: {e}"))?;
             let mut sin = enc.stdin.take().ok_or("ffmpeg stdin")?;
             for i in f0..=f1 { let t = cstart + i as f64 / fps; crate::render::prepare_at(&ss.project, &mut ss.cache, Some(t + 1e-4))?; let fr = crate::render::render_clip_alone(&ss.project, &cid, t + 1e-4, &ss.cache).ok_or("could not render the clip")?;

@@ -167,7 +167,7 @@ function onProgress(p) {
   if (p.phase === 'system') { el.classList.add('done'); el.querySelector('.st').textContent = 'Using the copy already on this computer'; el.querySelector('.bar i').style.width = '100%'; return; }
   if (p.phase === 'error' || p.phase === 'unavailable') { el.querySelector('.st').textContent = p.error || 'Not available'; return; }
   if (p.total) el.querySelector('.bar i').style.width = (100 * p.done / p.total).toFixed(1) + '%';
-  el.querySelector('.spd').textContent = p.bps ? (p.bps / 1e6).toFixed(1) + ' MB/s' : '';
+  el.querySelector('.spd').textContent = p.bytes_per_s ? (p.bytes_per_s / 1e6).toFixed(1) + ' MB/s' : '';
   if (p.phase === 'done' || p.phase === 'verified') { el.classList.add('done'); el.querySelector('.st').textContent = 'Installed'; el.querySelector('.spd').textContent = ''; }
 }
 $('#setup-go').onclick = async () => {
@@ -210,7 +210,13 @@ addEventListener('keydown', e => {
   const typing = e.target.closest?.('input,textarea,select,[contenteditable]');
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); if ($('#cmdk').classList.contains('on')) closePalette(); else openPalette(); return; }
-  if (e.key === 'Escape') { $$('.overlay.on').forEach(o => { if (!['setup'].includes(o.id)) o.classList.remove('on'); }); $('#ctx').hidden = true; return; }
+  if (e.key === 'Escape') {
+    // the first Escape closes an open dialog or menu; with none open it clears the selection on the Edit tab
+    const layer = $$('.overlay.on').length > 0 || !$('#ctx').hidden;
+    $$('.overlay.on').forEach(o => { if (!['setup'].includes(o.id)) o.classList.remove('on'); }); $('#ctx').hidden = true;
+    if (!layer && !typing && S.tab === 'edit') select(null);
+    return;
+  }
   if (mod && /^[1-4]$/.test(e.key)) { e.preventDefault(); show(['home', 'edit', 'live', 'connections'][+e.key - 1]); return; }
   if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); saveProject(e.shiftKey); return; }
   if (mod && e.key.toLowerCase() === 'o') { e.preventDefault(); openProject(); return; }
@@ -244,7 +250,6 @@ addEventListener('keydown', e => {
   else if (k === 'End') seekTo(P.dur);
   else if (k === '+' || k === '=') setZoom(T.z * 1.4);
   else if (k === '-' || k === '_') setZoom(T.z / 1.4);
-  else if (k === 'Escape') select(null);
   else if (k === 'f' || k === 'F') fullView();
   else if (k === 'g' || k === 'G') toggleGuide('grid');
   else if (k === "'") toggleGuide('safe');

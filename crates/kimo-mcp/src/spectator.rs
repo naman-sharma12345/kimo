@@ -2,7 +2,7 @@
 //!
 //! `KIMO_SPECTATOR` picks the sink:
 //!   unset or empty (the default; `on`, `1` and `gui` mean the same): the spectator GUI. The engine tries
-//!     127.0.0.1:7421..=7430 in order and keeps only a peer that greets it with the spectator's hello line
+//!     127.0.0.1:7421..=7430 (all at once; the lowest port that greets wins) and keeps only a peer that greets it with the spectator's hello line
 //!     (`HELLO`, a versioned line, `KIMO-SPECTATOR/1`; any other line, an older or newer version included, is a failed
 //!     handshake; sent by crates/kimo-gui/src/main.rs as soon as it accepts), so a foreign app holding one of those ports
 //!     never gets a byte of telemetry; with no spectator there it retries quietly (nothing is ever printed);
@@ -285,19 +285,26 @@ impl Conn {
         match self {
             Conn::File(f) => f.write_all(l),
             Conn::Tcp(s) => {
+                // Non-blocking writes: each one reports exactly how many bytes the socket took, so only the rest is
+                // retried. A blocking send that times out (Windows) leaves it unknown how much of the line went out,
+                // and retrying it could send part of a line twice.
+                s.set_nonblocking(true)?;
                 let mut off = 0;
-                while off < l.len() {
+                let r = loop {
+                    if off >= l.len() { break Ok(()); }
                     match s.write(&l[off..]) {
-                        Ok(0) => return Err(std::io::ErrorKind::WriteZero.into()),
+                        Ok(0) => break Err(std::io::ErrorKind::WriteZero.into()),
                         Ok(n) => off += n,
                         Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                        Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
-                            if !peer_open(s) { return Err(e); }
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            if !peek_open(s) { break Err(e); }
+                            std::thread::sleep(Duration::from_millis(2));
                         }
-                        Err(e) => return Err(e),
+                        Err(e) => break Err(e),
                     }
-                }
-                Ok(())
+                };
+                s.set_nonblocking(false)?;
+                r
             }
         }
     }
@@ -325,18 +332,28 @@ fn greeted(port: u16) -> Option<std::net::TcpStream> {
 /// False once the peer has closed its end: a non-blocking peek reads EOF (or fails).
 fn peer_open(s: &std::net::TcpStream) -> bool {
     if s.set_nonblocking(true).is_err() { return false; }
-    let mut b = [0u8; 1];
-    let ok = match s.peek(&mut b) {
-        Ok(0) => false,
-        Ok(_) => true,
-        Err(e) => e.kind() == std::io::ErrorKind::WouldBlock,
-    };
+    let ok = peek_open(s);
     s.set_nonblocking(false).is_ok() && ok
+}
+/// peer_open on a socket that is already non-blocking (leaves it that way).
+fn peek_open(s: &std::net::TcpStream) -> bool {
+    let mut b = [0u8; 1];
+    match s.peek(&mut b) { Ok(0) => false, Ok(_) => true, Err(e) => e.kind() == std::io::ErrorKind::WouldBlock }
+}
+
+/// The spectator on the first of `ports` (in order) that greets, with every port probed at once. One after another, each
+/// port that does not answer cost up to 250 ms (on Windows a refused loopback connect only fails at its timeout), so a pass
+/// took about 2.5 s and a spectator that had just opened missed the events sent meanwhile.
+fn first_greeting(ports: impl Iterator<Item = u16>) -> Option<std::net::TcpStream> {
+    std::thread::scope(|sc| {
+        let probes: Vec<_> = ports.map(|p| sc.spawn(move || greeted(p))).collect();
+        probes.into_iter().filter_map(|h| h.join().ok().flatten()).next()
+    })
 }
 
 fn open(dest: &Dest) -> Option<Conn> {
     match dest {
-        Dest::Gui => GUI_PORTS.clone().find_map(|p| greeted(p).map(Conn::Tcp)),
+        Dest::Gui => first_greeting(GUI_PORTS.clone()).map(Conn::Tcp),
         Dest::File(p) => std::fs::OpenOptions::new().create(true).append(true).open(p).ok().map(Conn::File),
         Dest::Tcp(a) => {
             use std::net::ToSocketAddrs;

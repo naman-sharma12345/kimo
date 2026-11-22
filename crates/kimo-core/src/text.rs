@@ -239,6 +239,37 @@ fn coverage(cw: usize, ch: usize, text: &str, f: &FontVec, size: f32, spacing: f
     (cov, [ink_bx, by, ink_bw, bh], tint)
 }
 
+/// The text outline: each pixel takes the largest coverage within `radius` of it (a disk), exactly as trying every disk
+/// offset over the whole frame did, but much faster: only rows and columns near the text are visited, and each disk row is
+/// one running window maximum per source row (a monotone queue), so a big outline costs radius x text area, not radius^2 x
+/// frame (a 39 px outline on a portrait caption took tens of seconds a frame).
+fn stroke_dilate(cov: &[f32], w: usize, h: usize, radius: f64) -> Vec<f32> {
+    let mut out = cov.to_vec();
+    let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0usize, 0usize);
+    for y in 0..h { for x in 0..w { if cov[y * w + x] > 0.0 { x0 = x0.min(x); x1 = x1.max(x); y0 = y0.min(y); y1 = y1.max(y); } } }
+    if x0 == usize::MAX || !(radius > 0.0) { return out; }
+    let r = radius.ceil() as usize;
+    let (lo, hi) = (x0.saturating_sub(r), (x1 + r).min(w - 1)); // columns the outline can reach
+    let mut row = vec![0f32; hi - lo + 1]; let mut q: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+    for d in 0..=r {
+        // half-width of the disk at vertical offset d (the widest dx with dx^2 + d^2 inside the radius)
+        let Some(hw) = (0..=r).take_while(|&dx| ((dx * dx + d * d) as f64).sqrt() <= radius).last() else { continue };
+        for sy in y0..=y1 {
+            // row[x - lo] = max of source row sy over columns x-hw..=x+hw (outside x0..=x1 the source is zero)
+            let src = &cov[sy * w..sy * w + w]; q.clear(); let mut next = lo.saturating_sub(hw);
+            for x in lo..=hi {
+                let right = (x + hw).min(w - 1);
+                while next <= right { while q.back().map_or(false, |&b| src[b] <= src[next]) { q.pop_back(); } q.push_back(next); next += 1; }
+                while q.front().map_or(false, |&f| f + hw < x) { q.pop_front(); }
+                row[x - lo] = q.front().map_or(0.0, |&f| src[f]);
+            }
+            for ty in [sy + d, sy.wrapping_sub(d)] { if ty >= h || (d == 0 && ty != sy) { continue; }
+                let dst = &mut out[ty * w + lo..=ty * w + hi]; for (o, v) in dst.iter_mut().zip(&row) { if *v > *o { *o = *v; } } }
+        }
+    }
+    out
+}
+
 pub fn render_text(fr: &mut Frame, text: &str, fontpath: &str, size: f64, col: [f64; 3], spacing: f64, stroke_w: f64, stroke_col: [f64; 3], shadow: f64, align: &str, reveal: f64, fx: Option<&TextFx>, t: f64) -> Result<(), String> {
     let f = font(fontpath, fx.map(|x| x.weight).unwrap_or(0.0))?; let upper; let text = if fx.map(|x| x.uppercase).unwrap_or(false) { upper = text.to_uppercase(); upper.as_str() } else { text }; let (w, h) = (fr.w, fr.h);
     let (main, bounds, tint) = coverage(w, h, text, &f, size as f32, spacing as f32, align, reveal, fx, t);
@@ -254,8 +285,7 @@ pub fn render_text(fr: &mut Frame, text: &str, fontpath: &str, size: f64, col: [
         if sh_blur > 0.5 { box_blur3(&mut m, (sh_blur * 2.0) as usize); } let sc: Vec<f32> = (0..w * h).map(|i| m.d[i * 4]).collect(); over(fr, &sc, &|_| [sh_col[0] as f32, sh_col[1] as f32, sh_col[2] as f32], sh_op as f32); }
     // glow
     if let Some(fx) = fx { if fx.glow > 0.0 { let mut m = Frame { w, h, d: vec![1.0; w * h * 4] }; for i in 0..w * h { m.d[i * 4] = main[i]; } box_blur3(&mut m, (fx.glow * 2.0) as usize); let gc: Vec<f32> = (0..w * h).map(|i| (m.d[i * 4] * 1.8).min(1.0)).collect(); over(fr, &gc, &|_| [fx.glow_color[0] as f32, fx.glow_color[1] as f32, fx.glow_color[2] as f32], 0.9); } }
-    if stroke_w > 0.0 { let mut st = main.clone(); let r = stroke_w.ceil() as i32;
-        for dy in -r..=r { for dx in -r..=r { if ((dx * dx + dy * dy) as f64).sqrt() > stroke_w { continue; } for y in 0..h as i32 { let sy = y - dy; if sy < 0 || sy >= h as i32 { continue; } for x in 0..w as i32 { let sx = x - dx; if sx < 0 || sx >= w as i32 { continue; } let v = main[sy as usize * w + sx as usize]; let i = y as usize * w + x as usize; if v > st[i] { st[i] = v; } } } } }
+    if stroke_w > 0.0 { let st = stroke_dilate(&main, w, h, stroke_w);
         over(fr, &st, &|_| [stroke_col[0] as f32, stroke_col[1] as f32, stroke_col[2] as f32], 1.0); }
     let grad = fx.and_then(|x| x.gradient); let (by0, bh) = (bounds[1], bounds[3].max(1.0));
     // Fill Color animators: base (solid or gradient, as below) * fs + ft per pixel; without a filling animator the match below runs as before
@@ -305,5 +335,22 @@ mod font_fallback_warning_tests {
         assert_eq!(path1, path2, "the resolved path must not depend on whether the warning already fired");
         assert_eq!(sub1, sub2);
         assert!(sub1, "a made-up font name should report substituted=true");
+    }
+}
+
+#[cfg(test)]
+mod stroke_tests {
+    /// The outline must be exactly what the old every-offset loop produced, near the frame edges too.
+    #[test]
+    fn fast_outline_matches_the_exhaustive_one() {
+        let (w, h) = (31usize, 19usize); let mut cov = vec![0f32; w * h]; let mut seed = 7u32;
+        for (y, x) in [(9, 10), (9, 11), (10, 12), (8, 15), (0, 0), (18, 30), (5, 0), (0, 29)] { seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223); cov[y * w + x] = 0.2 + (seed >> 24) as f32 / 320.0; }
+        for radius in [0.4, 1.0, 1.5, 2.3, 4.0, 7.9, 25.0] {
+            let mut want = cov.clone(); let r = (radius as f64).ceil() as i32;
+            for dy in -r..=r { for dx in -r..=r { if ((dx * dx + dy * dy) as f64).sqrt() > radius { continue; }
+                for y in 0..h as i32 { for x in 0..w as i32 { let (sx, sy) = (x - dx, y - dy); if sx < 0 || sy < 0 || sx >= w as i32 || sy >= h as i32 { continue; }
+                    let v = cov[sy as usize * w + sx as usize]; let i = y as usize * w + x as usize; if v > want[i] { want[i] = v; } } } } }
+            assert_eq!(super::stroke_dilate(&cov, w, h, radius), want, "radius {radius}");
+        }
     }
 }

@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: kimo: http://kimo.localhost; media-src 'self' kimo: http://kimo.localhost; font-src 'self'"
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost kimo: http://kimo.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data: kimo: http://kimo.localhost; media-src 'self' kimo: http://kimo.localhost; font-src 'self'"
     },
     "withGlobalTauri": true
   },

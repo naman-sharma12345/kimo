@@ -278,7 +278,7 @@ pub fn argv(pl: &Plan, out: &str, list: &str, crf: u32) -> Vec<String> {
             graph.push(format!("[{}:v]{}setpts=PTS/1,{},tpad=stop_mode=clone:stop=-1,trim=start_frame=0:end_frame={},setpts=PTS-STARTPTS,{},format=rgba[v{k}]", seg_in[k], s.pre, s.fps_filter, s.frames, s.fit));
         }
         let labels: String = (0..pl.video.len()).map(|k| format!("[v{k}]")).collect();
-        graph.push(format!("{labels}concat=n={}:v=1:a=0,scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[vout]", pl.video.len()));
+        graph.push(format!("{labels}concat=n={}:v=1:a=0,scale=out_color_matrix=bt709:out_range=tv,setparams=range=limited:color_primaries=bt709:color_trc=bt709:colorspace=bt709,format=yuv420p[vout]", pl.video.len()));
     }
     if !graph.is_empty() { a.extend(["-filter_complex".into(), graph.join(";")]); }
     match pl.mode {
@@ -413,7 +413,7 @@ mod tests {
         assert!(s.contains("[0:a]atrim=start=0.000000:duration=4.000000"), "the clip's sound comes from its already-seeked input: {s}");
         assert!(s.contains("[2:a]atrim"), "a separate audio file is its own input: {s}");
         assert!(s.contains("[0:v]setpts=PTS/1,fps=30,tpad=stop_mode=clone:stop=-1,trim=start_frame=0:end_frame=120,setpts=PTS-STARTPTS,scale=1920:1080:force_original_aspect_ratio=decrease"), "{s}");
-        assert!(s.contains("[v0][v1]concat=n=2:v=1:a=0,scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[vout]"), "{s}");
+        assert!(s.contains("[v0][v1]concat=n=2:v=1:a=0,scale=out_color_matrix=bt709:out_range=tv,setparams=range=limited:color_primaries=bt709:color_trc=bt709:colorspace=bt709,format=yuv420p[vout]"), "{s}");
         assert!(s.contains("-map [vout] -c:v libx264 -preset slow -pix_fmt yuv420p") && s.contains("-crf 20 -r 30"), "the normal export's encoder settings: {s}");
         assert!(!s.contains("-c:v copy"), "{s}");
         assert_eq!(summary(&pl)["mode"], "direct_encode");

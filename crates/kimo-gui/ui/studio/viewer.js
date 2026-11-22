@@ -101,7 +101,7 @@ function playSeq() {
   const tick = now => {
     const t = from + (now - t0) / 1000;
     if (t >= d.end - 1 / V.fps || !V.draft) {
-      V.t = Math.min(V.dur, d.end - 1 / V.fps); scrub.value = String(V.t); vTime(); stopPlay();
+      V.t = Math.min(V.dur, d.end); scrub.value = String(V.t); vTime(); stopPlay();
       if (V.t < V.dur - 2 / V.fps && playing) play(); // keep going: next draft chunk
       return;
     }

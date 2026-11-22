@@ -57,7 +57,7 @@ add_subject_clone f6fe4888b2d1c573
 add_text e504fc3dce60034a
 add_text_animator 7c837530f3da76ca
 add_title ef78e3db77ecd193
-add_track cf1da67768a18dbb
+add_track d3d8f4adba79137a
 add_transition bb51e8386d1e8f16
 add_vertigo_zoom 19a177a511ee9471
 add_vfx_graph bba5b2b13d4443f5
@@ -303,6 +303,7 @@ move_asset_to_bin 23a63229fa937d23
 move_clip 7a2fedebbc66bea9
 move_key 6ff462a36f5e1225
 mux_chapters d4c909f56caca1e1
+new_project 052bcea12015e620
 normalize_loudness d77d16d8f58e8b00
 organize_bins 1d9acfb9e939f902
 particle_simulate_raw 13a7503832a95aad
@@ -391,7 +392,7 @@ reorder_mask b182a28a665330c4
 replace_clip_media 5b0c47bea309e749
 restore dab5b50df493b4be
 resume_job ddf7317d0c4d5591
-review bb76f40bf6d4956a
+review b62f59ab52cf194a
 review_export 01faaf79df6bf84c
 ripple_delete af7455d513b9e3c9
 ripple_trim 5be54654d9c33c34

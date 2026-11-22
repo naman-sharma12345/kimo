@@ -1,7 +1,15 @@
 //! Bounded stdout capture for local header inspection commands.
 use std::{process::{Child,Command,Stdio},thread,sync::mpsc,io::{Read,Write},time::{Duration,Instant}};
-struct Capture{child:Child,reader:Option<thread::JoinHandle<()>>}
-impl Drop for Capture{fn drop(&mut self){let _=self.child.kill();let _=self.child.wait();if let Some(h)=self.reader.take(){let _=h.join();}}}
+struct Capture{child:Child,reader:Option<thread::JoinHandle<()>>,errors:Option<thread::JoinHandle<()>>,stderr:std::sync::Arc<std::sync::Mutex<Vec<u8>>>}
+impl Drop for Capture{fn drop(&mut self){let _=self.child.kill();let _=self.child.wait();if let Some(h)=self.reader.take(){let _=h.join();}if let Some(h)=self.errors.take(){let _=h.join();}}}
+/// How much of a failed capture command's stderr its error message keeps (the end, where ffmpeg says why).
+const CAPTURE_STDERR:usize=2048;
+impl Capture{fn failed(&mut self,status:std::process::ExitStatus)->String{if let Some(h)=self.errors.take(){let _=h.join();}let tail=self.stderr.lock().map(|v|String::from_utf8_lossy(&v).trim().to_string()).unwrap_or_default();if tail.is_empty(){format!("capture command failed: {status}")}else{format!("capture command failed: {status}; stderr: {tail}")}}}
+/// Drain a child's stderr on a thread, keeping its last CAPTURE_STDERR bytes (a full pipe would otherwise stall the child).
+fn drain_stderr(child:&mut Child)->(Option<thread::JoinHandle<()>>,std::sync::Arc<std::sync::Mutex<Vec<u8>>>){
+ let tail=std::sync::Arc::new(std::sync::Mutex::new(Vec::with_capacity(CAPTURE_STDERR)));let Some(mut errs)=child.stderr.take() else{return(None,tail)};let sink=tail.clone();
+ (Some(crate::guard::spawn_with_token(move||{let mut b=[0u8;512];while let Ok(n)=errs.read(&mut b){if n==0{break}if let Ok(mut t)=sink.lock(){let excess=t.len().saturating_add(n).saturating_sub(CAPTURE_STDERR);if excess>0{let k=excess.min(t.len());t.drain(..k);}t.extend_from_slice(&b[..n.min(CAPTURE_STDERR)]);}}})),tail)
+}
 pub fn capture(cmd:&mut Command,max:usize,timeout:Duration)->Result<Vec<u8>,String>{
  if max==0||max>16*1024*1024||timeout.is_zero(){return Err("invalid capture bounds".into())}capture_bounded(cmd,max,timeout)
 }
@@ -20,9 +28,9 @@ fn read_chunked(r:&mut impl Read,bytes:&mut Vec<u8>,max:usize)->Result<(),String
   match r.read(&mut chunk[..want]){Ok(0)=>return Ok(()),Ok(k)=>bytes.extend_from_slice(&chunk[..k]),Err(e) if e.kind()==std::io::ErrorKind::Interrupted=>continue,Err(e)=>return Err(e.to_string())}}
 }
 fn capture_bounded(cmd:&mut Command,max:usize,timeout:Duration)->Result<Vec<u8>,String>{
- let deadline=Instant::now().checked_add(timeout).ok_or("capture deadline overflow")?;crate::guard::reserve(max+1);let mut child=cmd.stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|e|e.to_string())?;let mut output=child.stdout.take().ok_or("capture stdout missing")?;let(tx,rx)=mpsc::channel();let reader=crate::guard::spawn_with_token(move||{let mut bytes=Vec::with_capacity(max+1);let result=read_chunked(&mut output,&mut bytes,max).and_then(|_|if bytes.len()>max{Err("capture stdout limit exceeded".into())}else{Ok(bytes)});let _=tx.send(result);});let mut c=Capture{child,reader:Some(reader)};
+ let deadline=Instant::now().checked_add(timeout).ok_or("capture deadline overflow")?;crate::guard::reserve(max+1);let mut child=cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e|e.to_string())?;let mut output=child.stdout.take().ok_or("capture stdout missing")?;let(errors,stderr)=drain_stderr(&mut child);let(tx,rx)=mpsc::channel();let reader=crate::guard::spawn_with_token(move||{let mut bytes=Vec::with_capacity(max+1);let result=read_chunked(&mut output,&mut bytes,max).and_then(|_|if bytes.len()>max{Err("capture stdout limit exceeded".into())}else{Ok(bytes)});let _=tx.send(result);});let mut c=Capture{child,reader:Some(reader),errors,stderr};
  let bytes=loop{crate::guard::check();let remaining=deadline.saturating_duration_since(Instant::now());if remaining.is_zero(){return Err("capture deadline exceeded".into())}match rx.recv_timeout(remaining.min(Duration::from_millis(100))){Ok(v)=>break v?,Err(mpsc::RecvTimeoutError::Timeout)=>continue,Err(_)=>return Err("capture reader disconnected".into())}};
- loop{crate::guard::check();if let Some(status)=c.child.try_wait().map_err(|e|e.to_string())?{if !status.success(){return Err("capture command failed".into())}return Ok(bytes)}let remaining=deadline.saturating_duration_since(Instant::now());if remaining.is_zero(){return Err("capture deadline exceeded after stdout".into())}thread::sleep(remaining.min(Duration::from_millis(20)));}
+ loop{crate::guard::check();if let Some(status)=c.child.try_wait().map_err(|e|e.to_string())?{if !status.success(){return Err(c.failed(status))}return Ok(bytes)}let remaining=deadline.saturating_duration_since(Instant::now());if remaining.is_zero(){return Err("capture deadline exceeded after stdout".into())}thread::sleep(remaining.min(Duration::from_millis(20)));}
 }
 #[cfg(test)]mod tests{use super::*;
 #[test]fn chunked_read_keeps_every_byte_and_stops_one_past_the_limit(){let data:Vec<u8>=(0..200_000u32).map(|i|(i%251) as u8).collect();let mut out=vec![];read_chunked(&mut &data[..],&mut out,data.len()).unwrap();assert_eq!(out,data);let mut cut=vec![];read_chunked(&mut &data[..],&mut cut,1000).unwrap();assert_eq!(cut.len(),1001,"one byte past max, so the caller can tell the limit was exceeded");}
@@ -97,7 +105,7 @@ pub(crate) fn wait_command(cmd:&mut Command,timeout:Duration)->Result<(),String>
  let mut child=cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().map_err(|e|e.to_string())?;
  let mut errors=child.stderr.take().ok_or("process stderr missing")?;let(tx,rx)=mpsc::channel();
  let reader=crate::guard::spawn_with_token(move||{let mut tail=Vec::with_capacity(8192);let mut b=[0u8;1024];while let Ok(n)=errors.read(&mut b){if n==0{break}let excess=tail.len().saturating_add(n).saturating_sub(8192);if excess>0{tail.drain(..excess);}tail.extend_from_slice(&b[..n]);}let _=tx.send(tail);});
- let mut owner=Capture{child,reader:Some(reader)};
+ let mut owner=Capture{child,reader:Some(reader),errors:None,stderr:Default::default()};
  let result=(||{loop{crate::guard::check();if let Some(status)=owner.child.try_wait().map_err(|e|e.to_string())?{return if status.success(){Ok(())}else{Err(format!("process failed: {status}"))}}let remaining=deadline.saturating_duration_since(Instant::now());if remaining.is_zero(){return Err("process deadline exceeded".into())}thread::sleep(remaining.min(Duration::from_millis(100)));}})();
  let _=owner.child.kill();let _=owner.child.wait();if let Some(h)=owner.reader.take(){let _=h.join();}let tail=rx.try_recv().unwrap_or_default();result.map_err(|e|{let tail=String::from_utf8_lossy(&tail);if tail.trim().is_empty(){e}else{format!("{e}; process stderr: {}",tail.trim())}})
 }

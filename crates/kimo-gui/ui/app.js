@@ -70,12 +70,16 @@ export function apply(ev) {
     case 'stats':
       merge(state.stats, ev); delete state.stats.type;
       break;
+    case 'feed_gap':
+      // queued with the events, so a feed drop is applied in order (a start received before it is not marked lost)
+      if (state._gapAt == null) state._gapAt = performance.now();
+      break;
     case 'tool_start': {
       const m = ev.mode || (state.explicitMode ? null : inferMode(ev.name));
       if (m && MODES[m] && m !== state.mode) { state.mode = m; layoutDirty = true; }
       // the engine runs one call at a time: a new start after a feed drop means a call left 'running' across the gap
       // finished while we could not hear it; its outcome is unknown, so it says so instead of ticking forever
-      if (state._gapAt != null) { for (const x of state.calls) if (x.status === 'running' && x.t < state._gapAt) { x.status = 'lost'; x.dur_ms = null; } state._gapAt = null; }
+      if (state._gapAt != null) { for (const x of state.calls) if (x.status === 'running') { x.status = 'lost'; x.dur_ms = null; } state._gapAt = null; }
       const c = { id: ev.id, name: ev.name, args: ev.args, t: performance.now() - (ev.elapsed_ms || 0), elapsed_ms: ev.elapsed_ms, dur_ms: null, status: 'running', progress: ev.progress };
       const i = state.calls.findIndex(x => x.id === ev.id && ev.id !== undefined);
       if (i >= 0) state.calls[i] = c; else { state.calls.push(c); state.callCount++; }
@@ -621,7 +625,7 @@ window.addEventListener('resize', () => { layoutDirty = true; schedule(); });
 // frame redraws just the timeline panel; nothing runs between inputs.
 function onWheel(e) {
   const el = e.target.closest && e.target.closest('[data-panel]'); if (!el) return;
-  const name = el.dataset.panel, spec = (MODES[state.mode] || {}).panels[name]; if (!spec || spec.kind !== 'timeline') return;
+  const name = el.dataset.panel, spec = MODES[state.mode]?.panels?.[name]; if (!spec || spec.kind !== 'timeline') return;
   const data = view(state.mode)[name]; if (!data || !(data.tracks || []).length) return;
   const key = state.mode + ':' + name, P = pans[key] || (pans[key] = { z: 1, t: null, k: 0, acc: 0 });
   const o = spec.opts || {}, x0 = o.x0 ?? 48, wpx = Math.max(1, el.clientWidth - (o.xr ?? 12) - x0);
@@ -646,7 +650,7 @@ function onWheel(e) {
 }
 main.addEventListener('wheel', onWheel, { passive: false });
 function renderPanel(name) {
-  const spec = (MODES[state.mode] || {}).panels[name], el = nodes[name]; if (!spec || !el) return;
+  const spec = MODES[state.mode]?.panels?.[name], el = nodes[name]; if (!spec || !el) return;
   const [w, h] = box(el), V = view(state.mode), args = { spec, data: V[name] || {}, view: V, state, w, h, mode: state.mode, pan: pans[state.mode + ':' + name] };
   if (PRE[spec.kind]) PRE[spec.kind](el, args);
   const wrote = paint(el, KINDS[spec.kind](args));
@@ -687,7 +691,7 @@ async function watchTauriWindow() {
 }
 
 document.fonts.ready.then(() => {
-  connect(enqueue, (kind, label) => { state.status = { kind, label }; if (label === 'reconnecting' && state._gapAt == null) state._gapAt = performance.now(); schedule(); });
+  connect(enqueue, (kind, label) => { state.status = { kind, label }; if (label === 'reconnecting') enqueue({ type: 'feed_gap' }); schedule(); });
   watchTauriWindow();
   schedule();
 });

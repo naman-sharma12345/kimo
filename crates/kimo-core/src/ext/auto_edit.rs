@@ -438,13 +438,13 @@ fn auto_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
             for cid in &pushed_ids {
                 let Some(c) = ss.project.find_clip(cid) else { continue };
                 let dur = c.duration;
-                let Some(scale_prop) = c.props.get("scale").cloned() else { continue };
+                if !c.props.contains_key("scale") { continue; }
                 let n = 60usize;
                 let mut max_px_per_frame = 0.0f64;
                 for i in 0..n {
                     let t0 = dur * i as f64 / n as f64;
                     let t1 = dur * (i as f64 + 1.0) / n as f64;
-                    let ds = (scale_prop.at(t1) - scale_prop.at(t0)).abs();
+                    let ds = (crate::render::resolve_xform(&ss.project, c, t1).scale - crate::render::resolve_xform(&ss.project, c, t0).scale).abs(); // the scale as rendered (links and expressions included), not the raw keys
                     // one render frame's worth of this sample-to-sample delta, as a px displacement at the
                     // canvas edge (scale is a multiplier about the centre, so an edge point moves by
                     // roughly ds * pw/2 over this span; /fps-interval converts the sampled span to per-frame).

@@ -39,11 +39,38 @@ fn sync_dir(d: &std::path::Path) { if let Ok(f) = std::fs::File::open(d) { let _
 fn sync_file(p: &std::path::Path) -> Result<(), String> { std::fs::OpenOptions::new().write(true).open(p).and_then(|f| f.sync_all()).map_err(|e| format!("cannot fsync {}: {e}", p.display())) }
 
 /// RV-20 job lock: `<dir>/job.lock` created O_EXCL with {pid, host, started_at, start_ticks}. A lock is live only when its host is this host, the pid
-/// exists AND the pid's /proc start time equals start_ticks (so a reused pid is not mistaken for the owner). Same-host only: a lock written by another
+/// exists AND the pid's start time (/proc on Linux, the process creation time on Windows) equals start_ticks (so a reused pid is not mistaken for the owner). Same-host only: a lock written by another
 /// host cannot be verified and is refused. The guard releases the lock on drop (normal end, error, cancel or panic); SIGKILL leaves a stale lock that
 /// the next start reclaims.
+#[cfg(not(windows))]
 pub fn host_name() -> String { std::fs::read_to_string("/proc/sys/kernel/hostname").map(|s| s.trim().to_string()).unwrap_or_else(|_| "unknown".into()) }
+#[cfg(not(windows))]
 pub fn start_ticks(pid: u32) -> Option<u64> { let s = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?; let rest = s.rsplit_once(')')?.1; rest.split_whitespace().nth(19)?.parse().ok() }
+// Windows has no /proc: without these the lock never saw its owner as alive, so a second export could start in the same
+// directory while the first was still writing it.
+#[cfg(windows)]
+pub fn host_name() -> String { std::env::var("COMPUTERNAME").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "unknown".into()) }
+/// The creation time of a running process (None when it is gone), so a reused pid never passes for the lock's owner.
+#[cfg(windows)]
+pub fn start_ticks(pid: u32) -> Option<u64> {
+    #[repr(C)] #[derive(Default)] struct FileTime { lo: u32, hi: u32 }
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut std::ffi::c_void;
+        fn GetProcessTimes(h: *mut std::ffi::c_void, c: *mut FileTime, e: *mut FileTime, k: *mut FileTime, u: *mut FileTime) -> i32;
+        fn GetExitCodeProcess(h: *mut std::ffi::c_void, code: *mut u32) -> i32;
+        fn CloseHandle(h: *mut std::ffi::c_void) -> i32;
+    }
+    const QUERY_LIMITED_INFORMATION: u32 = 0x1000; const STILL_ACTIVE: u32 = 259;
+    // SAFETY: plain Win32 queries on a handle this function opens and always closes; no pointer outlives the call.
+    unsafe {
+        let h = OpenProcess(QUERY_LIMITED_INFORMATION, 0, pid); if h.is_null() { return None; }
+        let (mut c, mut e, mut k, mut u) = (FileTime::default(), FileTime::default(), FileTime::default(), FileTime::default()); let mut code = 0u32;
+        let ok = GetProcessTimes(h, &mut c, &mut e, &mut k, &mut u) != 0 && GetExitCodeProcess(h, &mut code) != 0 && code == STILL_ACTIVE;
+        CloseHandle(h);
+        ok.then(|| (u64::from(c.hi) << 32) | u64::from(c.lo))
+    }
+}
 struct LockGuard { path: std::path::PathBuf, pid: u32 }
 impl Drop for LockGuard { fn drop(&mut self) { if read_json(&self.path).map_or(false, |v| v["pid"] == json!(self.pid)) { let _ = std::fs::remove_file(&self.path); sync_dir(self.path.parent().unwrap_or(std::path::Path::new("."))); } } }
 fn lock_live(v: &Value) -> Result<bool, String> {
@@ -70,6 +97,18 @@ fn acquire(dir: &std::path::Path) -> Result<LockGuard, String> {
 fn read_json(path: &std::path::Path) -> Option<Value> { serde_json::from_slice(&std::fs::read(path).ok()?).ok() }
 fn file_sha(p: &std::path::Path) -> Option<String> { deps::hash_file(p, true).ok().map(|x| x.0) }
 fn chunk_name(i: u64) -> String { format!("chunk_{i:05}.mp4") }
+/// Rename, retried for about a second: on Windows a file that was just closed can stay locked for a moment (an antivirus
+/// scanning it), and that must not fail a finished chunk or leave an unfinished one looking like an encode in progress.
+fn rename_retrying(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    let mut n = 1; loop { match std::fs::rename(from, to) { Ok(()) => return Ok(()), Err(e) if n >= 50 => return Err(e), Err(_) => { n += 1; std::thread::sleep(std::time::Duration::from_millis(20)); } } }
+}
+/// An unfinished chunk `from` becomes `<stem>.mp4.partial` beside a `.partial.marker` holding `info`, plus `rename_error` when
+/// the file could not be moved even after retrying (so that failure is recorded, not silent).
+fn mark_unfinished(dir: &std::path::Path, from: &std::path::Path, stem: &str, mut info: Value) {
+    let pf = dir.join(format!("{stem}.mp4.partial")); let _ = std::fs::remove_file(&pf);
+    if let Err(e) = rename_retrying(from, &pf) { info["rename_error"] = json!(e.to_string()); }
+    let _ = write_atomic(&dir.join(format!("{stem}.mp4.partial.marker")), &info);
+}
 
 fn status_json(j: &Job) -> Value {
     let s = j.st.lock().unwrap_or_else(|e| e.into_inner()); let remaining = s.to_render.saturating_sub(s.rendered_secs.len() as u64);
@@ -102,8 +141,7 @@ fn quarantine(dir: &std::path::Path, old: &Option<Value>) -> Vec<Value> {
         let stem = if let Some(s) = n.strip_suffix(".partial.mp4") { Some(s.to_string()) } else if let Some(s) = n.strip_suffix(".mp4").filter(|s| s.starts_with("chunk_")) {
             let i = s.trim_start_matches("chunk_").parse::<u64>().ok(); if i.map_or(false, |i| old.as_ref().map_or(false, |o| o["chunks"].get(i.to_string()).is_some())) { None } else { Some(s.to_string()) } } else { None };
         let Some(stem) = stem else { continue };
-        let pf = dir.join(format!("{stem}.mp4.partial")); let _ = std::fs::remove_file(&pf); let _ = std::fs::rename(dir.join(&n), &pf);
-        let _ = write_atomic(&dir.join(format!("{stem}.mp4.partial.marker")), &json!({"file": n, "reason": "crash_or_unverified"}));
+        mark_unfinished(dir, &dir.join(&n), &stem, json!({"file": n, "reason": "crash_or_unverified"}));
         out.push(json!({"file": n, "reason": "crash_or_unverified"}));
     }
     out
@@ -254,8 +292,8 @@ fn run(j: Arc<Job>, p: crate::model::Project, dir: std::path::PathBuf, out: Stri
                     // finished chunk_N.mp4 that the index does not vouch for, which the next run quarantines and re-renders. The job's own
                     // token is restored when this block ends, and the loop checks it before the next chunk.
                     let _commit = crate::guard::install_token(&crate::guard::new_token());
-                    match r { Ok(_) => { sync_file(&part)?; std::fs::rename(&part, &file).map_err(|e| e.to_string())?; sync_dir(&dir); }
-                        Err(e) => { let e = format!("chunk {} ({:.1}-{:.1} s): {e}", idx + 1, range[0] as f64 / fps, range[1] as f64 / fps); let pf = dir.join(format!("{}.partial", chunk_name(idx))); let _ = std::fs::rename(&part, &pf); let _ = write_atomic(&dir.join(format!("{}.partial.marker", chunk_name(idx))), &json!({"range": range, "key": c["key"], "error": e})); return Err(e); } }
+                    match r { Ok(_) => { sync_file(&part)?; rename_retrying(&part, &file).map_err(|e| e.to_string())?; sync_dir(&dir); }
+                        Err(e) => { let e = format!("chunk {} ({:.1}-{:.1} s): {e}", idx + 1, range[0] as f64 / fps, range[1] as f64 / fps); mark_unfinished(&dir, &part, &format!("chunk_{idx:05}"), json!({"range": range, "key": c["key"], "error": e})); return Err(e); } }
                     rendered.push(json!({"index": idx, "reason": why, "via": if made { "ffmpeg" } else { "render" }})); set(&j, |s| { s.rendered_secs.push(t0.elapsed().as_secs_f64()); s.frames_rendered += range[1] - range[0]; });
                     json!({"file": chunk_name(idx), "frames": range[1] - range[0], "key": c["key"], "range": range, "crf": crf, "sha256": file_sha(&file), "bytes": std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0)}) }
             };
@@ -274,7 +312,7 @@ fn run(j: Arc<Job>, p: crate::model::Project, dir: std::path::PathBuf, out: Stri
                     let c = &chunks[idx as usize]; let range = [c["range"][0].as_u64().unwrap_or(0), c["range"][1].as_u64().unwrap_or(0)]; let file = dir.join(chunk_name(idx)); let part = dir.join(format!("chunk_{idx:05}.partial.mp4"));
                     crate::render::export_range_opts(&p, part.to_str().unwrap_or(""), crf, range[0] as f64 / fps, range[1] as f64 / fps, true, false).map_err(|e| format!("chunk {}: {e}", idx + 1))?;
                     let _commit = crate::guard::install_token(&crate::guard::new_token());
-                    sync_file(&part)?; std::fs::rename(&part, &file).map_err(|e| e.to_string())?; sync_dir(&dir);
+                    sync_file(&part)?; rename_retrying(&part, &file).map_err(|e| e.to_string())?; sync_dir(&dir);
                     index["chunks"][idx.to_string()] = json!({"file": chunk_name(idx), "frames": range[1] - range[0], "key": c["key"], "range": range, "crf": crf, "sha256": file_sha(&file), "bytes": std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0)});
                     write_atomic(&dir.join("index.json"), &index)?;
                     if let Some(r) = rendered.iter_mut().find(|r| r["index"] == json!(idx)) { r["via"] = json!("render"); }
@@ -289,7 +327,7 @@ fn run(j: Arc<Job>, p: crate::model::Project, dir: std::path::PathBuf, out: Stri
         Ok(json!({"path": out, "duration": dur, "verified": joined["verified"], "verify": joined["verify"], "reverified": {"ok": reused.len(), "re_rendered": re, "reasons": reasons}, "quarantined": quarantined, "reused": reused, "rendered": rendered, "project_hash": m["project_hash"], "forced": force, "hybrid": super::export_hybrid::summary(&pmap, by_ffmpeg.len(), chunks.len())}))
     }));
     let cancelled = j.cancel.load(std::sync::atomic::Ordering::Relaxed);
-    if !matches!(res, Ok(Ok(_))) { if let Ok(rd) = std::fs::read_dir(&dir) { for e in rd.flatten() { let n = e.file_name().to_string_lossy().into_owned(); if let Some(stem) = n.strip_suffix(".partial.mp4") { let pf = dir.join(format!("{stem}.mp4.partial")); let _ = std::fs::rename(e.path(), &pf); let _ = write_atomic(&dir.join(format!("{stem}.mp4.partial.marker")), &json!({"error": "interrupted before the chunk finished", "cancelled": cancelled})); } } } }
+    if !matches!(res, Ok(Ok(_))) { if let Ok(rd) = std::fs::read_dir(&dir) { for e in rd.flatten() { let n = e.file_name().to_string_lossy().into_owned(); if let Some(stem) = n.strip_suffix(".partial.mp4") { mark_unfinished(&dir, &e.path(), stem, json!({"error": "interrupted before the chunk finished", "cancelled": cancelled})); } } } }
     // Release job.lock BEFORE publishing the terminal state: cancel_job and job_status report cancelled/done/failed only once the
     // directory is free, so a resume_job issued right after them never meets this job's own (live-pid) lock.
     drop(lock);
