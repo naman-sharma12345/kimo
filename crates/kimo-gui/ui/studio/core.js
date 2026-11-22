@@ -137,9 +137,14 @@ async function refresh() {
   $('#ab-ver').textContent = kimoRelease(a);
   const e = a.engine || {};
   const pe = $('#pill-engine');
-  pe.className = 'rail-pill ' + (e.state === 'running' ? 'ok' : e.state === 'stopped' ? '' : 'bad');
-  pe.title = e.state === 'running' ? `Engine v${e.version} · ${e.tools} tools, ${e.actions} actions` : e.state === 'missing' ? 'Engine not found' : e.state === 'crashed' ? 'Engine stopped: ' + e.error : 'Engine starting…';
-  $('#h-engine').innerHTML = e.state === 'running' ? `Running · v${esc(e.version)} · ${e.actions} actions`
+  // the engine must be the one this app shipped with: an older one (left behind by a manual copy or an update that could not
+  // replace a running engine) is missing tools and fixes, so say so instead of running it quietly
+  const mismatch = e.state === 'running' && e.version && a.version && e.version !== a.version;
+  pe.className = 'rail-pill ' + (mismatch ? 'warn' : e.state === 'running' ? 'ok' : e.state === 'stopped' ? '' : 'bad');
+  pe.title = mismatch ? `Engine v${e.version} does not match this app (v${a.version}). Reinstall kimo to update the engine.`
+    : e.state === 'running' ? `Engine v${e.version} · ${e.tools} tools, ${e.actions} actions` : e.state === 'missing' ? 'Engine not found' : e.state === 'crashed' ? 'Engine stopped: ' + e.error : 'Engine starting…';
+  $('#h-engine').innerHTML = mismatch ? `<span style="color:var(--warn)">Engine v${esc(e.version)} ≠ app v${esc(a.version)}</span> — reinstall kimo`
+    : e.state === 'running' ? `Running · v${esc(e.version)} · ${e.actions} actions`
     : e.state === 'missing' ? '<span style="color:var(--bad)">Not found</span> — reinstall kimo'
     : e.state === 'crashed' ? `<span style="color:var(--bad)">Stopped</span> · <a href="#" id="eng-restart">restart</a>` : 'Starting…';
   $('#eng-restart')?.addEventListener('click', ev => { ev.preventDefault(); B.invoke('engine_restart').then(() => { refresh(); loadProject(); }); });

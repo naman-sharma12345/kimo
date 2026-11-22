@@ -17,7 +17,7 @@
 .rail-pill{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:9.5px;font-weight:600;color:var(--ink3);text-align:center;line-height:1.1;max-width:64px;overflow:hidden}
 .rail-pill .d{width:8px;height:8px;border-radius:50%;background:var(--ink4)}
 .rail-pill.ok .d{background:var(--ok-dot);box-shadow:0 0 0 3px var(--ok-soft)}
-.rail-pill.bad .d{background:var(--bad)} .rail-pill.busy .d{background:var(--accent);animation:pulse 1.4s var(--ease) infinite}
+.rail-pill.bad .d{background:var(--bad)} .rail-pill.warn .d{background:var(--warn);box-shadow:0 0 0 3px var(--warn-soft)} .rail-pill.busy .d{background:var(--accent);animation:pulse 1.4s var(--ease) infinite}
 .rail-pill .lb{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:64px}
 
 main{display:flex;flex-direction:column;min-width:0;overflow:hidden}

@@ -57,6 +57,7 @@
         "headerImage": "installer/windows/header.bmp",
         "sidebarImage": "installer/windows/sidebar.bmp",
         "installerIcon": "icons/icon.ico",
+        "installerHooks": "installer/windows/hooks.nsh",
         "displayLanguageSelector": false,
         "languages": [
           "English"

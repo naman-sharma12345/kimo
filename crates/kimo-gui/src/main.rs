@@ -747,6 +747,11 @@ fn run_mcp(args: &[String]) -> ! {
     };
     let mut c = std::process::Command::new(&bin);
     c.args(&rest);
+    // CREATE_NO_WINDOW: this process is a windowless app, so Windows gave the console engine a new terminal window of its
+    // own, one per coding agent that started kimo (Claude Code, Codex, Antigravity...). Hidden, its stdin/stdout are still
+    // the agent's pipes, and the ffmpeg / whisper processes it starts share its hidden console instead of opening windows.
+    #[cfg(windows)]
+    { use std::os::windows::process::CommandExt; c.creation_flags(0x0800_0000); }
     if std::env::var_os("KIMO_FONTS").is_none() { if let Some(f) = find_fonts(exe_dir.as_deref(), None, Some(&bin)) { c.env("KIMO_FONTS", f); } }
     let st = c.status();
     log(&format!("standalone engine ended: {st:?}"));
