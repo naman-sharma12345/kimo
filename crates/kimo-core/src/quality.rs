@@ -1,11 +1,11 @@
-//! Render quality: the project's `render_quality` ("legacy" or "v10"), carried through one frame's render.
+//! Render quality: the project's `render_quality` ("legacy" or "current"), carried through one frame's render.
 //!
 //! Effects, transitions and the resampler do not receive the project, so render::render_frame_opts sets this
 //! context for the frame it renders (and restores the previous one when it ends, so a nested precomp render
 //! cannot leak its setting). It is per thread: code that fans work out to other threads (`par::rows_mut`) reads
 //! it first and passes the values in.
 //!
-//! "legacy" is every project saved before v10 and renders exactly as before. "v10" turns on the v10 algorithms:
+//! "legacy" is every project saved before 26.11 and renders exactly as before. "current" turns on the newer algorithms:
 //! linear-light blending, Gaussian blurs, bicubic magnification, transition motion blur, thin antialiased wipe
 //! edges, per-frame dither, and sizes given for 1080p that scale with the frame (`px`).
 use std::cell::Cell;

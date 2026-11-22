@@ -805,7 +805,7 @@ fn auto_edit(ss: &mut Session, a: &Value) -> Result<Value, String> {
     // crossfade midpoint comes just as correctly from the lighter option.
     if linear_compositing_on {
         // v10: the whole v10 look (linear light, Gaussian blurs, bicubic scaling, transition motion blur), not only the blend
-        call(ss, "project_set", &json!({"linear_blend": true, "render_quality": "v10"}))?;
+        call(ss, "project_set", &json!({"linear_blend": true, "render_quality": "current"}))?;
     }
     // V8.8.0: see encoder_quality_on's comment above. "slow" is the chosen preset (CHANGELOG.md v8.8.0).
     if encoder_quality_on {

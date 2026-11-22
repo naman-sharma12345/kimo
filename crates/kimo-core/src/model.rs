@@ -176,17 +176,17 @@ fn one_f64() -> f64 { 1.0 }
 fn is_one_f64(v: &f64) -> bool { *v == 1.0 }
 fn is_false(v: &bool) -> bool { !*v }
 
-/// How a project renders. `Legacy` is every project saved before v10 (the field is absent from those files) and
-/// renders exactly as it always did. `V10` is what new projects get: linear-light blending, Gaussian blurs,
+/// How a project renders. `Legacy` is every project saved before 26.11 (the field is absent from those files) and
+/// renders exactly as it always did. `Current` is what new projects get: linear-light blending, Gaussian blurs,
 /// bicubic magnification, transition motion blur, antialiased wipe edges, per-frame dither and resolution-scaled
 /// sizes (crate::quality).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum RenderQuality { #[default] Legacy, V10 }
+pub enum RenderQuality { #[default] Legacy, #[serde(alias = "v10")] Current }
 impl RenderQuality {
     pub fn is_legacy(&self) -> bool { *self == RenderQuality::Legacy }
-    pub fn name(&self) -> &'static str { match self { RenderQuality::Legacy => "legacy", RenderQuality::V10 => "v10" } }
-    pub fn parse(s: &str) -> Option<Self> { match s { "legacy" => Some(RenderQuality::Legacy), "v10" => Some(RenderQuality::V10), _ => None } }
+    pub fn name(&self) -> &'static str { match self { RenderQuality::Legacy => "legacy", RenderQuality::Current => "current" } }
+    pub fn parse(s: &str) -> Option<Self> { match s { "legacy" => Some(RenderQuality::Legacy), "current" | "v10" => Some(RenderQuality::Current), _ => None } }
 }
 impl Default for Audio { fn default() -> Self { Audio { lead: 0.0, tail: 0.0, effects: vec![], pan: Prop::new(0.0), duck_gain: Prop::new(1.0), mute: false, volume: Prop::new(1.0), fade_in: 0.0, fade_out: 0.0, pitch: 0.0, highpass: 0.0, lowpass: 0.0, denoise: 0.0, compress: false, echo: 0.0, reverse: false, speech_level: 0.0, compress_amount: 1.0 } } }
 
@@ -363,8 +363,8 @@ pub struct Project {
 
 impl Project {
     /// Linear-light blending (and the lanczos fit and dither that go with it): on with the linear_blend option or in v10.
-    pub fn linear(&self) -> bool { self.linear_blend || self.render_quality == RenderQuality::V10 }
-    pub fn v10(&self) -> bool { self.render_quality == RenderQuality::V10 }
+    pub fn linear(&self) -> bool { self.linear_blend || self.render_quality == RenderQuality::Current }
+    pub fn v10(&self) -> bool { self.render_quality == RenderQuality::Current }
 }
 
 impl Default for Project {

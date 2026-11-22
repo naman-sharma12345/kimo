@@ -303,7 +303,7 @@ move_asset_to_bin 23a63229fa937d23
 move_clip 7a2fedebbc66bea9
 move_key 6ff462a36f5e1225
 mux_chapters d4c909f56caca1e1
-new_project 052bcea12015e620
+new_project 6f33ccb3ecb0ac22
 normalize_loudness d77d16d8f58e8b00
 organize_bins 1d9acfb9e939f902
 particle_simulate_raw 13a7503832a95aad
@@ -321,7 +321,7 @@ preview_stream a71f9407fdd6a489
 preview_subject_match 8fbee66dc3095cb4
 project_diff 9156e2b0c03e1a9a
 project_merge 992b01703be15a3d
-project_set 6832aedab03f4c43
+project_set d1e0feab8694d4e4
 project_stats bad08dfe04a7688f
 proxy_generate 7704814ae86f6208
 proxy_jobs b9799c95bf2f0ff6

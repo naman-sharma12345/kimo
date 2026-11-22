@@ -134,7 +134,7 @@ document.addEventListener('click', e => { const g = e.target.closest('[data-go]'
 // ---------- app state ----------
 async function refresh() {
   const a = S.app = await B.invoke('app_state');
-  $('#ab-ver').textContent = 'v' + a.version;
+  $('#ab-ver').textContent = kimoRelease(a);
   const e = a.engine || {};
   const pe = $('#pill-engine');
   pe.className = 'rail-pill ' + (e.state === 'running' ? 'ok' : e.state === 'stopped' ? '' : 'bad');
@@ -205,3 +205,6 @@ async function loadProject() {
 }
 let loadTimer = 0;
 function loadSoon(ms = 120) { clearTimeout(loadTimer); loadTimer = setTimeout(loadProject, ms); }
+
+// "26.11 Altair": the version without a .0 fix number, then the release's name
+function kimoRelease(a) { const v = String(a?.version || '').replace(/\.0$/, ''); return a?.codename ? `${v} ${a.codename}` : v; }

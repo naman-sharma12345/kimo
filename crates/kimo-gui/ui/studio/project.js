@@ -21,7 +21,7 @@ function renderRecent() {
   const r = S.app?.settings?.recent || [], cur = S.app?.project_path || null;
   const hr = new Date().getHours();
   $('#home-greet').textContent = hr < 5 ? 'Working late' : hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
-  if (S.app?.version) $('#home-news-t').textContent = `What’s new in kimo ${S.app.version}`;
+  if (S.app?.version) $('#home-news-t').textContent = `What’s new in kimo ${kimoRelease(S.app)}`;
   // continue: the most recent project, or (first run) what kimo does
   const c = $('#home-continue');
   if (r.length) {

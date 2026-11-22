@@ -10,7 +10,7 @@ const H: u32 = 180;
 fn c(s: &mut Session, n: &str, a: Value) -> Value { dispatch(s, n, &a).unwrap_or_else(|e| panic!("{n}: {e}")) }
 fn session(v10: bool) -> Session {
     let mut s = Session::new();
-    c(&mut s, "project_set", json!({"width": W, "height": H, "fps": 30, "render_quality": if v10 { "v10" } else { "legacy" }}));
+    c(&mut s, "project_set", json!({"width": W, "height": H, "fps": 30, "render_quality": if v10 { "current" } else { "legacy" }}));
     s
 }
 fn track(s: &mut Session) -> String { c(s, "add_track", json!({}))["track_id"].as_str().unwrap().to_string() }
@@ -35,7 +35,7 @@ fn transition(v10: bool, kind: &str, bottom: [f64; 3], top: [f64; 3]) -> Session
 #[test]
 fn a_project_says_which_look_it_renders_with_and_old_files_are_legacy() {
     let s = session(true);
-    assert_eq!(serde_json::to_value(&s.project).unwrap()["render_quality"], "v10");
+    assert_eq!(serde_json::to_value(&s.project).unwrap()["render_quality"], "current");
     let old: kimo_core::model::Project = serde_json::from_value(json!({"name": "", "width": 64, "height": 64, "fps": 25.0, "tracks": [], "assets": {}, "markers": [], "next_id": 1})).unwrap_or_default();
     assert!(!old.v10(), "a project file without the field (every file saved before v10) renders as legacy");
     assert!(serde_json::to_value(&session(false).project).unwrap().get("render_quality").is_none(), "legacy projects save exactly as before");

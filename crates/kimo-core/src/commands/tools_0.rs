@@ -43,7 +43,7 @@ pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
     Command { name: "project_set", description: "Set project canvas size and frame rate (name, linear quality option).", mutates: true,
         schema: obj(vec![("width", n("pixels")), ("height", n("pixels")), ("fps", n("frames per second")), ("name", s("project name")),
             ("linear_blend", json!({"type":"boolean"})),
-            ("render_quality", json!({"type":"string","enum":["legacy","v10"],"description":"v10 (new projects): linear-light blending, Gaussian blurs, bicubic scaling, transition motion blur, clean wipe edges. legacy: exactly how projects saved before v10 render."})),
+            ("render_quality", json!({"type":"string","enum":["legacy","current"],"description":"current (new projects): linear-light blending, Gaussian blurs, bicubic scaling, transition motion blur, clean wipe edges. legacy: exactly how projects saved before 26.11 render."})),
             ("x264_preset", json!({"type":"string"})),
             ("color_tag_sanity", json!({"type":"boolean"})),
             ("frame_blend_conform", json!({"type":"boolean"})),
@@ -56,7 +56,7 @@ pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
             if let Some(v) = a.get("fps").and_then(|v| v.as_f64()) { if !(1.0..=480.0).contains(&v) { return Err(format!("fps {v} out of range 1..480")); } p.fps = v; }
             if let Some(v) = a.get("name").and_then(|v| v.as_str()) { p.name = v.into(); }
             if let Some(v) = a.get("linear_blend").and_then(|v| v.as_bool()) { p.linear_blend = v; }
-            if let Some(v) = a.get("render_quality").and_then(|v| v.as_str()) { p.render_quality = crate::model::RenderQuality::parse(v).ok_or_else(|| format!("render_quality must be legacy or v10, got '{v}'"))?; }
+            if let Some(v) = a.get("render_quality").and_then(|v| v.as_str()) { p.render_quality = crate::model::RenderQuality::parse(v).ok_or_else(|| format!("render_quality must be legacy or current, got '{v}'"))?; }
             if let Some(v) = a.get("x264_preset") { match v { Value::Null => p.x264_preset = None, Value::String(s) => { const OK: [&str; 9] = ["ultrafast","superfast","veryfast","faster","fast","medium","slow","slower","veryslow"]; if !OK.contains(&s.as_str()) { return Err(format!("x264_preset must be one of {OK:?}, got '{s}'")); } p.x264_preset = Some(s.clone()); }, _ => return Err("x264_preset must be a string or null".into()) } }
             if let Some(v) = a.get("color_tag_sanity").and_then(|v| v.as_bool()) { p.color_tag_sanity = v; }
             if let Some(v) = a.get("frame_blend_conform").and_then(|v| v.as_bool()) { p.frame_blend_conform = v; }
@@ -75,11 +75,11 @@ pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
         schema: obj(vec![("name", s("track name, e.g. \"Music\" or \"Titles\" (optional)"))], &[]),
         run: |ss, a| { let name = a.get("name").and_then(|v| v.as_str()).unwrap_or("").trim().to_string(); let id = ss.project.gen_id("track"); ss.project.tracks.push(Track { id: id.clone(), clips: vec![], locked: false, muted: false, solo: false, name: name.clone() });
             let mut out = json!({"track_id":id}); if !name.is_empty() { out["name"] = json!(name); } Ok(out) } },
-    Command { name: "new_project", description: "Start over with a fresh, empty project in this session, as if the engine had just started: no tracks, clips or assets, and ids count from 1 again. Optional width, height, fps and render_quality (default v10), as project_set takes them. Unsaved changes to the current project are dropped (undo brings it back).", mutates: true,
+    Command { name: "new_project", description: "Start over with a fresh, empty project in this session, as if the engine had just started: no tracks, clips or assets, and ids count from 1 again. Optional width, height, fps and render_quality (default current), as project_set takes them. Unsaved changes to the current project are dropped (undo brings it back).", mutates: true,
         schema: obj(vec![("width", n("frame width in pixels (default 1920)")), ("height", n("frame height in pixels (default 1080)")), ("fps", n("frames per second (default 30)")),
-            ("render_quality", json!({"type":"string","enum":["v10","legacy"],"description":"v10 (default) or legacy (the pre-v10 look)"}))], &[]),
+            ("render_quality", json!({"type":"string","enum":["current","legacy"],"description":"current (default) or legacy (the look before 26.11)"}))], &[]),
         run: |ss, a| {
-            ss.project = Project::default(); ss.project.render_quality = crate::model::RenderQuality::V10;
+            ss.project = Project::default(); ss.project.render_quality = crate::model::RenderQuality::Current;
             ss.cache = render::Cache::new(); ss.created_with = None;
             let mut set = serde_json::Map::new(); for k in ["width", "height", "fps", "render_quality"] { if let Some(v) = a.get(k) { set.insert(k.into(), v.clone()); } }
             if !set.is_empty() { crate::commands::dispatch_nested(ss, "project_set", &Value::Object(set))?; }

@@ -1,8 +1,11 @@
 //! RV-2: one build identity used by the MCP server (initialize + kimo_info), saved project files and export reports.
 use serde_json::{json, Value};
 
-/// Semver of this build (workspace version).
+/// Semver of this build (workspace version): year.month.fix, e.g. 26.11.0.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The release's name: a star, a new one each release in alphabetical order (Altair, Capella, Deneb, Lyra, Mira, Orion,
+/// Rigel, Sirius, Vega). Fix releases in the same month keep the month's name.
+pub const CODENAME: &str = "Altair";
 /// Short git commit the binary was built from, "-dirty" when the work tree had uncommitted changes, "unknown" outside a git checkout.
 pub const COMMIT: &str = env!("KIMO_GIT_COMMIT");
 /// Version of the saved project file layout. Bump when old binaries could misread a new file; load_project refuses files with a newer schema.
@@ -23,7 +26,7 @@ pub fn identity() -> Value { json!({"version": VERSION, "commit": COMMIT, "schem
 pub fn info() -> Value {
     static BACKENDS: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
     let backends = BACKENDS.get_or_init(|| json!({"ffmpeg": tool_version("ffmpeg"), "ffprobe": tool_version("ffprobe")})).clone();
-    json!({"name": "kimo", "version": VERSION, "commit": COMMIT, "schema_version": SCHEMA_VERSION,
+    json!({"name": "kimo", "version": VERSION, "codename": CODENAME, "commit": COMMIT, "schema_version": SCHEMA_VERSION,
         "features": {"native_ocio": cfg!(feature = "native-ocio")}, "backends": backends,
         "tools": crate::commands::registry_ref().len(), "extension_modules": crate::ext::MODULES.len(),
         "profile": if cfg!(debug_assertions) { "debug" } else { "release" }})

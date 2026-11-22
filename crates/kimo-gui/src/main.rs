@@ -121,6 +121,9 @@ fn shaped(r: Value) -> Value {
 }
 
 // ---------- state ----------
+/// This release's name (kimo-core buildinfo::CODENAME says how they are picked).
+const CODENAME: &str = "Altair";
+
 #[tauri::command]
 fn app_state(st: State<'_, AppState>) -> Value {
     let s = st.settings.lock().unwrap().clone();
@@ -131,6 +134,7 @@ fn app_state(st: State<'_, AppState>) -> Value {
     let launch = st.launch();
     json!({
         "version": env!("CARGO_PKG_VERSION"),
+        "codename": CODENAME,
         "engine": st.sup.status(),
         "mcp_enabled": s.mcp_enabled,
         "external_port": st.external.lock().unwrap().as_ref().map(|e| e.port),
