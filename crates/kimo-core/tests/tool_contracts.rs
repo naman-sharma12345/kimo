@@ -461,6 +461,58 @@ fn scoped_setup() -> (Vec<Step<'static>>, String) {
     let c = ss.project.find_clip(r["clip_ids"][0].as_str().unwrap()).unwrap(); assert!((c.start + c.duration - 4.0).abs() < 1e-3, "a riser ends on its mark");
     assert!(dispatch(&mut ss, "add_sfx", &json!({"kind": "laser", "at": 1.0})).is_err());
 }
+fn text_scene(text: &str) -> (Session, String) {
+    let mut ss = Session::new(); dispatch(&mut ss, "project_set", &json!({"width": 480, "height": 270, "fps": 30})).unwrap();
+    let t = dispatch(&mut ss, "add_track", &json!({})).unwrap()["track_id"].as_str().unwrap().to_string();
+    let id = dispatch(&mut ss, "add_text", &json!({"track_id": t, "text": text, "start": 0.0, "duration": 2.0, "font": "Inter", "size": 70, "color": [1, 1, 1]})).unwrap()["clip_id"].as_str().unwrap().to_string();
+    (ss, id)
+}
+fn frame(ss: &Session, t: f64) -> kimo_core::effects::Frame { render::render_frame(&ss.project, t, &render::Cache::new()).unwrap() }
+fn count(f: &kimo_core::effects::Frame, pred: &dyn Fn(f32, f32, f32) -> bool) -> usize { (0..f.w * f.h).filter(|&i| f.d[i * 4 + 3] > 0.5 && pred(f.d[i * 4], f.d[i * 4 + 1], f.d[i * 4 + 2])).count() }
+#[test] fn shading_layers_draw_an_outline_behind_the_fill() {
+    let (mut ss, id) = text_scene("Hi");
+    let plain = count(&frame(&ss, 1.0), &|r, g, b| r > 0.5 && g > 0.5 && b > 0.5);
+    dispatch(&mut ss, "set_text_layers", &json!({"clip_id": id, "layers": [{"kind": "outline", "color": [1, 0, 0], "width": 6}, {"kind": "fill", "color": [1, 1, 1]}]})).unwrap();
+    let f = frame(&ss, 1.0); let red = count(&f, &|r, g, b| r > 0.8 && g < 0.2 && b < 0.2); let white = count(&f, &|r, g, b| r > 0.5 && g > 0.5 && b > 0.5);
+    assert!(red > 200, "a red outline around the letters: {red} px"); assert!((white as f64 - plain as f64).abs() < plain as f64 * 0.15, "the white fill is unchanged on top: {white} vs {plain}");
+    assert!(dispatch(&mut ss, "set_text_layers", &json!({"clip_id": id, "layers": [{"kind": "bevel", "color": [1, 1, 1]}]})).is_err());
+}
+#[test] fn a_style_run_colours_one_word_and_superscript_shrinks() {
+    let (mut ss, id) = text_scene("red and white");
+    dispatch(&mut ss, "set_text_runs", &json!({"clip_id": id, "runs": [{"match": "red", "color": [1, 0, 0]}]})).unwrap();
+    let f = frame(&ss, 1.0); let red = count(&f, &|r, g, b| r > 0.8 && g < 0.2 && b < 0.2); let white = count(&f, &|r, g, b| r > 0.8 && g > 0.8 && b > 0.8);
+    assert!(red > 100 && white > red, "one word red, the rest white: red {red}, white {white}");
+    let (mut s2, id2) = text_scene("x2"); let before = count(&frame(&s2, 1.0), &|r, _, _| r > 0.5);
+    dispatch(&mut s2, "set_text_runs", &json!({"clip_id": id2, "runs": [{"from": 1, "to": 2, "script": "super"}]})).unwrap();
+    let after = count(&frame(&s2, 1.0), &|r, _, _| r > 0.5); assert!(after < before, "the superscript 2 is smaller: {after} vs {before}");
+}
+#[test] fn character_offset_decodes_letters_and_bad_expressions_are_refused() {
+    let (mut a, ida) = text_scene("ABC"); let plain = frame(&a, 1.0);
+    let an = dispatch(&mut a, "add_text_animator", &json!({"clip_id": ida, "unit": "char"})).unwrap();
+    let aid = an["animator_id"].as_str().unwrap().to_string();
+    let differs = |x: &kimo_core::effects::Frame, y: &kimo_core::effects::Frame| x.d.iter().zip(&y.d).filter(|(p, q)| (*p - *q).abs() > 0.02).count();
+    dispatch(&mut a, "set_animator_selectors", &json!({"clip_id": ida, "animator_id": aid, "char_offset": 26})).unwrap();
+    assert_eq!(differs(&frame(&a, 1.0), &plain), 0, "26 steps wrap the alphabet back to ABC");
+    dispatch(&mut a, "set_animator_selectors", &json!({"clip_id": ida, "animator_id": aid, "char_offset": 1})).unwrap();
+    assert!(differs(&frame(&a, 1.0), &plain) > 200, "one step changes the letters");
+    assert!(dispatch(&mut a, "set_animator_selectors", &json!({"clip_id": ida, "animator_id": aid, "expr": "i +"})).is_err());
+    dispatch(&mut a, "set_animator_selectors", &json!({"clip_id": ida, "animator_id": aid, "expr": "smoothstep(0, 1, t*2 - i/n)", "selectors": [{"mode": "intersect", "start": 0, "end": 0.5}]})).unwrap();
+}
+#[test] fn extruded_text_draws_lit_letters_and_dissolve_adds_particles() {
+    let mut ss = Session::new(); dispatch(&mut ss, "project_set", &json!({"width": 480, "height": 270, "fps": 30, "render_quality": "current"})).unwrap();
+    let r = dispatch(&mut ss, "add_text3d", &json!({"text": "Hi", "start": 0.0, "duration": 2.0, "per_char": "flip"})).unwrap();
+    assert_eq!(r["letters"], 2, "{r}"); assert!(r["triangles"].as_u64().unwrap() > 20);
+    let f = frame(&ss, 1.5); let lit = count(&f, &|r, g, b| r + g + b > 0.6); assert!(lit > 400, "the letters are visible: {lit} px");
+    let (mut s2, id) = text_scene("Bye"); let d = dispatch(&mut s2, "text_dissolve", &json!({"clip_id": id, "at": 0.5})).unwrap();
+    assert!(d["track_id"].is_string(), "{d}"); assert!(s2.project.find_clip(&id).unwrap().props["opacity"].at(1.9) < 0.1, "the text fades out");
+}
+#[test] fn a_3d_scene_keeps_its_size_with_supersampling() {
+    let width = |ssaa: u64| { let mut ss = Session::new(); dispatch(&mut ss, "project_set", &json!({"width": 480, "height": 270, "fps": 30, "render_quality": "current"})).unwrap();
+        let t = dispatch(&mut ss, "add_track", &json!({})).unwrap()["track_id"].as_str().unwrap().to_string();
+        dispatch(&mut ss, "add_scene3d", &json!({"track_id": t, "start": 0.0, "duration": 1.0, "config": {"ssaa": ssaa, "objects": [{"kind": "box", "size": [100, 100, 1], "color": [1, 1, 1], "flat": true}], "lights": [{"kind": "directional", "dir": [0, 0, 1]}], "ambient": [0.5, 0.5, 0.5]}})).unwrap();
+        let f = frame(&ss, 0.5); let xs: Vec<usize> = (0..f.w * f.h).filter(|&i| f.d[i * 4 + 3] > 0.5 && f.d[i * 4] > 0.15).map(|i| i % f.w).collect(); xs.iter().max().unwrap() - xs.iter().min().unwrap() + 1 };
+    let (a, b) = (width(1), width(2)); assert!((a as i64 - 100).abs() <= 2 && (b as i64 - a as i64).abs() <= 2, "a 100-unit box is 100 px with or without supersampling: {a} / {b}");
+}
 #[test] fn get_scopes_is_read_only_and_reports_stats() {
     let (s, _t1, _t2, _c) = one_clip(); let mut ss = fresh(&s); let before = pj(&ss);
     let r = call(&mut ss, "get_scopes", json!({"time": 1.5})); assert_eq!(pj(&ss), before, "read-only"); assert!(r.is_object() && !r.as_object().unwrap().is_empty(), "{r}");

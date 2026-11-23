@@ -43,3 +43,23 @@ sha512 = "d62ef56e39bb3d6a7b06f862c9dd73646efcbe26eadce20d8939ecc88c1680804d18a0
 license = "Apache-2.0"
 source = "MODNet portrait matting (Zhanghan Ke et al.), 8-bit quantized ONNX from Xenova/modnet"
 use = "matte (fetched only when a person matte is asked for)"
+
+[[model]]
+id = "spleeter_vocals"
+file = "spleeter_2stems_vocals.fp16.onnx"
+url = "https://huggingface.co/csukuangfj/sherpa-onnx-spleeter-2stems-fp16/resolve/93ba771920ade509f8cbd6825b1a90856c797e08/vocals.fp16.onnx"
+size = 19681017
+sha512 = "8efb092db66b7539fccd47f0edb13f1bbc5445f2dfdea2e7931845d96e2768ae035b33605f4e00d0b2f25c7de6539d5ea24e9da0e2614435592ccbfe04acaf92"
+license = "MIT"
+source = "Spleeter 2-stem vocals U-Net (Deezer, MIT), fp16 ONNX export from sherpa-onnx (Apache-2.0)"
+use = "stems (fetched only when separate_stems is asked for)"
+
+[[model]]
+id = "spleeter_accompaniment"
+file = "spleeter_2stems_accompaniment.fp16.onnx"
+url = "https://huggingface.co/csukuangfj/sherpa-onnx-spleeter-2stems-fp16/resolve/93ba771920ade509f8cbd6825b1a90856c797e08/accompaniment.fp16.onnx"
+size = 19681024
+sha512 = "79266c5746560ad074a01cf0204f3f98d5858dbce0482ffde8931d913b4c97c24ae73238d88839def0b0b530faddeeb80cab2d65dc1b96dc46151a3a7cf48e72"
+license = "MIT"
+source = "Spleeter 2-stem accompaniment U-Net (Deezer, MIT), fp16 ONNX export from sherpa-onnx (Apache-2.0)"
+use = "stems (fetched only when separate_stems is asked for)"

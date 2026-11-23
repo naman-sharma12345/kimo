@@ -565,7 +565,7 @@ fn apply_case(text: &str, case: Case) -> String {
 fn base_animator(id: &str, start: f64, end: f64) -> TextAnimator {
     TextAnimator { id: id.into(), unit: "word".into(), shape: "square".into(), start: Prop::new(start), end: Prop::new(end), offset: Prop::new(0.0), smoothness: Prop::new(0.0),
         x: Prop::new(0.0), y: Prop::new(0.0), scale: Prop::new(1.0), rotation: Prop::new(0.0), opacity: Prop::new(1.0), tracking: Prop::new(0.0), blur: Prop::new(0.0),
-        random: false, seed: 0, fill: None, fill_amount: None, ease: None, wiggly: None }
+        random: false, seed: 0, fill: None, fill_amount: None, ease: None, wiggly: None, more: None }
 }
 
 /// Which words (by index within the unit) are emphasised: an explicit list, keyword scoring (reuses `sw::keywords`,

@@ -186,7 +186,7 @@ pub(crate) fn recognize(src: &Src, a: &Value, mode: &mut String, lang_seen: &mut
 
 fn anim(id: &str, start: f64, end: f64) -> TextAnimator {
     TextAnimator { id: id.into(), unit: "word".into(), shape: "square".into(), start: Prop::new(start), end: Prop::new(end), offset: Prop::new(0.0), smoothness: Prop::new(0.0),
-        x: Prop::new(0.0), y: Prop::new(0.0), scale: Prop::new(1.0), rotation: Prop::new(0.0), opacity: Prop::new(1.0), tracking: Prop::new(0.0), blur: Prop::new(0.0), random: false, seed: 0, fill: None, fill_amount: None, ease: None, wiggly: None }
+        x: Prop::new(0.0), y: Prop::new(0.0), scale: Prop::new(1.0), rotation: Prop::new(0.0), opacity: Prop::new(1.0), tracking: Prop::new(0.0), blur: Prop::new(0.0), random: false, seed: 0, fill: None, fill_amount: None, ease: None, wiggly: None, more: None }
 }
 /// Per-word motion for one page. `s`/`e`: word start/end in page-local seconds; `kw`: keyword indices; `dur`: page length.
 fn page_animators(l: &Look, active: [f64; 3], kwc: Option<[f64; 3]>, s: &[f64], e: &[f64], kw: &[usize], highlight: bool, dur: f64) -> Vec<TextAnimator> {

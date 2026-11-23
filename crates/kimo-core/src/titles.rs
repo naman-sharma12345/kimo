@@ -60,7 +60,7 @@ const DOT_TEXT_GAP_RATIO: f64 = 0.9;
 /// same way either way).
 pub(crate) fn dot_room(dot_w: f64, k: f64) -> f64 { 2.0 * ((1.0 + DOT_TEXT_GAP_RATIO) * dot_w - 14.0 * k) }
 
-fn an(unit: &str, shape: &str, sm: f64) -> TextAnimator { TextAnimator { id: String::new(), unit: unit.into(), shape: shape.into(), start: Prop::new(0.0), end: Prop::new(1.0), offset: Prop::new(0.0), smoothness: Prop::new(sm), x: Prop::new(0.0), y: Prop::new(0.0), scale: Prop::new(1.0), rotation: Prop::new(0.0), opacity: Prop::new(1.0), tracking: Prop::new(0.0), blur: Prop::new(0.0), random: false, seed: 0, fill: None, fill_amount: None, ease: None, wiggly: None } }
+fn an(unit: &str, shape: &str, sm: f64) -> TextAnimator { TextAnimator { id: String::new(), unit: unit.into(), shape: shape.into(), start: Prop::new(0.0), end: Prop::new(1.0), offset: Prop::new(0.0), smoothness: Prop::new(sm), x: Prop::new(0.0), y: Prop::new(0.0), scale: Prop::new(1.0), rotation: Prop::new(0.0), opacity: Prop::new(1.0), tracking: Prop::new(0.0), blur: Prop::new(0.0), random: false, seed: 0, fill: None, fill_amount: None, ease: None, wiggly: None, more: None } }
 fn sweep(a: &mut TextAnimator, t0: f64, t1: f64, sm: f64, e: Ease) { let hi = 1.0 + 2.0 * sm.max(0.05); a.offset.set_key(t0, 0.0, e); a.offset.set_key(t1, hi, e); }
 fn num(a: &Value, k: &str, d: f64) -> f64 { a.get(k).and_then(|v| v.as_f64()).unwrap_or(d) }
 fn rgb(a: &Value, k: &str, d: [f64; 3]) -> [f64; 3] { a.get(k).and_then(|v| v.as_array()).filter(|v| v.len() >= 3).map(|v| [v[0].as_f64().unwrap_or(0.0), v[1].as_f64().unwrap_or(0.0), v[2].as_f64().unwrap_or(0.0)]).unwrap_or(d) }

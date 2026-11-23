@@ -18,6 +18,8 @@ pub mod models;
 pub mod post;
 #[cfg(feature = "vision")]
 pub mod infer;
+#[cfg(feature = "vision")]
+pub mod stems;
 
 use crate::effects::Frame;
 use serde::Serialize;

@@ -57,6 +57,7 @@ add_smart_punch 841bcd969ba8ab27
 add_speed_lines 0db4bddd46e7a057
 add_subject_clone f6fe4888b2d1c573
 add_text e504fc3dce60034a
+add_text3d 3d2de7b971b5da8c
 add_text_animator 7c837530f3da76ca
 add_title 9c0f885e596be675
 add_track d3d8f4adba79137a
@@ -403,6 +404,7 @@ ripple_delete af7455d513b9e3c9
 ripple_trim 5be54654d9c33c34
 roll_edit 6b0329ead4107025
 roto_propagate d82172bedca52a94
+roto_subject 2289178c6cebc27c
 run_hooks 400612110e836b40
 saliency_map 109791485c05b75a
 sample_advection_field cc26c0f26246430c
@@ -422,10 +424,12 @@ scene_split e3169bf97fff6916
 score_windows 2ee81cf98be42143
 search_assets 99bc5644005ec22f
 self_review 60d5d56439bd1c85
+separate_stems 3bdb69481ad35c7f
 session_stats 08b78ec5daffb184
 set_3d_compositor c3fab2e718ae3113
 set_3d_layer_shadows 872bd4ddb9990918
 set_animator_keyframe 1f7119987f8dc80b
+set_animator_selectors b90d8ae45aad3b2c
 set_audio 6bef2d3579557e56
 set_audio_effect_key 02e5c3c88e7432d6
 set_audio_pan f9b02d2054de6500
@@ -489,7 +493,9 @@ set_speed_ramp c98ee12bfb32f92d
 set_split_edit af640587669e23fa
 set_text 75d3e2ede376994a
 set_text_keyframes 92fdda11b077f9fa
+set_text_layers 489db303e59af7e3
 set_text_path 103cf0dd9d7f55b1
+set_text_runs 2d4eeb7d8f81eeb5
 set_text_style 977ef2306acb3365
 set_text_weight 814c0178887918c0
 set_time_mode c323a5b489cfd1de
@@ -518,6 +524,7 @@ template_delete 6b938f0f0f89fa07
 template_describe 6840c663f33496bf
 template_list 0757d10d640959f3
 text_contrast_series d14fc189b362abb4
+text_dissolve 4848f0472447c57a
 text_to_shapes c18ddeb9517d8ddc
 tighten_pauses 79c006e7fca0b005
 timeline_summary 9fdf3526f8d0c28b

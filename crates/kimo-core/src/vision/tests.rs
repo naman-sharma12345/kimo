@@ -29,8 +29,8 @@ fn square_frame() -> Frame {
 
 #[test] fn model_list_is_pinned() {
     let r = models::registry();
-    let ids: Vec<&str> = r.iter().map(|m| m.id.as_str()).collect(); assert_eq!(ids, ["yunet", "yolox_nano", "u2netp", "modnet"]);
-    for m in r { assert_eq!(m.sha512.len(), 128); assert!(m.size > 100_000 && m.size < 10_000_000, "{} is small", m.id); assert!(m.url.starts_with("https://")); assert!(["MIT", "Apache-2.0"].contains(&m.license.as_str()), "{} licence {}", m.id, m.license); }
+    let ids: Vec<&str> = r.iter().map(|m| m.id.as_str()).collect(); assert_eq!(ids, ["yunet", "yolox_nano", "u2netp", "modnet", "spleeter_vocals", "spleeter_accompaniment"]);
+    for m in r { assert_eq!(m.sha512.len(), 128); assert!(m.size > 100_000 && m.size < if m.id.starts_with("spleeter") { 25_000_000 } else { 10_000_000 }, "{} is small", m.id); assert!(m.url.starts_with("https://")); assert!(["MIT", "Apache-2.0"].contains(&m.license.as_str()), "{} licence {}", m.id, m.license); }
     assert!(models::parse_models("[[model]]\nid = \"x\"\n").is_err());
 }
 

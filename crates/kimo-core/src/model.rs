@@ -555,12 +555,55 @@ pub struct TextFx {
     #[serde(default, skip_serializing_if = "is_false")] pub tabular: bool,
     /// Source-text keyframes: from each key's time (clip-local seconds) the clip shows that key's text instead of its own.
     #[serde(default, skip_serializing_if = "Vec::is_empty")] pub text_keys: Vec<TextKey>,
+    /// Stacked shading layers (Resolve Text+ style), drawn back to front in list order; when present they replace the
+    /// clip's single fill / outline / shadow.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")] pub layers: Vec<ShadeLayer>,
+    /// Mixed styling inside one text clip: character ranges with their own colour, size, baseline shift or super/subscript.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")] pub runs: Vec<TextRun>,
 }
+/// One shading element: kind fill | outline | shadow | glow | border (a rounded box around the text).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ShadeLayer {
+    pub kind: String, pub color: [f64; 3], #[serde(default = "one")] pub opacity: f64,
+    /// outline / glow thickness, border padding (px)
+    #[serde(default)] pub width: f64, #[serde(default)] pub blur: f64, #[serde(default)] pub dx: f64, #[serde(default)] pub dy: f64,
+    /// border corner radius (px); outline: knockout = outline only, the letters themselves left empty
+    #[serde(default)] pub radius: f64, #[serde(default)] pub knockout: bool,
+}
+fn one() -> f64 { 1.0 }
+/// A styled character range [from, to) of the clip's text (character indices, spaces and newlines included).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct TextRun {
+    pub from: usize, pub to: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub color: Option<[f64; 3]>,
+    /// size relative to the clip's (1 = same)
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub scale: Option<f64>,
+    /// baseline shift in px, up positive
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub baseline: Option<f64>,
+    /// "super" | "sub"
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub script: Option<String>,
+}
+/// Extra selector machinery on a text animator (After Effects' advanced selectors).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct AnimatorMore {
+    /// Expression selector: the amount per unit from maths on i (unit index), n (units), t (seconds), k (the range
+    /// selector's own amount), r (a stable random 0..1 per unit); clamped to 0..1.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub expr: Option<String>,
+    /// Character offset: selected letters step through the alphabet / digits by round(amount x offset) (decode, scramble).
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub char_offset: Option<Prop>,
+    /// Per-unit skew (slant) by amount, as a fraction of height.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub skew: Option<Prop>,
+    /// More range selectors combined with the first in order: mode add | subtract | intersect | min | max | difference.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")] pub selectors: Vec<ExtraSelector>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExtraSelector { pub mode: String, pub start: Prop, pub end: Prop, #[serde(default = "zp")] pub offset: Prop, #[serde(default = "zp")] pub smoothness: Prop, #[serde(default = "sq")] pub shape: String }
+fn sq() -> String { "square".into() }
 /// One source-text keyframe: from `t` (clip-local seconds) on, the clip reads `text`.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct TextKey { pub t: f64, pub text: String }
 fn zp() -> Prop { Prop::new(0.0) }
-impl Default for TextFx { fn default() -> Self { TextFx { weight: 0.0, uppercase: false, line_mask: false, italic_skew: 0.0, box_width: 0.0, line_spacing: 1.15, kerning: true, bg: None, bg_pad: 24.0, bg_radius: 12.0, shadow_blur: 0.0, shadow_opacity: 0.6, shadow_color: [0.0; 3], shadow_angle: 45.0, gradient: None, glow: 0.0, glow_color: [1.0, 1.0, 1.0], animators: vec![], path: None, path_start: Prop::new(0.0), path_flip: false, axes: BTreeMap::new(), tabular: false, text_keys: vec![] } } }
+impl Default for TextFx { fn default() -> Self { TextFx { weight: 0.0, uppercase: false, line_mask: false, italic_skew: 0.0, box_width: 0.0, line_spacing: 1.15, kerning: true, bg: None, bg_pad: 24.0, bg_radius: 12.0, shadow_blur: 0.0, shadow_opacity: 0.6, shadow_color: [0.0; 3], shadow_angle: 45.0, gradient: None, glow: 0.0, glow_color: [1.0, 1.0, 1.0], animators: vec![], path: None, path_start: Prop::new(0.0), path_flip: false, axes: BTreeMap::new(), tabular: false, text_keys: vec![], layers: vec![], runs: vec![] } } }
 /// Range selector + properties applied to each unit (char/word/line) by selector amount. All values keyframable.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TextAnimator {
@@ -576,6 +619,8 @@ pub struct TextAnimator {
     #[serde(default, skip_serializing_if = "Option::is_none")] pub ease: Option<crate::keyframe::Ease>,
     /// AE Wiggly Selector: the selector amount is multiplied per unit by smooth noise between min and max (text.rs). None = no wiggle.
     #[serde(default, skip_serializing_if = "Option::is_none")] pub wiggly: Option<Wiggly>,
+    /// Expression selector, character offset, per-unit skew and stacked selectors (text.rs `animate`).
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub more: Option<Box<AnimatorMore>>,
 }
 /// Wiggly Selector (After Effects): per unit a smooth random value in min..max (each -1..1, keyframable), changing `freq` times a second;
 /// `correlation` 0 = every unit wanders on its own, 1 = all units share one wiggle; stable per `seed`.

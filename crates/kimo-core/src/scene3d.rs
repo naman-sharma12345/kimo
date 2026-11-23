@@ -16,6 +16,9 @@ pub struct Obj {
     #[serde(default)] pub parent: Option<usize>, #[serde(default)] pub keys: Vec<Key>,
     #[serde(default = "dcol")] pub color: [f64; 3], #[serde(default = "dr")] pub rough: f64, #[serde(default)] pub metal: f64, #[serde(default = "d3")] pub emissive: [f64; 3], #[serde(default = "dop")] pub opacity: f64,
     #[serde(default)] pub flat: bool,
+    /// kind "mesh": raw triangles in object space, 9 numbers each (three xyz corners, counter-clockwise seen from the
+    /// side the face looks to). Normals are per face (flat shading), so extruded text keeps crisp edges.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")] pub tris: Vec<[f64; 9]>,
 }
 fn dlk() -> String { "directional".into() } fn dli() -> f64 { 1.0 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -37,6 +40,10 @@ fn grid(f: &dyn Fn(f64, f64) -> (V3, V3), nu: usize, nv: usize, out: &mut Vec<Tr
 }
 fn mesh(o: &Obj) -> Vec<Tri> {
     let mut t = vec![]; let s = o.size; let tau = std::f64::consts::TAU; let pi = std::f64::consts::PI;
+    if o.kind == "mesh" {
+        for q in &o.tris { let (a, b, c) = ([q[0], q[1], q[2]], [q[3], q[4], q[5]], [q[6], q[7], q[8]]); let n = norm(cross(sub(b, a), sub(c, a))); t.push(Tri { p: [a, b, c], n: [n, n, n] }); }
+        return t;
+    }
     match o.kind.as_str() {
         "plane" => { let (hx, hz) = (s[0] / 2.0, s[2] / 2.0); let n = [0.0, -1.0, 0.0]; grid(&|u, v| ([(u - 0.5) * 2.0 * hx, 0.0, (v - 0.5) * 2.0 * hz], n), 1, 1, &mut t); }
         "sphere" => { let r = s[0]; grid(&|u, v| { let (th, ph) = (u * tau, v * pi); let n = [ph.sin() * th.cos(), ph.cos(), ph.sin() * th.sin()]; ([n[0] * r, n[1] * r, n[2] * r], n) }, 48, 24, &mut t); }
@@ -107,7 +114,7 @@ pub fn render_blur(sc: &Scene3D, f: &mut Frame, t: f64, fps: f64, cam_at: &dyn F
 }
 
 pub fn render(sc: &Scene3D, f: &mut Frame, t: f64, cam: &Camera) {
-    let (w, h) = (f.w, f.h); let ss = if sc.ssaa == 0 { 2 } else { sc.ssaa.min(4) as usize }; let (sw, sh) = (w * ss, h * ss); let cv = CamView::new(sw, sh, cam); let eye = cv.eye(); let fl = cv.focal() / ss as f64;
+    let (w, h) = (f.w, f.h); let ss = if sc.ssaa == 0 { 2 } else { sc.ssaa.min(4) as usize }; let (sw, sh) = (w * ss, h * ss); let cv = if crate::quality::v10() { CamView::new_ss(sw, sh, cam, ss) } else { CamView::new(sw, sh, cam) }; /* legacy projects keep their half-size look */ let eye = cv.eye(); let fl = cv.focal() / ss as f64;
     let mut zb = vec![f32::INFINITY; sw * sh]; let mut cb = vec![0f32; sw * sh * 4]; // premultiplied color + coverage
     let mut zout = vec![0f32; w * h];
     // gather draw list: opaque first, then transparent back-to-front by object center depth
