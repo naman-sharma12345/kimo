@@ -120,6 +120,7 @@ pub fn catalog3() -> &'static [Entry] {
         v.extend(generators::catalog());
         v.extend(controls_v7::catalog());
         v.extend(crate::keying::catalog4());
+        v.extend_from_slice(crate::effects_ec::CATALOG4);
         v
     })
 }

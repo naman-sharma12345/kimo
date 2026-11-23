@@ -3,7 +3,7 @@
 use crate::effects::Frame;
 use crate::model::Transition;
 
-pub const KINDS: &[&str] = &["crossfade", "dissolve", "wipe", "wipe_left", "wipe_right", "wipe_up", "wipe_down", "diagonal", "blinds", "checker", "iris", "clock", "split_h", "split_v", "noise_dissolve", "block_dissolve", "card_wipe", "slide_left", "slide_right", "slide_up", "slide_down", "zoom", "zoom_blur", "spin", "flash", "dip_black", "dip_white", "dip_color", "light_leak", "film_burn", "glitch", "whip_left", "whip_right", "shatter", "shatter_cells", "ripple_dissolve", "barn_doors", "page_peel"];
+pub const KINDS: &[&str] = &["crossfade", "dissolve", "wipe", "wipe_left", "wipe_right", "wipe_up", "wipe_down", "diagonal", "blinds", "checker", "iris", "clock", "split_h", "split_v", "noise_dissolve", "block_dissolve", "card_wipe", "slide_left", "slide_right", "slide_up", "slide_down", "zoom", "zoom_blur", "spin", "flash", "dip_black", "dip_white", "dip_color", "light_leak", "film_burn", "glitch", "whip_left", "whip_right", "shatter", "shatter_cells", "ripple_dissolve", "barn_doors", "page_peel", "cube_spin", "flip_over"];
 pub const EASES: &[&str] = &["linear", "in", "out", "in_out", "in_cubic", "out_cubic", "in_out_cubic", "in_out_expo", "out_back", "out_bounce", "out_quart", "out_expo", "in_expo", "in_out_quint", "in_back", "in_out_back", "in_elastic", "out_elastic", "in_out_elastic", "in_bounce", "in_out_bounce"];
 
 pub fn ease(name: &str, t: f64) -> f64 {
@@ -204,6 +204,9 @@ pub fn plan(tr: &Transition, lt: f64, w: usize, h: usize) -> Plan {
                 let band = d / (sw * 6.0); let shadow = (1.0 - band).powi(2) * 0.5 * it; let hl = (1.0 - (band - 0.12).abs() * 6.0).clamp(0.0, 1.0) * 0.35 * it;
                 let i = (y * f.w + x) * 4; let a = f.d[i + 3]; if a <= 0.0 { continue; }
                 for j in 0..3 { f.d[i + j] = (f.d[i + j] * (1.0 - shadow) + hl).clamp(0.0, 1.0); } } } })); }
+        // 3D page turns (transitions3d.rs): angle picks the direction (0 left, 180 right, 90 up, 270 down)
+        "cube_spin" => { let a = tr.angle; p.compose = Some(Box::new(move |below, inc| crate::transitions3d::cube_spin(below, inc, k, a))); }
+        "flip_over" => { let a = tr.angle; p.compose = Some(Box::new(move |below, inc| crate::transitions3d::flip_over(below, inc, k, a))); }
         _ => p.op = k,
     }
     p

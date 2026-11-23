@@ -745,3 +745,106 @@ let before=pj(&s);let r=call(&mut s,"audio_speech_intervals",json!({"target":"mi
     row(&s, "project_diff", json!({"a": "current", "b": "current"}), |r, b, a| { assert_eq!(b, a); assert_eq!(r["identical"], true); });
     row_err(&s, "project_diff", json!({"a": "undo:0", "b": "current"}), Some("n >= 1"));
 }
+
+// ---- batch 5: Lottie both ways, 3D page transitions, more audio effects, marker export
+fn centroid(f: &kimo_core::effects::Frame, pred: &dyn Fn(f32, f32, f32) -> bool) -> Option<(f64, f64, usize)> {
+    let (mut sx, mut sy, mut n) = (0.0, 0.0, 0usize);
+    for i in 0..f.w * f.h { if f.d[i * 4 + 3] > 0.5 && pred(f.d[i * 4], f.d[i * 4 + 1], f.d[i * 4 + 2]) { sx += (i % f.w) as f64; sy += (i / f.w) as f64; n += 1; } }
+    if n == 0 { None } else { Some((sx / n as f64, sy / n as f64, n)) }
+}
+#[test] fn lottie_export_then_import_draws_the_same_animation() {
+    let mut ss = fresh(&[]); let t = call(&mut ss, "add_track", json!({}))["track_id"].as_str().unwrap().to_string();
+    let e = call(&mut ss, "add_shape", json!({"track_id": t, "shape": "ellipse", "width": 40, "height": 40, "fill": [1, 0, 0, 1], "start": 0.0, "duration": 2.0}))["clip_id"].as_str().unwrap().to_string();
+    call(&mut ss, "set_keyframe", json!({"clip_id": e, "property": "x", "time": 0.0, "value": -100.0, "ease": "in_out"}));
+    call(&mut ss, "set_keyframe", json!({"clip_id": e, "property": "x", "time": 2.0, "value": 100.0}));
+    call(&mut ss, "set_keyframe", json!({"clip_id": e, "property": "scale", "time": 0.0, "value": 0.5, "ease": "out_back"}));
+    call(&mut ss, "set_keyframe", json!({"clip_id": e, "property": "scale", "time": 1.0, "value": 1.0}));
+    let t2 = call(&mut ss, "add_track", json!({}))["track_id"].as_str().unwrap().to_string();
+    let p = call(&mut ss, "add_path_shape", json!({"track_id": t2, "start": 0.0, "duration": 2.0, "points": [[-30, 40], [30, 40], [0, 80]], "closed": true, "fill": [0, 0, 1, 1]}))["clip_id"].as_str().unwrap().to_string();
+    call(&mut ss, "set_keyframe", json!({"clip_id": p, "property": "rotation", "time": 0.0, "value": 0.0}));
+    call(&mut ss, "set_keyframe", json!({"clip_id": p, "property": "rotation", "time": 2.0, "value": 90.0}));
+    let r = call(&mut ss, "export_lottie", json!({})); let doc = r["lottie"].clone();
+    assert_eq!(r["layers"], 2, "{r}"); assert_eq!(doc["w"], 320); assert_eq!(doc["fr"], 25.0);
+    assert_eq!(doc["layers"][0]["ty"], 4, "the top track is the first layer");
+    let back = &doc["layers"][1]; assert_eq!(back["ks"]["p"]["x"]["a"], 1, "x is animated"); assert!(back["ks"]["s"]["k"].as_array().unwrap().len() > 5, "out_back is sampled per frame");
+    // import into a fresh project of the same size and compare where things are drawn
+    let mut s2 = fresh(&[]); let ir = call(&mut s2, "import_lottie", json!({"lottie": doc}));
+    assert_eq!(ir["layers"], 2, "{ir}"); assert_eq!(ir["fit_scale"], 1.0);
+    for t in [0.0, 0.7, 1.3, 1.9] {
+        let (a, b) = (frame(&ss, t), frame(&s2, t));
+        let red = |r: f32, g: f32, b: f32| r > 0.6 && g < 0.3 && b < 0.3; let blue = |r: f32, g: f32, b: f32| b > 0.6 && r < 0.3 && g < 0.3;
+        let (ra, rb) = (centroid(&a, &red).unwrap(), centroid(&b, &red).unwrap()); let (ba, bb) = (centroid(&a, &blue).unwrap(), centroid(&b, &blue).unwrap());
+        assert!((ra.0 - rb.0).abs() < 1.5 && (ra.1 - rb.1).abs() < 1.5 && (ra.2 as f64 / rb.2 as f64 - 1.0).abs() < 0.1, "t={t}: the circle matches: {ra:?} vs {rb:?}");
+        assert!((ba.0 - bb.0).abs() < 1.5 && (ba.1 - bb.1).abs() < 1.5 && (ba.2 as f64 / bb.2 as f64 - 1.0).abs() < 0.1, "t={t}: the rotating triangle matches: {ba:?} vs {bb:?}");
+    }
+    let er = dispatch(&mut s2, "import_lottie", &json!({"lottie": {"w": 10}})).unwrap_err(); assert!(er.contains("not a Lottie"), "{er}");
+}
+#[test] fn lottie_import_follows_parents_groups_and_precomps() {
+    // a null that moves right, a parented square inside a group with a static offset, and a precomp holding a solid
+    let doc = json!({"v": "5.7.4", "fr": 25, "ip": 0, "op": 50, "w": 320, "h": 180, "assets": [{"id": "c1", "layers": [{"ty": 1, "ind": 1, "ip": 0, "op": 50, "st": 0, "sc": "#00ff00", "sw": 20, "sh": 20, "ks": {"p": {"a": 0, "k": [10, 10]}, "a": {"a": 0, "k": [10, 10]}}}]}],
+        "layers": [
+            {"ty": 3, "ind": 1, "ip": 0, "op": 50, "st": 0, "ks": {"p": {"a": 1, "k": [{"t": 0, "s": [60, 90], "o": {"x": 0, "y": 0}, "i": {"x": 1, "y": 1}}, {"t": 50, "s": [260, 90]}]}}},
+            {"ty": 4, "ind": 2, "parent": 1, "ip": 0, "op": 50, "st": 0, "ks": {"p": {"a": 0, "k": [0, 0]}},
+             "shapes": [{"ty": "gr", "it": [{"ty": "rc", "p": {"a": 0, "k": [0, 0]}, "s": {"a": 0, "k": [20, 20]}, "r": {"a": 0, "k": 0}}, {"ty": "fl", "c": {"a": 0, "k": [1, 0, 0, 1]}, "o": {"a": 0, "k": 100}}, {"ty": "tr", "p": {"a": 0, "k": [0, -40]}}]}]},
+            {"ty": 0, "ind": 3, "refId": "c1", "ip": 0, "op": 50, "st": 0, "w": 320, "h": 180, "ks": {"p": {"a": 0, "k": [160, 150]}, "a": {"a": 0, "k": [10, 10]}}}]});
+    let mut ss = fresh(&[]); let r = call(&mut ss, "import_lottie", json!({"lottie": doc})); assert_eq!(r["layers"], 2, "{r}");
+    let red = |r: f32, g: f32, b: f32| r > 0.6 && g < 0.3 && b < 0.3; let green = |r: f32, g: f32, b: f32| g > 0.6 && r < 0.3 && b < 0.3;
+    let (a, b) = (centroid(&frame(&ss, 0.0), &red).unwrap(), centroid(&frame(&ss, 1.0), &red).unwrap());
+    assert!((a.0 - 59.5).abs() < 2.0 && (a.1 - 49.5).abs() < 2.0, "the square starts under the null, 40 px up: {a:?}");
+    assert!((b.0 - 159.5).abs() < 2.0, "and follows the null half way across: {b:?}");
+    let g = centroid(&frame(&ss, 0.5), &green).unwrap(); assert!((g.0 - 159.5).abs() < 2.0 && (g.1 - 149.5).abs() < 2.0 && (g.2 as i64 - 400).abs() < 40, "the precomp's solid sits where its layer puts it: {g:?}");
+}
+#[test] fn cube_spin_and_flip_over_turn_between_two_shots() {
+    for kind in ["cube_spin", "flip_over"] {
+        let mut ss = fresh(&[]); let t1 = call(&mut ss, "add_track", json!({}))["track_id"].as_str().unwrap().to_string(); let t2 = call(&mut ss, "add_track", json!({}))["track_id"].as_str().unwrap().to_string();
+        call(&mut ss, "add_shape", json!({"track_id": t1, "shape": "rect", "width": 320, "height": 180, "fill": [1, 0, 0, 1], "start": 0.0, "duration": 4.0}));
+        let b = call(&mut ss, "add_shape", json!({"track_id": t2, "shape": "rect", "width": 320, "height": 180, "fill": [0, 0, 1, 1], "start": 1.0, "duration": 3.0}))["clip_id"].as_str().unwrap().to_string();
+        call(&mut ss, "add_transition", json!({"clip_id": b, "kind": kind, "duration": 1.0, "ease": "linear"}));
+        let red = |r: f32, g: f32, b: f32| r > 0.3 && g < 0.1 && b < 0.1; let blue = |r: f32, g: f32, b: f32| b > 0.3 && r < 0.1 && g < 0.1;
+        let m = frame(&ss, if kind == "cube_spin" { 1.5 } else { 1.3 }); let (nr, nb) = (count(&m, &red), count(&m, &blue));
+        if kind == "cube_spin" { assert!(nr > 2000 && nb > 2000, "{kind}: both faces show mid-way: red {nr} blue {nb}"); } else { assert!(nr > 2000 && nb < 50, "{kind}: the front still shows before half way: red {nr} blue {nb}"); }
+        let total = (320 * 180) as usize; let black = count(&m, &|r, g, b| r + g + b < 0.05); assert!(black > 500 && black < total, "{kind}: the turning card leaves the background showing: {black}");
+        let e = frame(&ss, 2.1); assert!(count(&e, &blue) > total * 99 / 100, "{kind}: ends on the incoming shot");
+    }
+}
+#[test] fn new_audio_effects_build_filters_ffmpeg_accepts() {
+    use kimo_core::editorial::AudioEffect;
+    let fx = vec![AudioEffect::Dehum { frequency: 60.0, harmonics: 4.0, q: 30.0 }, AudioEffect::Delay { delay_ms: 350.0, feedback: 0.4, mix: 0.35 }, AudioEffect::Bandpass { frequency: 1500.0, width: 0.7 },
+        AudioEffect::Chorus { delay_ms: 40.0, depth_ms: 2.0, rate_hz: 0.4, mix: 0.4 }, AudioEffect::Flanger { delay_ms: 2.0, depth_ms: 3.0, regen: 30.0, rate_hz: 0.5 }, AudioEffect::Phaser { rate_hz: 0.5, decay: 0.4 },
+        AudioEffect::Declick { threshold: 2.0 }, AudioEffect::Tremolo { rate_hz: 5.0, depth: 0.5 }];
+    let kinds = registry_ref().iter().find(|c| c.name == "add_audio_effect").unwrap().schema["properties"]["kind"]["enum"].clone(); for k in ["dehum", "delay", "bandpass", "declick"] { assert!(kinds.as_array().unwrap().iter().any(|x| x == k), "{k} in the schema"); }
+    if std::process::Command::new("ffmpeg").arg("-version").output().is_err() { eprintln!("ffmpeg not found; skipping"); return; }
+    for f in &fx { let chain = f.filter();
+        let o = std::process::Command::new("ffmpeg").args(["-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.5", "-af", &chain, "-f", "null", "-"]).output().unwrap();
+        assert!(o.status.success(), "ffmpeg rejects {chain}: {}", String::from_utf8_lossy(&o.stderr)); }
+}
+#[test] fn export_markers_writes_csv_and_youtube_chapters() {
+    let mut ss = fresh(&[]); for (t, n) in [(5.0, "Setup"), (30.0, "The idea, \"quoted\""), (75.5, "Wrap")] { call(&mut ss, "add_marker", json!({"time": t, "name": n})); }
+    let c = call(&mut ss, "export_markers", json!({})); let csv = c["content"].as_str().unwrap();
+    assert!(csv.starts_with("Marker Name,Color,In,Out,Duration") && csv.contains("\"The idea, \"\"quoted\"\"\",") && csv.contains("00:00:30:00"), "{csv}");
+    let y = call(&mut ss, "export_markers", json!({"format": "youtube_chapters"})); let txt = y["content"].as_str().unwrap();
+    assert_eq!(txt, "0:00 Intro\n0:05 Setup\n0:30 The idea, \"quoted\"\n1:15 Wrap\n"); assert!(y["warnings"].as_array().unwrap().iter().any(|w| w.as_str().unwrap().contains("10 s")), "Intro is only 5 s: {y}");
+}
+
+// ---- batch 6: After Effects-class effects (effects_ec.rs)
+#[test] fn every_batch6_effect_applies_through_add_effect_and_renders() {
+    let kinds: Vec<&str> = kimo_core::effects_ec::CATALOG4.iter().map(|c| c.0).collect(); assert!(kinds.len() >= 36, "{}", kinds.len());
+    let listed = dispatch(&mut Session::new(), "list_effects", &json!({})).unwrap(); for k in &kinds { assert!(listed.as_array().unwrap().iter().any(|e| e["kind"] == *k), "{k} is listed"); }
+    let mut unchanged = vec![];
+    for k in &kinds {
+        let mut ss = fresh(&[]); let t = call(&mut ss, "add_track", json!({}))["track_id"].as_str().unwrap().to_string();
+        let a = call(&mut ss, "add_shape", json!({"track_id": t, "shape": "ellipse", "width": 200, "height": 120, "fill": [0.9, 0.3, 0.1, 1], "stroke_width": 6, "stroke_color": [0.1, 0.8, 0.3, 1], "start": 0.0, "duration": 2.0}))["clip_id"].as_str().unwrap().to_string();
+        let before = frame_bytes(&ss, 1.0);
+        let mut args = json!({"clip_id": a, "kind": k}); if *k == "mesh_warp" { args["params"] = json!({"rows": 1, "cols": 1}); args["strings"] = json!({"mesh": "[[0,0],[30,0],[0,0],[0,-20]]"}); }
+        if *k == "color_range" { args["params"] = json!({"u_min": -0.5, "u_max": 0.5, "v_min": 0.2, "v_max": 0.5}); }
+        call(&mut ss, "add_effect", args);
+        let after = frame_bytes(&ss, 1.0); assert!(after.iter().all(|v| v.is_finite()), "{k}: finite pixels");
+        if before == after { unchanged.push(*k); }
+    }
+    // a few are neutral at their defaults on this picture (e.g. key cleaner on a clean matte)
+    assert!(unchanged.len() <= 6, "effects that did nothing at defaults: {unchanged:?}");
+    let mut ss = fresh(&[]); let t = call(&mut ss, "add_track", json!({}))["track_id"].as_str().unwrap().to_string();
+    let a = call(&mut ss, "add_shape", json!({"track_id": t, "shape": "rect", "width": 100, "height": 100, "start": 0.0, "duration": 1.0}))["clip_id"].as_str().unwrap().to_string();
+    let e = dispatch(&mut ss, "add_effect", &json!({"clip_id": a, "kind": "mesh_warp", "params": {"rows": 2, "cols": 2}, "strings": {"mesh": "[[0,0]]"}})).and_then(|_| render::render_frame(&ss.project, 0.5, &render::Cache::new()).map(|_| ()).map_err(|e| e.to_string()));
+    assert!(e.is_err() && format!("{e:?}").contains("needs 9"), "a wrong point count is reported: {e:?}");
+}

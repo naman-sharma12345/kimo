@@ -97,6 +97,18 @@ pub enum AudioEffect {
         attack_ms: f64,
         release_ms: f64,
     },
+    /// Mains hum remover: narrow notches at the hum frequency (50 or 60 Hz) and its harmonics.
+    Dehum { frequency: f64, harmonics: f64, q: f64 },
+    /// Feedback delay (repeats that fade): taps at delay, 2x, 3x, 4x, each `feedback` quieter, mixed in at `mix`.
+    Delay { delay_ms: f64, feedback: f64, mix: f64 },
+    /// Band-pass (telephone, radio, walkie-talkie voice): keeps a band around `frequency`, `width` = Q.
+    Bandpass { frequency: f64, width: f64 },
+    Chorus { delay_ms: f64, depth_ms: f64, rate_hz: f64, mix: f64 },
+    Flanger { delay_ms: f64, depth_ms: f64, regen: f64, rate_hz: f64 },
+    Phaser { rate_hz: f64, decay: f64 },
+    /// Click and crackle removal (vinyl, mouth clicks, digital ticks): a lower `threshold` removes more.
+    Declick { threshold: f64 },
+    Tremolo { rate_hz: f64, depth: f64 },
 }
 /// dB (relative to full scale) to a linear amplitude ratio, for ffmpeg filters (agate/alimiter) that take a linear 0..1 level.
 fn db_to_lin(db: f64) -> f64 { 10f64.powf(db / 20.0) }
@@ -111,6 +123,15 @@ impl AudioEffect {
  Self::Denoise{reduction_db,floor_db}=>format!("afftdn=nr={reduction_db}:nf={floor_db}"),
  Self::NoiseGate{threshold_db,range_db,ratio,attack_ms,release_ms}=>format!("agate=threshold={:.8}:range={:.8}:ratio={ratio}:attack={attack_ms}:release={release_ms}",db_to_lin(*threshold_db),db_to_lin(*range_db)),
  Self::Limiter{ceiling_db,attack_ms,release_ms}=>format!("alimiter=limit={:.8}:attack={attack_ms}:release={release_ms}:level=0",db_to_lin(*ceiling_db).min(1.0)),
+ Self::Dehum{frequency,harmonics,q}=>(1..=(*harmonics as usize).max(1)).map(|i| format!("bandreject=f={}:width_type=q:w={q}", frequency * i as f64)).collect::<Vec<_>>().join(","),
+ Self::Delay{delay_ms,feedback,mix}=>{ let g: Vec<f64> = (0..4).map(|i| mix * feedback.powi(i)).collect(); let sum: f64 = g.iter().sum();
+     format!("aecho=1:{:.6}:{}:{}", 1.0 / (1.0 + 0.5 * sum), (1..=4).map(|i| format!("{}", delay_ms * i as f64)).collect::<Vec<_>>().join("|"), g.iter().map(|v| format!("{:.6}", v.max(0.0001))).collect::<Vec<_>>().join("|")) }
+ Self::Bandpass{frequency,width}=>format!("bandpass=f={frequency}:width_type=q:w={width}"),
+ Self::Chorus{delay_ms,depth_ms,rate_hz,mix}=>format!("chorus=0.7:0.9:{delay_ms}|{}:{:.4}|{:.4}:{rate_hz}|{}:{depth_ms}|{}", delay_ms * 1.3, mix.max(0.0001), (mix * 0.8).max(0.0001), rate_hz * 1.37, depth_ms * 0.8),
+ Self::Flanger{delay_ms,depth_ms,regen,rate_hz}=>format!("flanger=delay={delay_ms}:depth={depth_ms}:regen={regen}:speed={rate_hz}"),
+ Self::Phaser{rate_hz,decay}=>format!("aphaser=speed={rate_hz}:decay={decay}"),
+ Self::Declick{threshold}=>format!("adeclick=t={threshold}"),
+ Self::Tremolo{rate_hz,depth}=>format!("tremolo=f={rate_hz}:d={depth}"),
 }
     }
 }

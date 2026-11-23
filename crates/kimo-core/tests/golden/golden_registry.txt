@@ -3,7 +3,7 @@ add_adjustment_layer 1a618920cefd1a66
 add_arrow 7ac2c615598ce04d
 add_asset 1e486a7df8bb88a6
 add_audio_clip 7b3d9ad166896234
-add_audio_effect 2d6dc2d0fa4ae755
+add_audio_effect f4dee13a056532d0
 add_blur_fill a3c4f9944c2d3a14
 add_box_expand 757e74b37aa0ba37
 add_camera_shake 9a275014886af36b
@@ -19,7 +19,7 @@ add_depth_parallax cc1c6063f0930b13
 add_detection_box e740cc0690940b44
 add_displacement_map be79622940cf29ef
 add_droste_zoom 6613207b378704f2
-add_effect 616999dbd36e7d54
+add_effect 3a407a72e2000644
 add_emitter 163900fc22436efa
 add_glitch_confetti ea3c9845ccf22d20
 add_glow_text 11957bdb81e0bc57
@@ -61,7 +61,7 @@ add_text3d 3d2de7b971b5da8c
 add_text_animator 7c837530f3da76ca
 add_title 9c0f885e596be675
 add_track d3d8f4adba79137a
-add_transition 0f72589dbde5d178
+add_transition eabf9a3c7f068f08
 add_vertigo_zoom 19a177a511ee9471
 add_vfx_graph bba5b2b13d4443f5
 add_watermark b96ec8e068099019
@@ -186,7 +186,9 @@ export_gif e3829ad88866844c
 export_grade_lut c25c05b9400b97b1
 export_high_bit c67d5e5efd756824
 export_job_start 74344231cadf0cab
+export_lottie 1b50ced76d6d74a7
 export_manifest ba5041cada0f270e
+export_markers 83ab1fd59498e78d
 export_ocio_view_video 78b47578708559a2
 export_preset 2584e278d8b503ad
 export_st_map 19270ee3126a2709
@@ -225,6 +227,7 @@ history_list bb1a0f89a5fcc401
 import_clips 4b7b35ef88f7bdfa
 import_edl db0bf7cee5567efc
 import_gltf_surface 2b840ef7d0dd6209
+import_lottie 0a3a5691fcdc5e64
 import_media 71b2675a5298c594
 import_mesh_raw 333cadbf73de6f0d
 import_pixels 90496dc0f91defc9

@@ -856,7 +856,7 @@ fn resolve_memo(p: &Project, c: &Clip, lt: f64) -> Xform {
     let x = resolve_xform(p, c, lt); XMEMO.with(|m| if let Some(h) = m.borrow_mut().as_mut() { h.insert(key, (c.id.clone(), x)); }); x
 }
 /// One field of `resolve_xform`. Without a parent it evaluates only the requested field (same cost and values as the old direct prop read).
-fn xprop(p: &Project, c: &Clip, k: &str, lt: f64) -> f64 {
+pub(crate) fn xprop(p: &Project, c: &Clip, k: &str, lt: f64) -> f64 {
     if c.parent.is_some() { let t = resolve_memo(p, c, lt); return match k { "x" => t.x, "y" => t.y, "scale" => t.scale, "rotation" => t.rotation, _ => t.opacity }; }
     /* xform-lint: ok */ match k { "x" => prop(c, "x", lt), "y" => prop(c, "y", lt), "scale" => prop(c, "scale", lt), "rotation" => prop(c, "rotation", lt), _ => prop(c, "opacity", lt) } }
 fn prop(c: &Clip, k: &str, lt: f64) -> f64 { c.props.get(k).map(|x| x.at(lt)).unwrap_or(0.0) }

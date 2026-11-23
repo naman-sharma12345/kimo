@@ -262,6 +262,8 @@ fn burn_in_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {
 fn list_captions(ss: &mut Session, _: &Value) -> Result<Value, String> {
     Ok(json!(ss.project.editorial.captions))
 }
+/// Every add_audio_effect kind, in schema order.
+const KINDS: &[&str] = &["eq", "compressor", "deesser", "reverb", "denoise", "noise_gate", "limiter", "dehum", "delay", "bandpass", "chorus", "flanger", "phaser", "declick", "tremolo", "biquad", "fir", "mix_matrix"];
 fn add_audio_effect_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let p = a.get("params").cloned().unwrap_or(json!({}));
     let kind = str_arg(a, "kind")?;
@@ -280,7 +282,15 @@ fn add_audio_effect_inner(ss: &mut Session, a: &Value) -> Result<Value, String> 
         "denoise" => &["reduction_db", "floor_db"],
         "noise_gate" => &["threshold_db", "range_db", "ratio", "attack_ms", "release_ms"],
         "limiter" => &["ceiling_db", "attack_ms", "release_ms"],
-        _ => return Err(format!("unknown audio effect '{kind}'; kinds: eq, compressor, deesser, reverb, denoise, noise_gate, limiter, biquad, fir, mix_matrix")),
+        "dehum" => &["frequency", "harmonics", "q"],
+        "delay" => &["delay_ms", "feedback", "mix"],
+        "bandpass" => &["frequency", "width"],
+        "chorus" => &["delay_ms", "depth_ms", "rate_hz", "mix"],
+        "flanger" => &["delay_ms", "depth_ms", "regen", "rate_hz"],
+        "phaser" => &["rate_hz", "decay"],
+        "declick" => &["threshold"],
+        "tremolo" => &["rate_hz", "depth"],
+        _ => return Err(format!("unknown audio effect '{kind}'; kinds: {}", KINDS.join(", "))),
     };
     // valid names with their range and default, so a wrong name is fixed in one retry
     let spec = |k: &str| -> &str { match (kind, k) {
@@ -291,6 +301,14 @@ fn add_audio_effect_inner(ss: &mut Session, a: &Value) -> Result<Value, String> 
         ("denoise", "reduction_db") => "default 12", ("denoise", "floor_db") => "default -50",
         ("noise_gate", "threshold_db") => "-80..0 dBFS, default -40 (signal below this is attenuated)", ("noise_gate", "range_db") => "-100..0 dBFS, default -60 (output level when fully closed)",
         ("noise_gate", "ratio") => "1..9000, default 4", ("noise_gate", "attack_ms") => "0.01..9000, default 20", ("noise_gate", "release_ms") => "0.01..9000, default 250",
+        ("dehum", "frequency") => "50 or 60 Hz (the local mains frequency), default 50", ("dehum", "harmonics") => "1..8 notches (hum, 2x, 3x...), default 4", ("dehum", "q") => "5..100 (higher = narrower notch), default 30",
+        ("delay", "delay_ms") => "20..2000, default 350", ("delay", "feedback") => "0..0.9 (each repeat this much quieter), default 0.4", ("delay", "mix") => "0..1, default 0.35",
+        ("bandpass", "frequency") => "100..8000 Hz, default 1500 (telephone)", ("bandpass", "width") => "Q 0.2..10, default 0.7",
+        ("chorus", "delay_ms") => "10..80, default 40", ("chorus", "depth_ms") => "0.5..10, default 2", ("chorus", "rate_hz") => "0.05..5, default 0.4", ("chorus", "mix") => "0..1, default 0.4",
+        ("flanger", "delay_ms") => "0..30, default 2", ("flanger", "depth_ms") => "0..10, default 3", ("flanger", "regen") => "-95..95 %, default 30", ("flanger", "rate_hz") => "0.1..10, default 0.5",
+        ("phaser", "rate_hz") => "0.1..2, default 0.5", ("phaser", "decay") => "0..0.99, default 0.4",
+        ("declick", "threshold") => "1..100 (lower removes more), default 2",
+        ("tremolo", "rate_hz") => "0.1..20, default 5", ("tremolo", "depth") => "0..1, default 0.5",
         ("limiter", "ceiling_db") => "-40..0 dBFS, default -1 (true ceiling; output never exceeds it)", ("limiter", "attack_ms") => "0.1..80, default 5", ("limiter", "release_ms") => "1..8000, default 50",
         _ => "" } };
     let map = p.as_object().ok_or_else(|| format!("params must be an object; {kind} takes: {}", allowed.iter().map(|k| format!("{k} ({})", spec(k))).collect::<Vec<_>>().join(", ")))?;
@@ -334,6 +352,14 @@ fn add_audio_effect_inner(ss: &mut Session, a: &Value) -> Result<Value, String> 
             attack_ms: f("attack_ms", 5., 0.1, 80.)?,
             release_ms: f("release_ms", 50., 1., 8000.)?,
         },
+        "dehum" => { let fq = f("frequency", 50., 40., 70.)?; AudioEffect::Dehum { frequency: if fq < 55. { 50. } else { 60. }, harmonics: f("harmonics", 4., 1., 8.)?.round(), q: f("q", 30., 5., 100.)? } }
+        "delay" => AudioEffect::Delay { delay_ms: f("delay_ms", 350., 20., 2000.)?, feedback: f("feedback", 0.4, 0., 0.9)?, mix: f("mix", 0.35, 0., 1.)? },
+        "bandpass" => AudioEffect::Bandpass { frequency: f("frequency", 1500., 100., 8000.)?, width: f("width", 0.7, 0.2, 10.)? },
+        "chorus" => AudioEffect::Chorus { delay_ms: f("delay_ms", 40., 10., 80.)?, depth_ms: f("depth_ms", 2., 0.5, 10.)?, rate_hz: f("rate_hz", 0.4, 0.05, 5.)?, mix: f("mix", 0.4, 0., 1.)? },
+        "flanger" => AudioEffect::Flanger { delay_ms: f("delay_ms", 2., 0., 30.)?, depth_ms: f("depth_ms", 3., 0., 10.)?, regen: f("regen", 30., -95., 95.)?, rate_hz: f("rate_hz", 0.5, 0.1, 10.)? },
+        "phaser" => AudioEffect::Phaser { rate_hz: f("rate_hz", 0.5, 0.1, 2.)?, decay: f("decay", 0.4, 0., 0.99)? },
+        "declick" => AudioEffect::Declick { threshold: f("threshold", 2., 1., 100.)? },
+        "tremolo" => AudioEffect::Tremolo { rate_hz: f("rate_hz", 5., 0.1, 20.)?, depth: f("depth", 0.5, 0., 1.)? },
         _ => AudioEffect::Denoise {
             reduction_db: f("reduction_db", 12., 0.01, 97.)?,
             floor_db: f("floor_db", -50., -80., -20.)?,
@@ -920,7 +946,7 @@ pub fn commands() -> Vec<Command> {
  Command{name:"set_caption_style",description:"Apply caption preset to every cue; optional size/y overrides.",mutates:true,schema:obj(vec![("caption_id",s("group")),("style",s("subtitle|boxed|yellow")),("size",n("px")),("y",n("px"))],&["caption_id","style"]),run:set_caption_style},
  Command{name:"edit_caption",description:"Edit caption text, timeline start, or duration.",mutates:true,schema:obj(vec![("clip_id",s("cue")),("text",s("caption text")),("start",n("timeline seconds")),("duration",n("seconds"))],&["clip_id"]),run:edit_caption},
  Command{name:"burn_in",description:"Enable/disable caption group's presence in preview and exports without deleting cues.",mutates:true,schema:obj(vec![("caption_id",s("group")),("enabled",json!({"type":"boolean"}))],&["caption_id","enabled"]),run:burn_in},
- Command{name:"add_audio_effect",description:"Append validated EQ/compressor/deesser/reverb/denoise/noise_gate/limiter or raw biquad (DFII transposed f64 state), fir and stereo mix_matrix. Raw defaults identity; no normalization/clamping. Render/export uses validated FFmpeg filters (noise_gate -> agate, limiter -> alimiter) plus CPU reverb. Reverb is stereo damped-comb/allpass Schroeder; tail cropped to clip duration, reverb applied after FFmpeg effects.",mutates:true,schema:obj(vec![("clip_id",s("media clip")),("kind",json!({"type":"string","enum":["eq","compressor","deesser","reverb","denoise","noise_gate","limiter","biquad","fir","mix_matrix"]})),("params",json!({"type":"object","additionalProperties":true}))],&["clip_id","kind"]),run:add_audio_effect},
+ Command{name:"add_audio_effect",description:"Append validated EQ/compressor/deesser/reverb/denoise/noise_gate/limiter, dehum (mains hum notches at 50/60 Hz and harmonics), delay (fading repeats), bandpass (telephone/radio voice), chorus, flanger, phaser, declick (clicks and crackle) and tremolo, or raw biquad (DFII transposed f64 state), fir and stereo mix_matrix. Raw defaults identity; no normalization/clamping. Render/export uses validated FFmpeg filters (noise_gate -> agate, limiter -> alimiter) plus CPU reverb. Reverb is stereo damped-comb/allpass Schroeder; tail cropped to clip duration, reverb applied after FFmpeg effects.",mutates:true,schema:obj(vec![("clip_id",s("media clip")),("kind",json!({"type":"string","enum":KINDS})),("params",json!({"type":"object","additionalProperties":true}))],&["clip_id","kind"]),run:add_audio_effect},
  Command{name:"remove_audio_effect",description:"Remove effect by zero-based index.",mutates:true,schema:obj(vec![("clip_id",s("clip")),("effect_index",json!({"type":"integer","minimum":0}))],&["clip_id","effect_index"]),run:remove_audio_effect},
  Command{name:"set_audio_pan",description:"Stereo balance -1 left to +1 right; attenuates opposite channel.",mutates:true,schema:obj(vec![("clip_id",s("clip")),("pan",n("-1..1"))],&["clip_id","pan"]),run:set_audio_pan},
  Command{name:"measure_loudness",description:"EBU R128 integrated stereo LUFS and sample peak, plus optional momentary/short-term LUFS curve, loudness range and clipped-sample count. Optional clip_id measures decoded post filters/pre gain; absent measures final timeline mix. Silence or <400ms LUFS returns null. true_peak=true adds 4x sinc reconstruction peak estimate (not certified): BS.1770-4 Annex 2 style 4x oversampling with a 64-tap-per-phase Blackman-windowed sinc, dBTP. curve=momentary|short_term|both adds loudness_curve: ungated EBU Tech 3341 momentary (400 ms) and/or short-term (3 s) LUFS readings every hop_s (0.1..3 s, default 0.1) with each series' max_lufs; payload is about 10 readings per second per series at the default (a 5-min clip is about 3000 per series, ~60 KB), so pass a larger hop_s or max_points (raises hop_s so each series holds at most that many readings) to keep it small. lra=true adds loudness_range per EBU Tech 3342: 3 s readings every lra_hop_s (default 0.1), gates -70 LUFS absolute and -20 LU relative, lra_lu = 95th minus 10th percentile, plus low_lufs/high_lufs. clip_threshold_dbfs (-60..0) adds clipping: channel samples and stereo frames at or above that level. Raw numbers only, no compliance verdict; reference values, not applied: EBU R128 -23 LUFS, streaming about -14 LUFS, -1 dBTP ceiling. Without these arguments the output is unchanged from v5.",mutates:false,schema:obj(vec![("clip_id",s("optional clip")),("true_peak",json!({"type":"boolean","default":false})),("curve",json!({"type":"string","enum":["momentary","short_term","both"],"description":"adds loudness_curve: EBU Tech 3341 momentary (400 ms) / short-term (3 s) LUFS series"})),("hop_s",json!({"type":"number","minimum":0.1,"maximum":3,"description":"curve reading spacing seconds, 0.01 s steps, default 0.1"})),("max_points",json!({"type":"integer","minimum":10,"maximum":100000,"description":"cap readings per curve series; raises hop_s to fit"})),("lra",json!({"type":"boolean","default":false,"description":"adds loudness_range (EBU Tech 3342)"})),("lra_hop_s",json!({"type":"number","minimum":0.1,"maximum":3,"description":"short-term reading spacing for LRA seconds, default 0.1"})),("clip_threshold_dbfs",json!({"type":"number","minimum":-60,"maximum":0,"description":"adds clipping: samples and frames with |x| at or above this level"}))],&[]),run:measure_loudness},
