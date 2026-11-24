@@ -8,7 +8,7 @@ use serde_json::json;
 #[ignore]
 fn preview_effectcraft_effects() {
     let Ok(dir) = std::env::var("KIMO_EC_PREVIEW") else { return };
-    let cases = [("card_dance", json!({})), ("shatter", json!({})), ("wave_world", json!({})), ("particle_emitter_2d", json!({})), ("rainfall", json!({})), ("liquify", json!({})),
+    let cases = [("gaussian_blur", json!({"blurriness": 20})), ("radial_blur", json!({"amount": 30})), ("cross_blur", json!({})), ("camera_lens_blur", json!({"blur_radius": 15})), ("card_dance", json!({})), ("shatter", json!({})), ("wave_world", json!({})), ("particle_emitter_2d", json!({})), ("rainfall", json!({})), ("liquify", json!({})),
         ("page_curl", json!({})), ("hexagonal_tiles", json!({})), ("brush_strokes", json!({})), ("glass_relief", json!({})), ("turbulent_noise", json!({})), ("radial_light_burst", json!({}))];
     for (k, params) in cases {
         let mut ss = Session::new(); dispatch(&mut ss, "project_set", &json!({"width": 640, "height": 360, "fps": 30, "render_quality": "current"})).unwrap();

@@ -703,6 +703,10 @@ fn prepare_window(p: &Project, cache: &mut Cache, t0: f64, t1: f64, window:usize
 pub fn flat_clips(tracks: &[Track], off: f64) -> Vec<Clip> { let mut v = vec![]; for tr in tracks { for c in &tr.clips { let mut cc = Clip::clone(c); cc.start += off; if let Source::Precomp { tracks: inner } = &c.source { let sub = flat_clips(inner, cc.start); cc.source = Source::Adjustment; v.push(cc); v.extend(sub); } else { v.push(cc); } } } v }
 
 fn source_frame(p: &Project, c: &Clip, lt_in: f64, cache: &Cache) -> Frame { source_frame_h(p, c, lt_in, cache).0 }
+/// A clip's own layer frame at clip-local time `lt`, before its effects and transform (ec_bridge: time effects reading other frames).
+pub(crate) fn source_frame_pub(p: &Project, c: &Clip, lt: f64, cache: &Cache) -> Frame { source_frame(p, c, lt, cache) }
+/// Run a list of a clip's effects on a frame (ec_bridge: the effects before a time effect, on a neighbouring frame).
+pub(crate) fn apply_effects_pub(effs: &[crate::model::Effect], f: &mut Frame, lt: f64, seed: u64) -> Result<(), String> { apply_effects_local(effs, f, lt, seed) }
 /// also returns the pixel region (x0,y0,x1,y1 exclusive) outside which the frame is exactly zero, when the source knows it (bounded plain rect)
 fn source_frame_h(p: &Project, c: &Clip, lt_in: f64, cache: &Cache) -> (Frame, Option<(usize, usize, usize, usize)>) {
     let lt = c.display_time(lt_in); let mut hint: Option<(usize, usize, usize, usize)> = None;
@@ -1788,6 +1792,7 @@ fn layer_place(p: &Project, c: &Clip, lt: f64, w: usize, h: usize) -> crate::lay
     pl
 }
 fn apply_effects_masked(p: &Project, c: &Clip, f: &mut Frame, lt: f64, seed: u64, t: f64, cache: &Cache) -> Result<(), String> {
+    let _host = crate::ec_bridge::enter(p, c, t, cache); // bridged EffectCraft effects may read other clips and this clip at other times
     let special = |e: &crate::model::Effect| e.strings.contains_key("mask_layer") || keyer_aux_fx(e) || crate::layerfx::driven(e) || e.kind == "set_channels";
     if !c.effects.iter().any(special) { apply_effects_local(&c.effects, f, lt, seed)?;if let Some(g)=&c.grade_graph{g.apply(f,lt,seed,p.fps)?;}p.grade_scopes.apply_clip(p,&c.id,f,lt,seed)?;return Ok(()); }
     let mut i = 0;

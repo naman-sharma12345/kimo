@@ -882,3 +882,27 @@ fn centroid(f: &kimo_core::effects::Frame, pred: &dyn Fn(f32, f32, f32) -> bool)
         assert_ne!(frame_bytes(&ss, 1.0), before, "{k} with {params} changes the picture");
     }
 }
+
+// ---- batch 8: the bridge's host services (other clips as layer inputs, this clip at other times)
+#[test] fn effectcraft_time_effects_read_earlier_frames() {
+    let mut ss = fresh(&[]); let t = call(&mut ss, "add_track", json!({}))["track_id"].as_str().unwrap().to_string();
+    let a = call(&mut ss, "add_shape", json!({"track_id": t, "shape": "rect", "width": 20, "height": 20, "fill": [1, 1, 1, 1], "start": 0.0, "duration": 2.0}))["clip_id"].as_str().unwrap().to_string();
+    call(&mut ss, "set_keyframe", json!({"clip_id": a, "property": "x", "time": 0.0, "value": -120.0})); call(&mut ss, "set_keyframe", json!({"clip_id": a, "property": "x", "time": 2.0, "value": 120.0}));
+    let g = call(&mut ss, "group_clips", json!({"clip_ids": [a]})); let gid = g["clip_id"].as_str().or_else(|| g["group_id"].as_str()).unwrap_or_else(|| panic!("{g}")).to_string();
+    let lit = |ss: &Session| frame_bytes(ss, 1.0).chunks_exact(4).filter(|c| c[0] + c[1] + c[2] > 0.15).count();
+    let before = lit(&ss); assert!(before > 300, "the square is drawn: {before}");
+    call(&mut ss, "add_effect", json!({"clip_id": gid, "kind": "echo", "params": {"echo_time": -0.1, "number_of_echoes": 4, "decay": 0.8}}));
+    let after = lit(&ss); assert!(after > before * 3, "four echoes trail the moving square: {before} -> {after} px");
+}
+#[test] fn effectcraft_layer_inputs_take_a_clip_id() {
+    let mut ss = fresh(&[]); let t1 = call(&mut ss, "add_track", json!({}))["track_id"].as_str().unwrap().to_string(); let t2 = call(&mut ss, "add_track", json!({}))["track_id"].as_str().unwrap().to_string();
+    let shape = json!({"shape": "ellipse", "width": 160, "height": 100, "fill": [0.2, 0.6, 0.9, 1], "start": 0.0, "duration": 2.0});
+    let mut s1 = shape.clone(); s1["track_id"] = json!(t1); let plate = call(&mut ss, "add_shape", s1)["clip_id"].as_str().unwrap().to_string();
+    let mut s2 = shape.clone(); s2["track_id"] = json!(t2); let top = call(&mut ss, "add_shape", s2)["clip_id"].as_str().unwrap().to_string();
+    let keys = dispatch(&mut Session::new(), "list_effects", &json!({})).unwrap(); let dm = keys.as_array().unwrap().iter().find(|e| e["kind"] == "difference_matte").unwrap().clone();
+    assert!(dm["description"].as_str().unwrap().contains("difference_layer"), "the layer input is documented: {dm}");
+    let top_id = top.clone(); let lit = move |ss: &Session| render::render_clip_alone(&ss.project, &top_id, 1.0, &render::Cache::new()).unwrap().d.chunks_exact(4).filter(|c| c[3] > 0.05).count(); let before = lit(&ss);
+    call(&mut ss, "add_effect", json!({"clip_id": top, "kind": "difference_matte", "strings": {"difference_layer": plate}}));
+    let after = lit(&ss); assert!(after * 20 < before, "matching the same picture keys it all out: {before} -> {after}");
+    let e = dispatch(&mut ss, "add_effect", &json!({"clip_id": top, "kind": "difference_matte", "strings": {"nope": plate}})).unwrap_err(); assert!(e.contains("unknown strings key"), "{e}");
+}

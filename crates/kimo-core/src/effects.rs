@@ -103,7 +103,7 @@ pub const CATALOG: &[(&str, &str, &[(&str, f64, &str)])] = &[
 
 pub fn apply(kind: &str, params: &Params, strings: &BTreeMap<String, String>, f: &mut Frame, t: f64, seed: u64) -> Result<(), String> {
     if let Some(r) = crate::effects_ec::apply(kind, params, strings, f, t, seed) { return r; }
-    if let Some(r) = crate::ec_bridge::apply(kind, params, f, t, seed) { return r; }
+    if let Some(r) = crate::ec_bridge::apply(kind, params, strings, f, t, seed) { return r; }
     if kind == "field_operator" { return crate::noise_fields::apply(params,strings,f,t); }
     if kind == "coherent_noise" { return crate::noise::apply(params,strings,f,t); }
     if ["displace","convolution","grade"].contains(&kind){return crate::shader_ops::apply(kind,params,strings,f,t);}

@@ -16,6 +16,8 @@ FX = [
     "util", "noise", "generate", "keying2", "channel2", "stylize2", "stylize3", "noise2", "noise3", "generate2",
     "perspective2", "distort2", "distort3", "distort4", "blur2", "color2", "color3", "transition2",
     "color_fx", "utility", "file_cache", "generate3", "transition", "sim", "sim2", "card3d", "psim", "ocio", "ocio_config", "sim3",
+    "misc", "distort", "keying", "matte", "channel", "perspective", "controls", "time_fx", "keylight", "blur3", "vr", "utility2",
+    "obsolete", "channel3d", "mocha_shape", "analysis_cache", "crypto_select",
 ]
 
 def read(p): return open(os.path.join(SRC, p), encoding="utf-8").read()
@@ -55,8 +57,9 @@ def paths(s, inner=None):
     s = s.replace("effectcraft_keyframe::Value", "crate::Value").replace("effectcraft_project::ParamUi", "crate::ParamUi")
     s = s.replace("effectcraft_project::cineon_log_to_lin", "crate::cineon_log_to_lin")
     s = re.sub(r"\beffectcraft_(color|raster|geom|track)::", r"crate::\1::", s)
+    s = re.sub(r"(?<![\w:])craft_exr::", "crate::craft_exr::", s)
     if inner:  # a file that was the root of its own crate: its `crate::` is now `crate::<inner>::`
-        s = re.sub(r"\bcrate::(?!(color|raster|geom|track)::)", f"crate::{inner}::", s)
+        s = re.sub(r"\bcrate::(?!(color|raster|geom|track|craft_exr)::)", f"crate::{inner}::", s)
     return s
 
 def main():
@@ -71,11 +74,12 @@ def main():
     write("src/color/mod.rs", HEADER.format(rev=REV, extra="") + paths(strip_tests(read("crates/color/src/lib.rs")), "color"))
     write("src/geom.rs", HEADER.format(rev=REV, extra="") + paths(strip_tests(read("crates/geom/src/lib.rs")), "geom"))
     r = strip_tests(read("crates/raster/src/lib.rs"))
-    r = re.sub(r"^pub mod (channels3d|cuts|flow|inpaint|scopes|warp|yuv);\n", "", r, flags=re.M)
-    r = re.sub(r"^pub use (channels3d|warp)::[^;]*;\n", "", r, flags=re.M)
+    r = re.sub(r"^pub mod (cuts|inpaint|scopes|yuv);\n", "", r, flags=re.M)
     r = re.sub(r"^#!\[[^\]]*\]\n", "", r, flags=re.M)
     write("src/raster/mod.rs", HEADER.format(rev=REV, extra="; only the image, blur and noise parts kept") + paths(r, "raster"))
     write("src/raster/blur.rs", HEADER.format(rev=REV, extra="") + paths(strip_tests(read("crates/raster/src/blur.rs")), "raster"))
+    for name in ["channels3d", "flow", "warp"]:
+        write(f"src/raster/{name}.rs", HEADER.format(rev=REV, extra="") + paths(strip_tests(read(f"crates/raster/src/{name}.rs")), "raster"))
     # effect modules
     for m in FX:
         write(f"src/{m}.rs", HEADER.format(rev=REV, extra="") + paths(strip_tests(read(f"crates/effects/src/{m}.rs"))))
@@ -94,6 +98,16 @@ def main():
     for fn_ in ["parse_spimtx", "parse_spi1d", "parse_spi3d"]:
         ls_ = re.sub(r"(pub fn " + fn_ + r"\(text: &str\) -> Option<\w+> \{)\n.*?\n\}", r"\1\n    let _ = text;\n    None\n}", ls_, count=1, flags=re.S)
     open(lp, "w", encoding="utf-8", newline="\n").write(ls_)
+    # two self-contained files from craft-libs (MIT OR Apache-2.0): EXR channel names and the Cryptomatte hash
+    cl = os.environ.get("CRAFT_LIBS_SRC") or os.path.join(os.path.dirname(SRC), "craft-libs")
+    crev = os.popen(f'git -C "{cl}" rev-parse HEAD').read().strip()
+    chead = (f"// Vendored from craft-libs (https://github.com/storytold/craft-libs, commit {crev}), crates/exr,\n"
+             "// Copyright (c) 2026 ArtCraft Team and the craft-libs contributors, licensed MIT OR Apache-2.0\n"
+             "// (see crates/kimo-ec/NOTICE-craft-libs). Changes for kimo: test modules removed.\n")
+    for f in ["channels", "cryptomatte"]:
+        write(f"src/craft_exr/{f}.rs", chead + strip_tests(open(os.path.join(cl, f"crates/exr/src/{f}.rs"), encoding="utf-8").read()))
+    write("src/craft_exr/mod.rs", chead + "pub mod channels;\npub mod cryptomatte;\n")
+    shutil.copy(os.path.join(cl, "NOTICE"), os.path.join(DST, "NOTICE-craft-libs"))
     # the KLT tracker (used by Rolling Shutter Repair / Warp-style motion measurement)
     for f in ["klt", "plane"]:
         write(f"src/track/{f}.rs", HEADER.format(rev=REV, extra="") + paths(strip_tests(read(f"crates/track/src/{f}.rs")), "track"))
@@ -111,7 +125,6 @@ def main():
     dv = find(r"/// A parameter's default value"); ls = find(r"pub fn layer_source_id") + 3
     core = lines(cat, fl - 1).rsplit("\n///", 1)[0] + "\n\n" + lines(buf, spec_end) + "\n\n" + lines(dv, ls) + "\n"
     # host services kimo does not provide yet
-    core = re.sub(r"\n    /// Auxiliary 3D channels.*?\n    fn aux\(&self\)[^}]*\}\n", "\n", core, flags=re.S)
     core = paths(core)
     mods = "\n".join(f"pub mod {m};" for m in FX)
     specs = "\n".join(f"        v.extend({m}::specs());" for m in FX if re.search(r"^pub (fn specs\(\)|use [^;]*\bspecs\b)", read(f"crates/effects/src/{m}.rs"), re.M))
@@ -125,7 +138,8 @@ pub mod geom;
 pub mod raster;
 pub mod track;
 pub mod textfx;
-pub use raster::Image;
+pub mod craft_exr;
+pub use raster::{{AuxChannels, Image}};
 {mods}
 
 /// A parameter value (EffectCraft's keyframe `Value`, without paths, text and gradients).
@@ -175,6 +189,7 @@ pub fn cineon_log_to_lin(v: f32, black: f32, white: f32, scale: f32, gamma: f32,
 }}
 
 pub use card3d::CompScene;
+pub use color2::Curve;
 pub fn find(id: &str) -> Option<&'static EffectSpec> {{ registry().iter().find(|s| s.id == id) }}
 pub fn apply(spec: &EffectSpec, ctx: &EffectCtx, buf: Buf) -> Buf {{ (spec.render)(ctx, buf) }}
 """

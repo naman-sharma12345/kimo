@@ -124,7 +124,7 @@ pub(super) fn tools(eff_kinds: &[&str]) -> Vec<Command> {
             // a params typo never read). Both are refused, naming the tool, the effect and the key (task brief item b, Naman m:abe1df3d).
             if let Some(o) = a.get("params").and_then(|v| v.as_object()) { for k in o.keys() { if !cat.2.iter().any(|p| p.0 == k.as_str()) {
                 let valid: Vec<&str> = cat.2.iter().map(|p| p.0).collect(); return Err(format!("add_effect: unknown param '{k}' for effect '{kind}': nothing reads it, so it would silently do nothing. Valid params: {}", if valid.is_empty() { "(none)".to_string() } else { valid.join(", ") })); } } }
-            if let Some(o) = a.get("strings").and_then(|v| v.as_object()) { for k in o.keys() { if !crate::effects::STRING_KEYS.contains(&k.as_str()) {
+            if let Some(o) = a.get("strings").and_then(|v| v.as_object()) { for k in o.keys() { if !crate::effects::STRING_KEYS.contains(&k.as_str()) && !crate::ec_bridge::string_keys(&kind).iter().any(|x| x == k) {
                 return Err(format!("add_effect: unknown strings key '{k}' for effect '{kind}': no effect reads it, so it would silently do nothing. String keys effects read: {}", crate::effects::STRING_KEYS.join(", "))); } } }
             let eid = ss.project.gen_id("fx"); let mut params = std::collections::BTreeMap::new();
             let mut strings = std::collections::BTreeMap::new();

@@ -9,6 +9,9 @@
 
 
 pub mod blur;
+pub mod channels3d;
+pub mod flow;
+pub mod warp;
 
 use crate::color::{BlendMode, blend_pixel};
 use rayon::prelude::*;
@@ -17,6 +20,8 @@ pub use blur::{
     RADIAL_BLUR_SAMPLES, box_blur, directional_blur, gaussian_blur, gaussian_blur_exact, gaussian_blur_unbounded, gaussian_blur_unbounded_at,
     gaussian_is_exact, radial_blur, radial_blur_spin_degrees, radial_blur_zoom_scale,
 };
+pub use channels3d::AuxChannels;
+pub use warp::{Sampling, WarpOpts, accumulate_warp, composite_warp, composite_warp_changed, composite_warp_reference, resample};
 
 pub type Px = [f32; 4];
 

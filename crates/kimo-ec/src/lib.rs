@@ -12,7 +12,8 @@ pub mod geom;
 pub mod raster;
 pub mod track;
 pub mod textfx;
-pub use raster::Image;
+pub mod craft_exr;
+pub use raster::{AuxChannels, Image};
 pub mod util;
 pub mod noise;
 pub mod generate;
@@ -43,6 +44,23 @@ pub mod psim;
 pub mod ocio;
 pub mod ocio_config;
 pub mod sim3;
+pub mod misc;
+pub mod distort;
+pub mod keying;
+pub mod matte;
+pub mod channel;
+pub mod perspective;
+pub mod controls;
+pub mod time_fx;
+pub mod keylight;
+pub mod blur3;
+pub mod vr;
+pub mod utility2;
+pub mod obsolete;
+pub mod channel3d;
+pub mod mocha_shape;
+pub mod analysis_cache;
+pub mod crypto_select;
 
 /// A parameter value (EffectCraft's keyframe `Value`, without paths, text and gradients).
 #[derive(Clone, Debug, PartialEq)]
@@ -435,6 +453,13 @@ pub trait EffectHost: Sync {
     fn layer_at(&self, _id: u64, _comp_time: f64, _masks_and_effects: bool) -> Option<LayerPixels> {
         None
     }
+    /// Auxiliary 3D channels (depth, object / material IDs, normals, Cryptomatte, any named
+    /// EXR channel) of the effect's own layer source at the current time, in layer space (see
+    /// [`AuxChannels`]). `None` when the source has none (the 3D Channel effects then pass the
+    /// layer through).
+    fn aux(&self) -> Option<std::sync::Arc<AuxChannels>> {
+        None
+    }
     /// The composition's camera and first light relative to the effect's layer (Card
     /// Dance / Shatter / Card Wipe's Comp Camera and First Comp Light). `None` when unknown.
     fn comp_scene(&self) -> Option<CompScene> {
@@ -624,6 +649,21 @@ pub fn registry() -> &'static [EffectSpec] {
         v.extend(sim2::specs());
         v.extend(ocio::specs());
         v.extend(sim3::specs());
+        v.extend(misc::specs());
+        v.extend(distort::specs());
+        v.extend(keying::specs());
+        v.extend(matte::specs());
+        v.extend(channel::specs());
+        v.extend(perspective::specs());
+        v.extend(controls::specs());
+        v.extend(time_fx::specs());
+        v.extend(keylight::specs());
+        v.extend(blur3::specs());
+        v.extend(vr::specs());
+        v.extend(utility2::specs());
+        v.extend(obsolete::specs());
+        v.extend(channel3d::specs());
+        v.extend(mocha_shape::specs());
         v.sort_by(|a, b| a.category.cmp(b.category).then(a.name.cmp(b.name)));
         v
     })
@@ -644,5 +684,6 @@ pub fn cineon_log_to_lin(v: f32, black: f32, white: f32, scale: f32, gamma: f32,
 }
 
 pub use card3d::CompScene;
+pub use color2::Curve;
 pub fn find(id: &str) -> Option<&'static EffectSpec> { registry().iter().find(|s| s.id == id) }
 pub fn apply(spec: &EffectSpec, ctx: &EffectCtx, buf: Buf) -> Buf { (spec.render)(ctx, buf) }
