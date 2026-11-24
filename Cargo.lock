@@ -1103,6 +1103,8 @@ dependencies = [
 name = "kimo-ec"
 version = "26.11.0"
 dependencies = [
+ "miniz_oxide 0.9.1",
+ "ndarray",
  "rayon",
  "serde",
  "serde_json",

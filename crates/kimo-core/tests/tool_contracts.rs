@@ -906,3 +906,14 @@ fn centroid(f: &kimo_core::effects::Frame, pred: &dyn Fn(f32, f32, f32) -> bool)
     let after = lit(&ss); assert!(after * 20 < before, "matching the same picture keys it all out: {before} -> {after}");
     let e = dispatch(&mut ss, "add_effect", &json!({"clip_id": top, "kind": "difference_matte", "strings": {"nope": plate}})).unwrap_err(); assert!(e.contains("unknown strings key"), "{e}");
 }
+
+// ---- batch 9: tracker and segmentation effects (Object Matte, Warp Stabilizer, 3D Camera Tracker, Face Track)
+#[test] fn object_matte_keeps_the_clicked_object_and_cuts_the_rest() {
+    let mut ss = fresh(&[]); let t1 = call(&mut ss, "add_track", json!({}))["track_id"].as_str().unwrap().to_string(); let t2 = call(&mut ss, "add_track", json!({}))["track_id"].as_str().unwrap().to_string();
+    let bg = call(&mut ss, "add_shape", json!({"track_id": t1, "shape": "rect", "width": 320, "height": 180, "fill": [0.12, 0.14, 0.2, 1], "start": 0.0, "duration": 1.0}))["clip_id"].as_str().unwrap().to_string();
+    let fg = call(&mut ss, "add_shape", json!({"track_id": t2, "shape": "ellipse", "width": 140, "height": 100, "fill": [0.95, 0.6, 0.2, 1], "start": 0.0, "duration": 1.0}))["clip_id"].as_str().unwrap().to_string();
+    let g = call(&mut ss, "group_clips", json!({"clip_ids": [bg, fg]})); let gid = g["clip_id"].as_str().unwrap_or_else(|| panic!("{g}")).to_string();
+    call(&mut ss, "add_effect", json!({"clip_id": gid, "kind": "object_matte", "params": {"object_point_x": 0.5, "object_point_y": 0.5}}));
+    let f = render::render_clip_alone(&ss.project, &gid, 0.5, &render::Cache::new()).unwrap(); let a = |x: usize, y: usize| f.d[(y * f.w + x) * 4 + 3];
+    assert!(a(160, 90) > 0.9, "the clicked ellipse stays: {}", a(160, 90)); assert!(a(10, 10) < 0.1 && a(300, 170) < 0.1, "the background goes: {} {}", a(10, 10), a(300, 170));
+}

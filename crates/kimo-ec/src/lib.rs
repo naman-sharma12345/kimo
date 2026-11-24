@@ -13,6 +13,16 @@ pub mod raster;
 pub mod track;
 pub mod textfx;
 pub mod craft_exr;
+pub mod segment;
+
+/// Standard base64 with padding (the tracker's RLE export used craft-mime for this).
+pub fn base64_encode(data: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut o = String::with_capacity((data.len() + 2) / 3 * 4);
+    for c in data.chunks(3) { let b = [c[0], *c.get(1).unwrap_or(&0), *c.get(2).unwrap_or(&0)]; let n = (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32;
+        for i in 0..4 { if i <= c.len() { o.push(T[(n >> (18 - 6 * i) & 63) as usize] as char); } else { o.push('='); } } }
+    o
+}
 pub use raster::{AuxChannels, Image};
 pub mod util;
 pub mod noise;
@@ -61,6 +71,11 @@ pub mod channel3d;
 pub mod mocha_shape;
 pub mod analysis_cache;
 pub mod crypto_select;
+pub mod roto;
+pub mod object_matte;
+pub mod warp_stab;
+pub mod camera_tracker;
+pub mod face_track;
 
 /// A parameter value (EffectCraft's keyframe `Value`, without paths, text and gradients).
 #[derive(Clone, Debug, PartialEq)]
@@ -664,6 +679,11 @@ pub fn registry() -> &'static [EffectSpec] {
         v.extend(obsolete::specs());
         v.extend(channel3d::specs());
         v.extend(mocha_shape::specs());
+        v.extend(roto::specs());
+        v.extend(object_matte::specs());
+        v.extend(warp_stab::specs());
+        v.extend(camera_tracker::specs());
+        v.extend(face_track::specs());
         v.sort_by(|a, b| a.category.cmp(b.category).then(a.name.cmp(b.name)));
         v
     })

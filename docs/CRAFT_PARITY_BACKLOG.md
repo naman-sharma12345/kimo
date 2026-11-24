@@ -30,9 +30,11 @@ the boxes below marked (7) came from it.
 Batch 8 vendored 17 more of their modules (174 effects bridged in all) and gave the bridge host services: a layer
 input takes a clip id in `strings` (e.g. `difference_layer`), and time effects (Echo, Timewarp, Pixel Motion Blur,
 Time Displacement...) read the clip's own frames at other times. Keylight is registered as Screen Color Key (their
-naming). Still missing: effects that need EffectCraft's property tree (Puppet, Paint), its tracker and segmentation
-crates (Warp Stabilizer, 3D Camera Tracker, Roto Brush, Object Matte, Face Track), its text engine (text effects) and
-its audio renderer (audio effects); 3D channel effects run but kimo layers carry no depth or ID channels yet.
+naming). Batch 9 vendored their tracker and segmentation crates (pure Rust: KLT, planar and camera solves, stabilizer,
+graph-cut segmentation, MobileSAM and MediaPipe inference), bringing Object Matte (click point or box; works with the
+built-in graph-cut engine, no download), Warp Stabilizer, 3D Camera Tracker and Face Track (180 effects bridged).
+Still missing: effects that need EffectCraft's property tree (Puppet, Paint, Roto Brush strokes), its text engine
+(text effects) and its audio renderer (audio effects); MobileSAM weights are not wired to kimo's model downloader yet; 3D channel effects run but kimo layers carry no depth or ID channels yet.
 
 kimo already has many After Effects effects under its own names (blur, glow, curves, levels, keyer,
 choker, wave, ripple, twirl, bulge, polar, offset, motion_tile, four_color_gradient, fractal_noise,
@@ -47,18 +49,18 @@ outer_glow, spill_suppress, luma_key, chroma_key, ...). These are the ones still
 - [x] Smear (7) - [x] Directional Smear (7) - [x] Flexible Bend (7) - [x] Two-Point Bend (7)
 - [x] Split Warp / Dual Split Warp / Dual Lens Warp (7) - [x] Scaled Tiles / Tile Grid (7)
 - [x] Rolling Shutter Repair (7) - [x] Detail-preserving Upscale (7)
-- [ ] Warp Stabilizer as an effect (kimo has the stabilize tool)
+- [x] Warp Stabilizer as an effect (kimo has the stabilize tool) (9)
 
 ### Perspective
 - [x] Cylinder Wrap (6) - [x] Sphere Wrap (6) - [x] Bevel Alpha (6)
 - [x] Bevel Edges (8) - [x] Radial Shadow (8) - [x] Environment Map (7) - [x] Surface Spotlight (8) - [x] 3D Glasses (7)
-- [ ] 3D Camera Tracker (solve, track points, create camera/solids)
+- [x] 3D Camera Tracker (solve, track points, create camera/solids) (9)
 
 ### Keying and matte
 - [x] Linear Color Key (6) - [x] Color Range (6) - [x] Extract (6) - [x] Unmult (6) - [x] Key Cleaner (6)
 - [x] Color Difference Key (8) - [x] Inner/Outer Key (7) - [x] Difference Matte (7) - [x] Line Removal (7)
 - [x] Screen Key / Screen Color Key (8) - [x] Refine Soft Matte / Refine Hard Matte (8)
-- [ ] Object Matte (click/box AI matte as an effect; kimo has roto_subject)
+- [x] Object Matte (click/box AI matte as an effect; kimo has roto_subject) (9)
 - [ ] Tracked Shape Matte - [x] Set Matte (alpha from another layer) (8)
 
 ### Colour
@@ -101,7 +103,7 @@ outer_glow, spill_suppress, luma_key, chroma_key, ...). These are the ones still
 - [x] Hexagonal Tiles (7) - [x] Palette Map (7) - [x] Block Reveal (7) - [x] Edge Tile Repeat (7) - [x] Plastic Shading (7)
 - [ ] Numbers - [ ] Timecode (as effects; kimo has burn_in_timecode)
 - [x] HDR Highlight Compression (7) - [x] Cineon Converter (7) - [x] Out-of-Range Display (7) - [x] Grow Bounds (7)
-- [ ] Face Track Points / Face Measurements
+- [x] Face Track Points / Face Measurements (9)
 - [x] VR Sphere to Plane (8) - [x] VR Color Gradients (8) - [x] VR Digital Glitch (8)
 
 ### Presets

@@ -1,7 +1,7 @@
 // Vendored from EffectCraft (https://github.com/storytold/effectcraft, commit 53f1312448b9d87ddf9d4ec7ce62112a02da6fa9),
 // Copyright (c) 2026 ArtCraft Team and the EffectCraft contributors, licensed MIT OR Apache-2.0
 // (see crates/kimo-ec/LICENSE-MIT, LICENSE-APACHE and NOTICE). Changes for kimo: crate paths
-// rewritten (effectcraft_* -> crate::*), test modules removed.
+// rewritten (effectcraft_* -> crate::*), test modules removed; web_time -> std::time, craft_mime base64 -> crate::base64_encode.
 //! Sparse feature tracking (KLT), clean-room from the published methods:
 //!
 //! - **corners**: the Shi–Tomasi criterion (Shi & Tomasi, "Good Features to Track", CVPR 1994):

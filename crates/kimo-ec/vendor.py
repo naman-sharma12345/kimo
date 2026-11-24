@@ -18,6 +18,7 @@ FX = [
     "color_fx", "utility", "file_cache", "generate3", "transition", "sim", "sim2", "card3d", "psim", "ocio", "ocio_config", "sim3",
     "misc", "distort", "keying", "matte", "channel", "perspective", "controls", "time_fx", "keylight", "blur3", "vr", "utility2",
     "obsolete", "channel3d", "mocha_shape", "analysis_cache", "crypto_select",
+    "roto", "object_matte", "warp_stab", "camera_tracker", "face_track",
 ]
 
 def read(p): return open(os.path.join(SRC, p), encoding="utf-8").read()
@@ -56,11 +57,28 @@ HEADER = """// Vendored from EffectCraft (https://github.com/storytold/effectcra
 def paths(s, inner=None):
     s = s.replace("effectcraft_keyframe::Value", "crate::Value").replace("effectcraft_project::ParamUi", "crate::ParamUi")
     s = s.replace("effectcraft_project::cineon_log_to_lin", "crate::cineon_log_to_lin")
-    s = re.sub(r"\beffectcraft_(color|raster|geom|track)::", r"crate::\1::", s)
+    s = re.sub(r"\beffectcraft_(color|raster|geom|track|segment)::", r"crate::\1::", s)
+    s = re.sub(r"\buse effectcraft_segment\b", "use crate::segment", s)
     s = re.sub(r"(?<![\w:])craft_exr::", "crate::craft_exr::", s)
+    s = s.replace("web_time::", "std::time::")
+    s = s.replace("craft_mime::base64::STANDARD.encode(data)", "crate::base64_encode(data)")
     if inner:  # a file that was the root of its own crate: its `crate::` is now `crate::<inner>::`
-        s = re.sub(r"\bcrate::(?!(color|raster|geom|track|craft_exr)::)", f"crate::{inner}::", s)
+        s = re.sub(r"\bcrate::(?!(color|raster|geom|track|segment|craft_exr)::|base64_encode\b)", f"crate::{inner}::", s)
     return s
+
+def copy_crate(name, extra=""):
+    """A whole EffectCraft crate as module `name`: lib.rs -> mod.rs, every other .rs kept at its path (tests dropped)."""
+    root = os.path.join(SRC, "crates", name, "src")
+    for dp, dn, fn in os.walk(root):
+        dn[:] = [d for d in dn if d != "tests"]
+        for f in fn:
+            if not f.endswith(".rs") or f in ("tests.rs", "bench.rs"): continue
+            rel = os.path.relpath(os.path.join(dp, f), root).replace("\\", "/")
+            out = "mod.rs" if rel == "lib.rs" else rel
+            s = strip_tests(open(os.path.join(dp, f), encoding="utf-8").read())
+            s = re.sub(r"^#!\[[^\]]*\]\n", "", s, flags=re.M)
+            s = re.sub(r"^(pub )?mod bench;\n", "", s, flags=re.M)
+            write(f"src/{name}/{out}", HEADER.format(rev=REV, extra=extra) + paths(s, name))
 
 def main():
     sd = os.path.join(DST, "src")
@@ -108,10 +126,10 @@ def main():
         write(f"src/craft_exr/{f}.rs", chead + strip_tests(open(os.path.join(cl, f"crates/exr/src/{f}.rs"), encoding="utf-8").read()))
     write("src/craft_exr/mod.rs", chead + "pub mod channels;\npub mod cryptomatte;\n")
     shutil.copy(os.path.join(cl, "NOTICE"), os.path.join(DST, "NOTICE-craft-libs"))
-    # the KLT tracker (used by Rolling Shutter Repair / Warp-style motion measurement)
-    for f in ["klt", "plane"]:
-        write(f"src/track/{f}.rs", HEADER.format(rev=REV, extra="") + paths(strip_tests(read(f"crates/track/src/{f}.rs")), "track"))
-    write("src/track/mod.rs", HEADER.format(rev=REV, extra="; only klt and plane kept") + "pub mod klt;\npub mod plane;\n")
+    # the tracker (KLT, planar, stabilizer, camera solve, roto propagation, face) and segmentation (graph cut, MobileSAM,
+    # MediaPipe face landmarks; pure Rust inference) crates
+    copy_crate("track", "; web_time -> std::time, craft_mime base64 -> crate::base64_encode")
+    copy_crate("segment")
     # lib.rs: shared types sliced from the effects crate root
     lib = read("crates/effects/src/lib.rs").split("\n")
     def lines(a, b): return "\n".join(lib[a - 1:b])
@@ -139,6 +157,16 @@ pub mod raster;
 pub mod track;
 pub mod textfx;
 pub mod craft_exr;
+pub mod segment;
+
+/// Standard base64 with padding (the tracker's RLE export used craft-mime for this).
+pub fn base64_encode(data: &[u8]) -> String {{
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut o = String::with_capacity((data.len() + 2) / 3 * 4);
+    for c in data.chunks(3) {{ let b = [c[0], *c.get(1).unwrap_or(&0), *c.get(2).unwrap_or(&0)]; let n = (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32;
+        for i in 0..4 {{ if i <= c.len() {{ o.push(T[(n >> (18 - 6 * i) & 63) as usize] as char); }} else {{ o.push('='); }} }} }}
+    o
+}}
 pub use raster::{{AuxChannels, Image}};
 {mods}
 
@@ -203,6 +231,8 @@ description = "EffectCraft's effects (MIT OR Apache-2.0), vendored for kimo"
 
 [dependencies]
 rayon = "1"
+ndarray = { version = "0.17", default-features = false, features = ["std"] }
+miniz_oxide = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 """)
