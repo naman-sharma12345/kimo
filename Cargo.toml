@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/kimo-core", "crates/kimo-mcp", "crates/kimo-cli"]
+members = ["crates/kimo-core", "crates/kimo-mcp", "crates/kimo-cli", "crates/kimo-ec"]
 
 [workspace.package]
 version = "26.11.0"

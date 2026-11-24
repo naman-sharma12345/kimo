@@ -848,3 +848,37 @@ fn centroid(f: &kimo_core::effects::Frame, pred: &dyn Fn(f32, f32, f32) -> bool)
     let e = dispatch(&mut ss, "add_effect", &json!({"clip_id": a, "kind": "mesh_warp", "params": {"rows": 2, "cols": 2}, "strings": {"mesh": "[[0,0]]"}})).and_then(|_| render::render_frame(&ss.project, 0.5, &render::Cache::new()).map(|_| ()).map_err(|e| e.to_string()));
     assert!(e.is_err() && format!("{e:?}").contains("needs 9"), "a wrong point count is reported: {e:?}");
 }
+
+// ---- batch 7: EffectCraft's effects through the bridge (crates/kimo-ec, src/ec_bridge.rs)
+#[test] fn every_effectcraft_effect_runs_through_add_effect() {
+    let listed = dispatch(&mut Session::new(), "list_effects", &json!({})).unwrap();
+    let kinds: Vec<(String, Vec<String>)> = listed.as_array().unwrap().iter().filter(|e| e["description"].as_str().unwrap_or("").contains("from EffectCraft"))
+        .map(|e| (e["kind"].as_str().unwrap().to_string(), e["params"].as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap().to_string()).collect())).collect();
+    eprintln!("bridged EffectCraft effects: {}: {}", kinds.len(), kinds.iter().map(|k| k.0.as_str()).collect::<Vec<_>>().join(" ")); assert!(kinds.len() >= 80, "{}", kinds.len());
+    let (mut failed, mut unchanged, mut slow) = (vec![], vec![], vec![]);
+    for (k, _) in &kinds {
+        let mut ss = fresh(&[]); let t = call(&mut ss, "add_track", json!({}))["track_id"].as_str().unwrap().to_string();
+        let a = call(&mut ss, "add_shape", json!({"track_id": t, "shape": "ellipse", "width": 200, "height": 120, "fill": [0.9, 0.3, 0.1, 1], "stroke_width": 6, "stroke_color": [0.1, 0.8, 0.3, 1], "start": 0.0, "duration": 2.0}))["clip_id"].as_str().unwrap().to_string();
+        let before = frame_bytes(&ss, 1.0);
+        if let Err(e) = dispatch(&mut ss, "add_effect", &json!({"clip_id": a, "kind": k})) { failed.push(format!("{k}: add_effect: {e}")); continue; }
+        let t0 = std::time::Instant::now();
+        match render::render_frame(&ss.project, 1.0, &render::Cache::new()) {
+            Ok(f) => { if !f.d.iter().all(|v| v.is_finite()) { failed.push(format!("{k}: non-finite pixels")); } if f.d == before { unchanged.push(k.clone()); } }
+            Err(e) => failed.push(format!("{k}: render: {e}")),
+        }
+        if t0.elapsed().as_secs_f64() > 3.0 { slow.push(format!("{k} {:.1}s", t0.elapsed().as_secs_f64())); }
+    }
+    eprintln!("unchanged at defaults ({}): {unchanged:?}", unchanged.len()); eprintln!("slow: {slow:?}");
+    assert!(failed.is_empty(), "{} failed:\n{}", failed.len(), failed.join("\n"));
+    // many After Effects effects are neutral at their defaults (Brightness 0, Liquify with no strokes, wipes at 0 %): see the param test below
+}
+#[test] fn effectcraft_effects_read_kimo_params() {
+    // a parameter set through add_effect reaches the effect: these are neutral at their defaults and change the picture once set
+    for (k, params) in [("brightness_and_contrast", json!({"brightness": 60})), ("slant", json!({"slant": 30})), ("tile_grid", json!({"tile_size": 20, "rotation": 30})), ("color_balance_hls", json!({"hue": 120})), ("iris_wipe", json!({"outer_radius": 60})), ("card_wipe", json!({"completion": 50}))] {
+        let mut ss = fresh(&[]); let t = call(&mut ss, "add_track", json!({}))["track_id"].as_str().unwrap().to_string();
+        let a = call(&mut ss, "add_shape", json!({"track_id": t, "shape": "rect", "width": 300, "height": 160, "fill": [0.9, 0.3, 0.1, 1], "start": 0.0, "duration": 2.0}))["clip_id"].as_str().unwrap().to_string();
+        let before = frame_bytes(&ss, 1.0);
+        if let Err(e) = dispatch(&mut ss, "add_effect", &json!({"clip_id": a, "kind": k, "params": params})) { panic!("{k}: {e}"); }
+        assert_ne!(frame_bytes(&ss, 1.0), before, "{k} with {params} changes the picture");
+    }
+}

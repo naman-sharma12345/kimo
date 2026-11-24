@@ -72,6 +72,7 @@ pub mod titles;
 pub mod transitions;
 pub mod transitions3d;
 pub mod effects_ec;
+pub mod ec_bridge;
 pub mod audio;
 pub mod perception;
 pub mod assets;

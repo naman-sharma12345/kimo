@@ -121,6 +121,8 @@ pub fn catalog3() -> &'static [Entry] {
         v.extend(controls_v7::catalog());
         v.extend(crate::keying::catalog4());
         v.extend_from_slice(crate::effects_ec::CATALOG4);
+        let existing: std::collections::BTreeSet<String> = crate::effects::CATALOG.iter().map(|c| c.0).chain(crate::effects2::CATALOG2.iter().map(|c| c.0)).chain(v.iter().map(|c| c.0)).map(String::from).collect();
+        v.extend(crate::ec_bridge::catalog(&existing));
         v
     })
 }

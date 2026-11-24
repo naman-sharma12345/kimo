@@ -1082,6 +1082,7 @@ dependencies = [
  "ffmpeg-next",
  "gltf",
  "isosurface",
+ "kimo-ec",
  "mikktspace",
  "nalgebra",
  "opensubdiv-rs",
@@ -1096,6 +1097,15 @@ dependencies = [
  "tract-onnx",
  "ureq",
  "wgpu",
+]
+
+[[package]]
+name = "kimo-ec"
+version = "26.11.0"
+dependencies = [
+ "rayon",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
