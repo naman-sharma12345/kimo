@@ -264,9 +264,35 @@ fn list_captions(ss: &mut Session, _: &Value) -> Result<Value, String> {
 }
 /// Every add_audio_effect kind, in schema order.
 const KINDS: &[&str] = &["eq", "compressor", "deesser", "reverb", "denoise", "noise_gate", "limiter", "dehum", "delay", "bandpass", "chorus", "flanger", "phaser", "declick", "tremolo", "biquad", "fir", "mix_matrix"];
+/// FilmCraft's audio effects (crate kimo_fc_audio) as add_audio_effect kinds: the effect id, with `_dsp` added where kimo
+/// already has an ffmpeg-based kind of that name. Parameter names are the effect's ids with dots as underscores.
+pub fn dsp_kinds() -> Vec<(String, &'static kimo_fc_audio::EffectInfo)> {
+    kimo_fc_audio::effects().iter().filter(|e| e.id != "loudness_meter").map(|e| (if KINDS[..15].contains(&e.id) { format!("{}_dsp", e.id) } else { e.id.to_string() }, e)).collect()
+}
+fn dsp_param_doc(s: &kimo_fc_audio::ParamSpec) -> String {
+    use kimo_fc_audio::Unit as U;
+    let unit = match s.unit { U::Decibels => " dB", U::Hertz => " Hz", U::Milliseconds => " ms", U::Seconds => " s", U::Percent => " %", U::Semitones => " semitones", U::Ratio => ":1", U::Bpm => " BPM", _ => "" };
+    if !s.choices.is_empty() { format!("{}: {} (default {})", s.id.replace('.', "_"), s.choices.iter().enumerate().map(|(i, c)| format!("{i} {c}")).collect::<Vec<_>>().join(", "), s.default) }
+    else if s.unit == U::Toggle { format!("{} 0/1 (default {})", s.id.replace('.', "_"), s.default) }
+    else { format!("{} {}..{}{unit} (default {})", s.id.replace('.', "_"), s.min, s.max, s.default) }
+}
+fn add_dsp_effect(ss: &mut Session, a: &Value, info: &'static kimo_fc_audio::EffectInfo, kind: &str) -> Result<Value, String> {
+    let p = a.get("params").cloned().unwrap_or(json!({})); let map = p.as_object().ok_or("params must be an object")?;
+    let mut params = std::collections::BTreeMap::new();
+    for (k, v) in map {
+        let Some(spec) = info.params.iter().find(|s| s.id.replace('.', "_") == *k) else { return Err(format!("unknown {kind} parameter {k}; {kind} takes: {}", info.params.iter().map(dsp_param_doc).collect::<Vec<_>>().join(", "))) };
+        let x = v.as_f64().filter(|x| x.is_finite()).ok_or_else(|| format!("{kind}.{k} must be a number"))?;
+        if (x as f32) < spec.min - 1e-6 || (x as f32) > spec.max + 1e-6 { return Err(format!("{kind}.{k} must be {}..{}, got {x}", spec.min, spec.max)); }
+        params.insert(spec.id.to_string(), x);
+    }
+    let c = get(ss, a)?; if !matches!(c.source, Source::Media { .. }) { return Err("audio effects require media clip".into()); }
+    c.audio.effects.push(AudioEffect::Dsp { id: info.id.to_string(), params: params.clone() });
+    Ok(json!({"kind": kind, "effect": info.name, "params": params, "index": c.audio.effects.len() - 1}))
+}
 fn add_audio_effect_inner(ss: &mut Session, a: &Value) -> Result<Value, String> {
     let p = a.get("params").cloned().unwrap_or(json!({}));
     let kind = str_arg(a, "kind")?;
+    if let Some((_, info)) = dsp_kinds().into_iter().find(|(k, _)| k == kind) { return add_dsp_effect(ss, a, info, kind); }
     if ["biquad","fir","mix_matrix"].contains(&kind){let e=crate::ext::audio_filters::parse_effect(kind,&p)?;let c=get(ss,a)?;if !matches!(c.source,Source::Media{..}){return Err("audio effects require media clip".into());}c.audio.effects.push(e);return Ok(json!({"effect_index":c.audio.effects.len()-1}));}
     let allowed: &[&str] = match kind {
         "eq" => &["frequency", "width", "gain_db"],
@@ -290,7 +316,7 @@ fn add_audio_effect_inner(ss: &mut Session, a: &Value) -> Result<Value, String> 
         "phaser" => &["rate_hz", "decay"],
         "declick" => &["threshold"],
         "tremolo" => &["rate_hz", "depth"],
-        _ => return Err(format!("unknown audio effect '{kind}'; kinds: {}", KINDS.join(", "))),
+        _ => return Err(format!("unknown audio effect '{kind}'; kinds: {}, {}", KINDS.join(", "), dsp_kinds().iter().map(|k| k.0.as_str()).collect::<Vec<_>>().join(", "))),
     };
     // valid names with their range and default, so a wrong name is fixed in one retry
     let spec = |k: &str| -> &str { match (kind, k) {
@@ -946,7 +972,7 @@ pub fn commands() -> Vec<Command> {
  Command{name:"set_caption_style",description:"Apply caption preset to every cue; optional size/y overrides.",mutates:true,schema:obj(vec![("caption_id",s("group")),("style",s("subtitle|boxed|yellow")),("size",n("px")),("y",n("px"))],&["caption_id","style"]),run:set_caption_style},
  Command{name:"edit_caption",description:"Edit caption text, timeline start, or duration.",mutates:true,schema:obj(vec![("clip_id",s("cue")),("text",s("caption text")),("start",n("timeline seconds")),("duration",n("seconds"))],&["clip_id"]),run:edit_caption},
  Command{name:"burn_in",description:"Enable/disable caption group's presence in preview and exports without deleting cues.",mutates:true,schema:obj(vec![("caption_id",s("group")),("enabled",json!({"type":"boolean"}))],&["caption_id","enabled"]),run:burn_in},
- Command{name:"add_audio_effect",description:"Append validated EQ/compressor/deesser/reverb/denoise/noise_gate/limiter, dehum (mains hum notches at 50/60 Hz and harmonics), delay (fading repeats), bandpass (telephone/radio voice), chorus, flanger, phaser, declick (clicks and crackle) and tremolo, or raw biquad (DFII transposed f64 state), fir and stereo mix_matrix. Raw defaults identity; no normalization/clamping. Render/export uses validated FFmpeg filters (noise_gate -> agate, limiter -> alimiter) plus CPU reverb. Reverb is stereo damped-comb/allpass Schroeder; tail cropped to clip duration, reverb applied after FFmpeg effects.",mutates:true,schema:obj(vec![("clip_id",s("media clip")),("kind",json!({"type":"string","enum":KINDS})),("params",json!({"type":"object","additionalProperties":true}))],&["clip_id","kind"]),run:add_audio_effect},
+ Command{name:"add_audio_effect",description:"Append an audio effect. FilmCraft's in-process DSP (no ffmpeg): parametric_eq, simple_eq, gate, pitch_shifter, dereverb, speech_enhance, multiband_compressor, tube_compressor, mastering, vocal_enhancer, click_remover, convolution_reverb, stereo_width, distortion and more (params: the effect's ids, dots as underscores; an unknown name lists them with ranges), plus compressor_dsp, reverb_dsp, denoise_dsp, deesser_dsp, limiter_dsp, dehum_dsp, delay_dsp, flanger_dsp, phaser_dsp. Also validated ffmpeg EQ/compressor/deesser/reverb/denoise/noise_gate/limiter, dehum (mains hum notches at 50/60 Hz and harmonics), delay (fading repeats), bandpass (telephone/radio voice), chorus, flanger, phaser, declick (clicks and crackle) and tremolo, or raw biquad (DFII transposed f64 state), fir and stereo mix_matrix. Raw defaults identity; no normalization/clamping. Render/export uses validated FFmpeg filters (noise_gate -> agate, limiter -> alimiter) plus CPU reverb. Reverb is stereo damped-comb/allpass Schroeder; tail cropped to clip duration, reverb applied after FFmpeg effects.",mutates:true,schema:obj(vec![("clip_id",s("media clip")),("kind",json!({"type":"string","enum":KINDS.iter().map(|k| k.to_string()).chain(dsp_kinds().into_iter().map(|k| k.0)).collect::<Vec<_>>()})),("params",json!({"type":"object","additionalProperties":true}))],&["clip_id","kind"]),run:add_audio_effect},
  Command{name:"remove_audio_effect",description:"Remove effect by zero-based index.",mutates:true,schema:obj(vec![("clip_id",s("clip")),("effect_index",json!({"type":"integer","minimum":0}))],&["clip_id","effect_index"]),run:remove_audio_effect},
  Command{name:"set_audio_pan",description:"Stereo balance -1 left to +1 right; attenuates opposite channel.",mutates:true,schema:obj(vec![("clip_id",s("clip")),("pan",n("-1..1"))],&["clip_id","pan"]),run:set_audio_pan},
  Command{name:"measure_loudness",description:"EBU R128 integrated stereo LUFS and sample peak, plus optional momentary/short-term LUFS curve, loudness range and clipped-sample count. Optional clip_id measures decoded post filters/pre gain; absent measures final timeline mix. Silence or <400ms LUFS returns null. true_peak=true adds 4x sinc reconstruction peak estimate (not certified): BS.1770-4 Annex 2 style 4x oversampling with a 64-tap-per-phase Blackman-windowed sinc, dBTP. curve=momentary|short_term|both adds loudness_curve: ungated EBU Tech 3341 momentary (400 ms) and/or short-term (3 s) LUFS readings every hop_s (0.1..3 s, default 0.1) with each series' max_lufs; payload is about 10 readings per second per series at the default (a 5-min clip is about 3000 per series, ~60 KB), so pass a larger hop_s or max_points (raises hop_s so each series holds at most that many readings) to keep it small. lra=true adds loudness_range per EBU Tech 3342: 3 s readings every lra_hop_s (default 0.1), gates -70 LUFS absolute and -20 LU relative, lra_lu = 95th minus 10th percentile, plus low_lufs/high_lufs. clip_threshold_dbfs (-60..0) adds clipping: channel samples and stereo frames at or above that level. Raw numbers only, no compliance verdict; reference values, not applied: EBU R128 -23 LUFS, streaming about -14 LUFS, -1 dBTP ceiling. Without these arguments the output is unchanged from v5.",mutates:false,schema:obj(vec![("clip_id",s("optional clip")),("true_peak",json!({"type":"boolean","default":false})),("curve",json!({"type":"string","enum":["momentary","short_term","both"],"description":"adds loudness_curve: EBU Tech 3341 momentary (400 ms) / short-term (3 s) LUFS series"})),("hop_s",json!({"type":"number","minimum":0.1,"maximum":3,"description":"curve reading spacing seconds, 0.01 s steps, default 0.1"})),("max_points",json!({"type":"integer","minimum":10,"maximum":100000,"description":"cap readings per curve series; raises hop_s to fit"})),("lra",json!({"type":"boolean","default":false,"description":"adds loudness_range (EBU Tech 3342)"})),("lra_hop_s",json!({"type":"number","minimum":0.1,"maximum":3,"description":"short-term reading spacing for LRA seconds, default 0.1"})),("clip_threshold_dbfs",json!({"type":"number","minimum":-60,"maximum":0,"description":"adds clipping: samples and frames with |x| at or above this level"}))],&[]),run:measure_loudness},

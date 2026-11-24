@@ -1083,6 +1083,7 @@ dependencies = [
  "gltf",
  "isosurface",
  "kimo-ec",
+ "kimo-fc-audio",
  "mikktspace",
  "nalgebra",
  "opensubdiv-rs",
@@ -1109,6 +1110,10 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "kimo-fc-audio"
+version = "26.11.0"
 
 [[package]]
 name = "kimo-mcp"

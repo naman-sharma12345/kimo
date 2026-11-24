@@ -136,7 +136,7 @@ outer_glow, spill_suppress, luma_key, chroma_key, ...). These are the ones still
 - [ ] Relative paths and relinking when a project moves
 
 ## 5. Audio engine
-- [ ] Own DSP chain (no ffmpeg filters): parametric EQ, dynamics, multiband, reverbs, pitch, restoration
+- [x] Own DSP chain (no ffmpeg filters): parametric EQ, dynamics, multiband, reverbs, pitch, restoration (10: FilmCraft's audio-dsp vendored as crates/kimo-fc-audio; its 42 effects are add_audio_effect kinds, run in process on the clip PCM with latency compensation; kinds that clash with kimo's ffmpeg ones end in _dsp)
 - [ ] Mixer: track faders and pan, buses, sends, submixes, insert slots, latency compensation
 - [ ] Automation modes (Read, Latch, Touch, Write) recorded from the mixer
 - [ ] 5.1 surround mixing and export

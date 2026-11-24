@@ -917,3 +917,26 @@ fn centroid(f: &kimo_core::effects::Frame, pred: &dyn Fn(f32, f32, f32) -> bool)
     let f = render::render_clip_alone(&ss.project, &gid, 0.5, &render::Cache::new()).unwrap(); let a = |x: usize, y: usize| f.d[(y * f.w + x) * 4 + 3];
     assert!(a(160, 90) > 0.9, "the clicked ellipse stays: {}", a(160, 90)); assert!(a(10, 10) < 0.1 && a(300, 170) < 0.1, "the background goes: {} {}", a(10, 10), a(300, 170));
 }
+
+// ---- batch 10: FilmCraft's audio DSP (crates/kimo-fc-audio) as add_audio_effect kinds
+fn sine(hz: f64, secs: f64) -> Vec<f32> { (0..(48000.0 * secs) as usize).flat_map(|i| { let v = (0.3 * (std::f64::consts::TAU * hz * i as f64 / 48000.0).sin()) as f32; [v, v] }).collect() }
+fn zero_crossings_hz(pcm: &[f32]) -> f64 { let l: Vec<f32> = pcm.chunks_exact(2).map(|p| p[0]).skip(9600).collect(); let n = l.windows(2).filter(|w| w[0] <= 0.0 && w[1] > 0.0).count(); n as f64 / (l.len() as f64 / 48000.0) }
+#[test] fn every_filmcraft_audio_effect_processes_audio() {
+    let kinds = kimo_core::ext::editorial_tools::dsp_kinds(); assert!(kinds.len() >= 40, "{}", kinds.len());
+    let mut silent = vec![];
+    for (k, info) in &kinds {
+        let mut pcm = sine(440.0, 1.0); let n = pcm.len();
+        kimo_core::editorial::process_dsp(&mut pcm, info.id, &Default::default()).unwrap_or_else(|e| panic!("{k}: {e}"));
+        assert_eq!(pcm.len(), n, "{k}: length kept"); assert!(pcm.iter().all(|v| v.is_finite()), "{k}: finite samples");
+        let rms = (pcm.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / n as f64).sqrt(); if rms < 1e-4 { silent.push(k.clone()); }
+    }
+    assert!(silent.iter().all(|k| k == "mute"), "only mute goes silent at defaults: {silent:?}");
+    // a parameter reaches the effect: an octave up doubles the pitch
+    let mut pcm = sine(220.0, 1.0); let mut p = std::collections::BTreeMap::new(); p.insert("semitones".to_string(), 12.0);
+    if kimo_core::editorial::process_dsp(&mut pcm, "pitch_shifter", &p).is_ok() { let hz = zero_crossings_hz(&pcm); assert!((hz - 440.0).abs() < 25.0, "pitch_shifter +12 st: {hz} Hz"); }
+    // the tool validates names and ranges before touching the clip, listing what the effect takes
+    let mut ss = fresh(&[]); let e = dispatch(&mut ss, "add_audio_effect", &json!({"clip_id": "x", "kind": "parametric_eq", "params": {"nope": 1}})).unwrap_err();
+    assert!(e.contains("unknown parametric_eq parameter nope") && e.contains("Hz"), "{e}");
+    let kinds_enum = registry_ref().iter().find(|c| c.name == "add_audio_effect").unwrap().schema["properties"]["kind"]["enum"].clone();
+    for k in ["parametric_eq", "mastering", "compressor_dsp", "eq", "dehum"] { assert!(kinds_enum.as_array().unwrap().iter().any(|x| x == k), "{k} in the schema"); }
+}

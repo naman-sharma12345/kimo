@@ -1,0 +1,826 @@
+// Vendored from FilmCraft (https://github.com/storytold/filmcraft, commit 25979b15a419d4457fb67ea5e10c1a15d2e56b62), crates/audio-dsp,
+// Copyright (c) 2026 ArtCraft Team and the FilmCraft contributors, licensed MIT OR Apache-2.0
+// (see crates/kimo-fc-audio/LICENSE-MIT, LICENSE-APACHE and NOTICE). Changes for kimo: test modules removed.
+//! Music remix: retime a piece of music to a target duration by cutting it at musically similar
+//! beat boundaries (Clip ▸ Remix).
+//!
+//! ```text
+//! mono mix ─► STFT (≈46 ms Hann, ¼ hop) ─► log-magnitude spectral flux = onset envelope
+//!          ─► tempo: autocorrelation of the envelope, 50–200 BPM, log-Gaussian prior at 120 BPM
+//!          ─► beats: dynamic programming (onset strength + penalty on beat-to-beat deviation
+//!             from the period, squared log ratio), backtracked from the strongest end
+//!          ─► per beat: 12-bin chroma and 12 mel cepstra (26 mel bands, DCT-II, c0 dropped)
+//!          ─► beat self-similarity S(i, j) = 0.6 · cos(chroma) + 0.4 · (1 + cos(z-scored cepstra)) / 2
+//! plan:  output = piece₀ ⧺ piece₁ ⧺ … ⧺ piece_k; each joint leaves the source at a beat boundary
+//!        b_i and continues at another beat boundary b_j, chosen where the context of the jump
+//!        (the beats before and after) is most similar: J(i, j) = mean of S along the diagonals
+//!        through (i, j) over `CONTEXT` beats on both sides.
+//! render: pieces concatenated with an equal-power crossfade centred on every joint.
+//! ```
+//!
+//! **Parameters** (Premiere's Remix "Segments" and "Variations" sliders; our own semantics):
+//!
+//! | parameter | range | default | meaning |
+//! |---|---|---|---|
+//! | segments | 0 … 100 | 50 | number of joints: 0–33 → 1, 34–67 → 2, 68–100 → 3 (more when a long extension needs them) |
+//! | variations | 0 … 100 | 50 | how far from the evenly spaced positions a joint may move to find a better match: ±(1 + 7·v/100) beats |
+//!
+//! The first piece starts at the beginning of the source and the last ends at its end (intro and
+//! outro are kept). The plan length is within half a beat of the target whenever the beat grid
+//! allows it, always within one beat. Everything is deterministic: the same audio, target and
+//! parameters give the same plan.
+//!
+//! Positions are in samples of the analysed signal (`i64`).
+
+use crate::fft::Fft;
+
+/// Beats of context on each side of a joint that the similarity looks at.
+pub const CONTEXT: usize = 4;
+/// Shortest piece, in beats (no stutter edits).
+pub const MIN_PIECE_BEATS: usize = 4;
+/// Crossfade at each joint (seconds).
+pub const XFADE_S: f64 = 0.02;
+/// Long enough for a complete music cue while bounding the audio decoded and analysed by Remix.
+pub const MAX_ANALYSIS_SECONDS: u64 = 10 * 60;
+/// A dense similarity matrix is useful for planning, but must remain a bounded allocation.
+const MAX_SIMILARITY_CELLS: usize = 4_000_000;
+/// Remix analysis supports ordinary production and high-resolution audio rates, not arbitrary
+/// integers supplied through a public library API.
+pub const MAX_ANALYSIS_SAMPLE_RATE: u32 = 384_000;
+/// Most pieces a plan may have. A planned remix has a handful of joints (a few hundred for a very
+/// long extension); a stored plan with more is damaged or hostile.
+pub const MAX_PIECES: usize = 65_536;
+/// The longest a project may run, in seconds, rounded up: `Tick::MAX` (`i64::MAX / 4` ticks at 254 016 000 000
+/// ticks/s) is 9.08 million seconds. (This crate has no dependencies, so the figure is repeated here.)
+const MAX_PROJECT_SECONDS: i64 = 9_100_000;
+/// Most output samples a plan may describe: the longest project at the highest rate remix supports, so no
+/// valid plan reaches it. A render reads at most two pieces per output sample it produces, so the work of
+/// rendering a playable plan is bounded by its output samples, whatever the piece count.
+pub const MAX_OUTPUT_SAMPLES: i64 = MAX_ANALYSIS_SAMPLE_RATE as i64 * MAX_PROJECT_SECONDS;
+
+/// One piece of the output: `len` samples read from the source at `src`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Piece {
+    pub src: i64,
+    pub len: i64,
+}
+
+/// A remix: pieces played one after the other, crossfaded over `xfade` samples at the joints.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Plan {
+    pub pieces: Vec<Piece>,
+    pub xfade: i64,
+}
+
+impl Plan {
+    /// The plan that plays the source unchanged.
+    pub fn identity(len: i64, xfade: i64) -> Plan {
+        Plan { pieces: vec![Piece { src: 0, len }], xfade }
+    }
+    /// Output length (samples).
+    pub fn len(&self) -> i64 {
+        self.pieces.iter().map(|p| p.len).sum()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    /// Output position of each joint (the start of every piece after the first).
+    pub fn joints(&self) -> Vec<i64> {
+        let mut out = Vec::new();
+        let mut d = 0;
+        for p in &self.pieces[..self.pieces.len().saturating_sub(1)] {
+            d += p.len;
+            out.push(d);
+        }
+        out
+    }
+    /// The source positions each joint cuts at: (end of the outgoing piece, start of the incoming one).
+    pub fn cuts(&self) -> Vec<(i64, i64)> {
+        self.pieces.windows(2).map(|w| (w[0].src + w[0].len, w[1].src)).collect()
+    }
+    /// Whether playback can follow this plan with bounded work: at most [`MAX_PIECES`] pieces and [`MAX_OUTPUT_SAMPLES`] output samples, a
+    /// non-negative crossfade, non-negative lengths, and, when there are joints, every piece at
+    /// least as long as the crossfade and non-empty. Then no more than two pieces contribute to any
+    /// output sample, and every position [`render`] computes fits in `i64`.
+    pub fn is_playable(&self) -> bool {
+        self.is_playable_within(MAX_OUTPUT_SAMPLES)
+    }
+    /// [`Self::is_playable`] with the output limit in the plan's own units: a plan stored in ticks
+    /// (see `filmcraft-render`'s `Remix`) passes the project's longest duration in ticks instead.
+    pub fn is_playable_within(&self, max_output: i64) -> bool {
+        if self.pieces.is_empty() || self.pieces.len() > MAX_PIECES || self.xfade < 0 {
+            return false;
+        }
+        let joined = self.pieces.len() > 1;
+        let x = self.xfade;
+        let mut total = 0i64;
+        for p in &self.pieces {
+            if p.len < 0 || (joined && (p.len == 0 || p.len < x)) {
+                return false;
+            }
+            // render reads from `src − xfade/2` to `src + len + xfade/2`
+            if p.src.checked_sub(x).is_none() || p.src.checked_add(p.len).and_then(|e| e.checked_add(x)).is_none() {
+                return false;
+            }
+            match total.checked_add(p.len) {
+                Some(t) if t <= max_output => total = t,
+                _ => return false,
+            }
+        }
+        total.checked_add(x).is_some()
+    }
+}
+
+/// Remix sliders (see the module documentation).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Params {
+    pub segments: f64,
+    pub variations: f64,
+}
+
+impl Default for Params {
+    fn default() -> Self {
+        Params { segments: 50.0, variations: 50.0 }
+    }
+}
+
+/// What the planner needs to know about the music.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Analysis {
+    pub sample_rate: u32,
+    /// Source length (samples).
+    pub len: i64,
+    /// Beat positions (samples), increasing.
+    pub beats: Vec<i64>,
+    /// Beat period (samples).
+    pub period: f64,
+    /// Tempo (beats per minute).
+    pub bpm: f64,
+    /// Beat self-similarity, `beats.len()²`, row-major; beat `i` is `[beats[i], beats[i + 1])`
+    /// (the last runs to the end).
+    pub sim: Vec<f32>,
+}
+
+impl Analysis {
+    pub fn sim(&self, i: usize, j: usize) -> f32 {
+        let m = self.beats.len();
+        self.sim[i * m + j]
+    }
+
+    /// How well a jump from beat boundary `i` (the source is left there) to beat boundary `j`
+    /// (playback continues there) fits: mean similarity of the beats after `i` and after `j`, and
+    /// of the beats before them, over [`CONTEXT`] beats. 0 … 1.
+    pub fn jump_score(&self, i: usize, j: usize) -> f32 {
+        let m = self.beats.len();
+        let (mut s, mut n) = (0f32, 0f32);
+        for k in 0..CONTEXT {
+            if i + k < m && j + k < m {
+                s += self.sim(i + k, j + k);
+                n += 1.0;
+            }
+            if i > k && j > k {
+                s += self.sim(i - 1 - k, j - 1 - k);
+                n += 1.0;
+            }
+        }
+        if n > 0.0 { s / n } else { 0.0 }
+    }
+}
+
+/// Why music cannot be remixed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RemixError {
+    /// The source sample rate is zero or above the supported analysis limit.
+    InvalidSampleRate,
+    /// The source would exceed the bounded Remix analysis duration.
+    TooLong,
+    /// The detected beat grid would need too much similarity storage or work.
+    TooComplex,
+    /// Not enough rhythmic content to find a beat (silence, noise, speech).
+    NoBeat,
+    /// The source has fewer beats than a remix needs.
+    TooShort,
+    /// The target is shorter than the intro and outro the remix keeps.
+    TargetTooShort,
+}
+
+impl std::fmt::Display for RemixError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            RemixError::InvalidSampleRate => "the audio sample rate is not supported for remix analysis",
+            RemixError::TooLong => "the music is too long to remix",
+            RemixError::TooComplex => "the music has too many beats to remix",
+            RemixError::NoBeat => "no beat found in the audio",
+            RemixError::TooShort => "the music is too short to remix",
+            RemixError::TargetTooShort => "the target duration is too short for this music",
+        })
+    }
+}
+
+impl std::error::Error for RemixError {}
+
+// ------------------------------------------------------------------------------------- analysis
+
+fn hann(n: usize) -> Vec<f32> {
+    (0..n).map(|i| 0.5 - 0.5 * (2.0 * std::f64::consts::PI * i as f64 / n as f64).cos() as f32).collect()
+}
+
+/// Magnitude spectra of `x` with frame `n` and `hop` (frames start at `t·hop`).
+fn stft_mag(x: &[f32], n: usize, hop: usize) -> Vec<Vec<f32>> {
+    let fft = Fft::new(n);
+    let w = hann(n);
+    let frames = if x.len() >= n { (x.len() - n) / hop + 1 } else { 1 };
+    let mut re = vec![0f32; n];
+    let mut im = vec![0f32; n];
+    let mut out = Vec::with_capacity(frames);
+    for t in 0..frames {
+        let s = t * hop;
+        for i in 0..n {
+            re[i] = x.get(s + i).copied().unwrap_or(0.0) * w[i];
+            im[i] = 0.0;
+        }
+        fft.forward(&mut re, &mut im);
+        out.push((0..n / 2 + 1).map(|k| (re[k] * re[k] + im[k] * im[k]).sqrt()).collect());
+    }
+    out
+}
+
+/// STFT frame for the onset envelope: the power of two nearest to 46 ms (1024 at 22.05 kHz, 2048
+/// at 44.1/48 kHz).
+fn onset_frame(sr: u32) -> usize {
+    // `onset_envelope` is public on its own, so it must remain bounded even outside `analyze`.
+    let n = (sr.min(MAX_ANALYSIS_SAMPLE_RATE) as f64 * 0.046).max(256.0);
+    1usize << n.log2().round() as u32
+}
+
+/// Below this normalised autocorrelation at the beat period there is no usable pulse.
+const MIN_PULSE: f64 = 0.1;
+
+/// Onset strength per hop: half-wave rectified log-magnitude spectral flux, normalised to unit
+/// standard deviation. Returns (envelope, frame size, hop).
+pub fn onset_envelope(x: &[f32], sr: u32) -> (Vec<f32>, usize, usize) {
+    let n = onset_frame(sr);
+    let hop = n / 4;
+    let mags = stft_mag(x, n, hop);
+    let mut env = vec![0f32; mags.len()];
+    let lg: Vec<Vec<f32>> = mags.iter().map(|m| m.iter().map(|v| (1.0 + 1000.0 * v).ln()).collect()).collect();
+    for t in 1..lg.len() {
+        env[t] = lg[t].iter().zip(&lg[t - 1]).map(|(a, b)| (a - b).max(0.0)).sum();
+    }
+    let mean = env.iter().sum::<f32>() / env.len().max(1) as f32;
+    let sd = (env.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / env.len().max(1) as f32).sqrt();
+    if sd > 0.0 {
+        env.iter_mut().for_each(|v| *v /= sd);
+    }
+    (env, n, hop)
+}
+
+/// Beat period in envelope frames from the autocorrelation (50–200 BPM, prior centred at 120 BPM).
+fn tempo(env: &[f32], frame_rate: f64) -> Option<f64> {
+    let mean = env.iter().sum::<f32>() / env.len().max(1) as f32;
+    let e: Vec<f32> = env.iter().map(|v| v - mean).collect();
+    let lo = (frame_rate * 60.0 / 200.0).floor().max(2.0) as usize;
+    let hi = ((frame_rate * 60.0 / 50.0).ceil() as usize).min(e.len() / 2);
+    if hi <= lo + 2 {
+        return None;
+    }
+    let ac = |lag: usize| -> f64 { e.iter().zip(&e[lag..]).map(|(a, b)| (*a as f64) * (*b as f64)).sum::<f64>() / (e.len() - lag) as f64 };
+    let raw: Vec<f64> = (lo - 1..=hi + 1).map(ac).collect();
+    let weighted = |k: usize| {
+        let lag = (lo - 1 + k) as f64;
+        let bpm = 60.0 * frame_rate / lag;
+        raw[k] * (-0.5 * ((bpm / 120.0).log2() / 1.0).powi(2)).exp()
+    };
+    let (mut best, mut bk) = (f64::MIN, 0usize);
+    for k in 1..raw.len() - 1 {
+        let w = weighted(k);
+        if w > best {
+            best = w;
+            bk = k;
+        }
+    }
+    if best <= 0.0 || raw[bk] <= MIN_PULSE * ac(0) {
+        return None;
+    }
+    // parabolic refinement on the raw autocorrelation
+    let (a, b, c) = (raw[bk - 1], raw[bk], raw[bk + 1]);
+    let den = a - 2.0 * b + c;
+    let d = if den < 0.0 { (0.5 * (a - c) / den).clamp(-0.5, 0.5) } else { 0.0 };
+    Some((lo - 1 + bk) as f64 + d)
+}
+
+/// Dynamic-programming beat tracker: frame indices of beats.
+fn track_beats(env: &[f32], period: f64) -> Vec<usize> {
+    let n = env.len();
+    let mut score = vec![0f64; n];
+    let mut back = vec![usize::MAX; n];
+    let tight = 100.0;
+    let lo = (period * 0.5).round().max(1.0) as usize;
+    let hi = (period * 2.0).round() as usize;
+    for t in 0..n {
+        let mut best = 0.0f64;
+        let mut arg = usize::MAX;
+        if t >= lo {
+            for prev in t.saturating_sub(hi)..=t - lo {
+                let r = ((t - prev) as f64 / period).ln();
+                let v = score[prev] - tight * r * r;
+                if arg == usize::MAX || v > best {
+                    best = v;
+                    arg = prev;
+                }
+            }
+        }
+        score[t] = env[t] as f64 + if arg == usize::MAX { 0.0 } else { best.max(0.0) };
+        back[t] = if arg != usize::MAX && best > 0.0 { arg } else { usize::MAX };
+    }
+    // strongest end within the last period
+    let tail = n.saturating_sub(period.ceil() as usize + 1);
+    let mut t = (tail..n).max_by(|&a, &b| score[a].total_cmp(&score[b]).then(b.cmp(&a))).unwrap_or(0);
+    let mut beats = vec![t];
+    while back[t] != usize::MAX {
+        t = back[t];
+        beats.push(t);
+    }
+    beats.reverse();
+    beats
+}
+
+fn hz_to_mel(f: f64) -> f64 {
+    2595.0 * (1.0 + f / 700.0).log10()
+}
+
+fn mel_to_hz(m: f64) -> f64 {
+    700.0 * (10f64.powf(m / 2595.0) - 1.0)
+}
+
+/// Mel bands of the cepstra.
+const BANDS: usize = 26;
+
+/// Triangular mel filterbank (26 bands, 30 Hz … min(8 kHz, Nyquist)) for an `n`-point STFT: per
+/// band, the bins it covers with their weights, in increasing bin order. Every other bin has
+/// weight 0 in that band.
+fn mel_weights(sr: u32, n: usize) -> Vec<Vec<(usize, f64)>> {
+    let hz = |k: usize| k as f64 * sr as f64 / n as f64;
+    let fmax = (sr as f64 / 2.0).min(8000.0);
+    let (m0, m1) = (hz_to_mel(30.0), hz_to_mel(fmax));
+    let edges: Vec<f64> = (0..BANDS + 2).map(|i| mel_to_hz(m0 + (m1 - m0) * i as f64 / (BANDS + 1) as f64)).collect();
+    (0..BANDS)
+        .map(|b| {
+            let (l, cn, r) = (edges[b], edges[b + 1], edges[b + 2]);
+            (0..n / 2 + 1)
+                .filter_map(|k| {
+                    let f = hz(k);
+                    if f > l && f < cn {
+                        Some((k, (f - l) / (cn - l)))
+                    } else if f >= cn && f < r {
+                        Some((k, (r - f) / (r - cn)))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Mel band energies of one magnitude spectrum.
+fn mel_bands(mel: &[Vec<(usize, f64)>], mag: &[f32]) -> [f64; BANDS] {
+    let mut band = [0f64; BANDS];
+    for (e, weights) in band.iter_mut().zip(mel) {
+        for &(k, w) in weights {
+            let v = mag[k];
+            *e += w * (v as f64) * (v as f64);
+        }
+    }
+    band
+}
+
+/// Per-beat chroma (12) and cepstra (12) from a 4× larger STFT.
+fn beat_features(x: &[f32], sr: u32, beats: &[i64]) -> (Vec<[f32; 12]>, Vec<[f32; 12]>) {
+    let n = (onset_frame(sr) * 2).max(1024);
+    let hop = n / 2;
+    let mags = stft_mag(x, n, hop);
+    let bins = n / 2 + 1;
+    let hz = |k: usize| k as f64 * sr as f64 / n as f64;
+    // chroma map
+    let pc: Vec<Option<usize>> = (0..bins)
+        .map(|k| {
+            let f = hz(k);
+            (55.0..=5000.0).contains(&f).then(|| (((12.0 * (f / 440.0).log2()).round() as i64 + 9).rem_euclid(12)) as usize)
+        })
+        .collect();
+    let mel = mel_weights(sr, n);
+    let mut frame_chroma = Vec::with_capacity(mags.len());
+    let mut frame_cep = Vec::with_capacity(mags.len());
+    for m in &mags {
+        let mut c = [0f32; 12];
+        for (k, v) in m.iter().enumerate() {
+            if let Some(p) = pc[k] {
+                c[p] += v * v;
+            }
+        }
+        frame_chroma.push(c);
+        let band = mel_bands(&mel, m);
+        let lb: Vec<f64> = band.iter().map(|e| (e + 1e-10).ln()).collect();
+        let mut cep = [0f32; 12];
+        for (q, c) in cep.iter_mut().enumerate() {
+            let q = q + 1;
+            *c = lb.iter().enumerate().map(|(b, v)| v * (std::f64::consts::PI * q as f64 * (b as f64 + 0.5) / BANDS as f64).cos()).sum::<f64>() as f32;
+        }
+        frame_cep.push(cep);
+    }
+    // Frames and beats are both ordered. Assign every frame once instead of scanning the entire
+    // feature timeline for every beat interval.
+    let mut chroma = vec![[0f32; 12]; beats.len()];
+    let mut cep = vec![[0f32; 12]; beats.len()];
+    let mut counts = vec![0f32; beats.len()];
+    let end = x.len() as i64;
+    let mut beat = 0;
+    for (t, (fc, fq)) in frame_chroma.iter().zip(&frame_cep).enumerate() {
+        let centre = (t * hop + n / 2) as i64;
+        while beat + 1 < beats.len() && centre >= beats[beat + 1] {
+            beat += 1;
+        }
+        if centre >= beats[beat] && centre < end {
+            for k in 0..12 {
+                chroma[beat][k] += fc[k];
+                cep[beat][k] += fq[k];
+            }
+            counts[beat] += 1.0;
+        }
+    }
+    for ((c, q), count) in chroma.iter_mut().zip(&mut cep).zip(counts) {
+        if count > 0.0 {
+            q.iter_mut().for_each(|v| *v /= count);
+        }
+        let norm = c.iter().map(|v| v * v).sum::<f32>().sqrt();
+        if norm > 0.0 {
+            c.iter_mut().for_each(|v| *v /= norm);
+        }
+    }
+    // z-score the cepstra across beats
+    let m = cep.len().max(1) as f32;
+    for k in 0..12 {
+        let mean = cep.iter().map(|c| c[k]).sum::<f32>() / m;
+        let sd = (cep.iter().map(|c| (c[k] - mean).powi(2)).sum::<f32>() / m).sqrt().max(1e-6);
+        cep.iter_mut().for_each(|c| c[k] = (c[k] - mean) / sd);
+    }
+    (chroma, cep)
+}
+
+fn similarity_cells(beats: usize) -> Result<usize, RemixError> {
+    beats.checked_mul(beats).filter(|&n| n <= MAX_SIMILARITY_CELLS).ok_or(RemixError::TooComplex)
+}
+
+fn norm(a: &[f32; 12]) -> f32 {
+    a.iter().map(|v| v * v).sum::<f32>().sqrt()
+}
+
+/// Cosine similarity of `a` and `b`, given their norms.
+fn cos(a: &[f32; 12], na: f32, b: &[f32; 12], nb: f32) -> f32 {
+    let d: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    if na > 0.0 && nb > 0.0 { d / (na * nb) } else { 0.0 }
+}
+
+/// Fills the beat self-similarity matrix `sim` (`m²`, row-major, symmetric).
+fn fill_similarity(sim: &mut [f32], chroma: &[[f32; 12]], cep: &[[f32; 12]]) {
+    let m = chroma.len();
+    let chroma_norm: Vec<f32> = chroma.iter().map(norm).collect();
+    let cep_norm: Vec<f32> = cep.iter().map(norm).collect();
+    for i in 0..m {
+        for j in i..m {
+            let s = 0.6 * cos(&chroma[i], chroma_norm[i], &chroma[j], chroma_norm[j]) + 0.4 * (1.0 + cos(&cep[i], cep_norm[i], &cep[j], cep_norm[j])) * 0.5;
+            sim[i * m + j] = s;
+            sim[j * m + i] = s;
+        }
+    }
+}
+
+/// How far [`Analysis::beats`] sit before the attack of each beat (half a crossfade), samples.
+pub fn beat_lead(sample_rate: u32) -> i64 {
+    (XFADE_S * 0.5 * sample_rate as f64).round() as i64
+}
+
+fn local_max(env: &[f32], t: usize, r: usize) -> f32 {
+    env[t.saturating_sub(r)..(t + r + 1).min(env.len())].iter().copied().fold(0.0, f32::max)
+}
+
+/// Analyse planar audio (channels are summed to mono).
+pub fn analyze(channels: &[&[f32]], sample_rate: u32) -> Result<Analysis, RemixError> {
+    if sample_rate == 0 || sample_rate > MAX_ANALYSIS_SAMPLE_RATE {
+        return Err(RemixError::InvalidSampleRate);
+    }
+    let len = channels.iter().map(|c| c.len()).max().unwrap_or(0);
+    if (len as u64) > u64::from(sample_rate).saturating_mul(MAX_ANALYSIS_SECONDS) {
+        return Err(RemixError::TooLong);
+    }
+    let k = 1.0 / channels.len().max(1) as f32;
+    let mono: Vec<f32> = (0..len).map(|i| channels.iter().map(|c| c.get(i).copied().unwrap_or(0.0)).sum::<f32>() * k).collect();
+    let (env, n, hop) = onset_envelope(&mono, sample_rate);
+    let frame_rate = sample_rate as f64 / hop as f64;
+    let period = tempo(&env, frame_rate).ok_or(RemixError::NoBeat)?;
+    let mut frames = track_beats(&env, period);
+    // weak beats at the edges (silence before / after the music) are not beats
+    let mut strengths: Vec<f32> = frames.iter().map(|&t| local_max(&env, t, 2)).collect();
+    strengths.sort_by(f32::total_cmp);
+    let median = strengths.get(strengths.len() / 2).copied().unwrap_or(0.0);
+    while frames.first().is_some_and(|&t| local_max(&env, t, 2) < 0.3 * median) {
+        frames.remove(0);
+    }
+    while frames.last().is_some_and(|&t| local_max(&env, t, 2) < 0.3 * median) {
+        frames.pop();
+    }
+    // …and edge beats off the grid (the tracker's end search can settle on an off-beat)
+    let off_grid = |a: usize, b: usize| ((b - a) as f64 / period - 1.0).abs() > 0.05;
+    while frames.len() > 2 && off_grid(frames[frames.len() - 2], frames[frames.len() - 1]) {
+        frames.pop();
+    }
+    while frames.len() > 2 && off_grid(frames[0], frames[1]) {
+        frames.remove(0);
+    }
+    // the flux of frame t peaks as soon as an attack enters the newer window, at about
+    // t·hop + n − ¾·hop (measured on generated drums); joints sit half a crossfade earlier so a joint's fade is over
+    // when the beat's attack starts
+    let mut beats: Vec<i64> =
+        frames.iter().map(|&t| (t * hop + n) as i64 - 3 * hop as i64 / 4 - beat_lead(sample_rate)).filter(|&b| b > 0 && b < len as i64).collect();
+    beats.dedup();
+    if beats.len() < 2 * MIN_PIECE_BEATS + 2 {
+        return Err(if beats.len() < 4 { RemixError::NoBeat } else { RemixError::TooShort });
+    }
+    let (chroma, cep) = beat_features(&mono, sample_rate, &beats);
+    let m = beats.len();
+    let mut sim = vec![0f32; similarity_cells(m)?];
+    fill_similarity(&mut sim, &chroma, &cep);
+    let period_s = period * hop as f64;
+    Ok(Analysis { sample_rate, len: len as i64, beats, period: period_s, bpm: 60.0 * sample_rate as f64 / period_s, sim })
+}
+
+// ------------------------------------------------------------------------------------- planning
+
+/// Most joints a plan may use. Extending a short source to a long target adds joints until each
+/// jump fits, which a degenerate source (a tiny span between the intro and outro) never satisfies.
+const MAX_PLAN_JOINTS: usize = 1024;
+
+/// Number of joints the Segments slider asks for.
+pub fn joints_for(segments: f64) -> usize {
+    1 + (segments.clamp(0.0, 100.0) / 34.0).floor() as usize
+}
+
+/// Plan a remix of the analysed music to `target` samples.
+pub fn plan(a: &Analysis, target: i64, params: Params) -> Result<Plan, RemixError> {
+    let xfade = (XFADE_S * a.sample_rate as f64).round() as i64;
+    let len = a.len;
+    let b = &a.beats;
+    let m = b.len();
+    // an invalid analysis is refused before the period is used for the identity check
+    if m < 2 || !a.period.is_finite() || a.period <= 0.0 {
+        return Err(RemixError::TooShort);
+    }
+    let half = (a.period / 2.0) as i64;
+    if (target - len).abs() <= half {
+        return Ok(Plan::identity(len, xfade));
+    }
+    let min_piece = (MIN_PIECE_BEATS as f64 * a.period) as i64;
+    if target < 2 * min_piece {
+        return Err(RemixError::TargetTooShort);
+    }
+    let window = 1 + (7.0 * params.variations.clamp(0.0, 100.0) / 100.0).round() as usize;
+    let mut k = joints_for(params.segments).min(((target - len).abs() as f64 / a.period).round().max(1.0) as usize);
+    // pieces may not get shorter than the minimum
+    while k > 1 && target / (k as i64 + 1) < min_piece {
+        k -= 1;
+    }
+    // a backwards jump can span at most the music between the intro and outro pieces
+    if target > len {
+        let max_span = (len - 2 * min_piece).max(a.period as i64);
+        while k < MAX_PLAN_JOINTS && ((target - len) as f64 / k as f64) > max_span as f64 * 0.9 && (target / (k as i64 + 2)) >= min_piece {
+            k += 1;
+        }
+    }
+    let nearest = |x: i64| -> usize { b.partition_point(|&v| v < x).min(m - 1) };
+    let closest = |x: i64| -> usize {
+        let i = nearest(x);
+        if i > 0 && (x - b[i - 1]).abs() <= (b[i] - x).abs() { i - 1 } else { i }
+    };
+    let mut pieces = Vec::new();
+    let mut src = 0i64; // start of the current piece in the source
+    let mut out = 0i64; // output length so far
+    for jn in 0..k {
+        let left = (k - jn) as i64; // joints still to place (this one included)
+        let out_left = target - out; // output still to make
+        let piece = out_left / (left + 1); // even split of what is left
+        let src_left = len - src;
+        let span = (src_left - out_left) / left; // source skipped (+) or replayed (−) per joint
+        let ni = closest(src + piece);
+        let last = jn + 1 == k;
+        let mut best: Option<(f32, i64, usize, usize)> = None;
+        let lo_i = ni.saturating_sub(window);
+        for i in lo_i..=(ni + window).min(m - 1) {
+            if b[i] - src < min_piece {
+                continue;
+            }
+            let nj = closest(b[i] + span);
+            for j in nj.saturating_sub(window)..=(nj + window).min(m - 1) {
+                if j == i || len - b[j] < min_piece || (b[j] > b[i]) != (target < len) {
+                    continue;
+                }
+                let new_out = out + (b[i] - src);
+                let rest_src = len - b[j];
+                // what the remaining joints still have to absorb
+                let err = (target - new_out) - rest_src;
+                if last {
+                    if err.abs() > half.max(1) * 2 {
+                        continue;
+                    }
+                } else {
+                    // remaining joints must still be able to fit pieces of the minimum length
+                    let rem_out = target - new_out;
+                    if rem_out < (left) * min_piece {
+                        continue;
+                    }
+                    // the joints after this one must still each skip (or replay) a beat or more
+                    let rem = rest_src - rem_out;
+                    if rem.signum() != (len - target).signum() || (rem.abs() as f64) < (left - 1) as f64 * a.period * 0.75 {
+                        continue;
+                    }
+                }
+                let score = a.jump_score(i, j);
+                // final joint: land as close to the target as possible, then by similarity
+                let key_err = if last { err.abs() / half.max(1) } else { 0 };
+                let better = match best {
+                    None => true,
+                    Some((s, e, bi, bj)) => {
+                        let bad = key_err.cmp(&e);
+                        bad.is_lt() || (bad.is_eq() && (score > s || (score == s && (i, j) < (bi, bj))))
+                    }
+                };
+                if better {
+                    best = Some((score, key_err, i, j));
+                }
+            }
+        }
+        let Some((_, _, i, j)) = best else {
+            return Err(RemixError::TargetTooShort);
+        };
+        pieces.push(Piece { src, len: b[i] - src });
+        out += b[i] - src;
+        src = b[j];
+    }
+    pieces.push(Piece { src, len: len - src });
+    Ok(Plan { pieces, xfade })
+}
+
+// ------------------------------------------------------------------------------------- render
+
+/// Render output samples `[out0, out0 + n)` of `plan` with `channels` channels. `read(src, len)`
+/// returns planar source samples `[src, src + len)` (silence outside the source is fine). Each
+/// joint at output position `J` crossfades over `[J − xfade/2, J + xfade/2)` with equal-power
+/// gains; the result does not depend on how the output is cut into requests.
+pub fn render(plan: &Plan, out0: i64, n: usize, channels: usize, read: &mut dyn FnMut(i64, usize) -> Vec<Vec<f32>>) -> Vec<Vec<f32>> {
+    let mut out = vec![vec![0f32; n]; channels];
+    // a plan that would stack many pieces on the same output (or overflow its positions) plays silence
+    if !plan.is_playable() || out0.checked_add(n as i64).is_none() {
+        return out;
+    }
+    let x = plan.xfade.max(0);
+    let h0 = x / 2;
+    let h1 = x - h0;
+    let end = out0 + n as i64;
+    let last = plan.pieces.len().saturating_sub(1);
+    let mut d = 0i64;
+    for (pi, p) in plan.pieces.iter().enumerate() {
+        let (ds, de) = (d, d + p.len);
+        d = de;
+        let fade_in = pi > 0 && x > 0;
+        let fade_out = pi < last && x > 0;
+        let s = if fade_in { ds - h0 } else { ds };
+        let e = if fade_out { de + h1 } else { de };
+        let (a, z) = (s.max(out0), e.min(end));
+        if z <= a {
+            continue;
+        }
+        let len = (z - a) as usize;
+        let buf = read(p.src + (a - ds), len);
+        for i in 0..len {
+            let o = a + i as i64;
+            let mut g = 1.0f64;
+            if fade_in && o < ds + h1 {
+                let u = (o - (ds - h0)) as f64 + 0.5;
+                g *= (u / x as f64 * std::f64::consts::FRAC_PI_2).sin();
+            }
+            if fade_out && o >= de - h0 {
+                let u = (o - (de - h0)) as f64 + 0.5;
+                g *= (u / x as f64 * std::f64::consts::FRAC_PI_2).cos();
+            }
+            let g = g as f32;
+            let k = (o - out0) as usize;
+            for (c, dst) in out.iter_mut().enumerate() {
+                let src = buf.get(c.min(buf.len().saturating_sub(1))).and_then(|ch| ch.get(i)).copied().unwrap_or(0.0);
+                dst[k] += src * g;
+            }
+        }
+    }
+    out
+}
+
+// ------------------------------------------------------------------------------------- serialise
+
+impl Plan {
+    /// Text form: `xfade;src,len;src,len;…` (the unit is the caller's).
+    pub fn to_text(&self) -> String {
+        let mut s = self.xfade.to_string();
+        for p in &self.pieces {
+            s.push_str(&format!(";{},{}", p.src, p.len));
+        }
+        s
+    }
+    /// Parses [`Plan::to_text`]; `None` unless the plan [is playable](Plan::is_playable).
+    pub fn from_text(s: &str) -> Option<Plan> {
+        Plan::from_text_within(s, MAX_OUTPUT_SAMPLES)
+    }
+    /// [`Plan::from_text`] with the output limit in the stored plan's units (see [`Plan::is_playable_within`]).
+    pub fn from_text_within(s: &str, max_output: i64) -> Option<Plan> {
+        let mut it = s.split(';');
+        let xfade = it.next()?.trim().parse().ok()?;
+        let mut pieces = Vec::new();
+        for p in it {
+            if pieces.len() >= MAX_PIECES {
+                return None;
+            }
+            let (a, b) = p.split_once(',')?;
+            pieces.push(Piece { src: a.trim().parse().ok()?, len: b.trim().parse().ok()? });
+        }
+        let plan = Plan { pieces, xfade };
+        plan.is_playable_within(max_output).then_some(plan)
+    }
+}
+
+/// Generated rhythmic test music: drums on every beat, a bass note per beat and a chord pad per
+/// bar following `sections` of four-bar progressions. Returns stereo planar audio and the true
+/// beat positions (samples). Used by tests here, in the engine and in the UI.
+#[cfg(any(test, feature = "test-util"))]
+pub fn test_music(sr: u32, bpm: f64, bars: usize, seed: u32) -> (Vec<Vec<f32>>, Vec<i64>) {
+    let beat = sr as f64 * 60.0 / bpm;
+    let n = (bars as f64 * 4.0 * beat).round() as usize;
+    let mut l = vec![0f32; n];
+    let mut rng = seed.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
+    let mut noise = move || {
+        rng = rng.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        (rng >> 8) as f32 / (1u32 << 24) as f32 * 2.0 - 1.0
+    };
+    // chord roots (semitones from A3 = 220 Hz): section A: C Am F G, B: Dm G Em A
+    let a_sec = [3, 0, 8, 10];
+    let b_sec = [5, 10, 7, 0];
+    let form = [a_sec, a_sec, b_sec, a_sec, b_sec, a_sec];
+    let minor = |r: i32| matches!(r, 0 | 5 | 7);
+    let tau = std::f64::consts::TAU;
+    let mut beats = Vec::new();
+    for bar in 0..bars {
+        let root = form[(bar / 4) % form.len()][bar % 4];
+        let third = if minor(root) { 3 } else { 4 };
+        let notes = [root, root + third, root + 7];
+        let b0 = (bar as f64 * 4.0 * beat).round() as usize;
+        let b1 = (((bar + 1) as f64) * 4.0 * beat).round() as usize;
+        for (i, s) in l.iter_mut().enumerate().take(b1.min(n)).skip(b0) {
+            let t = (i - b0) as f64 / sr as f64;
+            let env = (1.0 - (-t * 30.0).exp()) * 0.9f64.powf(t);
+            let mut v = 0.0;
+            for nt in notes {
+                let f = 220.0 * 2f64.powf(nt as f64 / 12.0);
+                v += (tau * f * i as f64 / sr as f64).sin() + 0.3 * (tau * 2.0 * f * i as f64 / sr as f64).sin();
+            }
+            *s += (0.06 * env * v) as f32;
+        }
+        for q in 0..4 {
+            let start = ((bar * 4 + q) as f64 * beat).round() as usize;
+            beats.push(start as i64);
+            let bass_f = 110.0 * 2f64.powf(root as f64 / 12.0) / if q % 2 == 0 { 1.0 } else { 2.0f64.powf(-7.0 / 12.0) };
+            let dur = (beat * 0.9) as usize;
+            for k in 0..dur.min(n.saturating_sub(start)) {
+                let t = k as f64 / sr as f64;
+                let i = start + k;
+                // kick (1 and 3) or snare (2 and 4)
+                if q % 2 == 0 {
+                    let f = 50.0 + 90.0 * (-t * 25.0).exp();
+                    l[i] += (0.8 * (-t * 9.0).exp() * (tau * f * t).sin()) as f32;
+                } else if t < 0.2 {
+                    l[i] += 0.35 * (-t as f32 * 22.0).exp() * noise();
+                }
+                // bass
+                l[i] += (0.15 * (-t * 3.0).exp() * (tau * bass_f * t).sin()) as f32;
+            }
+            // hats on 8ths
+            for h in 0..2 {
+                let hs = start + (h as f64 * beat / 2.0) as usize;
+                for k in 0..(sr as usize / 25).min(n.saturating_sub(hs)) {
+                    let t = k as f32 / sr as f32;
+                    l[hs + k] += 0.08 * (-t * 120.0).exp() * noise();
+                }
+            }
+        }
+    }
+    let r = l.clone();
+    (vec![l, r], beats)
+}
+
+

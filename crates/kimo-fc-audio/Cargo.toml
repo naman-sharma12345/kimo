@@ -1,0 +1,8 @@
+[package]
+name = "kimo-fc-audio"
+version.workspace = true
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "FilmCraft's audio DSP (MIT OR Apache-2.0), vendored for kimo"
+
+[dependencies]

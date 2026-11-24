@@ -109,6 +109,9 @@ pub enum AudioEffect {
     /// Click and crackle removal (vinyl, mouth clicks, digital ticks): a lower `threshold` removes more.
     Declick { threshold: f64 },
     Tremolo { rate_hz: f64, depth: f64 },
+    /// One of FilmCraft's audio effects (crate kimo_fc_audio), run in process on the clip's 48 kHz stereo PCM.
+    /// `id` is the FilmCraft effect id, `params` its parameter ids -> values (missing = default).
+    Dsp { id: String, #[serde(default)] params: BTreeMap<String, f64> },
 }
 /// dB (relative to full scale) to a linear amplitude ratio, for ffmpeg filters (agate/alimiter) that take a linear 0..1 level.
 fn db_to_lin(db: f64) -> f64 { 10f64.powf(db / 20.0) }
@@ -132,6 +135,7 @@ impl AudioEffect {
  Self::Phaser{rate_hz,decay}=>format!("aphaser=speed={rate_hz}:decay={decay}"),
  Self::Declick{threshold}=>format!("adeclick=t={threshold}"),
  Self::Tremolo{rate_hz,depth}=>format!("tremolo=f={rate_hz}:d={depth}"),
+ Self::Dsp{..}=>"anull".into(),
 }
     }
 }
@@ -312,8 +316,23 @@ pub fn reverb(pcm: &mut [f32], decay: f64, delay_ms: f64) {
 pub fn process_pcm(pcm: &mut [f32], effects: &[AudioEffect]) {
     process_pcm_checked(pcm, effects).unwrap_or_else(|e| panic!("{e}"));
 }
+/// Run FilmCraft effect `id` over interleaved stereo 48 kHz `pcm` in place, compensating its look-ahead latency.
+pub fn process_dsp(pcm: &mut [f32], id: &str, params: &BTreeMap<String, f64>) -> Result<(), String> {
+    let mut fx = kimo_fc_audio::create_effect(id, 48000.0, 2).ok_or_else(|| format!("unknown audio effect '{id}'"))?;
+    for (k, v) in params { if !fx.set_param(k, *v as f32) { return Err(format!("audio effect {id} has no parameter '{k}'")); } }
+    fx.reset(); // parameters start at their targets
+    let n = pcm.len() / 2; let lat = fx.latency();
+    let (mut l, mut r): (Vec<f32>, Vec<f32>) = (Vec::with_capacity(n + lat), Vec::with_capacity(n + lat));
+    for p in pcm.chunks_exact(2) { l.push(p[0]); r.push(p[1]); }
+    l.resize(n + lat, 0.0); r.resize(n + lat, 0.0); // flush the latency tail
+    const BLOCK: usize = 1024; let mut i = 0;
+    while i < n + lat { let j = (i + BLOCK).min(n + lat); { let mut ch: [&mut [f32]; 2] = [&mut l[i..j], &mut r[i..j]]; fx.process(&mut ch); } i = j; }
+    for k in 0..n { pcm[k * 2] = l[k + lat]; pcm[k * 2 + 1] = r[k + lat]; }
+    Ok(())
+}
 pub fn process_pcm_checked(pcm: &mut [f32], effects: &[AudioEffect]) -> Result<(), String> {
     for e in effects {
+        if let AudioEffect::Dsp { id, params } = e { process_dsp(pcm, id, params)?; continue; }
         use crate::perception::audio_raw::{Samples, Section};
         let raw = matches!(
             e,

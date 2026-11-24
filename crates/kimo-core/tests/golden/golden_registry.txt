@@ -3,7 +3,7 @@ add_adjustment_layer 1a618920cefd1a66
 add_arrow 7ac2c615598ce04d
 add_asset 1e486a7df8bb88a6
 add_audio_clip 7b3d9ad166896234
-add_audio_effect f4dee13a056532d0
+add_audio_effect 8848750ae3159ae4
 add_blur_fill a3c4f9944c2d3a14
 add_box_expand 757e74b37aa0ba37
 add_camera_shake 9a275014886af36b
