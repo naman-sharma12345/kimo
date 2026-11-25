@@ -1,0 +1,12 @@
+[package]
+name = "craft-xml"
+description = "Bounded XML for hostile input: an owned element tree, streaming of repeated elements, a pull reader, escaping and a writer. No DTDs, no entity expansion."
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+
+[dependencies]
+quick-xml = { version = "0.41", default-features = false }
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }

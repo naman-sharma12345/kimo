@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/kimo-core", "crates/kimo-mcp", "crates/kimo-cli", "crates/kimo-ec", "crates/kimo-fc-audio"]
+members = ["crates/kimo-core", "crates/kimo-mcp", "crates/kimo-cli", "crates/kimo-ec", "crates/kimo-fc-audio", "third_party/craft-libs/time", "third_party/craft-libs/xml", "third_party/craft-libs/timeline"]
 
 [workspace.package]
 version = "26.11.0"

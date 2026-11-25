@@ -1,0 +1,12 @@
+[package]
+name = "craft-time"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Exact media time, frame rate rational math, and SMPTE timecode for the Craft suite"
+
+
+[dependencies]
+serde = "1"
+thiserror = "2"
+

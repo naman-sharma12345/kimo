@@ -126,10 +126,11 @@ outer_glow, spill_suppress, luma_key, chroma_key, ...). These are the ones still
 - [ ] Nesting and paste-insert parity, effects on a whole track
 
 ## 4. Interchange and project files
-- [ ] FCP 7 XML (xmeml) import and export
-- [ ] FCPXML import (kimo exports only)
+- [x] FCP 7 XML (xmeml) import and export (11: export_timeline / import_timeline over craft-libs craft-timeline, vendored in third_party/craft-libs)
+- [x] FCPXML import and export, 1.9-1.11 (11)
 - [ ] AAF and OMF (audio post handoff)
-- [ ] OTIO import (kimo exports only); ALE
+- [x] OTIO import and export (11)
+- [ ] ALE
 - [ ] EDL: drop-frame, transitions, M2 speed, one EDL per track
 - [ ] PSD import as layers; PDF and AI import
 - [ ] After Effects `.aep` import (large)

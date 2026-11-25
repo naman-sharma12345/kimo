@@ -1,0 +1,23 @@
+[package]
+name = "craft-timeline"
+description = "Editorial timeline interchange: exact media time and SMPTE timecode, import/export reports, Avid Log Exchange (ALE) and CMX 3600 EDL documents."
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+
+[features]
+# Serialize and Deserialize for the time, report and document types.
+serde = ["dep:serde"]
+# Final Cut Pro 7 XML (`fcp7`), read with craft-xml's bounded parser.
+xml = ["dep:craft-xml"]
+# OpenTimelineIO JSON (`otio`), with serde_json.
+otio = ["dep:serde_json"]
+
+[dependencies]
+serde = { version = "1", optional = true }
+craft-time = { path = "../time" }
+craft-xml = { path = "../xml", optional = true }
+serde_json = { version = "1", optional = true }
+
+
