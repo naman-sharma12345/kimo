@@ -4,3 +4,6 @@ dist/
 __pycache__/
 fonts/*.ttf
 nope
+
+# test scratch files written with a mangled Windows temp path
+crates/kimo-core/C*AppDataLocalTemp*
