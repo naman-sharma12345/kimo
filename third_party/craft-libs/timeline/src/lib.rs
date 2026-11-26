@@ -229,4 +229,3 @@ pub fn decode_text(bytes: &[u8]) -> String {
     }
 }
 
-

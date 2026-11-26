@@ -117,20 +117,20 @@ outer_glow, spill_suppress, luma_key, chroma_key, ...). These are the ones still
 - [ ] Scripting API (ExtendScript-like) for batch jobs
 
 ## 3. Editing (FilmCraft)
-- [ ] Integer tick time base; exact 23.976 / 29.97 drop-frame / 59.94
-- [ ] Three-point editing: source In/Out, insert, overwrite, patch and target tracks
+- [~] Integer tick time base; exact 23.976 / 29.97 drop-frame / 59.94 (12: the timecode tool and every interchange/caption format use craft-time ticks; kimo's own timeline still stores seconds)
+- [x] Three-point editing: source In/Out, insert, overwrite, sync locks (12: insert_edit / overwrite_edit; mark_source existed)
 - [ ] Trim modes: ripple, roll, slip, slide, rate stretch as one trim engine; Trim and Slip monitors; JKL dynamic trim
 - [ ] Sync locks and linked selection
 - [ ] Multicam with audio sync and angle switching
-- [ ] Auto-save with rolling versions; crash-recovery journal
+- [x] Auto-save with rolling versions; crash recovery (12: set_autosave, list_autosaves, recover_autosave; at most one interval of work lost)
 - [ ] Nesting and paste-insert parity, effects on a whole track
 
 ## 4. Interchange and project files
 - [x] FCP 7 XML (xmeml) import and export (11: export_timeline / import_timeline over craft-libs craft-timeline, vendored in third_party/craft-libs)
 - [x] FCPXML import and export, 1.9-1.11 (11)
-- [ ] AAF and OMF (audio post handoff)
+- [x] AAF and OMF (audio post handoff) (12: export_aaf / import_aaf over craft-libs craft-aaf)
 - [x] OTIO import and export (11)
-- [ ] ALE
+- [x] ALE (12: export_ale)
 - [ ] EDL: drop-frame, transitions, M2 speed, one EDL per track
 - [ ] PSD import as layers; PDF and AI import
 - [ ] After Effects `.aep` import (large)
@@ -138,21 +138,22 @@ outer_glow, spill_suppress, luma_key, chroma_key, ...). These are the ones still
 
 ## 5. Audio engine
 - [x] Own DSP chain (no ffmpeg filters): parametric EQ, dynamics, multiband, reverbs, pitch, restoration (10: FilmCraft's audio-dsp vendored as crates/kimo-fc-audio; its 42 effects are add_audio_effect kinds, run in process on the clip PCM with latency compensation; kinds that clash with kimo's ffmpeg ones end in _dsp)
-- [ ] Mixer: track faders and pan, buses, sends, submixes, insert slots, latency compensation
+- [~] Mixer: track gain, balance and insert effects with latency compensation (12: set_track_mix); buses, sends and submixes not yet
 - [ ] Automation modes (Read, Latch, Touch, Write) recorded from the mixer
-- [ ] 5.1 surround mixing and export
+- [~] 5.1 export (12: export_audio_as channels 6, ITU-R BS.775 upmix); 5.1 panning per clip not yet
 - [ ] Voice-over recording
-- [ ] Remix (retime music to a length at musical boundaries)
-- [ ] BS.1770 meters matching ffmpeg ebur128 to 0.1 LU; true peak
+- [x] Remix (retime music to a length at musical boundaries) (12: remix_music)
+- [x] BS.1770 / EBU R128 meter with true peak (12: loudness_report against delivery targets; export_audio_as normalize_lufs)
 
 ## 6. Captions and graphics
-- [ ] Caption tracks: CEA-608, CEA-708, Teletext; SCC import and export; 608/708 embedded in exports
+- [x] Caption files: SCC (CEA-608), MCC (608/708), EBU STL, TTML/IMSC1, DFXP, ASS, SRT, VTT import and export (12: import_captions / export_captions_as over craft-libs craft-captions)
+- [ ] 608/708 embedded in the video stream; Teletext
 - [ ] Rolls and crawls; editable graphic templates
 
 ## 7. Export
-- [ ] ProRes 422 HQ to 4444 XQ with alpha; DNxHR; MXF OP1a and OP-Atom
-- [ ] EXR, DPX and TGA sequences; WebM VP9 with alpha; AV1; HEVC Main 10 with HDR metadata
-- [ ] Hardware encoding (NVENC, VideoToolbox, Quick Sync)
+- [x] ProRes Proxy to 4444 XQ with alpha; DNxHR LB to 444; MXF OP1a with 24-bit PCM (12: export_format) - [ ] MXF OP-Atom
+- [x] EXR, DPX, TGA and 16-bit PNG sequences; WebM VP9 with alpha and Opus; HEVC Main 10 (12: export_format); AV1 existed - [ ] HDR metadata on HEVC
+- [~] Hardware encoding: NVENC H.264/HEVC (12: export_format); VideoToolbox and Quick Sync not yet
 - [ ] Render queue with templates; render previews cached by content
 
 ## 8. The app

@@ -173,15 +173,20 @@ evaluate_hlg_reference_display d6dcb3d3d9272b80
 explain_cut b18de9c6817e418b
 explain_invalidation b8ff41ad113ac528
 export 2393506cd9af274b
+export_aaf e8c2bf0cafa7f116
 export_aces2_reference_video aeadc88e69eedbab
+export_ale 058492d123dd3d82
 export_alpha 53571ab59e1b99ed
 export_asc_cdl bba60640e79ca448
 export_asset_svg 35c3b184e383e509
 export_audio 24abf7a62d81ecac
+export_audio_as 54e0f7af45fa3e72
 export_camera_solve 55844ee547289f42
 export_captions 7467456686f5ca4f
+export_captions_as ddf68e890692e785
 export_color_pipeline_lut cc32ea2c0dd1b8a6
 export_edl 629fa1df814470b0
+export_format 9db0fbacdbe31c2e
 export_gif e3829ad88866844c
 export_grade_lut c25c05b9400b97b1
 export_high_bit c67d5e5efd756824
@@ -225,6 +230,8 @@ gpu_gaussian_blur_frame 24112f892cffa87c
 grade_node_tracking 1ffa2a4a07a2951e
 group_clips 39d53498853f9730
 history_list bb1a0f89a5fcc401
+import_aaf e777c6b75b435cec
+import_captions e42614ee5bedfb11
 import_clips 4b7b35ef88f7bdfa
 import_edl db0bf7cee5567efc
 import_gltf_surface 2b840ef7d0dd6209
@@ -238,6 +245,7 @@ import_svg 338e43b9ca8798fb
 import_template_package 4bddfa764c1bca8a
 import_timeline 2a852abf69ccbadf
 ingest_vertex_stream ea0e4b037307853d
+insert_edit 0f7e9d813ccda11c
 insert_gap b236ff202828ce3c
 inspect_asc_cdl 2cad335b491d5690
 inspect_color_delivery 319e512feadfa939
@@ -268,6 +276,7 @@ link_property 6f0a18a9af4371ff
 lint_edit 283156133621ecfd
 lint_frame e2ac027590d57fb0
 list_animated_properties ff1575a5548784c7
+list_autosaves 96d7cf4a66576327
 list_bins e70cb3e4438b2c8f
 list_camera_solves 492655c34a9e22aa
 list_captions 524db21fe840e247
@@ -293,6 +302,7 @@ lk_residual_audit 2cf7e10ac95fd795
 load_project 2a874565cec5ea83
 look d161d038a25924be
 loop_clip 84a9f61420f1b87c
+loudness_report a4e28160355f481f
 make_montage_from_folder 23e863d91fb9cc4b
 mark_scene_cuts f8a5604d15845151
 mark_source f05beb0417bee904
@@ -317,6 +327,7 @@ mux_chapters d4c909f56caca1e1
 new_project 6f33ccb3ecb0ac22
 normalize_loudness d77d16d8f58e8b00
 organize_bins 1d9acfb9e939f902
+overwrite_edit b7f4e398f19fb5e0
 particle_simulate_raw 13a7503832a95aad
 paste_attributes 836988433eac2c08
 path_info bd40d934b727ca02
@@ -351,11 +362,13 @@ recipe_apply 25bf86d6e0d5714f
 recipe_describe d6500745b10aabda
 recipe_list 260d6e832e090377
 recolor_svg_layer 1fbbfdc6de9aa7bb
+recover_autosave 8a1885454e25c9a9
 redo 738dbd6488fa90b3
 refine_matte b2b938688521e43d
 reframe_timeline f2af0127584f4157
 register_hook b0eb54c7424279fe
 relink_media 007d3b0771ae5694
+remix_music da1b79856b893546
 remove_audio_effect 0efeb2144dd5d9f7
 remove_effect e5c9246d4f7c20de
 remove_grade_node 96f0bed092feb2d4
@@ -440,6 +453,7 @@ set_audio_effect_key 02e5c3c88e7432d6
 set_audio_pan f9b02d2054de6500
 set_audio_pan_key 68c1e6eef9c55534
 set_audio_volume_key 93c0a5135d9ba013
+set_autosave 5c7c79031a54afdf
 set_blend cdad51ace4f9fd7f
 set_camera d916f0fec16525a1
 set_camera_keyframe 11674e720d5c77f9
@@ -507,6 +521,7 @@ set_time_mode c323a5b489cfd1de
 set_time_remap 940549e7e55150cb
 set_track 7f1955a6b775ec8c
 set_track_matte b4eb6b6073080911
+set_track_mix 9699426225b29174
 shards_project c322e07f6dbcfc79
 simplify_curve 6de030d9111840e4
 simulate_physics 379d680dbb9bb0a2
@@ -532,6 +547,7 @@ text_contrast_series d14fc189b362abb4
 text_dissolve 4848f0472447c57a
 text_to_shapes c18ddeb9517d8ddc
 tighten_pauses 79c006e7fca0b005
+timecode e25499c7b07f4f2a
 timeline_summary 9fdf3526f8d0c28b
 track_beats 91bef51f0456917f
 track_feature_residuals c91589589f2b376d

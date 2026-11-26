@@ -332,6 +332,9 @@ pub struct Project {
     pub next_id: u64,
     #[serde(default)]
     pub markers: Vec<Marker>,
+    /// Track mixer settings by track id (set_track_mix): gain, pan and audio effects applied to the track's summed sound.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub track_mix: BTreeMap<String, TrackMix>,
     /// Dependency records (size, sha256, ...) written by collect_project; absent in files that never recorded them (old files stay byte-stable).
     #[serde(default, skip_serializing_if = "Option::is_none")] pub deps: Option<crate::deps::DepTable>,
     /// U2.4: user-authored batch templates (none ship with Kimo); absent when empty so old files stay byte-stable.
@@ -369,7 +372,7 @@ impl Project {
 
 impl Default for Project {
     fn default() -> Self {
-        Project { links: vec![], proxies: Default::default(), grade_scopes: Default::default(), lights: BTreeMap::new(), materials: BTreeMap::new(), editorial: Default::default(), ocio_view_delivery: None, occluders: BTreeMap::new(), color_pipeline: Default::default(), linear_blend: false, render_quality: RenderQuality::Legacy, x264_preset: None, color_tag_sanity: false, frame_blend_conform: false, adaptive_denoise: false, hdr_tonemap: false, camera: BTreeMap::new(), comp3d: None, hooks: BTreeMap::new(), expr_scripts: vec![], name: "untitled".into(), width: 1280, height: 720, fps: 30.0, assets: BTreeMap::new(), bins: vec![], subclips: BTreeMap::new(), tracks: vec![], next_id: 1, markers: vec![], deps: None, templates: vec![], base_dir: None, master_speech_level: 0.0, master_speech_level_scope_end: 0.0 }
+        Project { track_mix: Default::default(), links: vec![], proxies: Default::default(), grade_scopes: Default::default(), lights: BTreeMap::new(), materials: BTreeMap::new(), editorial: Default::default(), ocio_view_delivery: None, occluders: BTreeMap::new(), color_pipeline: Default::default(), linear_blend: false, render_quality: RenderQuality::Legacy, x264_preset: None, color_tag_sanity: false, frame_blend_conform: false, adaptive_denoise: false, hdr_tonemap: false, camera: BTreeMap::new(), comp3d: None, hooks: BTreeMap::new(), expr_scripts: vec![], name: "untitled".into(), width: 1280, height: 720, fps: 30.0, assets: BTreeMap::new(), bins: vec![], subclips: BTreeMap::new(), tracks: vec![], next_id: 1, markers: vec![], deps: None, templates: vec![], base_dir: None, master_speech_level: 0.0, master_speech_level_scope_end: 0.0 }
     }
 }
 
@@ -535,6 +538,15 @@ pub fn default_props() -> BTreeMap<String, Prop> {
     m.insert("rotation".into(), Prop::new(0.0)); // degrees
     m.insert("reveal".into(), Prop::new(1.0)); // text typewriter 0..1
     m
+}
+
+/// One track's mixer strip: gain (dB), stereo balance (-1 left .. 1 right) and insert effects, applied to the sum of
+/// the track's clips before the master (like a DAW or Premiere's Audio Track Mixer).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct TrackMix {
+    #[serde(default)] pub gain_db: f64,
+    #[serde(default)] pub pan: f64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")] pub effects: Vec<crate::editorial::AudioEffect>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

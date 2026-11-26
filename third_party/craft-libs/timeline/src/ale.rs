@@ -179,4 +179,3 @@ pub fn row_range(doc: &AleDoc, row: usize) -> Option<(Tick, Tick)> {
     Some((rate.tick_of(a), rate.tick_of(b)))
 }
 
-

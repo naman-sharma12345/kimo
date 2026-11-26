@@ -173,6 +173,7 @@ fn resolve_names(ss: &Session, name: &str, args: &Value) -> Result<Option<Value>
 /// Top-level call: counted by `session_stats` (calls and bytes returned per tool); nested calls made by batch are not counted separately.
 pub fn dispatch(ss: &mut Session, name: &str, args: &Value) -> Result<Value, String> {
     let r = dispatch_core(ss, name, args);
+    if r.is_ok() { crate::ext::autosave::after(ss, name); }
     let bytes = match &r { Ok(v) => crate::ext::session_stats::json_len(v), Err(e) => e.len() };
     ss.stats.record(name, bytes, r.is_err()); r
 }

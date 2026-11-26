@@ -231,4 +231,3 @@ pub fn feet_frames(s: Samples, rate: FrameRate, sr: SampleRate, start: i64) -> (
     (f.div_euclid(16), f.rem_euclid(16))
 }
 
-

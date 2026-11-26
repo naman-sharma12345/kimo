@@ -417,6 +417,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-aaf"
+version = "0.1.0"
+dependencies = [
+ "craft-audio",
+ "craft-cfb",
+ "craft-timeline",
+ "thiserror",
+]
+
+[[package]]
+name = "craft-audio"
+version = "0.1.0"
+
+[[package]]
+name = "craft-captions"
+version = "0.1.0"
+dependencies = [
+ "craft-timeline",
+ "craft-xml",
+ "thiserror",
+]
+
+[[package]]
+name = "craft-cfb"
+version = "0.1.0"
+
+[[package]]
 name = "craft-time"
 version = "0.1.0"
 dependencies = [
@@ -1104,6 +1131,8 @@ dependencies = [
  "ab_glyph",
  "bvh",
  "cc",
+ "craft-aaf",
+ "craft-captions",
  "craft-timeline",
  "criterion",
  "exr",

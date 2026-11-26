@@ -410,4 +410,3 @@ fn ceil_div(num: i64, den: i64) -> i64 {
     num / den + i64::from(num % den != 0)
 }
 
-

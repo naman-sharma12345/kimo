@@ -12,6 +12,8 @@ serde_json = "1"
 kimo-ec = { path = "../kimo-ec" }
 kimo-fc-audio = { path = "../kimo-fc-audio" }
 craft-timeline = { path = "../../third_party/craft-libs/timeline", features = ["xml", "otio"] }
+craft-captions = { path = "../../third_party/craft-libs/captions" }
+craft-aaf = { path = "../../third_party/craft-libs/aaf" }
 roxmltree = "0.21"
 
 tiff = "0.10"

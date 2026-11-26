@@ -588,4 +588,3 @@ fn step_enum<T: Copy + PartialEq>(values: &[T], value: T, larger: bool) -> Optio
     values.get(next).copied()
 }
 
-

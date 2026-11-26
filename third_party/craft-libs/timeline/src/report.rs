@@ -100,4 +100,3 @@ impl std::fmt::Display for Report {
     }
 }
 
-

@@ -276,6 +276,18 @@ fn dsp_param_doc(s: &kimo_fc_audio::ParamSpec) -> String {
     else if s.unit == U::Toggle { format!("{} 0/1 (default {})", s.id.replace('.', "_"), s.default) }
     else { format!("{} {}..{}{unit} (default {})", s.id.replace('.', "_"), s.min, s.max, s.default) }
 }
+/// A FilmCraft DSP effect from an add_audio_effect-style kind and params object (validated: names and ranges).
+pub fn dsp_effect_from(kind: &str, p: &Value) -> Result<AudioEffect, String> {
+    let (_, info) = dsp_kinds().into_iter().find(|(k, _)| k == kind).ok_or_else(|| format!("unknown audio effect '{kind}'; kinds: {}", dsp_kinds().iter().map(|k| k.0.as_str()).collect::<Vec<_>>().join(", ")))?;
+    let map = p.as_object().ok_or("params must be an object")?; let mut params = std::collections::BTreeMap::new();
+    for (k, v) in map {
+        let Some(spec) = info.params.iter().find(|s| s.id.replace('.', "_") == *k) else { return Err(format!("unknown {kind} parameter {k}; {kind} takes: {}", info.params.iter().map(dsp_param_doc).collect::<Vec<_>>().join(", "))) };
+        let x = v.as_f64().filter(|x| x.is_finite()).ok_or_else(|| format!("{kind}.{k} must be a number"))?;
+        if (x as f32) < spec.min - 1e-6 || (x as f32) > spec.max + 1e-6 { return Err(format!("{kind}.{k} must be {}..{}, got {x}", spec.min, spec.max)); }
+        params.insert(spec.id.to_string(), x);
+    }
+    Ok(AudioEffect::Dsp { id: info.id.to_string(), params })
+}
 fn add_dsp_effect(ss: &mut Session, a: &Value, info: &'static kimo_fc_audio::EffectInfo, kind: &str) -> Result<Value, String> {
     let p = a.get("params").cloned().unwrap_or(json!({})); let map = p.as_object().ok_or("params must be an object")?;
     let mut params = std::collections::BTreeMap::new();

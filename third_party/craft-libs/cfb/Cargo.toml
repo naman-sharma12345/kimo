@@ -1,0 +1,10 @@
+[package]
+name = "craft-cfb"
+description = "Clean-room Compound File Binary ([MS-CFB], OLE structured storage) reader and writer: the container of legacy Office files, Outlook messages and AAF."
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+
+[dependencies]
+

@@ -747,4 +747,3 @@ pub fn validate(dtd: &Dtd, xml: &str) -> Vec<Problem> {
     }
 }
 
-

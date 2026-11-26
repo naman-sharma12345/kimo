@@ -225,4 +225,3 @@ pub fn extension(path: &str) -> String {
     n.rfind('.').map(|i| n[i + 1..].to_ascii_lowercase()).unwrap_or_default()
 }
 
-

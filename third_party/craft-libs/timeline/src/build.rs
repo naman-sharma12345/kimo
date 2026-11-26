@@ -429,4 +429,3 @@ pub fn gain_to_db(g: f64) -> f64 {
     if g <= 1e-15 { -287.5 } else { 20.0 * g.log10() }
 }
 
-

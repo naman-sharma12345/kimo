@@ -50,4 +50,3 @@ pub fn to_u32_lossy(s: &str) -> Option<u32> {
     to_i64_lossy(s).map(|v| v.clamp(0, i64::from(u32::MAX)) as u32)
 }
 
-

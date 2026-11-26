@@ -137,6 +137,27 @@ fn apply_master_speech_level(p: &Project, out: Vec<f32>) -> Vec<f32> {
 }
 /// Mix every media clip's audio (and audio-only assets) into one interleaved stereo buffer.
 pub fn mix(p: &Project) -> Vec<f32> {
+    if !p.track_mix.is_empty() { let mut out = with_track_mix(p, |q| Ok::<_, String>(mix_plain(q))).unwrap_or_default(); limit(&mut out, -1.5); return out; }
+    mix_plain(p)
+}
+/// Mix track by track and run each through its mixer strip (Project::track_mix), then sum. `base` mixes one track.
+pub(crate) fn with_track_mix<E: From<String>>(p: &Project, base: impl Fn(&Project) -> Result<Vec<f32>, E>) -> Result<Vec<f32>, E> {
+    let total = ((p.duration() * SR as f64).ceil() as usize) * 2; let mut out = vec![0f32; total];
+    for t in &p.tracks {
+        if crate::model::effective_mute(&p.tracks, t) { continue; }
+        let mut q = p.clone(); q.track_mix.clear(); let mut one = t.clone(); one.solo = false; one.muted = false; q.tracks = vec![one];
+        let mut stem = base(&q)?; stem.resize(total, 0.0);
+        if let Some(m) = p.track_mix.get(&t.id) {
+            crate::editorial::process_pcm_checked(&mut stem, &m.effects).map_err(|e| E::from(format!("track {} mixer: {e}", t.id)))?;
+            let g = 10f64.powf(m.gain_db / 20.0) as f32; let pan = m.pan.clamp(-1.0, 1.0);
+            let (gl, gr) = (g * (1.0 - pan.max(0.0)) as f32, g * (1.0 + pan.min(0.0)) as f32);
+            for f in stem.chunks_exact_mut(2) { f[0] *= gl; f[1] *= gr; }
+        }
+        for (o, s) in out.iter_mut().zip(&stem) { *o += *s; }
+    }
+    Ok(out)
+}
+fn mix_plain(p: &Project) -> Vec<f32> {
     let total = ((p.duration() * SR as f64).ceil() as usize) * 2; let mut out = vec![0f32; total];
     for t in &p.tracks { for c in &t.clips {
         let Source::Media { asset } = &c.source else { continue }; if crate::model::effective_mute(&p.tracks, t) || c.audio.mute { continue; }
@@ -245,6 +266,11 @@ pub(crate) fn strict_decode(path:&str,c:&Clip)->Result<Vec<f32>,AudioError>{
 }
 /// New strict path for high-bit export only. The legacy mix/decode API is unchanged.
 pub fn mix_strict(p:&Project)->Result<Vec<f32>,AudioError>{
+ if !p.track_mix.is_empty(){return with_track_mix(p,mix_strict_plain);}
+ mix_strict_plain(p)
+}
+impl From<String> for AudioError{fn from(s:String)->Self{AudioError::InvalidInput(s)}}
+fn mix_strict_plain(p:&Project)->Result<Vec<f32>,AudioError>{
  let total=strict_samples(p.duration())?;let bytes=total.checked_mul(4).ok_or_else(||AudioError::ResourceLimit("mix bytes overflow".into()))?;if bytes>strict_audio_cap(){return Err(AudioError::ResourceLimit(format!("timeline PCM exceeds{}byte cap",strict_audio_cap())))}crate::guard::reserve(bytes);let mut out=vec![0f32;total];
  for track in &p.tracks{for c in &track.clips{crate::guard::check();let Source::Media{asset}=&c.source else{continue};if crate::model::effective_mute(&p.tracks, track) || c.audio.mute{continue}if !c.start.is_finite()||c.start<0.||!c.audio.fade_in.is_finite()||!c.audio.fade_out.is_finite(){return Err(AudioError::InvalidInput("invalid clip start/fades".into()))}let a=p.assets.get(asset).ok_or_else(||AudioError::InvalidInput("missing audio asset".into()))?;let(v,ko)=audio_view(c);let c=&*v;
  let s=match strict_decode(&p.resolve(&a.path),c){Ok(v)=>v,Err(AudioError::NoAudioTrack)=>continue,Err(e)=>return Err(e)};let off=((c.start*SR as f64) as usize).checked_mul(2).ok_or_else(||AudioError::ResourceLimit("audio offset overflow".into()))?;let n=((c.duration*SR as f64) as usize).checked_mul(2).ok_or_else(||AudioError::ResourceLimit("clip samples overflow".into()))?.min(s.len());

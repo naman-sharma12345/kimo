@@ -420,5 +420,3 @@ pub fn write(header: &OutHeader, events: &[OutEvent]) -> String {
 }
 
 
-
-

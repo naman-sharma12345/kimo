@@ -157,6 +157,25 @@ fn import_timeline(ss: &mut Session, a: &Value) -> Result<Value, String> {
     Ok(json!({"format": fmt, "sequence": m.item(sid).map(|i| i.name.clone()), "tracks": tracks, "clips": n_clips, "markers": seq.markers.len(), "notes": out}))
 }
 
+
+/// Avid Log Exchange: one row per media clip on the timeline (its source in/out as timecode, tracks and file), for
+/// logging and batch-import into Media Composer.
+fn export_ale(ss: &mut Session, a: &Value) -> Result<Value, String> {
+    let path = str_arg(a, "path")?.to_string();
+    if std::path::Path::new(&path).exists() && !a.get("overwrite").and_then(|v| v.as_bool()).unwrap_or(false) { return Err(format!("{path} exists; pass overwrite: true to replace it")); }
+    let p = &ss.project; let rate = FrameRate::from_f64(if p.fps > 0.0 { p.fps } else { 30.0 }); let df = (p.fps - 29.97).abs() < 0.01 || (p.fps - 59.94).abs() < 0.01;
+    let tc = |s: f64| craft_timeline::time::format_timecode_frames((s * rate.as_f64()).round() as i64, rate, df);
+    let mut rows = vec![];
+    for t in &p.tracks { for c in t.clips.iter() { let Source::Media { asset } = &c.source else { continue }; let Some(m) = p.assets.get(asset) else { continue }; let path = p.resolve(&m.path);
+        let name = c.name.clone().unwrap_or_else(|| std::path::Path::new(&path).file_stem().map(|f| f.to_string_lossy().to_string()).unwrap_or_default());
+        let video = m.width > 0; let audio = !crate::render::is_still_path(&path);
+        rows.push(vec![craft_timeline::ale::clean(&name), tc(c.in_point), tc(c.in_point + c.duration * c.speed.abs()), craft_timeline::ale::tracks_text(video, if audio { 2 } else { 0 }), craft_timeline::ale::clean(&path), tc(c.start)]); } }
+    if rows.is_empty() { return Err("no media clips to log".into()); }
+    let doc = craft_timeline::ale::AleDoc { heading: craft_timeline::ale::standard_heading(rate, p.height, 48_000), columns: ["Name", "Start", "End", "Tracks", "Source File", "Record Start"].iter().map(|s| s.to_string()).collect(), rows };
+    let text = craft_timeline::ale::write(&doc); std::fs::write(&path, &text).map_err(|e| format!("could not write {path}: {e}"))?;
+    Ok(json!({"path": path, "clips": doc.rows.len(), "drop_frame": df}))
+}
+
 pub fn commands() -> Vec<Command> { vec![
     Command { name: "export_timeline", description: "Export the edit for another editor: Final Cut Pro 7 XML (format fcp7; what Premiere Pro imports), FCPXML 1.9-1.11 (Final Cut Pro, DaVinci Resolve) or OpenTimelineIO. Media clips with their in points, speed and reverse, linked sound, volume, crossfades and dips, markers. Titles, shapes and kimo effects have no equivalent and are listed in notes. Format from the extension (.xml, .fcpxml, .otio) unless given. For CMX 3600 EDL use export_edl.", mutates: false,
         schema: obj(vec![("path", s("file to write")), ("format", json!({"type":"string","enum":["fcp7","fcpxml","otio"]})), ("overwrite", json!({"type":"boolean"})), ("relative_paths", json!({"type":"boolean","description":"write media paths relative to the file where the format allows"}))], &["path"]),
@@ -164,4 +183,7 @@ pub fn commands() -> Vec<Command> { vec![
     Command { name: "import_timeline", description: "Import an edit from another editor: Premiere Pro / Final Cut Pro 7 XML, FCPXML (Final Cut Pro, DaVinci Resolve) or OpenTimelineIO. Each video track becomes a kimo track of media clips (in points, speed, reverse), sound that is not linked to a picture goes on audio tracks, dissolves and dips become transitions, markers are added. Media is imported from the paths in the document (relative to it); offline media, nested sequences, generators and effects are listed in notes.", mutates: true,
         schema: obj(vec![("path", s(".xml, .fcpxml or .otio file")), ("format", json!({"type":"string","enum":["fcp7","fcpxml","otio"],"description":"default: detected"})), ("sequence", s("sequence name when the document has several (default: the first)")), ("start", n("timeline seconds to place it at, default 0"))], &["path"]),
         run: import_timeline },
+    Command { name: "export_ale", description: "Write an Avid Log Exchange (.ale) of the timeline's media clips: name, source start/end timecode (drop-frame at 29.97/59.94), tracks, source file and record start, for logging and Media Composer batch import.", mutates: false,
+        schema: obj(vec![("path", s(".ale file")), ("overwrite", json!({"type":"boolean"}))], &["path"]),
+        run: export_ale },
 ] }

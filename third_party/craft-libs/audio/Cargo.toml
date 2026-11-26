@@ -1,0 +1,12 @@
+[package]
+name = "craft-audio"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "craft-libs' craft-audio reduced to its integer-PCM WAVE/AIFF wrappers (vendored for kimo)"
+
+[features]
+decode-native = []
+pcm-encode = []
+
+[dependencies]
