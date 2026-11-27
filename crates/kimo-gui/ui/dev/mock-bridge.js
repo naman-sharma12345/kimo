@@ -157,7 +157,7 @@ const psNeed = () => { if (!STREAM) throw 'unknown command preview_start'; if (!
 const psRestart = (t, rate) => { PS.gen++; PS.t = t; PS.rate = rate ?? PS.rate; PS.start = Math.floor(t * FPS + 1e-6); PS.rev = revOf(); };
 
 let callN = 0, changeN = 0;
-const UNDOABLE = new Set(['add_clip', 'move_clip', 'trim_clip', 'split_clip', 'duplicate_clip', 'delete_clip', 'ripple_delete', 'add_track', 'delete_track', 'set_track', 'add_marker', 'add_text', 'set_text', 'set_audio', 'set_speed', 'add_effect', 'remove_effect', 'add_transition', 'close_gaps', 'project_set', 'set_temperature', 'set_caption_style', 'import_media', 'set_property', 'auto_captions']);
+const UNDOABLE = new Set(['set_effect_param', 'set_keyframe', 'move_key', 'remove_key', 'set_track_mix', 'auto_grade', 'match_shot_look', 'add_clip', 'move_clip', 'trim_clip', 'split_clip', 'duplicate_clip', 'delete_clip', 'ripple_delete', 'add_track', 'delete_track', 'set_track', 'add_marker', 'add_text', 'set_text', 'set_audio', 'set_speed', 'add_effect', 'remove_effect', 'add_transition', 'close_gaps', 'project_set', 'set_temperature', 'set_caption_style', 'import_media', 'set_property', 'auto_captions']);
 function apply(action, a) {
   const [t, c] = a.clip_id ? findClip(a.clip_id) : [null, null];
   switch (action) {
@@ -175,7 +175,14 @@ function apply(action, a) {
     case 'add_marker': project.markers.push({ time: a.time, name: a.name }); break;
     case 'set_text': if (c) Object.assign(c.source, Object.fromEntries(Object.entries(a).filter(([k]) => k !== 'clip_id'))); break;
     case 'set_audio': if (c) Object.assign(c, Object.fromEntries(Object.entries(a).filter(([k]) => k !== 'clip_id'))); break;
-    case 'add_effect': if (c) c.effects.push({ id: 'fx' + (++callN), kind: a.kind }); break;
+    case 'add_effect': if (c) c.effects.push({ id: 'fx' + (++callN), kind: a.kind, params: Object.fromEntries(Object.entries(a.params || {}).map(([k, v]) => [k, { base: v, keys: [] }])) }); break;
+    case 'set_effect_param': { const f = c?.effects.find(x => x.id === a.effect_id); if (f) { f.params = f.params || {}; f.params[a.param] = { ...(f.params[a.param] || { keys: [] }), base: a.value }; } break; }
+    case 'set_keyframe': { if (!c) break; const bag = a.effect_id ? (c.effects.find(x => x.id === a.effect_id)?.params || {}) : (c.props = c.props || {}); const pr = bag[a.property] = bag[a.property] || { base: a.value, keys: [] };
+      pr.keys = (pr.keys || []).filter(k => Math.abs(k.t - a.time) > 0.02); pr.keys.push({ t: a.time, v: a.value, ease: a.ease || 'in_out' }); pr.keys.sort((x, y) => x.t - y.t); break; }
+    case 'move_key': case 'remove_key': { if (!c) break; const bag = a.effect_id ? (c.effects.find(x => x.id === a.effect_id)?.params || {}) : (c.props || {}); const pr = bag[a.property]; if (!pr?.keys) break;
+      const i = pr.keys.findIndex(k => Math.abs(k.t - a.time) < 0.05); if (i < 0) break; if (action === 'remove_key') pr.keys.splice(i, 1); else { if (a.new_time != null) pr.keys[i].t = a.new_time; if (a.new_value != null) pr.keys[i].v = a.new_value; pr.keys.sort((x, y) => x.t - y.t); } break; }
+    case 'set_track_mix': { project.track_mix = project.track_mix || {}; const m = project.track_mix[a.track_id] = project.track_mix[a.track_id] || { gain_db: 0, pan: 0, effects: [] };
+      if (a.gain_db != null) m.gain_db = a.gain_db; if (a.pan != null) m.pan = a.pan; if (a.clear_effects) m.effects = []; if (a.add_effect) m.effects.push({ kind: 'dsp', id: a.add_effect.kind, params: {} }); break; }
     case 'remove_effect': if (c) c.effects = c.effects.filter(f => f.id !== a.effect_id); break;
     case 'add_transition': if (c) c.transition_in = { kind: a.kind, duration: a.duration }; break;
     case 'project_set': Object.assign(project, a); break;
@@ -253,6 +260,18 @@ const handlers = {
   engine_read: async ({ tool, args }) => {
     const a = args?.action;
     if (a === 'get_project') return { ok: true, data: structuredClone(project) };
+    if (a === 'list_effects') return { ok: true, data: [
+      { kind: 'blur', description: 'Gaussian blur', params: [{ name: 'radius', default: 8, description: 'px' }] },
+      { kind: 'glow', description: 'Soft glow around bright areas', params: [{ name: 'radius', default: 20, description: 'px' }, { name: 'intensity', default: 0.6, description: '0..2' }, { name: 'threshold', default: 0.7, description: '0..1' }] },
+      { kind: 'primaries', description: 'Resolve-style primary grade', params: ['lift_m', 'gamma_m', 'gain_m', 'contrast', 'saturation', 'temperature', 'tint', 'shadows', 'highlights'].map(n => ({ name: n, default: /gamma|gain|contrast|saturation/.test(n) ? 1 : 0, description: '' })) },
+      { kind: 'card_dance', description: 'Card Dance (After Effects Simulation, from EffectCraft)', params: [{ name: 'rows', default: 15, description: 'Rows 1..1000' }, { name: 'columns', default: 15, description: 'Columns 1..1000' }, { name: 'gradient_layer_1_x', default: 0.5, description: '0..1 of the layer' }] },
+      { kind: 'wave_warp', description: 'Wave Warp: waves travel across the layer', params: [{ name: 'height', default: 10, description: 'px of displacement' }, { name: 'width', default: 40, description: 'px wavelength' }, { name: 'direction', default: 90, description: 'degrees the waves travel' }] },
+    ] };
+    if (a === 'key_graph') { const ar = args.args || {}; const [, c] = findClip(ar.clip_id); const bag = ar.effect_id ? (c?.effects.find(x => x.id === ar.effect_id)?.params || {}) : (c?.props || {}); const ks = bag[ar.property]?.keys || [];
+      if (ks.length < 2) return { ok: true, data: { keys: ks.length, note: 'fewer than two keys: nothing animates' } };
+      const val = t => { if (t <= ks[0].t) return ks[0].v; for (let i = 0; i < ks.length - 1; i++) if (t <= ks[i + 1].t) { const u = (t - ks[i].t) / (ks[i + 1].t - ks[i].t), e = u * u * (3 - 2 * u); return ks[i].v + (ks[i + 1].v - ks[i].v) * e; } return ks.at(-1).v; };
+      const t0 = ks[0].t, t1 = ks.at(-1).t, n = 120; return { ok: true, data: { keys: ks.map(k => ({ t: k.t, value: k.v, ease: k.ease || 'in_out' })), graph: Array.from({ length: n + 1 }, (_, i) => { const t = t0 + (t1 - t0) * i / n; return { t, value: val(t), speed: (val(t + 1e-3) - val(t - 1e-3)) / 2e-3 }; }) } }; }
+    if (a === 'loudness_report') return { ok: true, data: { integrated_lufs: -18.4, loudness_range_lu: 6.2, max_momentary_lufs: -11.9, max_short_term_lufs: -14.1, true_peak_dbtp: -2.3, target: { name: args.args?.target || 'youtube', lufs: -14, true_peak_dbtp: -1 }, ok: false, issues: ['integrated -18.4 LUFS is 4.4 LU below the youtube target -14 LUFS: normalize with export_audio_as normalize_lufs=-14 or finish_audio'] } };
     if (a === 'list_transitions') return { ok: true, data: ['dissolve', 'dip_to_black', 'wipe_left', 'slide_up', 'zoom_in', 'whip_pan', 'glitch'] };
     if (a === 'job_status') { EXJ.n = Math.min(EXJ.total, EXJ.n + 90); return { ok: true, data: { state: EXJ.n >= EXJ.total ? 'done' : 'running', frames_done: EXJ.n, frames_total: EXJ.total, fps: 148, eta_s: (EXJ.total - EXJ.n) / 148 } }; }
     return { ok: true, data: {} };

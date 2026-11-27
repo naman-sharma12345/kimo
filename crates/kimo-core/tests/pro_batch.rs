@@ -105,3 +105,10 @@ fn delivery_formats_write_what_they_say() {
     assert!(d.join("seq").join("f_00000.exr").exists() && d.join("seq").join("f_00009.exr").exists(), "ten EXR frames");
     let e = dispatch(&mut s, "export_format", &json!({"path": d.join("x.mov").to_string_lossy(), "format": "exr_sequence"})).unwrap_err(); assert!(e.contains(".exr"), "{e}");
 }
+
+#[test]
+fn every_tool_has_a_group() {
+    let extras: Vec<&str> = kimo_core::commands::registry_ref().iter().map(|c| c.name).filter(|n| kimo_core::toolgroups::group_of(n) == "extras").collect();
+    assert!(extras.is_empty(), "tools in no group (add them to toolgroups.rs): {extras:?}");
+    assert_eq!(kimo_core::toolgroups::group_of("set_track_mix"), "audio");
+}

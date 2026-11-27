@@ -1118,7 +1118,7 @@ dependencies = [
 
 [[package]]
 name = "kimo-cli"
-version = "26.11.0"
+version = "26.11.1"
 dependencies = [
  "kimo-core",
  "serde_json",
@@ -1126,7 +1126,7 @@ dependencies = [
 
 [[package]]
 name = "kimo-core"
-version = "26.11.0"
+version = "26.11.1"
 dependencies = [
  "ab_glyph",
  "bvh",
@@ -1159,7 +1159,7 @@ dependencies = [
 
 [[package]]
 name = "kimo-ec"
-version = "26.11.0"
+version = "26.11.1"
 dependencies = [
  "miniz_oxide 0.9.1",
  "ndarray",
@@ -1170,11 +1170,11 @@ dependencies = [
 
 [[package]]
 name = "kimo-fc-audio"
-version = "26.11.0"
+version = "26.11.1"
 
 [[package]]
 name = "kimo-mcp"
-version = "26.11.0"
+version = "26.11.1"
 dependencies = [
  "kimo-core",
  "serde_json",

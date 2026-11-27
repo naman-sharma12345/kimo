@@ -45,6 +45,16 @@ pub fn group_of(n: &str) -> &'static str {
         ("timeline", &["auto_edit", "auto_rough_cut", "place_broll", "cut_to_beat", "cut_to_speech", "add_track", "add_clip", "move_clip", "trim_clip", "split_clip", "delete_clip", "paste_attributes", "copy_keyframes", "set_speed", "set_speed_ramp", "set_time_remap", "beat_cut", "set_time_mode", "freeze_frame", "ripple_delete", "close_gaps", "reframe_timeline", "drop_short_segments", "ripple_trim", "roll_edit", "slip_clip", "set_split_edit", "slide_clip", "replace_clip_media", "insert_gap", "lift_range", "duplicate_clip", "loop_clip", "distribute_clips", "swap_clips", "rate_stretch", "set_track", "delete_track", "split_all_at", "scene_split", "remove_silence_cuts", "trim_filler_words", "tighten_pauses", "fit_clip_duration", "group_clips", "ungroup_clip", "add_marker", "list_markers", "remove_marker", "mark_scene_cuts", "snap_time", "list_edit_points", "add_multicam", "switch_angle", "list_multicam", "flatten_multicam", "sync_clips", "mark_source", "clear_source_marks", "get_source_marks", "edit_points", "apply_responsive_time", "make_montage_from_folder", "best_segments", "beat_sync_montage", "montage_color_match"]),
     ];
     if n.starts_with("transcript_") { return "text"; }
+    // batches 5-12: tools whose names the keyword rules below would misplace or miss
+    match n {
+        "set_track_mix" | "remix_music" | "loudness_report" | "export_audio_as" | "music_structure" | "separate_stems" | "add_sfx" | "add_sfx_on" => return "audio",
+        "copy_ease" | "key_graph" | "set_key_velocity" => return "animate",
+        "set_animator_selectors" => return "text",
+        "insert_edit" | "overwrite_edit" | "timecode" | "import_timeline" | "import_aaf" | "export_timeline" | "export_aaf" | "export_ale" | "export_markers" => return "timeline",
+        "set_autosave" | "list_autosaves" | "recover_autosave" => return "project",
+        "import_lottie" | "export_lottie" => return "graphics",
+        _ => {}
+    }
     for (g, names) in EXACT { if names.contains(&n) { return g; } }
     // rules for tools added later: the first match wins
     let has = |p: &[&str]| p.iter().any(|x| n.contains(x));

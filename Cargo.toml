@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/kimo-core", "crates/kimo-mcp", "crates/kimo-cli", "crates/kimo-ec", "crates/kimo-fc-audio", "third_party/craft-libs/time", "third_party/craft-libs/xml", "third_party/craft-libs/timeline", "third_party/craft-libs/captions", "third_party/craft-libs/cfb", "third_party/craft-libs/aaf", "third_party/craft-libs/audio"]
 
 [workspace.package]
-version = "26.11.0"
+version = "26.11.1"
 edition = "2021"
 license = "MIT"
 
